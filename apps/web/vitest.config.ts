@@ -14,7 +14,7 @@ export default defineConfig({
       reporter: ['text'],
       thresholds: {
         statements: 100,
-        branches: 95, // ratcheted: remaining gaps are UI edge-branches in DeployWizard/Layout/Dashboard
+        branches: 100,
         functions: 100,
         lines: 100,
       },

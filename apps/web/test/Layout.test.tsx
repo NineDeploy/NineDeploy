@@ -210,6 +210,15 @@ describe('Layout', () => {
     expect(screen.getByText('weird thing')).toBeInTheDocument();
   });
 
+  it('connects the events socket with an empty token when none is stored', async () => {
+    apiMock.getToken.mockReturnValue(null);
+    const user = userEvent.setup();
+    renderLayout();
+    await user.click(screen.getByTitle('Activity'));
+    await waitFor(() => expect(FakeWebSocket.instances.length).toBeGreaterThan(0));
+    expect(FakeWebSocket.instances[0]?.url).toBe('ws://localhost/v1/events?token=');
+  });
+
   it('uses wss when the page is served over https', async () => {
     const original = window.location;
     Object.defineProperty(window, 'location', {

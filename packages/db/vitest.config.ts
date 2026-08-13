@@ -9,9 +9,9 @@ export default defineConfig({
       include: ['src/**/*.ts'],
       reporter: ['text'],
       thresholds: {
-        statements: 98, // ratcheted to current baseline
+        statements: 100,
         branches: 100,
-        functions: 97,
+        functions: 100,
         lines: 100,
       },
     },

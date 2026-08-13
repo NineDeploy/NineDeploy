@@ -10,7 +10,7 @@ export default defineConfig({
       reporter: ['text'],
       thresholds: {
         statements: 100,
-        branches: 96, // ratcheted to current baseline (~97%)
+        branches: 100,
         functions: 100,
         lines: 100,
       },
