@@ -3,7 +3,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { auditLog, notificationLog } from '@ninedeploy/db';
 
 const logsMock = vi.hoisted(() => ({ pruneOldLogs: vi.fn(() => 0) }));
+const execMock = vi.hoisted(() => ({
+  run: vi.fn(async (_c: string, _a: unknown[], _o: unknown, sink?: (l: string) => void) => {
+    sink?.('');
+  }),
+}));
 vi.mock('../../src/engine/logs.js', () => ({ logBus: new (class extends EventTarget {})(), pruneOldLogs: logsMock.pruneOldLogs }));
+vi.mock('../../src/lib/exec.js', () => ({ run: execMock.run }));
 
 const housekeepingPlugin = (await import('../../src/plugins/housekeeping.js')).default;
 
@@ -43,6 +49,8 @@ describe('housekeeping plugin', () => {
     const tables = deleted.map((d) => d.table);
     expect(tables).toContain(auditLog);
     expect(tables).toContain(notificationLog);
+    // Dangling Docker images are pruned each tick too.
+    expect(execMock.run).toHaveBeenCalledWith('docker', ['image', 'prune', '-f'], {}, expect.any(Function));
     await app.close();
   });
 
@@ -88,5 +96,18 @@ describe('housekeeping plugin', () => {
     await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
 
     expect(logsMock.pruneOldLogs).toHaveBeenCalledTimes(1);
+  });
+
+  it('absorbs a failing docker image prune without breaking the tick', async () => {
+    execMock.run.mockRejectedValueOnce(new Error('docker unavailable'));
+    const { db } = makeDb();
+    const app = await buildApp(db);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    // The prune rejection is caught (fire-and-forget); the rest of the tick still ran.
+    expect(logsMock.pruneOldLogs).toHaveBeenCalledTimes(1);
+    expect(execMock.run).toHaveBeenCalledWith('docker', ['image', 'prune', '-f'], {}, expect.any(Function));
+    await app.close();
   });
 });
