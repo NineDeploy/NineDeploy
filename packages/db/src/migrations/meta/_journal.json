@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1786633908358,
+      "tag": "0000_true_rage",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1786638706336,
+      "tag": "0001_chunky_kree",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1786639293745,
+      "tag": "0002_shocking_stellaris",
+      "breakpoints": true
+    }
+  ]
+}

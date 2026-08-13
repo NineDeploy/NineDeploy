@@ -1,0 +1,66 @@
+import { desc, eq } from 'drizzle-orm';
+import { deployments, services } from '@ninedeploy/db';
+import type { FastifyPluginAsync } from 'fastify';
+import { logBus } from '../engine/logs.js';
+import { resolveUser } from '../lib/auth.js';
+import { notFound } from '../lib/errors.js';
+
+const num = (v: string) => Number(v);
+
+export const deploysRoutes: FastifyPluginAsync = async (app) => {
+  // Trigger a new deployment (enqueues a `queued` row the worker picks up).
+  app.post('/:id/deploys', { onRequest: [app.authenticate] }, async (req) => {
+    const id = num((req.params as { id: string }).id);
+    const svc = await app.db.query.services.findFirst({ where: eq(services.id, id) });
+    if (!svc) throw notFound('Service not found');
+    const [dep] = await app.db
+      .insert(deployments)
+      .values({ serviceId: id, status: 'queued', trigger: 'user', message: 'Manual deploy' })
+      .returning();
+    return { deploymentId: dep!.id };
+  });
+
+  // List deployments for a service.
+  app.get('/:id/deploys', { onRequest: [app.authenticate] }, async (req) => {
+    const id = num((req.params as { id: string }).id);
+    const rows = await app.db.query.deployments.findMany({
+      where: eq(deployments.serviceId, id),
+      orderBy: desc(deployments.createdAt),
+      limit: 50,
+    });
+    return rows.map((d) => ({
+      id: d.id,
+      status: d.status,
+      commitSha: d.commitSha,
+      message: d.message,
+      author: d.author,
+      trigger: d.trigger,
+      startedAt: d.startedAt ? d.startedAt.toISOString() : null,
+      finishedAt: d.finishedAt ? d.finishedAt.toISOString() : null,
+      createdAt: d.createdAt.toISOString(),
+    }));
+  });
+
+  // Live log stream over WebSocket. Auth via ?token= (ws can't set headers easily).
+  app.get('/:id/deploys/:depId/logs', { websocket: true }, async (socket, req) => {
+    const token = (req.query as { token?: string }).token;
+    const depId = num((req.params as { id: string; depId: string }).depId);
+    if (!token || !(await resolveUser(app.db, token))) {
+      socket.close(1008, 'unauthorized');
+      return;
+    }
+
+    // Replay backlog, then stream live lines.
+    const backlog = logBus.read(depId);
+    if (backlog) socket.send(backlog);
+    const unsub = logBus.subscribe(depId, (line) => {
+      try {
+        socket.send(line + '\n');
+      } catch {
+        /* socket closed */
+      }
+    });
+    socket.on('close', unsub);
+    socket.on('error', unsub);
+  });
+};

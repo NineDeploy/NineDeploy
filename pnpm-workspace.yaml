@@ -1,0 +1,24 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+# Dependencies allowed to run install scripts (pnpm 11 blocks these by default).
+# esbuild ships its native binary via postinstall; Vite/tsx need it.
+allowBuilds:
+  esbuild: true
+
+minimumReleaseAgeExclude:
+  - '@node-rs/argon2-android-arm-eabi@2.1.0'
+  - '@node-rs/argon2-android-arm64@2.1.0'
+  - '@node-rs/argon2-darwin-arm64@2.1.0'
+  - '@node-rs/argon2-darwin-x64@2.1.0'
+  - '@node-rs/argon2-freebsd-x64@2.1.0'
+  - '@node-rs/argon2-linux-arm-gnueabihf@2.1.0'
+  - '@node-rs/argon2-linux-arm64-gnu@2.1.0'
+  - '@node-rs/argon2-linux-arm64-musl@2.1.0'
+  - '@node-rs/argon2-linux-x64-gnu@2.1.0'
+  - '@node-rs/argon2-linux-x64-musl@2.1.0'
+  - '@node-rs/argon2-win32-arm64-msvc@2.1.0'
+  - '@node-rs/argon2-win32-ia32-msvc@2.1.0'
+  - '@node-rs/argon2-win32-x64-msvc@2.1.0'
+  - '@node-rs/argon2@2.1.0'

@@ -1,0 +1,26 @@
+{
+  "name": "ninedeploy",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Self-hosted, one-click deployment platform with PM2 + Docker, Traefik, webhooks, secrets, backups and monitoring.",
+  "license": "MIT",
+  "packageManager": "pnpm@11.21.0",
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "db:generate": "pnpm --filter @ninedeploy/db db:generate",
+    "db:migrate": "pnpm --filter @ninedeploy/db db:migrate",
+    "db:studio": "pnpm --filter @ninedeploy/db db:studio",
+    "clean": "turbo run clean && rm -rf node_modules"
+  },
+  "devDependencies": {
+    "turbo": "^2.10.9",
+    "typescript": "^7.0.2"
+  }
+}

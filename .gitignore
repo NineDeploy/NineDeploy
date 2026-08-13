@@ -1,0 +1,40 @@
+# dependencies
+node_modules
+.pnpm-store
+
+# build outputs
+dist
+build
+*.tsbuildinfo
+.turbo
+
+# runtime data
+.data
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+
+# env / secrets
+.env
+.env.*
+!.env.example
+master.key
+
+# logs
+logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# editor / OS
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+Thumbs.db
+
+# deployments / repos managed at runtime
+repos
+volumes
+backups
