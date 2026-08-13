@@ -141,6 +141,22 @@ describe('key rotation (versioned key ring)', () => {
     expect(crypto.decrypt(legacy)).toBe('legacy');
   });
 
+  it('decrypts a legacy envelope with the ORIGINAL key after rotation (active is now newer)', async () => {
+    // Seal a value under the original single key (becomes legacy iv:tag:ct).
+    vi.resetModules();
+    vi.stubEnv('NINEDEPLOY_MASTER_KEYS', `0:${KEY_A}`);
+    const mod0 = await import('../../src/lib/crypto.js');
+    const legacy = mod0.encrypt('pre-rotation-secret').slice('v0:'.length); // strip prefix
+
+    // Rotate: add key 1 (now active). Legacy secret must still decrypt with key 0.
+    vi.resetModules();
+    vi.stubEnv('NINEDEPLOY_MASTER_KEYS', `0:${KEY_A},1:${KEY_B}`);
+    const mod1 = await import('../../src/lib/crypto.js');
+    expect(mod1.decrypt(legacy)).toBe('pre-rotation-secret');
+    // And reencrypt migrates it onto the active key.
+    expect(mod1.reencrypt(legacy).startsWith('v1:')).toBe(true);
+  });
+
   it('still decrypts old-version ciphertext after a new key is added', async () => {
     vi.resetModules();
     vi.stubEnv('NINEDEPLOY_MASTER_KEYS', `0:${KEY_A}`);
@@ -198,6 +214,14 @@ describe('key rotation (versioned key ring)', () => {
     // Active is v1; relabel an active ciphertext as an unknown v9 version.
     const forged = mod.encrypt('fallback').replace(/^v1:/, 'v9:');
     expect(mod.decrypt(forged)).toBe('fallback');
+  });
+
+  it('falls back to the active key for a legacy envelope when version 0 is absent from the ring', async () => {
+    vi.resetModules();
+    vi.stubEnv('NINEDEPLOY_MASTER_KEYS', `1:${KEY_A}`); // no version 0 declared
+    const mod = await import('../../src/lib/crypto.js');
+    const legacy = mod.encrypt('legacy-no-v0').slice('v1:'.length); // strip prefix
+    expect(mod.decrypt(legacy)).toBe('legacy-no-v0');
   });
 });
 

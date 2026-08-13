@@ -36,7 +36,7 @@ async function isContainerRunning(name: string): Promise<boolean> {
 
 /** Docker builder: BuildKit image build + container run/stop via the docker CLI. */
 export const dockerBuilder: Builder = {
-  async buildAndRun(ctx) {
+  async buildAndRun(ctx, previous) {
     const { service, buildConfig, workDir, deploymentId, commitSha, env, imageDigest, log } = ctx;
     const name = `${service.slug}-${deploymentId}`;
 
@@ -69,7 +69,15 @@ export const dockerBuilder: Builder = {
     // interfaces. Public traffic enters exclusively through Traefik, which
     // reaches the container by name over the shared network. The loopback
     // binding exists only so the healthcheck can probe it from the host.
-    if (service.port) args.push('-p', `127.0.0.1:${service.port}:${service.port}`);
+    // BLUE-GREEN: when a previous container is still serving, it already holds
+    // 127.0.0.1:<port>, so the new container binds an EPHEMERAL host port
+    // (Docker assigns one) to avoid a "port already allocated" conflict; we
+    // capture it below and healthcheck against it.
+    let hostPort = service.port ?? null;
+    if (service.port) {
+      if (previous) args.push('-p', `127.0.0.1::${service.port}`);
+      else args.push('-p', `127.0.0.1:${service.port}:${service.port}`);
+    }
     if (service.cpuShares > 0) args.push('--cpu-shares', String(service.cpuShares));
     if (service.memLimitMb > 0) args.push('--memory', `${service.memLimitMb}m`);
     if (service.volumeMount) args.push('-v', `nd-svc-${service.slug}-data:${service.volumeMount}`);
@@ -99,11 +107,26 @@ export const dockerBuilder: Builder = {
       /* non-fatal — digest is best-effort */
     }
 
-    return { runtimeId: name, port: service.port ?? null, healthPath: service.healthPath ?? '/', imageDigest: digest };
+    // For a blue-green deploy, capture the ephemeral host port Docker assigned
+    // so the healthcheck can reach the new container.
+    if (previous && service.port) {
+      try {
+        const portOut = await capture('docker', ['port', name, `${service.port}/tcp`]);
+        const m = /:(\d+)\s*$/.exec(portOut.trim());
+        if (m) hostPort = Number(m[1]);
+      } catch {
+        /* fall back to service.port for the healthcheck */
+      }
+    }
+
+    return { runtimeId: name, port: service.port ?? null, hostPort, healthPath: service.healthPath ?? '/', imageDigest: digest };
   },
 
   async isHealthy(runtime, timeoutMs = 30_000) {
     const healthPath = runtime.healthPath || '/';
+    // Probe the host port the container actually bound (ephemeral during
+    // blue-green), falling back to the service port.
+    const probePort = runtime.hostPort ?? runtime.port;
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       // First requirement in every iteration: the container must still be alive.
@@ -112,11 +135,11 @@ export const dockerBuilder: Builder = {
         await sleep(1000);
         continue;
       }
-      if (runtime.port) {
+      if (probePort) {
         // Probe the HTTP endpoint with a short per-attempt timeout so a server
         // that accepts TCP but never responds can't stall the whole deadline.
         try {
-          const res = await fetch(`http://127.0.0.1:${runtime.port}${healthPath}`, {
+          const res = await fetch(`http://127.0.0.1:${probePort}${healthPath}`, {
             signal: AbortSignal.timeout(3000),
           });
           if (res.status < 500) return true;

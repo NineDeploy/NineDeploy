@@ -177,9 +177,24 @@ export async function runDeployment(db: DB, deploymentId: number): Promise<void>
   // Flip routing to the NEW container first, then stop the old one (blue-green
   // finalize). For PM2 the previous was already stopped inside buildAndRun, so
   // this stop is a harmless no-op.
-  await writeDynamicConfig(db).catch((err) => log(`proxy warning: ${msg(err)}`));
+  // IMPORTANT: only stop the previous container when routing actually flipped —
+  // otherwise we'd kill the still-serving old version and cause an outage.
+  let routingFlipped = false;
+  try {
+    await writeDynamicConfig(db);
+    routingFlipped = true;
+  } catch (err) {
+    log(`proxy warning: ${msg(err)}`);
+  }
   if (previous) {
-    await builder.stop(previous.runtimeId).catch((err) => log(`finalize warning (previous stop): ${msg(err)}`));
+    // Only retire the previous container once routing has actually flipped to
+    // the new one — otherwise we'd stop the still-serving version and cause an
+    // outage. If the config write failed, leave the previous container live.
+    if (routingFlipped) {
+      await builder.stop(previous.runtimeId).catch((err) => log(`finalize warning (previous stop): ${msg(err)}`));
+    } else {
+      log('↩ finalize skipped: routing did not flip, the previous container stays live');
+    }
   }
   log('✓ Deployment successful');
 }

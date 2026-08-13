@@ -100,8 +100,12 @@ export function decrypt(payload: string): string {
   const ring = getKeyRing();
   const m = VERSION_RE.exec(payload);
   const body = m ? payload.slice(m[0].length) : payload;
-  // Versioned → look up the key; unknown version or legacy → fall back to active.
-  const key = m ? (ring.keys.get(Number(m[1])) ?? ring.activeKey) : ring.activeKey;
+  // Versioned → look up the key by version. Legacy (un-prefixed, pre-rotation)
+  // ciphertext was sealed under the original key = version 0 (NOT necessarily
+  // the current active key after a rotation), so resolve it to key 0.
+  const key = m
+    ? (ring.keys.get(Number(m[1])) ?? ring.activeKey)
+    : (ring.keys.get(0) ?? ring.activeKey);
   const [ivB, tagB, encB] = body.split(':') as [string, string, string];
   const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(ivB, 'base64'));
   decipher.setAuthTag(Buffer.from(tagB, 'base64'));

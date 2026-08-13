@@ -485,6 +485,20 @@ describe('runDeployment', () => {
     expect(lines).toContain('✓ Deployment successful');
   });
 
+  it('keeps the previous container serving when the routing flip fails (no silent outage)', async () => {
+    const { db } = makeDb();
+    baseSetup(db, { runtimeId: 'old-c' }); // a previous container is serving
+    h.builder.buildAndRun.mockResolvedValue({ runtimeId: 'c-2', port: 3000, hostPort: 3000, healthPath: '/' });
+    h.writeDynamicConfig.mockRejectedValue(new Error('disk full'));
+    const lines = collectLogs(1);
+
+    await runDeployment(db as never, 1);
+
+    // Routing did not flip → the previous container must NOT be retired.
+    expect(h.builder.stop).not.toHaveBeenCalledWith('old-c');
+    expect(lines).toContain('↩ finalize skipped: routing did not flip, the previous container stays live');
+  });
+
   it('fails the deployment with a stringified reason when the failure is not an Error', async () => {
     const { db } = makeDb();
     baseSetup(db);

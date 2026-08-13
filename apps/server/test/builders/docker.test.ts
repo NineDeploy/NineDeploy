@@ -68,7 +68,7 @@ describe('dockerBuilder.buildAndRun', () => {
         'nginx:1.25',
       ],
     );
-    expect(runtime).toEqual({ runtimeId: 'web-3', port: 3000, healthPath: '/health', imageDigest: expect.any(String) });
+    expect(runtime).toEqual({ runtimeId: 'web-3', port: 3000, hostPort: 3000, healthPath: '/health', imageDigest: expect.any(String) });
   });
 
   it('logs a pull warning when the rejection is not an Error instance', async () => {
@@ -150,7 +150,7 @@ describe('dockerBuilder.buildAndRun', () => {
 
     const runtime = await dockerBuilder.buildAndRun(ctx as never);
 
-    expect(runtime).toEqual({ runtimeId: 'y-3', port: null, healthPath: '/', imageDigest: expect.any(String) });
+    expect(runtime).toEqual({ runtimeId: 'y-3', port: null, hostPort: null, healthPath: '/', imageDigest: expect.any(String) });
   });
 
   it('does NOT stop the previous container (blue-green: old keeps serving until healthy)', async () => {
@@ -161,6 +161,22 @@ describe('dockerBuilder.buildAndRun', () => {
     // Only build + run are invoked — never `docker stop`/`rm` against the old container.
     const stops = h.run.mock.calls.filter((c) => (c[1] as unknown[])[1] === 'stop' || (c[1] as unknown[])[1] === 'rm');
     expect(stops).toHaveLength(0);
+  });
+
+  it('binds an ephemeral host port during blue-green and captures it for the healthcheck', async () => {
+    // `docker port` output: the ephemeral host port Docker assigned.
+    h.capture.mockResolvedValue('0.0.0.0:32768\n');
+    const ctx = makeCtx(); // port 3000
+
+    const runtime = await dockerBuilder.buildAndRun(
+      ctx as never,
+      { runtimeId: 'old-1', port: 3000, healthPath: '/' }, // previous still holds 127.0.0.1:3000
+    );
+
+    const runArgs = h.run.mock.calls.find((c) => (c[1] as unknown[])[0] === 'run')![1] as unknown[];
+    // Ephemeral host port (no host-side port) so it doesn't conflict with the previous container.
+    expect(runArgs).toContain('127.0.0.1::3000');
+    expect(runtime.hostPort).toBe(32768);
   });
 
   it('deletes the env-file even when docker run fails', async () => {
