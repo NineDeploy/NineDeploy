@@ -51,7 +51,7 @@ export const pm2Builder: Builder = {
           ),
         ),
     );
-    return { runtimeId: name, port: service.port ?? null };
+    return { runtimeId: name, port: service.port ?? null, healthPath: service.healthPath ?? '/' };
   },
 
   async isHealthy(runtime, timeoutMs = 20_000) {

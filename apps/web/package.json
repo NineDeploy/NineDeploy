@@ -13,6 +13,8 @@
   "dependencies": {
     "@ninedeploy/sdk": "workspace:*",
     "@tanstack/react-query": "^5.101.4",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
     "@xyflow/react": "^12.11.3",
     "lucide-react": "^1.31.0",
     "react": "^19.2.8",

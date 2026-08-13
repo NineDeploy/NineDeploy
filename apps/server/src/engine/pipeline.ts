@@ -79,7 +79,7 @@ export async function runDeployment(db: DB, deploymentId: number): Promise<void>
     }
 
     const previous: DeployRuntime | undefined = service.runtimeId
-      ? { runtimeId: service.runtimeId, port: service.port ?? null }
+      ? { runtimeId: service.runtimeId, port: service.port ?? null, healthPath: service.healthPath ?? '/' }
       : undefined;
 
     const ctx: BuildContext = {

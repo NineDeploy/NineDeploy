@@ -43,15 +43,16 @@ export const dockerBuilder: Builder = {
 
     log(`Starting container ${name} …`);
     await run('docker', args, {}, log);
-    return { runtimeId: name, port: service.port ?? null };
+    return { runtimeId: name, port: service.port ?? null, healthPath: service.healthPath ?? '/' };
   },
 
   async isHealthy(runtime, timeoutMs = 30_000) {
     if (!runtime.port) return true; // nothing to probe
+    const path = runtime.healthPath || '/';
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       try {
-        const res = await fetch(`http://127.0.0.1:${runtime.port}/`);
+        const res = await fetch(`http://127.0.0.1:${runtime.port}${path}`);
         if (res.status < 500) return true;
       } catch {
         /* not up yet */

@@ -12,9 +12,11 @@ import { Domains } from './routes/Domains.js';
 import { Hub } from './routes/Hub.js';
 import { ServiceDetail } from './routes/ServiceDetail.js';
 import { ServicesList } from './routes/ServicesList.js';
+import { Settings } from './routes/Settings.js';
 import { Sources } from './routes/Sources.js';
 import { Topology } from './routes/Topology.js';
 import { Tunnels } from './routes/Tunnels.js';
+import { Users } from './routes/Users.js';
 import { Volumes } from './routes/Volumes.js';
 
 function RequireAuth({ children }: { children: ReactNode }) {
@@ -43,10 +45,12 @@ export default function App() {
         <Route path="databases" element={<Databases />} />
         <Route path="domains" element={<Domains />} />
         <Route path="tunnels" element={<Tunnels />} />
+        <Route path="users" element={<Users />} />
         <Route path="volumes" element={<Volumes />} />
         <Route path="topology" element={<Topology />} />
         <Route path="backups" element={<Backups />} />
         <Route path="sources" element={<Sources />} />
+        <Route path="settings" element={<Settings />} />
         <Route path="monitoring" element={<Monitoring />} />
         <Route path="services/new" element={<NewService />} />
         <Route path="services/:id" element={<ServiceDetail />} />

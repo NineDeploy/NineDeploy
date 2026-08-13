@@ -22,6 +22,7 @@ function serialize(s: Service) {
     volumeMount: s.volumeMount,
     commitSha: s.commitSha,
     runtimeId: s.runtimeId,
+    healthPath: s.healthPath,
     port: s.port,
     createdAt: s.createdAt.toISOString(),
     updatedAt: s.updatedAt.toISOString(),

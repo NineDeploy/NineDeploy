@@ -19,6 +19,7 @@ export interface DeployRuntime {
   /** Docker container name or PM2 process name. */
   runtimeId: string;
   port: number | null;
+  healthPath: string;
 }
 
 /** A runtime backend (Docker / PM2). Implementations live in ./builders. */

@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import { desc, eq } from 'drizzle-orm';
 import { deployments, services } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
@@ -43,6 +44,26 @@ export const deploysRoutes: FastifyPluginAsync = async (app) => {
     }));
   });
 
+  // Rollback to a previous deployment (redeploys at that commit SHA).
+  app.post('/:id/deploys/:depId/rollback', { onRequest: [app.authenticate] }, async (req) => {
+    const id = num((req.params as { id: string }).id);
+    const depId = num((req.params as { depId: string }).depId);
+    const old = await app.db.query.deployments.findFirst({ where: eq(deployments.id, depId) });
+    if (!old || old.serviceId !== id) throw notFound('Deployment not found');
+    void audit(app.db, req.user!.id, 'deploy.rollback', `#${depId} → ${old.commitSha?.slice(0, 7) ?? '—'}`);
+    const [dep] = await app.db
+      .insert(deployments)
+      .values({
+        serviceId: id,
+        status: 'queued',
+        trigger: 'user',
+        commitSha: old.commitSha,
+        message: `Rollback to #${depId}`,
+      })
+      .returning();
+    return { deploymentId: dep!.id };
+  });
+
   // Live log stream over WebSocket. Auth via ?token= (ws can't set headers easily).
   app.get('/:id/deploys/:depId/logs', { websocket: true }, async (socket, req) => {
     const token = (req.query as { token?: string }).token;
@@ -64,5 +85,28 @@ export const deploysRoutes: FastifyPluginAsync = async (app) => {
     });
     socket.on('close', unsub);
     socket.on('error', unsub);
+  });
+
+  // Container exec — interactive shell via WebSocket (docker exec -i).
+  app.get('/:id/exec', { websocket: true }, async (socket, req) => {
+    const token = (req.query as { token?: string }).token;
+    const id = num((req.params as { id: string }).id);
+    if (!token || !(await resolveUser(app.db, token))) {
+      socket.close(1008, 'unauthorized');
+      return;
+    }
+    const svc = await app.db.query.services.findFirst({ where: eq(services.id, id) });
+    if (!svc?.runtimeId) {
+      socket.close(1008, 'no running container');
+      return;
+    }
+
+    const child = spawn('docker', ['exec', '-i', svc.runtimeId, 'sh'], {});
+    socket.on('message', (data) => child.stdin.write(data as Buffer));
+    child.stdout.on('data', (data) => { try { socket.send(data); } catch { /* closed */ } });
+    child.stderr.on('data', (data) => { try { socket.send(data); } catch { /* closed */ } });
+    socket.on('close', () => child.kill());
+    socket.on('error', () => child.kill());
+    child.on('exit', () => { try { socket.close(); } catch { /* already closed */ } });
   });
 };

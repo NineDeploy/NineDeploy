@@ -16,6 +16,7 @@ export const createService = z.object({
   volumeMount: z.string().optional(),
   cpuShares: z.number().int().min(0).max(262144).optional(),
   memLimitMb: z.number().int().min(0).optional(),
+  healthPath: z.string().optional(),
   port: z.number().int().min(1).max(65535).optional(),
   build: z
     .object({
@@ -51,6 +52,7 @@ export const service = z.object({
   volumeMount: z.string().nullable(),
   commitSha: z.string().nullable(),
   runtimeId: z.string().nullable(),
+  healthPath: z.string(),
   port: z.number().int().nullable(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),

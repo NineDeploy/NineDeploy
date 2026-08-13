@@ -5,6 +5,7 @@ import { Link, useParams } from 'react-router';
 import { api } from '../lib/api.js';
 import { useDeployLogs } from '../lib/useDeployLogs.js';
 import { AttachmentsCard } from '../components/AttachmentsCard.js';
+import { ContainerTerminal } from '../components/ContainerTerminal.js';
 import { EnvCard } from '../components/EnvCard.js';
 import { Button, Card, CardBody, Input, Skeleton, Spinner, StatusBadge, cn } from '../components/ui.js';
 
@@ -47,7 +48,17 @@ export function ServiceDetail() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['service', id] }),
   });
 
+  const rollback = useMutation({
+    mutationFn: (depId: number) => api.deploys.rollback(id, depId),
+    onSuccess: (res) => {
+      setActiveDeploy(res.deploymentId);
+      qc.invalidateQueries({ queryKey: ['deploys', id] });
+      qc.invalidateQueries({ queryKey: ['service', id] });
+    },
+  });
+
   const [showRuntimeLogs, setShowRuntimeLogs] = useState(false);
+  const [showExec, setShowExec] = useState(false);
   const runtimeLogs = useQuery({
     queryKey: ['runtime-logs', id],
     queryFn: () => api.services.logs(id),
@@ -122,6 +133,11 @@ export function ServiceDetail() {
               <Terminal size={15} /> {showRuntimeLogs ? 'Hide logs' : 'Runtime logs'}
             </Button>
           )}
+          {svc.runtimeId && (
+            <Button variant="ghost" size="md" onClick={() => setShowExec((v) => !v)}>
+              <Terminal size={15} /> {showExec ? 'Hide shell' : 'Exec'}
+            </Button>
+          )}
         </div>
       </div>
 
@@ -141,6 +157,12 @@ export function ServiceDetail() {
         </Card>
       )}
 
+      {showExec && svc.runtimeId && (
+        <div className="mt-5">
+          <ContainerTerminal serviceId={id} onClose={() => setShowExec(false)} />
+        </div>
+      )}
+
       <div className="mt-6 grid grid-cols-1 gap-5 lg:grid-cols-5">
         <div className="space-y-5 lg:col-span-2">
           <DomainsCard serviceId={id} />
@@ -151,6 +173,10 @@ export function ServiceDetail() {
             deploys={deploys.data ?? []}
             activeId={activeDeploy}
             onSelect={setActiveDeploy}
+            onRollback={(depId) => {
+              rollback.mutate(depId);
+              setActiveDeploy(null);
+            }}
             loading={deploys.isLoading}
           />
         </div>
@@ -397,11 +423,13 @@ function DeploymentsCard({
   deploys,
   activeId,
   onSelect,
+  onRollback,
   loading,
 }: {
   deploys: import('@ninedeploy/sdk').Deployment[];
   activeId: number | null;
   onSelect: (id: number) => void;
+  onRollback?: (deploymentId: number) => void;
   loading: boolean;
 }) {
   return (
@@ -414,12 +442,12 @@ function DeploymentsCard({
           <p className="py-2 text-xs text-slate-600">No deployments yet.</p>
         ) : (
           <ul className="space-y-1">
-            {deploys.map((d) => (
-              <li key={d.id}>
+            {deploys.map((d, i) => (
+              <li key={d.id} className="group flex items-center gap-1">
                 <button
                   onClick={() => onSelect(d.id)}
                   className={cn(
-                    'flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm transition',
+                    'flex flex-1 items-center justify-between rounded-lg px-3 py-2 text-left text-sm transition',
                     d.id === activeId ? 'bg-white/[0.08]' : 'hover:bg-white/[0.04]',
                   )}
                 >
@@ -429,6 +457,15 @@ function DeploymentsCard({
                   </span>
                   <StatusBadge status={d.status} />
                 </button>
+                {onRollback && i > 0 && d.status === 'running' && (
+                  <button
+                    onClick={() => onRollback(d.id)}
+                    className="shrink-0 rounded p-1.5 text-slate-600 opacity-0 transition hover:bg-white/5 hover:text-indigo-300 group-hover:opacity-100"
+                    title={`Rollback to #${d.id}`}
+                  >
+                    <RotateCcw size={12} />
+                  </button>
+                )}
               </li>
             ))}
           </ul>

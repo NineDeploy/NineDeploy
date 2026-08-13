@@ -25,6 +25,7 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
   const [image, setImage] = useState(template?.image ?? '');
   const [port, setPort] = useState(template ? String(template.port) : '');
   const [volumeMount, setVolumeMount] = useState(template?.volumeMount ?? '');
+  const [healthPath, setHealthPath] = useState('/');
   const [cpuShares, setCpuShares] = useState('');
   const [memLimitMb, setMemLimitMb] = useState('');
   const [envRows, setEnvRows] = useState<EnvRow[]>(
@@ -42,6 +43,7 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
         sourceId: sourceId ? Number(sourceId) : undefined,
         port: port ? Number(port) : undefined,
         volumeMount: volumeMount || undefined,
+        healthPath: healthPath || undefined,
         cpuShares: cpuShares ? Number(cpuShares) : undefined,
         memLimitMb: memLimitMb ? Number(memLimitMb) : undefined,
       });
@@ -141,7 +143,8 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
                 <L label="Port (host)"><Input value={port} onChange={(e) => setPort(e.target.value)} placeholder="3000" /></L>
                 <L label="Persistent volume (container path)"><Input value={volumeMount} onChange={(e) => setVolumeMount(e.target.value)} placeholder="/app/data" className="font-mono text-xs" /></L>
               </div>
-              <p className="rounded-lg bg-white/[0.03] px-3 py-2 text-xs text-slate-500">Leave volume empty for ephemeral storage. A named volume keeps data across redeploys.</p>
+              <L label="Health check path"><Input value={healthPath} onChange={(e) => setHealthPath(e.target.value)} placeholder="/" className="font-mono text-xs" /></L>
+              <p className="rounded-lg bg-white/[0.03] px-3 py-2 text-xs text-slate-500">Leave volume empty for ephemeral storage. Health check probes this path to verify the app is up.</p>
             </div>
           )}
 

@@ -1,0 +1,1 @@
+ALTER TABLE `services` ADD `health_path` text DEFAULT '/' NOT NULL;

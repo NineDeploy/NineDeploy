@@ -104,6 +104,7 @@ export const services = sqliteTable(
     // Optional container path to mount a persistent named volume (nd-svc-<slug>-data).
     volumeMount: text('volume_mount'),
     port: integer('port'),
+    healthPath: text('health_path').notNull().default('/'),
     // Runtime identifier: pm2 process name or docker container name.
     runtimeId: text('runtime_id'),
     // Resource limits (0 = unlimited). cpuShares maps to docker --cpu-shares,

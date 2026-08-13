@@ -17,6 +17,7 @@ import { systemRoutes } from './resources.js';
 import { templateRoutes } from './templates.js';
 import { topologyRoutes } from './topology.js';
 import { tunnelRoutes } from './tunnels.js';
+import { userRoutes } from './users.js';
 import { volumeRoutes } from './volumes.js';
 
 /** All versioned API routes, mounted under /v1. */
@@ -28,6 +29,7 @@ export const apiRoutes: FastifyPluginAsync = async (app) => {
   await app.register(hookReceiveRoutes, { prefix: '/hooks' });
 
   await app.register(authRoutes, { prefix: '/auth' });
+  await app.register(userRoutes, { prefix: '/users' });
   await app.register(activityRoutes, { prefix: '/activity' });
   await app.register(databasesRoutes, { prefix: '/databases' });
   await app.register(databaseBackupRoutes, { prefix: '/databases' });

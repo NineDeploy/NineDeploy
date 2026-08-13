@@ -100,6 +100,7 @@ export interface NineDeployClient {
   deploys: {
     trigger: (serviceId: number, input?: TriggerDeploy) => Promise<{ deploymentId: number }>;
     list: (serviceId: number) => Promise<Deployment[]>;
+    rollback: (serviceId: number, deploymentId: number) => Promise<{ deploymentId: number }>;
   };
   domains: {
     list: (serviceId: number) => Promise<Domain[]>;
@@ -123,6 +124,11 @@ export interface NineDeployClient {
   };
   activity: {
     list: () => Promise<Array<{ id: number; userId: number | null; action: string; entity: string | null; ts: string }>>;
+  };
+  users: {
+    list: () => Promise<PublicUser[]>;
+    setRole: (id: number, role: 'admin' | 'member') => Promise<PublicUser>;
+    remove: (id: number) => Promise<void>;
   };
   sources: {
     list: () => Promise<Source[]>;
@@ -253,6 +259,8 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
       trigger: (serviceId, input) =>
         send<{ deploymentId: number }>('POST', `/v1/services/${serviceId}/deploys`, input ?? {}),
       list: (serviceId) => get<Deployment[]>(`/v1/services/${serviceId}/deploys`),
+      rollback: (serviceId, deploymentId) =>
+        send<{ deploymentId: number }>('POST', `/v1/services/${serviceId}/deploys/${deploymentId}/rollback`),
     },
     domains: {
       list: (serviceId) => get<Domain[]>(`/v1/services/${serviceId}/domains`),
@@ -285,6 +293,13 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
         get<Array<{ id: number; userId: number | null; action: string; entity: string | null; ts: string }>>(
           '/v1/activity',
         ),
+    },
+    users: {
+      list: () => get<PublicUser[]>('/v1/users'),
+      setRole: (id, role) => send<PublicUser>('PATCH', `/v1/users/${id}/role`, { role }),
+      remove: async (id) => {
+        await request(`/v1/users/${id}`, { method: 'DELETE' });
+      },
     },
     sources: {
       list: () => get<Source[]>('/v1/sources'),
