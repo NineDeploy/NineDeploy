@@ -2,6 +2,7 @@ import { eq } from 'drizzle-orm';
 import type { FastifyPluginAsync } from 'fastify';
 import { buildConfigs, services, type Service } from '@ninedeploy/db';
 import { createService, setLimits, updateService } from '@ninedeploy/schemas';
+import { capture, run } from '../lib/exec.js';
 import { notFound } from '../lib/errors.js';
 import { slugify } from '../lib/slug.js';
 
@@ -20,6 +21,7 @@ function serialize(s: Service) {
     image: s.image,
     volumeMount: s.volumeMount,
     commitSha: s.commitSha,
+    runtimeId: s.runtimeId,
     port: s.port,
     createdAt: s.createdAt.toISOString(),
     updatedAt: s.updatedAt.toISOString(),
@@ -102,5 +104,41 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
     const [svc] = await app.db.update(services).set(input).where(eq(services.id, id)).returning();
     if (!svc) throw notFound('Service not found');
     return { cpuShares: svc.cpuShares, memLimitMb: svc.memLimitMb };
+  });
+
+  // ── Lifecycle: stop / start / restart ──────────────────────────────────
+  app.post('/:id/stop', async (req) => {
+    const svc = await app.db.query.services.findFirst({ where: eq(services.id, num((req.params as { id: string }).id)) });
+    if (!svc?.runtimeId) throw notFound('Service not found or not deployed');
+    await run('docker', ['stop', '-t', '5', svc.runtimeId], {}, () => {}).catch(() => undefined);
+    await app.db.update(services).set({ status: 'stopped' }).where(eq(services.id, svc.id));
+    return { ok: true, status: 'stopped' };
+  });
+
+  app.post('/:id/start', async (req) => {
+    const svc = await app.db.query.services.findFirst({ where: eq(services.id, num((req.params as { id: string }).id)) });
+    if (!svc?.runtimeId) throw notFound('Service not found or not deployed');
+    await run('docker', ['start', svc.runtimeId], {}, () => {}).catch(() => undefined);
+    await app.db.update(services).set({ status: 'running' }).where(eq(services.id, svc.id));
+    return { ok: true, status: 'running' };
+  });
+
+  app.post('/:id/restart', async (req) => {
+    const svc = await app.db.query.services.findFirst({ where: eq(services.id, num((req.params as { id: string }).id)) });
+    if (!svc?.runtimeId) throw notFound('Service not found or not deployed');
+    await run('docker', ['restart', svc.runtimeId], {}, () => {}).catch(() => undefined);
+    return { ok: true, status: 'running' };
+  });
+
+  // Runtime container logs (docker logs --tail).
+  app.get('/:id/logs', async (req) => {
+    const svc = await app.db.query.services.findFirst({ where: eq(services.id, num((req.params as { id: string }).id)) });
+    if (!svc?.runtimeId) throw notFound('Service not found or not deployed');
+    try {
+      const out = await capture('docker', ['logs', '--tail', '300', '--timestamps', svc.runtimeId]);
+      return { lines: out };
+    } catch {
+      return { lines: '' };
+    }
   });
 };

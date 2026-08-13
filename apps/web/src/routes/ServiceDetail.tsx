@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { type RefObject, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Check, Copy, ExternalLink, GitBranch, Globe, Plus, Rocket, Trash2, Webhook } from 'lucide-react';
+import { ArrowLeft, Check, Copy, ExternalLink, GitBranch, Globe, Play, Plus, Rocket, RotateCcw, Square, Terminal, Trash2, Webhook } from 'lucide-react';
 import { Link, useParams } from 'react-router';
 import { api } from '../lib/api.js';
 import { useDeployLogs } from '../lib/useDeployLogs.js';
@@ -40,6 +40,19 @@ export function ServiceDetail() {
       qc.invalidateQueries({ queryKey: ['deploys', id] });
       qc.invalidateQueries({ queryKey: ['service', id] });
     },
+  });
+
+  const lifecycle = useMutation({
+    mutationFn: (action: 'stop' | 'start' | 'restart') => api.services[action](id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['service', id] }),
+  });
+
+  const [showRuntimeLogs, setShowRuntimeLogs] = useState(false);
+  const runtimeLogs = useQuery({
+    queryKey: ['runtime-logs', id],
+    queryFn: () => api.services.logs(id),
+    enabled: showRuntimeLogs && !!service.data?.runtimeId,
+    refetchInterval: showRuntimeLogs ? 3000 : false,
   });
 
   const svc = service.data;
@@ -85,10 +98,48 @@ export function ServiceDetail() {
             <span className="truncate">{svc.repoUrl}</span>
           </p>
         </div>
-        <Button onClick={() => trigger.mutate()} disabled={trigger.isPending}>
-          <Rocket size={16} /> {trigger.isPending ? 'Triggering…' : 'Deploy'}
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button onClick={() => trigger.mutate()} disabled={trigger.isPending}>
+            <Rocket size={16} /> {trigger.isPending ? 'Triggering…' : 'Deploy'}
+          </Button>
+          {svc.status === 'running' && (
+            <>
+              <Button variant="secondary" size="md" onClick={() => lifecycle.mutate('restart')} disabled={lifecycle.isPending} title="Restart">
+                <RotateCcw size={15} /> Restart
+              </Button>
+              <Button variant="secondary" size="md" onClick={() => lifecycle.mutate('stop')} disabled={lifecycle.isPending} title="Stop">
+                <Square size={15} /> Stop
+              </Button>
+            </>
+          )}
+          {svc.status === 'stopped' && (
+            <Button variant="secondary" size="md" onClick={() => lifecycle.mutate('start')} disabled={lifecycle.isPending}>
+              <Play size={15} /> Start
+            </Button>
+          )}
+          {svc.runtimeId && (
+            <Button variant="ghost" size="md" onClick={() => setShowRuntimeLogs((v) => !v)}>
+              <Terminal size={15} /> {showRuntimeLogs ? 'Hide logs' : 'Runtime logs'}
+            </Button>
+          )}
+        </div>
       </div>
+
+      {showRuntimeLogs && (
+        <Card className="mt-5">
+          <CardBody>
+            <div className="mb-3 flex items-center justify-between">
+              <div className="flex items-center gap-2 text-sm font-medium text-slate-300">
+                <Terminal size={15} className="text-slate-500" /> Runtime logs
+              </div>
+              <span className="text-xs text-slate-600">live · auto-refresh 3s</span>
+            </div>
+            <pre className="h-72 overflow-auto rounded-lg bg-black/40 p-3 font-mono text-xs leading-relaxed text-slate-300 ring-1 ring-inset ring-white/5">
+              {runtimeLogs.data?.lines || 'No logs yet.'}
+            </pre>
+          </CardBody>
+        </Card>
+      )}
 
       <div className="mt-6 grid grid-cols-1 gap-5 lg:grid-cols-5">
         <div className="space-y-5 lg:col-span-2">

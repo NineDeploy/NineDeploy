@@ -8,6 +8,7 @@ import type {
   CreateDomainInput,
   CreateServiceInput,
   CreateSourceInput,
+  CreateTunnelInput,
   CreateWebhookInput,
   CreatedApiToken,
   CreatedWebhook,
@@ -30,6 +31,7 @@ import type {
   Template,
   TemplateSummary,
   TopologyGraph,
+  TunnelEntry,
   TriggerDeploy,
   UpdateServiceInput,
   UpsertEnvVarInput,
@@ -90,6 +92,10 @@ export interface NineDeployClient {
     create: (input: CreateServiceInput) => Promise<Service>;
     update: (id: number, input: UpdateServiceInput) => Promise<Service>;
     remove: (id: number) => Promise<void>;
+    stop: (id: number) => Promise<{ ok: boolean; status: string }>;
+    start: (id: number) => Promise<{ ok: boolean; status: string }>;
+    restart: (id: number) => Promise<{ ok: boolean; status: string }>;
+    logs: (id: number) => Promise<{ lines: string }>;
   };
   deploys: {
     trigger: (serviceId: number, input?: TriggerDeploy) => Promise<{ deploymentId: number }>;
@@ -109,6 +115,14 @@ export interface NineDeployClient {
   system: {
     resources: () => Promise<DockerResources>;
     pruneImages: () => Promise<{ ok: boolean }>;
+  };
+  tunnels: {
+    list: () => Promise<TunnelEntry[]>;
+    create: (input: CreateTunnelInput) => Promise<TunnelEntry>;
+    remove: (id: number) => Promise<void>;
+  };
+  activity: {
+    list: () => Promise<Array<{ id: number; userId: number | null; action: string; entity: string | null; ts: string }>>;
   };
   sources: {
     list: () => Promise<Source[]>;
@@ -230,6 +244,10 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
       remove: async (id) => {
         await request(`/v1/services/${id}`, { method: 'DELETE' });
       },
+      stop: (id) => send<{ ok: boolean; status: string }>('POST', `/v1/services/${id}/stop`),
+      start: (id) => send<{ ok: boolean; status: string }>('POST', `/v1/services/${id}/start`),
+      restart: (id) => send<{ ok: boolean; status: string }>('POST', `/v1/services/${id}/restart`),
+      logs: (id) => get<{ lines: string }>(`/v1/services/${id}/logs`),
     },
     deploys: {
       trigger: (serviceId, input) =>
@@ -254,6 +272,19 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
     system: {
       resources: () => get<DockerResources>('/v1/system/resources'),
       pruneImages: () => send<{ ok: boolean }>('POST', '/v1/system/prune-images'),
+    },
+    tunnels: {
+      list: () => get<TunnelEntry[]>('/v1/tunnels'),
+      create: (input) => send<TunnelEntry>('POST', '/v1/tunnels', input),
+      remove: async (id) => {
+        await request(`/v1/tunnels/${id}`, { method: 'DELETE' });
+      },
+    },
+    activity: {
+      list: () =>
+        get<Array<{ id: number; userId: number | null; action: string; entity: string | null; ts: string }>>(
+          '/v1/activity',
+        ),
     },
     sources: {
       list: () => get<Source[]>('/v1/sources'),

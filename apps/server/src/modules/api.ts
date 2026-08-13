@@ -2,6 +2,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { register } from '@ninedeploy/schemas';
 import { createFirstAdmin } from './auth.js';
 import { authRoutes } from './auth.js';
+import { activityRoutes } from './activity.js';
 import { attachmentRoutes, databasesRoutes } from './databases.js';
 import { backupRoutes, databaseBackupRoutes } from './backups.js';
 import { deploysRoutes } from './deploys.js';
@@ -15,6 +16,7 @@ import { sourcesRoutes } from './sources.js';
 import { systemRoutes } from './resources.js';
 import { templateRoutes } from './templates.js';
 import { topologyRoutes } from './topology.js';
+import { tunnelRoutes } from './tunnels.js';
 import { volumeRoutes } from './volumes.js';
 
 /** All versioned API routes, mounted under /v1. */
@@ -26,6 +28,7 @@ export const apiRoutes: FastifyPluginAsync = async (app) => {
   await app.register(hookReceiveRoutes, { prefix: '/hooks' });
 
   await app.register(authRoutes, { prefix: '/auth' });
+  await app.register(activityRoutes, { prefix: '/activity' });
   await app.register(databasesRoutes, { prefix: '/databases' });
   await app.register(databaseBackupRoutes, { prefix: '/databases' });
   await app.register(backupRoutes, { prefix: '/backups' });
@@ -35,6 +38,7 @@ export const apiRoutes: FastifyPluginAsync = async (app) => {
   await app.register(systemRoutes, { prefix: '/system' });
   await app.register(sourcesRoutes, { prefix: '/sources' });
   await app.register(topologyRoutes, { prefix: '/topology' });
+  await app.register(tunnelRoutes, { prefix: '/tunnels' });
   await app.register(templateRoutes, { prefix: '/templates' });
   await app.register(servicesRoutes, { prefix: '/services' });
   await app.register(deploysRoutes, { prefix: '/services' });

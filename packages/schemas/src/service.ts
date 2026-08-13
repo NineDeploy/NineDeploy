@@ -50,6 +50,7 @@ export const service = z.object({
   image: z.string().nullable(),
   volumeMount: z.string().nullable(),
   commitSha: z.string().nullable(),
+  runtimeId: z.string().nullable(),
   port: z.number().int().nullable(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
@@ -306,3 +307,17 @@ export const dockerResources = z.object({
   images: z.array(z.object({ repo: z.string(), tag: z.string(), size: z.string() })),
 });
 export type DockerResources = z.infer<typeof dockerResources>;
+
+// ── Cloudflare Tunnels ─────────────────────────────────────────────────────
+export const createTunnel = z.object({ name: z.string().min(1).max(100), token: z.string().min(1) });
+export type CreateTunnelInput = z.input<typeof createTunnel>;
+
+export const tunnelEntry = z.object({
+  id: z.number().int(),
+  name: z.string(),
+  slug: z.string(),
+  status: z.string(),
+  containerName: z.string(),
+  createdAt: z.string().datetime(),
+});
+export type TunnelEntry = z.infer<typeof tunnelEntry>;

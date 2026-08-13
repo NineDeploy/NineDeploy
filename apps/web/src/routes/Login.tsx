@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { type FormEvent, useState } from 'react';
-import { Navigate, useNavigate } from 'react-router';
+import { Navigate, useLocation, useNavigate } from 'react-router';
 import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.js';
 import { BrandMark, Button, Card, Field, Input } from '../components/ui.js';
@@ -8,6 +8,8 @@ import { BrandMark, Button, Card, Field, Input } from '../components/ui.js';
 export function Login() {
   const { user, login, setup } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  const from = (location.state as { from?: string } | null)?.from ?? '/';
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
@@ -26,7 +28,7 @@ export function Login() {
     try {
       if (initialized) await login(email, password);
       else await setup(email, password, name || undefined);
-      navigate('/', { replace: true });
+      navigate(from, { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong');
     } finally {

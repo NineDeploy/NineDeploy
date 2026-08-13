@@ -1,6 +1,7 @@
 import { desc, eq } from 'drizzle-orm';
 import { deployments, services } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
+import { audit } from '../lib/audit.js';
 import { logBus } from '../engine/logs.js';
 import { resolveUser } from '../lib/auth.js';
 import { notFound } from '../lib/errors.js';
@@ -13,6 +14,7 @@ export const deploysRoutes: FastifyPluginAsync = async (app) => {
     const id = num((req.params as { id: string }).id);
     const svc = await app.db.query.services.findFirst({ where: eq(services.id, id) });
     if (!svc) throw notFound('Service not found');
+    void audit(app.db, req.user!.id, 'deploy.trigger', svc.name);
     const [dep] = await app.db
       .insert(deployments)
       .values({ serviceId: id, status: 'queued', trigger: 'user', message: 'Manual deploy' })

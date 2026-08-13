@@ -1,4 +1,4 @@
-import { Activity, Boxes, Database, Globe, HardDrive, KeyRound, Layers, LogOut, Network, Server, Sparkles } from 'lucide-react';
+import { Activity, Boxes, Cloud, Database, Globe, HardDrive, KeyRound, Layers, LogOut, Network, Server, Sparkles } from 'lucide-react';
 import { Link, Outlet, useLocation } from 'react-router';
 import { useAuth } from '../lib/auth.js';
 import { BrandMark, Button, cn } from './ui.js';
@@ -8,6 +8,7 @@ const NAV = [
   { to: '/', label: 'Services', icon: Server, exact: true },
   { to: '/databases', label: 'Databases', icon: Database, exact: false },
   { to: '/domains', label: 'Domains', icon: Globe, exact: false },
+  { to: '/tunnels', label: 'Tunnels', icon: Cloud, exact: false },
   { to: '/volumes', label: 'Volumes', icon: Layers, exact: false },
   { to: '/topology', label: 'Topology', icon: Network, exact: false },
   { to: '/backups', label: 'Backups', icon: HardDrive, exact: false },

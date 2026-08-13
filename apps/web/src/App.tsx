@@ -1,5 +1,5 @@
 import { type ReactNode } from 'react';
-import { Navigate, Route, Routes } from 'react-router';
+import { Navigate, Route, Routes, useLocation } from 'react-router';
 import { Layout } from './components/Layout.js';
 import { FullScreenSpinner } from './components/ui.js';
 import { useAuth } from './lib/auth.js';
@@ -14,11 +14,13 @@ import { ServiceDetail } from './routes/ServiceDetail.js';
 import { ServicesList } from './routes/ServicesList.js';
 import { Sources } from './routes/Sources.js';
 import { Topology } from './routes/Topology.js';
+import { Tunnels } from './routes/Tunnels.js';
 import { Volumes } from './routes/Volumes.js';
 
 function RequireAuth({ children }: { children: ReactNode }) {
   const { user } = useAuth();
-  if (!user) return <Navigate to="/login" replace />;
+  const location = useLocation();
+  if (!user) return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   return <>{children}</>;
 }
 
@@ -40,6 +42,7 @@ export default function App() {
         <Route path="hub" element={<Hub />} />
         <Route path="databases" element={<Databases />} />
         <Route path="domains" element={<Domains />} />
+        <Route path="tunnels" element={<Tunnels />} />
         <Route path="volumes" element={<Volumes />} />
         <Route path="topology" element={<Topology />} />
         <Route path="backups" element={<Backups />} />

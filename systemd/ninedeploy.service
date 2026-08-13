@@ -1,0 +1,35 @@
+# NineDeploy systemd service — copy to /etc/systemd/system/ and adjust paths.
+#
+#   sudo cp systemd/ninedeploy.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now ninedeploy
+#
+[Unit]
+Description=NineDeploy — Self-hosted PaaS
+Documentation=https://github.com/ninedeploy/ninedeploy
+After=network.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=ninedeploy
+Group=ninedeploy
+WorkingDirectory=/opt/ninedeploy
+EnvironmentFile=/opt/ninedeploy/.env
+ExecStart=/usr/bin/node /opt/ninedeploy/apps/server/dist/server.js
+Restart=always
+RestartSec=5
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/ninedeploy/.data
+PrivateTmp=true
+
+# Logs
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ninedeploy
+
+[Install]
+WantedBy=multi-user.target
