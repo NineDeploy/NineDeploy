@@ -194,7 +194,7 @@ Zero-downtime for Docker, brief-gap-with-rollback for PM2. The worker processes 
 
 - **Containers**: ports bound to `127.0.0.1` only — never exposed publicly
 - **Traefik**: the only publicly exposed service (:80/:443); routes by container name over `ninedeploy` network. Dynamic config written atomically (temp+rename) with sanitized Host/Path operands (no rule/YAML injection)
-- **Secrets**: AES-256-GCM encrypted at rest with auto-generated master key
+- **Secrets**: AES-256-GCM encrypted at rest in versioned envelopes (`v<version>:iv:tag:ciphertext`). The master key is **rotatable**: add a new key under a higher version in `NINEDEPLOY_MASTER_KEYS`, restart, run the `rotateSecrets` job to re-encrypt every stored secret, then retire the old version. Legacy (pre-versioned) ciphertext still decrypts with the active key
 - **Auth**: JWT (access 15m + refresh 7d) + opaque API tokens (sha256 hashed). JWTs carry a `ver` claim matched against the user's `tokenVersion`; logout / role change / password change bump it to revoke all outstanding tokens statelessly
 - **Passwords**: Argon2id
 - **RBAC**: admin-only for system-wide/destructive actions (sources, tunnels, notifications, system export/import/prune, user management); members manage services

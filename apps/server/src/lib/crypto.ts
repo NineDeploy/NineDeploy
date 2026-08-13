@@ -29,42 +29,94 @@ export function randomToken(bytes = 32): string {
 }
 
 // ── Symmetric encryption (secrets at rest) ────────────────────────────────
-// AES-256-GCM with a per-instance master key. Foundation for secret/env-var
-// encryption (fully wired up in the secrets phase).
+// AES-256-GCM with a per-instance master key, wrapped in a versioned envelope
+// so the master key can be ROTATED without invalidating existing secrets:
+//   • new ciphertext: "v<version>:iv:tag:ciphertext"
+//   • legacy ciphertext (pre-rotation): "iv:tag:ciphertext" (no prefix)
+// decrypt accepts both. To rotate: add the new key under a higher version in
+// NINEDEPLOY_MASTER_KEYS, then re-encrypt secrets (see `reencrypt`).
 
-let masterKey: Buffer | null = null;
+interface KeyRing {
+  /** version → 32-byte key */
+  keys: Map<number, Buffer>;
+  activeVersion: number;
+  activeKey: Buffer;
+}
 
-function getMasterKey(): Buffer {
-  if (masterKey) return masterKey;
+let keyRing: KeyRing | null = null;
+
+/** Load the single legacy master key from env or the master.key file (auto-creating it). */
+function loadSingleKey(): Buffer {
   const envKey = process.env['NINEDEPLOY_MASTER_KEY'];
-  if (envKey) {
-    masterKey = Buffer.from(envKey, 'hex');
-  } else {
-    const file = config.paths.masterKeyFile;
-    if (existsSync(file)) {
-      masterKey = Buffer.from(readFileSync(file, 'utf8').trim(), 'hex');
-    } else {
-      mkdirSync(path.dirname(file), { recursive: true });
-      masterKey = randomBytes(32);
-      writeFileSync(file, masterKey.toString('hex'), { mode: 0o600 });
+  if (envKey) return Buffer.from(envKey, 'hex');
+  const file = config.paths.masterKeyFile;
+  if (existsSync(file)) return Buffer.from(readFileSync(file, 'utf8').trim(), 'hex');
+  mkdirSync(path.dirname(file), { recursive: true });
+  const generated = randomBytes(32);
+  writeFileSync(file, generated.toString('hex'), { mode: 0o600 });
+  return generated;
+}
+
+function getKeyRing(): KeyRing {
+  if (keyRing) return keyRing;
+  const multi = process.env['NINEDEPLOY_MASTER_KEYS']; // "0:hex,1:hex,..."
+  if (multi) {
+    const keys = new Map<number, Buffer>();
+    for (const pair of multi.split(',')) {
+      const sep = pair.indexOf(':');
+      if (sep < 0) continue;
+      const id = Number(pair.slice(0, sep));
+      const key = Buffer.from(pair.slice(sep + 1).trim(), 'hex');
+      if (key.length !== 32) throw new Error(`NINEDEPLOY_MASTER_KEYS version ${id} must decode to 32 bytes`);
+      keys.set(id, key);
     }
+    if (keys.size === 0) throw new Error('NINEDEPLOY_MASTER_KEYS contained no valid keys');
+    const activeVersion = Math.max(...keys.keys());
+    keyRing = { keys, activeVersion, activeKey: keys.get(activeVersion)! };
+    return keyRing;
   }
-  if (masterKey.length !== 32) throw new Error('NINEDEPLOY_MASTER_KEY must decode to 32 bytes');
-  return masterKey;
+  // Legacy single-key path: the configured/generated master key is version 0.
+  const key = loadSingleKey();
+  if (key.length !== 32) throw new Error('NINEDEPLOY_MASTER_KEY must decode to 32 bytes');
+  keyRing = { keys: new Map([[0, key]]), activeVersion: 0, activeKey: key };
+  return keyRing;
 }
 
-/** Encrypt plaintext → "iv:tag:ciphertext" (all base64). */
+/** Match a leading `v<digits>:` version prefix on an envelope. */
+const VERSION_RE = /^v(\d+):/;
+
+/** Encrypt plaintext → "v<version>:iv:tag:ciphertext" (all base64). */
 export function encrypt(plaintext: string): string {
+  const ring = getKeyRing();
   const iv = randomBytes(12);
-  const cipher = createCipheriv('aes-256-gcm', getMasterKey(), iv);
+  const cipher = createCipheriv('aes-256-gcm', ring.activeKey, iv);
   const enc = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
-  return [iv, cipher.getAuthTag(), enc].map((b) => b.toString('base64')).join(':');
+  const body = [iv, cipher.getAuthTag(), enc].map((b) => b.toString('base64')).join(':');
+  return `v${ring.activeVersion}:${body}`;
 }
 
-/** Decrypt a value produced by `encrypt()`. */
+/** Decrypt a value produced by `encrypt()` (versioned or legacy envelope). */
 export function decrypt(payload: string): string {
-  const [ivB, tagB, encB] = payload.split(':') as [string, string, string];
-  const decipher = createDecipheriv('aes-256-gcm', getMasterKey(), Buffer.from(ivB, 'base64'));
+  const ring = getKeyRing();
+  const m = VERSION_RE.exec(payload);
+  const body = m ? payload.slice(m[0].length) : payload;
+  // Versioned → look up the key; unknown version or legacy → fall back to active.
+  const key = m ? (ring.keys.get(Number(m[1])) ?? ring.activeKey) : ring.activeKey;
+  const [ivB, tagB, encB] = body.split(':') as [string, string, string];
+  const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(ivB, 'base64'));
   decipher.setAuthTag(Buffer.from(tagB, 'base64'));
   return Buffer.concat([decipher.update(Buffer.from(encB, 'base64')), decipher.final()]).toString('utf8');
+}
+
+/**
+ * Re-encrypt an existing ciphertext with the ACTIVE key version. Used during key
+ * rotation: after adding a new key version, run every stored secret through this
+ * so it moves off the old key (which can then be retired). A no-op if already on
+ * the active version.
+ */
+export function reencrypt(payload: string): string {
+  const ring = getKeyRing();
+  const m = VERSION_RE.exec(payload);
+  if (m && Number(m[1]) === ring.activeVersion) return payload;
+  return encrypt(decrypt(payload));
 }

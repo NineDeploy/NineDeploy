@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createHash, randomBytes } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as crypto from '../../src/lib/crypto.js';
 
 const KEY_HEX = 'a'.repeat(64); // 32 bytes
@@ -46,9 +46,10 @@ describe('encrypt/decrypt with an env master key', () => {
     vi.stubEnv('NINEDEPLOY_MASTER_KEY', KEY_HEX);
   });
 
-  it('roundtrips plaintext', () => {
+  it('roundtrips plaintext in a versioned envelope', () => {
     const ct = crypto.encrypt('my secret value');
-    expect(ct.split(':')).toHaveLength(3); // iv:tag:ciphertext
+    expect(ct.startsWith('v0:')).toBe(true);
+    expect(ct.slice(3).split(':')).toHaveLength(3); // iv:tag:ciphertext after the version
     expect(crypto.decrypt(ct)).toBe('my secret value');
   });
 
@@ -60,9 +61,9 @@ describe('encrypt/decrypt with an env master key', () => {
   });
 
   it('decrypt rejects tampered payloads', () => {
-    const ct = crypto.encrypt('data');
+    const ct = crypto.encrypt('data'); // v0:iv:tag:ct
     const parts = ct.split(':');
-    const tampered = [parts[0], 'AAAAAAAAAAAAAAAAAAAAAA==', parts[2]].join(':');
+    const tampered = [parts[0], parts[1], 'AAAAAAAAAAAAAAAAAAAAAA==', parts[3]].join(':'); // flip the auth tag
     expect(() => crypto.decrypt(tampered)).toThrow();
   });
 
@@ -113,6 +114,90 @@ describe('master key resolution from the key file', () => {
     vi.stubEnv('NINEDEPLOY_DATA_DIR', freshDir);
     const mod = await import('../../src/lib/crypto.js');
     expect(() => mod.encrypt('x')).toThrow('must decode to 32 bytes');
+  });
+});
+
+describe('key rotation (versioned key ring)', () => {
+  const KEY_A = 'a'.repeat(64);
+  const KEY_B = 'b'.repeat(64);
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('encrypts with the highest-version key as active', async () => {
+    vi.resetModules();
+    vi.stubEnv('NINEDEPLOY_MASTER_KEYS', `0:${KEY_A},1:${KEY_B}`);
+    const mod = await import('../../src/lib/crypto.js');
+    const ct = mod.encrypt('rotated');
+    expect(ct.startsWith('v1:')).toBe(true);
+    expect(mod.decrypt(ct)).toBe('rotated');
+  });
+
+  it('decrypts a legacy un-versioned envelope with the active key', () => {
+    vi.stubEnv('NINEDEPLOY_MASTER_KEY', KEY_A);
+    const ct = crypto.encrypt('legacy'); // v0:iv:tag:ct
+    const legacy = ct.slice('v0:'.length); // strip the version → iv:tag:ct
+    expect(crypto.decrypt(legacy)).toBe('legacy');
+  });
+
+  it('still decrypts old-version ciphertext after a new key is added', async () => {
+    vi.resetModules();
+    vi.stubEnv('NINEDEPLOY_MASTER_KEYS', `0:${KEY_A}`);
+    const mod0 = await import('../../src/lib/crypto.js');
+    const v0ct = mod0.encrypt('old-secret');
+    expect(v0ct.startsWith('v0:')).toBe(true);
+
+    vi.resetModules();
+    vi.stubEnv('NINEDEPLOY_MASTER_KEYS', `0:${KEY_A},1:${KEY_B}`); // key 1 now active
+    const mod1 = await import('../../src/lib/crypto.js');
+    expect(mod1.decrypt(v0ct)).toBe('old-secret'); // old key version still readable
+  });
+
+  it('reencrypt migrates an old-version value onto the active key (and is a no-op when current)', async () => {
+    vi.resetModules();
+    vi.stubEnv('NINEDEPLOY_MASTER_KEYS', `0:${KEY_A}`);
+    const mod0 = await import('../../src/lib/crypto.js');
+    const v0ct = mod0.encrypt('migrate-me');
+
+    vi.resetModules();
+    vi.stubEnv('NINEDEPLOY_MASTER_KEYS', `0:${KEY_A},1:${KEY_B}`);
+    const mod1 = await import('../../src/lib/crypto.js');
+    const migrated = mod1.reencrypt(v0ct);
+    expect(migrated.startsWith('v1:')).toBe(true);
+    expect(mod1.decrypt(migrated)).toBe('migrate-me');
+    // Already on the active version → unchanged.
+    expect(mod1.reencrypt(migrated)).toBe(migrated);
+  });
+
+  it('rejects a multi-key entry that is not 32 bytes', async () => {
+    vi.resetModules();
+    vi.stubEnv('NINEDEPLOY_MASTER_KEYS', '0:aabb');
+    const mod = await import('../../src/lib/crypto.js');
+    expect(() => mod.encrypt('x')).toThrow('must decode to 32 bytes');
+  });
+
+  it('skips malformed (colon-less) entries in the multi-key list', async () => {
+    vi.resetModules();
+    vi.stubEnv('NINEDEPLOY_MASTER_KEYS', `0:${KEY_A},garbage-entry`);
+    const mod = await import('../../src/lib/crypto.js');
+    expect(mod.decrypt(mod.encrypt('ok'))).toBe('ok'); // key 0 still parsed
+  });
+
+  it('rejects a multi-key list with no valid entries', async () => {
+    vi.resetModules();
+    vi.stubEnv('NINEDEPLOY_MASTER_KEYS', 'garbage1,garbage2');
+    const mod = await import('../../src/lib/crypto.js');
+    expect(() => mod.encrypt('x')).toThrow('contained no valid keys');
+  });
+
+  it('falls back to the active key when decrypting an unknown version', async () => {
+    vi.resetModules();
+    vi.stubEnv('NINEDEPLOY_MASTER_KEYS', `0:${KEY_A},1:${KEY_B}`);
+    const mod = await import('../../src/lib/crypto.js');
+    // Active is v1; relabel an active ciphertext as an unknown v9 version.
+    const forged = mod.encrypt('fallback').replace(/^v1:/, 'v9:');
+    expect(mod.decrypt(forged)).toBe('fallback');
   });
 });
 
