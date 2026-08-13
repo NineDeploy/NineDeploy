@@ -16,6 +16,9 @@ function serialize(s: Service) {
     status: s.status,
     repoUrl: s.repoUrl,
     branch: s.branch,
+    sourceId: s.sourceId,
+    image: s.image,
+    volumeMount: s.volumeMount,
     commitSha: s.commitSha,
     port: s.port,
     createdAt: s.createdAt.toISOString(),
@@ -46,6 +49,11 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
         type: input.type,
         repoUrl: input.repoUrl,
         branch: input.branch,
+        sourceId: input.sourceId ?? null,
+        image: input.image ?? null,
+        volumeMount: input.volumeMount ?? null,
+        cpuShares: input.cpuShares ?? 0,
+        memLimitMb: input.memLimitMb ?? 0,
         port: input.port ?? null,
       })
       .returning();

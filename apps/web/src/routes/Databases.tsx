@@ -1,33 +1,26 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { type FormEvent, useState } from 'react';
-import { Check, Copy, Database, Plus, Trash2 } from 'lucide-react';
+import { useState } from 'react';
+import { Check, Copy, Database, HardDriveDownload, Plus, Trash2 } from 'lucide-react';
 import { api } from '../lib/api.js';
-import { Button, Card, EmptyState, Field, Input, Select, Skeleton, StatusBadge, cn } from '../components/ui.js';
+import { Button, Card, EmptyState, Skeleton, StatusBadge, cn } from '../components/ui.js';
+import { StorageGauge } from '../components/StorageGauge.js';
+import { DatabaseWizard } from '../components/DatabaseWizard.js';
 
-const ENGINES = ['postgres', 'mysql', 'redis', 'mongo'] as const;
 const ENGINE_LABEL: Record<string, string> = { postgres: 'PostgreSQL', mysql: 'MySQL', redis: 'Redis', mongo: 'MongoDB' };
 
 export function Databases() {
   const qc = useQueryClient();
-  const [open, setOpen] = useState(false);
-  const [name, setName] = useState('');
-  const [engine, setEngine] = useState<(typeof ENGINES)[number]>('postgres');
-  const [version, setVersion] = useState('');
+  const [wizard, setWizard] = useState(false);
   const [copied, setCopied] = useState<number | null>(null);
 
   const list = useQuery({ queryKey: ['databases'], queryFn: () => api.databases.list() });
-  const create = useMutation({
-    mutationFn: () => api.databases.create({ name, engine, version: version || undefined }),
-    onSuccess: () => {
-      setOpen(false);
-      setName('');
-      setVersion('');
-      qc.invalidateQueries({ queryKey: ['databases'] });
-    },
-  });
   const remove = useMutation({
     mutationFn: (id: number) => api.databases.remove(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['databases'] }),
+  });
+  const backup = useMutation({
+    mutationFn: (id: number) => api.backups.backupNow(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['backups'] }),
   });
 
   const copy = async (id: number, value: string) => {
@@ -47,43 +40,12 @@ export function Databases() {
           <h1 className="text-2xl font-semibold tracking-tight">Databases</h1>
           <p className="mt-1 text-sm text-slate-400">Managed databases with persistent storage.</p>
         </div>
-        <Button onClick={() => setOpen((v) => !v)}>
+        <Button onClick={() => setWizard(true)}>
           <Plus size={16} /> New database
         </Button>
       </div>
 
-      {open && (
-        <Card className="mb-5 p-5 nd-fade">
-          <form
-            onSubmit={(e: FormEvent) => {
-              e.preventDefault();
-              if (name.trim()) create.mutate();
-            }}
-            className="grid grid-cols-1 gap-4 sm:grid-cols-4"
-          >
-            <Field label="Name">
-              <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="my-db" required />
-            </Field>
-            <Field label="Engine">
-              <Select value={engine} onChange={(e) => setEngine(e.target.value as (typeof ENGINES)[number])}>
-                {ENGINES.map((e) => (
-                  <option key={e} value={e}>
-                    {ENGINE_LABEL[e]}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-            <Field label="Version (optional)">
-              <Input value={version} onChange={(e) => setVersion(e.target.value)} placeholder="16" />
-            </Field>
-            <div className="flex items-end">
-              <Button type="submit" className="w-full" disabled={create.isPending || !name.trim()}>
-                {create.isPending ? 'Creating…' : 'Create'}
-              </Button>
-            </div>
-          </form>
-        </Card>
-      )}
+      {wizard && <DatabaseWizard onClose={() => setWizard(false)} />}
 
       {list.isLoading ? (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -134,12 +96,21 @@ export function Databases() {
                 ) : (
                   <div className="rounded-lg bg-black/20 px-2.5 py-2 text-[11px] text-slate-600">Not running</div>
                 )}
-                <div className="mt-2 font-mono text-[11px] text-slate-600">
-                  {d.host ? `${d.host}:${d.port}` : '—'} · user {d.username ?? '—'}{d.database ? ` · db ${d.database}` : ''}
-                </div>
+                {d.status === 'running' && (
+                  <div className="mt-3">
+                    <StorageGauge databaseId={d.id} />
+                  </div>
+                )}
               </div>
 
-              <div className="mt-4 flex justify-end">
+              <div className="mt-4 flex items-center justify-between">
+                <button
+                  onClick={() => backup.mutate(d.id)}
+                  disabled={backup.isPending}
+                  className="flex items-center gap-1 text-xs text-slate-400 transition hover:text-indigo-300 disabled:opacity-50"
+                >
+                  <HardDriveDownload size={12} /> Backup
+                </button>
                 <button
                   onClick={() => remove.mutate(d.id)}
                   className={cn('flex items-center gap-1 text-xs text-slate-600 transition hover:text-rose-400')}

@@ -6,6 +6,7 @@ import { config } from './config.js';
 import { apiRoutes } from './modules/api.js';
 import { healthRoutes } from './modules/health.js';
 import authPlugin from './plugins/auth.js';
+import backupSchedulerPlugin from './plugins/backupScheduler.js';
 import collectorPlugin from './plugins/collector.js';
 import dbPlugin from './plugins/db.js';
 import rawBodyPlugin from './plugins/rawBody.js';
@@ -58,6 +59,8 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(traefikPlugin);
   // Resource metrics collector
   await app.register(collectorPlugin);
+  // Scheduled database backups
+  await app.register(backupSchedulerPlugin);
 
   return app;
 }

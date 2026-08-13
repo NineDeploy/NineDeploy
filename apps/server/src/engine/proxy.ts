@@ -44,19 +44,29 @@ const dir = () => path.join(config.paths.dataDir, 'traefik');
 const staticPath = () => path.join(dir(), 'traefik.yml');
 const dynamicPath = () => path.join(dir(), 'dynamic.yml');
 
-/** Ensure the Traefik reverse-proxy container is running (idempotent). */
+/** Whether `container` is attached to `network`. */
+async function onNetwork(container: string, network: string): Promise<boolean> {
+  try {
+    const out = await capture('docker', ['inspect', container, '--format', '{{json .NetworkSettings.Networks}}']);
+    return out.includes(`"${network}"`);
+  } catch {
+    return false;
+  }
+}
+
+/** Ensure the Traefik reverse-proxy container is running on the shared network (idempotent). */
 export async function ensureTraefik(log: (line: string) => void): Promise<void> {
   mkdirSync(dir(), { recursive: true });
   writeFileSync(staticPath(), STATIC_CONFIG);
   if (!existsSync(dynamicPath())) writeFileSync(dynamicPath(), 'http:\n  routers:\n  services:\n');
 
   try {
-    const running = await capture('docker', ['ps', '-q', '-f', `name=^${TRAEFIK_CONTAINER}$`]);
-    if (running.trim()) {
-      log('traefik already running');
+    const running = (await capture('docker', ['ps', '-q', '-f', `name=^${TRAEFIK_CONTAINER}$`])).trim();
+    if (running && (await onNetwork(TRAEFIK_CONTAINER, NETWORK))) {
+      log('traefik already running on shared network');
       return;
     }
-    // Remove a stopped container with the same name, if any.
+    // Recreate so it joins the network (the only publicly exposed service).
     await run('docker', ['rm', '-f', TRAEFIK_CONTAINER], {}, () => {}).catch(() => undefined);
 
     log('starting traefik container …');
@@ -64,8 +74,8 @@ export async function ensureTraefik(log: (line: string) => void): Promise<void> 
       'docker',
       [
         'run', '-d', '--name', TRAEFIK_CONTAINER, '--restart', 'unless-stopped',
+        '--network', NETWORK,
         '-p', '80:80', '-p', '443:443',
-        '--add-host', 'host.docker.internal:host-gateway',
         '-v', `${staticPath()}:/etc/traefik/traefik.yml:ro`,
         '-v', `${dynamicPath()}:/etc/traefik/dynamic.yml:ro`,
         TRAEFIK_IMAGE,
@@ -74,7 +84,7 @@ export async function ensureTraefik(log: (line: string) => void): Promise<void> 
       log,
     );
     await sleep(1000);
-    log('traefik started (http on :80)');
+    log('traefik started (http :80 / https :443) on shared network');
   } catch (err) {
     log(`traefik warning: ${err instanceof Error ? err.message : err}`);
     log('domain routing will be unavailable until traefik can bind :80/:443');
@@ -98,14 +108,16 @@ export async function writeDynamicConfig(db: DB): Promise<void> {
 
   for (const d of all) {
     const svc = servicesById.get(d.serviceId);
-    if (!svc || !svc.port) continue; // nothing to route to yet
+    if (!svc || !svc.port || !svc.runtimeId) continue; // need a running container to route to
     const key = `${svc.slug}_${d.id}`;
     const host = d.hostname.replace(/[`"]/g, '');
+    const entry = d.ssl ? 'websecure' : 'web';
     routers.push(
       `    ${key}:\n` +
         `      rule: "Host(\`${host}\`)${d.path && d.path !== '/' ? ` && PathPrefix(\`${d.path}\`)` : ''}"\n` +
         `      service: svc_${key}\n` +
-        `      entryPoints:\n        - web`,
+        `      entryPoints:\n        - ${entry}` +
+        (d.ssl ? `\n      tls: {}` : ''),
     );
     if (!seen.has(`svc_${key}`)) {
       seen.add(`svc_${key}`);
@@ -113,7 +125,7 @@ export async function writeDynamicConfig(db: DB): Promise<void> {
         `    svc_${key}:\n` +
           `      loadBalancer:\n` +
           `        servers:\n` +
-          `          - url: "http://host.docker.internal:${svc.port}"`,
+          `          - url: "http://${svc.runtimeId}:${svc.port}"`,
       );
     }
   }

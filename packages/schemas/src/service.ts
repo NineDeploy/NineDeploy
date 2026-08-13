@@ -9,8 +9,13 @@ export const createService = z.object({
   name: z.string().min(1).max(100),
   slug: slug.optional(), // derived from name if omitted
   type: serviceType.default('docker'),
-  repoUrl: z.url(),
+  repoUrl: z.url().optional(),
   branch: z.string().min(1).max(200).default('main'),
+  sourceId: z.number().int().positive().optional(),
+  image: z.string().optional(),
+  volumeMount: z.string().optional(),
+  cpuShares: z.number().int().min(0).max(262144).optional(),
+  memLimitMb: z.number().int().min(0).optional(),
   port: z.number().int().min(1).max(65535).optional(),
   build: z
     .object({
@@ -39,14 +44,38 @@ export const service = z.object({
   slug: z.string(),
   type: serviceType,
   status: z.enum(['idle', 'deploying', 'running', 'stopped', 'error', 'deleting']),
-  repoUrl: z.string(),
+  repoUrl: z.string().nullable(),
   branch: z.string(),
+  sourceId: z.number().int().nullable(),
+  image: z.string().nullable(),
+  volumeMount: z.string().nullable(),
   commitSha: z.string().nullable(),
   port: z.number().int().nullable(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });
 export type Service = z.infer<typeof service>;
+
+// ── Sources (private repo credentials) ─────────────────────────────────────
+export const createSource = z.object({
+  name: z.string().min(1).max(100),
+  type: z.enum(['github', 'gitlab', 'gitea', 'custom']),
+  token: z.string().optional(),
+  deployKey: z.string().optional(),
+  defaultBranch: z.string().optional(),
+});
+export type CreateSourceInput = z.input<typeof createSource>;
+
+export const source = z.object({
+  id: z.number().int(),
+  name: z.string(),
+  type: z.string(),
+  hasToken: z.boolean(),
+  hasDeployKey: z.boolean(),
+  defaultBranch: z.string().nullable(),
+  createdAt: z.string().datetime(),
+});
+export type Source = z.infer<typeof source>;
 
 export const triggerDeploy = z.object({
   commitSha: z.string().optional(),
@@ -195,3 +224,85 @@ export const metricSeries = z.object({
   points: z.array(z.object({ ts: z.string().datetime(), value: z.number().int() })),
 });
 export type MetricSeries = z.infer<typeof metricSeries>;
+
+// ── Topology graph ─────────────────────────────────────────────────────────
+export const topologyGraph = z.object({
+  services: z.array(z.object({ id: z.number().int(), name: z.string(), slug: z.string(), type: z.string(), status: z.string() })),
+  databases: z.array(z.object({ id: z.number().int(), name: z.string(), engine: z.string(), status: z.string() })),
+  attachments: z.array(z.object({ id: z.number().int(), serviceId: z.number().int(), databaseId: z.number().int(), envAlias: z.string() })),
+  domains: z.array(z.object({ id: z.number().int(), serviceId: z.number().int(), hostname: z.string() })),
+});
+export type TopologyGraph = z.infer<typeof topologyGraph>;
+
+// ── Backups + storage ──────────────────────────────────────────────────────
+export const backup = z.object({
+  id: z.number().int(),
+  databaseId: z.number().int().nullable(),
+  status: z.string(),
+  sizeBytes: z.number().int(),
+  createdAt: z.string().datetime(),
+});
+export type Backup = z.infer<typeof backup>;
+
+export const backupWithDb = backup.extend({ databaseName: z.string().nullable() });
+export type BackupWithDb = z.infer<typeof backupWithDb>;
+
+// ── Template hub ───────────────────────────────────────────────────────────
+export const templateSummary = z.object({
+  id: z.string(),
+  name: z.string(),
+  tagline: z.string(),
+  category: z.string(),
+  emoji: z.string(),
+  featured: z.boolean().optional(),
+});
+export type TemplateSummary = z.infer<typeof templateSummary>;
+
+export const template = z.object({
+  id: z.string(),
+  name: z.string(),
+  tagline: z.string(),
+  description: z.string(),
+  category: z.string(),
+  emoji: z.string(),
+  image: z.string(),
+  port: z.number().int(),
+  volumeMount: z.string().nullable().optional(),
+  env: z.array(z.object({ key: z.string(), value: z.string(), secret: z.boolean().optional() })).optional(),
+  website: z.string().optional(),
+  featured: z.boolean().optional(),
+});
+export type Template = z.infer<typeof template>;
+
+// ── Domain routing index + volumes ─────────────────────────────────────────
+export const domainEntry = z.object({
+  id: z.number().int(),
+  hostname: z.string(),
+  path: z.string(),
+  ssl: z.boolean(),
+  status: z.string(),
+  serviceId: z.number().int(),
+  serviceName: z.string().nullable(),
+  container: z.string().nullable(),
+  port: z.number().int().nullable(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+export type DomainEntry = z.infer<typeof domainEntry>;
+
+export const volumeEntry = z.object({
+  name: z.string(),
+  sizeBytes: z.number().int(),
+  owner: z.object({ kind: z.string(), name: z.string(), engine: z.string().optional() }).nullable(),
+});
+export type VolumeEntry = z.infer<typeof volumeEntry>;
+
+// ── Docker resource accounting ─────────────────────────────────────────────
+export const dockerResources = z.object({
+  network: z.string(),
+  containers: z.number().int(),
+  volumes: z.number().int(),
+  imagesSummary: z.object({ total: z.string(), active: z.string(), size: z.string(), reclaimable: z.string() }),
+  images: z.array(z.object({ repo: z.string(), tag: z.string(), size: z.string() })),
+});
+export type DockerResources = z.infer<typeof dockerResources>;

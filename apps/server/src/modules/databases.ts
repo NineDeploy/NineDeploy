@@ -1,5 +1,5 @@
 import { eq } from 'drizzle-orm';
-import { databaseAttachments, databases, services, type Database } from '@ninedeploy/db';
+import { backups, databaseAttachments, databases, services, type Database } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { createDatabase, setLimits } from '@ninedeploy/schemas';
 import { connectionString, defaultPort, ENGINES, startDatabase, stopDatabase } from '../engine/database.js';
@@ -90,6 +90,9 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
     const d = await app.db.query.databases.findFirst({ where: eq(databases.id, num((req.params as { id: string }).id)) });
     if (!d) throw notFound('Database not found');
     await stopDatabase(d, (line) => app.log.info({ component: 'database' }, line));
+    // Remove dependents explicitly (volume is intentionally kept = retained).
+    await app.db.delete(databaseAttachments).where(eq(databaseAttachments.databaseId, d.id));
+    await app.db.delete(backups).where(eq(backups.databaseId, d.id));
     await app.db.delete(databases).where(eq(databases.id, d.id));
     return { ok: true };
   });

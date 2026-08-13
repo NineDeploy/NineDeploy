@@ -1,4 +1,4 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { type FormEvent, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { api } from '../lib/api.js';
@@ -12,7 +12,11 @@ export function NewService() {
   const [repoUrl, setRepoUrl] = useState('');
   const [branch, setBranch] = useState('main');
   const [port, setPort] = useState('');
+  const [sourceId, setSourceId] = useState('');
+  const [volumeMount, setVolumeMount] = useState('');
   const [error, setError] = useState<string | null>(null);
+
+  const sources = useQuery({ queryKey: ['sources'], queryFn: () => api.sources.list() });
 
   const create = useMutation({
     mutationFn: () =>
@@ -21,7 +25,9 @@ export function NewService() {
         type,
         repoUrl,
         branch,
+        sourceId: sourceId ? Number(sourceId) : undefined,
         port: port ? Number(port) : undefined,
+        volumeMount: volumeMount || undefined,
       }),
     onSuccess: (svc) => {
       qc.invalidateQueries({ queryKey: ['services'] });
@@ -73,15 +79,35 @@ export function NewService() {
               <Field label="Branch">
                 <Input value={branch} onChange={(e) => setBranch(e.target.value)} placeholder="main" />
               </Field>
-              <Field label="Port (optional)">
-                <Input
-                  type="number"
-                  value={port}
-                  onChange={(e) => setPort(e.target.value)}
-                  placeholder="3000"
-                />
+              <Field label="Source (for private repos)">
+                <Select value={sourceId} onChange={(e) => setSourceId(e.target.value)}>
+                  <option value="">Public / none</option>
+                  {sources.data?.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name} ({s.type})
+                    </option>
+                  ))}
+                </Select>
               </Field>
             </div>
+
+            <Field label="Port (optional)">
+              <Input
+                type="number"
+                value={port}
+                onChange={(e) => setPort(e.target.value)}
+                placeholder="3000"
+              />
+            </Field>
+
+            <Field label="Persistent volume (container path, optional)">
+              <Input
+                value={volumeMount}
+                onChange={(e) => setVolumeMount(e.target.value)}
+                placeholder="/app/data"
+                className="font-mono text-xs"
+              />
+            </Field>
 
             {error && <p className="rounded-lg bg-rose-500/10 px-3 py-2 text-sm text-rose-300">{error}</p>}
 

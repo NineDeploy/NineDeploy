@@ -1,0 +1,1 @@
+ALTER TABLE `backups` ADD `database_id` integer REFERENCES databases(id);

@@ -1,10 +1,13 @@
 import { useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
 import { GitBranch, Plus, Server } from 'lucide-react';
 import { Link } from 'react-router';
 import { api } from '../lib/api.js';
 import { Button, Card, EmptyState, Skeleton, StatusBadge } from '../components/ui.js';
+import { DeployWizard } from '../components/DeployWizard.js';
 
 export function ServicesList() {
+  const [wizard, setWizard] = useState(false);
   const { data: services, isLoading } = useQuery({ queryKey: ['services'], queryFn: () => api.services.list() });
 
   return (
@@ -14,12 +17,12 @@ export function ServicesList() {
           <h1 className="text-2xl font-semibold tracking-tight">Services</h1>
           <p className="mt-1 text-sm text-slate-400">Deploy and manage your applications.</p>
         </div>
-        <Link to="/services/new">
-          <Button>
-            <Plus size={16} /> New service
-          </Button>
-        </Link>
+        <Button onClick={() => setWizard(true)}>
+          <Plus size={16} /> New service
+        </Button>
       </div>
+
+      {wizard && <DeployWizard onClose={() => setWizard(false)} />}
 
       {isLoading ? (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -38,11 +41,9 @@ export function ServicesList() {
             title="No services yet"
             hint="Connect a repository to deploy your first application in seconds."
             action={
-              <Link to="/services/new">
-                <Button>
-                  <Plus size={16} /> Create service
-                </Button>
-              </Link>
+              <Button onClick={() => setWizard(true)}>
+                <Plus size={16} /> Create service
+              </Button>
             }
           />
         </Card>

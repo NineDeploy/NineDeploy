@@ -1,26 +1,39 @@
 import type {
   ApiToken,
   Attachment,
+  Backup,
+  BackupWithDb,
   CreateApiToken,
   CreateDatabaseInput,
   CreateDomainInput,
   CreateServiceInput,
+  CreateSourceInput,
   CreateWebhookInput,
   CreatedApiToken,
   CreatedWebhook,
   Deployment,
+  DockerResources,
   Domain,
+  DomainEntry,
   EnvVar,
   Login,
   ManagedDatabase,
+  MetricSeries,
   PublicUser,
   Refresh,
   Register,
   Service,
   Session,
+  SetLimitsInput,
+  Source,
+  StatsSnapshot,
+  Template,
+  TemplateSummary,
+  TopologyGraph,
   TriggerDeploy,
   UpdateServiceInput,
   UpsertEnvVarInput,
+  VolumeEntry,
   Webhook,
 } from '@ninedeploy/schemas';
 import { NineDeployError } from './errors.js';
@@ -86,6 +99,22 @@ export interface NineDeployClient {
     list: (serviceId: number) => Promise<Domain[]>;
     create: (serviceId: number, input: CreateDomainInput) => Promise<Domain>;
     remove: (serviceId: number, domainId: number) => Promise<void>;
+    all: () => Promise<DomainEntry[]>;
+    setSsl: (domainId: number, ssl: boolean) => Promise<{ id: number; ssl: boolean }>;
+  };
+  volumes: {
+    list: () => Promise<VolumeEntry[]>;
+    remove: (name: string) => Promise<void>;
+  };
+  system: {
+    resources: () => Promise<DockerResources>;
+    pruneImages: () => Promise<{ ok: boolean }>;
+  };
+  sources: {
+    list: () => Promise<Source[]>;
+    create: (input: CreateSourceInput) => Promise<Source>;
+    update: (id: number, input: Partial<CreateSourceInput>) => Promise<Source>;
+    remove: (id: number) => Promise<void>;
   };
   webhooks: {
     list: (serviceId: number) => Promise<Webhook[]>;
@@ -108,6 +137,31 @@ export interface NineDeployClient {
     create: (serviceId: number, input: UpsertEnvVarInput) => Promise<EnvVar>;
     update: (serviceId: number, varId: number, input: UpsertEnvVarInput) => Promise<EnvVar>;
     remove: (serviceId: number, varId: number) => Promise<void>;
+  };
+  stats: {
+    snapshot: () => Promise<StatsSnapshot>;
+    metrics: (serviceId: number, opts?: { kind?: 'cpu' | 'memory'; minutes?: number }) => Promise<MetricSeries>;
+  };
+  topology: {
+    get: () => Promise<TopologyGraph>;
+  };
+  backups: {
+    storage: (databaseId: number) => Promise<{ sizeBytes: number }>;
+    backupNow: (databaseId: number) => Promise<Backup>;
+    listForDb: (databaseId: number) => Promise<Backup[]>;
+    restore: (databaseId: number, backupId: number) => Promise<{ ok: boolean }>;
+    list: () => Promise<BackupWithDb[]>;
+    remove: (backupId: number) => Promise<void>;
+    downloadUrl: (backupId: number) => string;
+  };
+  templates: {
+    list: () => Promise<TemplateSummary[]>;
+    get: (id: string) => Promise<Template>;
+    deploy: (id: string) => Promise<{ serviceId: number; deploymentId: number }>;
+  };
+  limits: {
+    setService: (serviceId: number, input: SetLimitsInput) => Promise<{ cpuShares: number; memLimitMb: number }>;
+    setDatabase: (databaseId: number, input: SetLimitsInput) => Promise<{ cpuShares: number; memLimitMb: number }>;
   };
   health: () => Promise<HealthStatus>;
 }
@@ -188,6 +242,26 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
       remove: async (serviceId, domainId) => {
         await request(`/v1/services/${serviceId}/domains/${domainId}`, { method: 'DELETE' });
       },
+      all: () => get<DomainEntry[]>('/v1/domains'),
+      setSsl: (domainId, ssl) => send<{ id: number; ssl: boolean }>('PATCH', `/v1/domains/${domainId}`, { ssl }),
+    },
+    volumes: {
+      list: () => get<VolumeEntry[]>('/v1/volumes'),
+      remove: async (name) => {
+        await request(`/v1/volumes/${encodeURIComponent(name)}`, { method: 'DELETE' });
+      },
+    },
+    system: {
+      resources: () => get<DockerResources>('/v1/system/resources'),
+      pruneImages: () => send<{ ok: boolean }>('POST', '/v1/system/prune-images'),
+    },
+    sources: {
+      list: () => get<Source[]>('/v1/sources'),
+      create: (input) => send<Source>('POST', '/v1/sources', input),
+      update: (id, input) => send<Source>('PATCH', `/v1/sources/${id}`, input),
+      remove: async (id) => {
+        await request(`/v1/sources/${id}`, { method: 'DELETE' });
+      },
     },
     webhooks: {
       list: (serviceId) => get<Webhook[]>(`/v1/services/${serviceId}/webhooks`),
@@ -218,6 +292,38 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
       remove: async (serviceId, varId) => {
         await request(`/v1/services/${serviceId}/env/${varId}`, { method: 'DELETE' });
       },
+    },
+    stats: {
+      snapshot: () => get<StatsSnapshot>('/v1/stats'),
+      metrics: (serviceId, opts) =>
+        get<MetricSeries>(
+          `/v1/services/${serviceId}/metrics?kind=${opts?.kind ?? 'cpu'}&minutes=${opts?.minutes ?? 60}`,
+        ),
+    },
+    topology: {
+      get: () => get<TopologyGraph>('/v1/topology'),
+    },
+    templates: {
+      list: () => get<TemplateSummary[]>('/v1/templates'),
+      get: (id) => get<Template>(`/v1/templates/${id}`),
+      deploy: (id) => send<{ serviceId: number; deploymentId: number }>('POST', `/v1/templates/${id}/deploy`),
+    },
+    backups: {
+      storage: (databaseId) => get<{ sizeBytes: number }>(`/v1/databases/${databaseId}/storage`),
+      backupNow: (databaseId) => send<Backup>('POST', `/v1/databases/${databaseId}/backups`),
+      listForDb: (databaseId) => get<Backup[]>(`/v1/databases/${databaseId}/backups`),
+      restore: (databaseId, backupId) => send<{ ok: boolean }>('POST', `/v1/databases/${databaseId}/backups/${backupId}/restore`),
+      list: () => get<BackupWithDb[]>('/v1/backups'),
+      remove: async (backupId) => {
+        await request(`/v1/backups/${backupId}`, { method: 'DELETE' });
+      },
+      downloadUrl: (backupId) => `/v1/backups/${backupId}/download`,
+    },
+    limits: {
+      setService: (serviceId, input) =>
+        send<{ cpuShares: number; memLimitMb: number }>('PATCH', `/v1/services/${serviceId}/limits`, input),
+      setDatabase: (databaseId, input) =>
+        send<{ cpuShares: number; memLimitMb: number }>('PATCH', `/v1/databases/${databaseId}/limits`, input),
     },
     health: () => get<HealthStatus>('/health'),
   };

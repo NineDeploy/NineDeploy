@@ -22,6 +22,34 @@
       "when": 1786639293745,
       "tag": "0002_shocking_stellaris",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1786639836541,
+      "tag": "0003_natural_william_stryker",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1786641500203,
+      "tag": "0004_dark_loners",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1786641942904,
+      "tag": "0005_abandoned_giant_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1786643865187,
+      "tag": "0006_optimal_the_leader",
+      "breakpoints": true
     }
   ]
 }

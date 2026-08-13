@@ -1,9 +1,9 @@
 import path from 'node:path';
 import { eq } from 'drizzle-orm';
-import { buildConfigs, databaseAttachments, databases, type DB, deployments, envVars, services } from '@ninedeploy/db';
+import { buildConfigs, databaseAttachments, databases, type DB, deployments, envVars, services, sources } from '@ninedeploy/db';
 import { config } from '../config.js';
 import { decrypt } from '../lib/crypto.js';
-import { checkoutCommit } from '../lib/git.js';
+import { checkoutCommit, type CloneCreds } from '../lib/git.js';
 import { connectionString } from './database.js';
 import { dockerBuilder } from './builders/docker.js';
 import { logBus } from './logs.js';
@@ -58,8 +58,25 @@ export async function runDeployment(db: DB, deploymentId: number): Promise<void>
   const workDir = path.join(config.paths.reposDir, String(service.id));
   let runtime: DeployRuntime | undefined;
   try {
-    const sha = await checkoutCommit(service.repoUrl, service.branch, dep.commitSha ?? undefined, workDir, log);
-    await db.update(deployments).set({ commitSha: sha }).where(eq(deployments.id, deploymentId));
+    // Image-based deploys skip git entirely; repo-based deploys resolve creds + checkout.
+    let sha = '';
+    if (service.image) {
+      log(`Image deploy from ${service.image}`);
+    } else {
+      let creds: CloneCreds | undefined;
+      if (service.sourceId) {
+        const src = await db.query.sources.findFirst({ where: eq(sources.id, service.sourceId) });
+        if (src) {
+          creds = {
+            type: src.type,
+            token: src.tokenEncrypted ? decrypt(src.tokenEncrypted) : undefined,
+            deployKey: src.deployKeyEncrypted ? decrypt(src.deployKeyEncrypted) : undefined,
+          };
+        }
+      }
+      sha = await checkoutCommit(service.repoUrl ?? '', service.branch, dep.commitSha ?? undefined, workDir, log, creds);
+      await db.update(deployments).set({ commitSha: sha }).where(eq(deployments.id, deploymentId));
+    }
 
     const previous: DeployRuntime | undefined = service.runtimeId
       ? { runtimeId: service.runtimeId, port: service.port ?? null }

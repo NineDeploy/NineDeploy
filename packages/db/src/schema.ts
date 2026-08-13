@@ -95,9 +95,14 @@ export const services = sqliteTable(
     slug: text('slug').notNull(),
     type: text('type', { enum: serviceType }).notNull().default('docker'),
     status: text('status', { enum: serviceStatus }).notNull().default('idle'),
-    repoUrl: text('repo_url').notNull(),
+    repoUrl: text('repo_url'),
     branch: text('branch').notNull().default('main'),
     commitSha: text('commit_sha'),
+    sourceId: integer('source_id').references(() => sources.id, { onDelete: 'set null' }),
+    // Image-based deploy (no repo): skip git+build and run this image directly.
+    image: text('image'),
+    // Optional container path to mount a persistent named volume (nd-svc-<slug>-data).
+    volumeMount: text('volume_mount'),
     port: integer('port'),
     // Runtime identifier: pm2 process name or docker container name.
     runtimeId: text('runtime_id'),
@@ -171,6 +176,7 @@ export const sources = sqliteTable('sources', {
   name: text('name').notNull(),
   // OAuth/token or deploy key material — always encrypted at rest.
   tokenEncrypted: text('token_encrypted'),
+  deployKeyEncrypted: text('deploy_key_encrypted'),
   defaultBranch: text('default_branch').default('main'),
   createdAt: ts('created_at'),
   updatedAt: tsUpdatable('updated_at'),
@@ -210,6 +216,7 @@ export const webhooks = sqliteTable('webhooks', {
 // ─── backups & monitoring ─────────────────────────────────────────────────
 export const backups = sqliteTable('backups', {
   id: id(),
+  databaseId: integer('database_id').references(() => databases.id, { onDelete: 'cascade' }),
   scope: text('scope', { enum: backupScope }).notNull(),
   status: text('status', { enum: backupStatus }).notNull().default('pending'),
   path: text('path').notNull(),
@@ -292,6 +299,24 @@ export const databaseAttachments = sqliteTable(
   (t) => ({ uniq: uniqueIndex('db_attach_svc_db_idx').on(t.serviceId, t.databaseId) }),
 );
 
+// ─── cloudflare tunnels ───────────────────────────────────────────────────
+export const tunnelStatus = ['running', 'stopped', 'error'] as const;
+
+export const tunnels = sqliteTable(
+  'tunnels',
+  {
+    id: id(),
+    name: text('name').notNull(),
+    slug: text('slug').notNull().unique(),
+    tokenEncrypted: text('token_encrypted').notNull(),
+    status: text('status', { enum: tunnelStatus }).notNull().default('running'),
+    containerName: text('container_name').notNull(),
+    createdAt: ts('created_at'),
+    updatedAt: tsUpdatable('updated_at'),
+  },
+  (t) => ({ slugIdx: uniqueIndex('tunnels_slug_idx').on(t.slug) }),
+);
+
 // ─── relations ────────────────────────────────────────────────────────────
 export const usersRelations = relations(users, ({ many }) => ({
   apiTokens: many(apiTokens),
@@ -367,3 +392,4 @@ export type Setting = typeof settings.$inferSelect;
 export type Database = typeof databases.$inferSelect;
 export type NewDatabase = typeof databases.$inferInsert;
 export type DatabaseAttachment = typeof databaseAttachments.$inferSelect;
+export type Tunnel = typeof tunnels.$inferSelect;

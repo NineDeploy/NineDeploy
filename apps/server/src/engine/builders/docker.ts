@@ -8,25 +8,38 @@ const swallow = () => {};
 export const dockerBuilder: Builder = {
   async buildAndRun(ctx, previous) {
     const { service, buildConfig, workDir, deploymentId, commitSha, log } = ctx;
-    const tag = `ninedeploy/${service.slug}:${commitSha.slice(0, 7) || 'latest'}`;
-    const baseDir = !buildConfig?.baseDir || buildConfig.baseDir === '/' ? '.' : buildConfig.baseDir;
-    const dockerfile = buildConfig?.dockerfilePath || 'Dockerfile';
+    const name = `${service.slug}-${deploymentId}`;
 
-    log(`Building image ${tag} …`);
-    await run('docker', ['build', '-t', tag, '-f', dockerfile, baseDir], { cwd: workDir, env: { DOCKER_BUILDKIT: '1' } }, log);
+    // Determine the image to run: a pre-built image (template/one-click) or build from source.
+    let target: string;
+    if (service.image) {
+      target = service.image;
+      log(`Pulling image ${target} …`);
+      await run('docker', ['pull', target], {}, log).catch(() => undefined);
+    } else {
+      target = `ninedeploy/${service.slug}:${commitSha.slice(0, 7) || 'latest'}`;
+      const baseDir = !buildConfig?.baseDir || buildConfig.baseDir === '/' ? '.' : buildConfig.baseDir;
+      const dockerfile = buildConfig?.dockerfilePath || 'Dockerfile';
+      log(`Building image ${target} …`);
+      await run('docker', ['build', '-t', target, '-f', dockerfile, baseDir], { cwd: workDir, env: { DOCKER_BUILDKIT: '1' } }, log);
+    }
 
     if (previous) {
       log(`Stopping previous container ${previous.runtimeId} …`);
       await this.stop(previous.runtimeId);
     }
 
-    const name = `${service.slug}-${deploymentId}`;
     const args = ['run', '-d', '--name', name, '--restart', 'unless-stopped', '--network', NETWORK];
-    if (service.port) args.push('-p', `${service.port}:${service.port}`);
+    // Bind to loopback only — the container must NOT be reachable on public
+    // interfaces. Public traffic enters exclusively through Traefik, which
+    // reaches the container by name over the shared network. The loopback
+    // binding exists only so the healthcheck can probe it from the host.
+    if (service.port) args.push('-p', `127.0.0.1:${service.port}:${service.port}`);
     if (service.cpuShares > 0) args.push('--cpu-shares', String(service.cpuShares));
     if (service.memLimitMb > 0) args.push('--memory', `${service.memLimitMb}m`);
+    if (service.volumeMount) args.push('-v', `nd-svc-${service.slug}-data:${service.volumeMount}`);
     for (const [k, v] of Object.entries(ctx.env)) args.push('-e', `${k}=${v}`);
-    args.push(tag);
+    args.push(target);
 
     log(`Starting container ${name} …`);
     await run('docker', args, {}, log);
