@@ -58,17 +58,38 @@ export const ENGINES: Record<string, EngineConfig> = {
   },
 };
 
+/** Whether a container exists and is currently in the `running` state. */
+async function containerRunning(name: string): Promise<boolean> {
+  try {
+    const out = await capture('docker', ['inspect', name, '--format', '{{.State.Status}}']);
+    return out.trim() === 'running';
+  } catch {
+    return false;
+  }
+}
+
 /** Run a managed database container on the shared network with a persistent volume. */
 export async function startDatabase(d: Database, log: (line: string) => void): Promise<void> {
   const cfg = ENGINES[d.engine];
   if (!cfg) throw new Error(`Unknown engine: ${d.engine}`);
   if (!d.containerName || !d.volumeName) throw new Error('database has no container/volume name');
 
+  // Idempotency: if the database is already running, do nothing (e.g. on server
+  // restart). This avoids a `docker run` name-conflict failure.
+  if (await containerRunning(d.containerName)) {
+    log(`${d.containerName} already running — reusing`);
+    return;
+  }
+
   // Detect a retained volume from a previous deployment of the same name → its
   // data will be reused automatically by Docker (the volume bind is idempotent).
   if (await volumeExists(d.volumeName)) {
     log(`Reusing retained volume ${d.volumeName} (previous data restored)`);
   }
+
+  // Remove any stale (stopped) container of the same name so `docker run` does
+  // not fail with a name conflict; the retained volume preserves the data.
+  await run('docker', ['rm', '-f', d.containerName], {}, swallow).catch(() => undefined);
 
   const password = decrypt(d.passwordEncrypted);
   const args = ['run', '-d', '--name', d.containerName, '--network', NETWORK, '--restart', 'unless-stopped'];

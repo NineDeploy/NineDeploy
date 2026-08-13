@@ -112,6 +112,39 @@ describe('startDatabase', () => {
     );
   });
 
+  it('is a no-op when the container is already running (idempotent restart)', async () => {
+    // First capture call is the container-state inspect.
+    h.capture.mockResolvedValueOnce('running');
+    const log = vi.fn();
+
+    await startDatabase(dbRow({ engine: 'postgres' }), log);
+
+    expect(log).toHaveBeenCalledWith('c already running — reusing');
+    expect(h.run).not.toHaveBeenCalled();
+  });
+
+  it('removes a stale same-name container before starting (no name conflict)', async () => {
+    // Container not running, volume retained. The rm -f may fail if there was
+    // nothing to remove — that's absorbed and we still proceed to start.
+    h.capture.mockResolvedValue('[{"Name":"v"}]');
+    h.run.mockRejectedValueOnce(new Error('no such container'));
+    const log = vi.fn();
+
+    await startDatabase(dbRow({ engine: 'postgres' }), log);
+
+    expect(h.run).toHaveBeenCalledWith('docker', ['rm', '-f', 'c'], {}, expect.any(Function));
+  });
+
+  it('still starts when the state inspect fails (treats it as not running)', async () => {
+    h.capture.mockRejectedValue(new Error('inspect failed'));
+    const log = vi.fn();
+
+    await startDatabase(dbRow({ engine: 'postgres' }), log);
+
+    expect(log).toHaveBeenCalledWith('Starting postgres database db (c) …');
+    expect(h.run).toHaveBeenCalledWith('docker', expect.arrayContaining(['run', '-d', '--name', 'c']), {}, log);
+  });
+
   it('adds cpu/memory flags and defaults the mysql tag when no version is set', async () => {
     h.capture.mockResolvedValue('No such volume');
     const log = vi.fn();
