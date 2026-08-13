@@ -1,63 +1,107 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 @import 'tailwindcss';
 
-/* NineDeploy design tokens — Tailwind v4 CSS-first theme. */
+/* ── Accent palette — maps indigo-* utilities to dynamic CSS vars ──────── */
 @theme {
   --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+  --color-indigo-300: var(--nd-a300);
+  --color-indigo-400: var(--nd-a400);
+  --color-indigo-500: var(--nd-a500);
+  --color-indigo-600: var(--nd-a600);
 }
 
+:root {
+  --nd-a300: #a5b4fc;
+  --nd-a400: #818cf8;
+  --nd-a500: #6366f1;
+  --nd-a600: #4f46e5;
+}
+[data-accent='blue']    { --nd-a300:#93c5fd; --nd-a400:#60a5fa; --nd-a500:#3b82f6; --nd-a600:#2563eb; }
+[data-accent='emerald'] { --nd-a300:#6ee7b7; --nd-a400:#34d399; --nd-a500:#10b981; --nd-a600:#059669; }
+[data-accent='rose']    { --nd-a300:#fda4af; --nd-a400:#fb7185; --nd-a500:#f43f5e; --nd-a600:#e11d48; }
+[data-accent='amber']   { --nd-a300:#fcd34d; --nd-a400:#fbbf24; --nd-a500:#f59e0b; --nd-a600:#d97706; }
+[data-accent='violet']  { --nd-a300:#c4b5fd; --nd-a400:#a78bfa; --nd-a500:#8b5cf6; --nd-a600:#7c3aed; }
+
+/* ── Base ──────────────────────────────────────────────────────────────── */
 @layer base {
-  html {
-    -webkit-font-smoothing: antialiased;
-    text-rendering: optimizeLegibility;
-  }
+  html { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
   body {
-    /* Deep, near-black canvas with a subtle indigo glow at the top. */
     background-color: #07070b;
     background-image:
-      radial-gradient(60rem 60rem at 80% -20%, rgba(99, 102, 241, 0.12), transparent 60%),
-      radial-gradient(50rem 50rem at -10% 10%, rgba(139, 92, 246, 0.08), transparent 55%);
+      radial-gradient(60rem 60rem at 80% -20%, rgba(99,102,241,.12), transparent 60%),
+      radial-gradient(50rem 50rem at -10% 10%, rgba(139,92,246,.08), transparent 55%);
     background-attachment: fixed;
     color: rgb(226 232 240);
+    transition: background-color .2s, color .2s;
   }
-  ::selection {
-    background: rgba(99, 102, 241, 0.35);
-  }
+  ::selection { background: rgba(99,102,241,.35); }
 }
 
-/* Slim, dark scrollbars to match the theme. */
+/* ── Scrollbars ────────────────────────────────────────────────────────── */
 @layer utilities {
-  * {
-    scrollbar-width: thin;
-    scrollbar-color: rgba(148, 163, 184, 0.25) transparent;
-  }
-  *::-webkit-scrollbar {
-    width: 9px;
-    height: 9px;
-  }
-  *::-webkit-scrollbar-thumb {
-    background: rgba(148, 163, 184, 0.2);
-    border-radius: 9999px;
-    border: 2px solid transparent;
-    background-clip: padding-box;
-  }
-  *::-webkit-scrollbar-thumb:hover {
-    background: rgba(148, 163, 184, 0.35);
-    background-clip: padding-box;
-  }
+  * { scrollbar-width: thin; scrollbar-color: rgba(148,163,184,.25) transparent; }
+  *::-webkit-scrollbar { width: 9px; height: 9px; }
+  *::-webkit-scrollbar-thumb { background: rgba(148,163,184,.2); border-radius: 9999px; border: 2px solid transparent; background-clip: padding-box; }
+  *::-webkit-scrollbar-thumb:hover { background: rgba(148,163,184,.35); background-clip: padding-box; }
 }
 
+/* ── Light theme overrides ─────────────────────────────────────────────── */
+html[data-theme='light'] body {
+  background-color: #f8fafc;
+  background-image:
+    radial-gradient(60rem 60rem at 80% -20%, rgba(99,102,241,.06), transparent 60%),
+    radial-gradient(50rem 50rem at -10% 10%, rgba(139,92,246,.04), transparent 55%);
+  color: rgb(30 41 59);
+}
+html[data-theme='light'] ::selection { background: rgba(99,102,241,.2); }
+
+/* Map dark surface utilities → light equivalents */
+html[data-theme='light'] .bg-slate-950 { background-color: #f8fafc; }
+html[data-theme='light'] .bg-slate-950\/40 { background-color: rgba(248,250,252,.4); }
+html[data-theme='light'] .bg-slate-950\/60 { background-color: rgba(248,250,252,.6); }
+html[data-theme='light'] .bg-slate-950\/70 { background-color: rgba(248,250,252,.7); }
+html[data-theme='light'] .bg-slate-950\/80 { background-color: rgba(248,250,252,.8); }
+html[data-theme='light'] .bg-slate-900\/90 { background-color: rgba(255,255,255,.9); }
+html[data-theme='light'] .bg-slate-900\/95 { background-color: rgba(255,255,255,.95); }
+html[data-theme='light'] .bg-\[\#0a0a10\] { background-color: #f1f5f9; }
+
+html[data-theme='light'] .text-slate-100 { color: #1e293b; }
+html[data-theme='light'] .text-slate-200 { color: #334155; }
+html[data-theme='light'] .text-slate-300 { color: #475569; }
+
+html[data-theme='light'] .border-white\/\[0\.04\] { border-color: rgba(0,0,0,.06); }
+html[data-theme='light'] .border-white\/\[0\.05\] { border-color: rgba(0,0,0,.07); }
+html[data-theme='light'] .border-white\/\[0\.06\] { border-color: rgba(0,0,0,.08); }
+html[data-theme='light'] .border-white\/\[0\.08\] { border-color: rgba(0,0,0,.1); }
+html[data-theme='light'] .border-white\/\[0\.1\] { border-color: rgba(0,0,0,.12); }
+html[data-theme='light'] .border-white\/5 { border-color: rgba(0,0,0,.06); }
+html[data-theme='light'] .border-white\/10 { border-color: rgba(0,0,0,.1); }
+
+html[data-theme='light'] .bg-white\/\[0\.015\] { background-color: rgba(0,0,0,.015); }
+html[data-theme='light'] .bg-white\/\[0\.02\] { background-color: rgba(0,0,0,.02); }
+html[data-theme='light'] .bg-white\/\[0\.025\] { background-color: rgba(0,0,0,.025); }
+html[data-theme='light'] .bg-white\/\[0\.03\] { background-color: rgba(0,0,0,.03); }
+html[data-theme='light'] .bg-white\/\[0\.04\] { background-color: rgba(0,0,0,.04); }
+html[data-theme='light'] .bg-white\/\[0\.06\] { background-color: rgba(0,0,0,.06); }
+html[data-theme='light'] .bg-white\/\[0\.08\] { background-color: rgba(0,0,0,.08); }
+html[data-theme='light'] .bg-white\/\[0\.1\] { background-color: rgba(0,0,0,.1); }
+html[data-theme='light'] .bg-white\/\[0\.16\] { background-color: rgba(0,0,0,.08); }
+html[data-theme='light'] .bg-white\/5 { background-color: rgba(0,0,0,.04); }
+html[data-theme='light'] .bg-white\/10 { background-color: rgba(0,0,0,.06); }
+
+html[data-theme='light'] .bg-black\/20 { background-color: rgba(0,0,0,.06); }
+html[data-theme='light'] .bg-black\/30 { background-color: rgba(255,255,255,.4); }
+html[data-theme='light'] .bg-black\/40 { background-color: rgba(0,0,0,.3); }
+html[data-theme='light'] .bg-black\/60 { background-color: rgba(0,0,0,.3); }
+
+/* Scrollbars in light mode */
+html[data-theme='light'] * { scrollbar-color: rgba(100,116,139,.3) transparent; }
+html[data-theme='light'] *::-webkit-scrollbar-thumb { background: rgba(100,116,139,.25); }
+
+/* ── Animations ────────────────────────────────────────────────────────── */
 @keyframes nd-fade-in {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
-.nd-fade {
-  animation: nd-fade-in 0.25s ease-out both;
-}
+.nd-fade { animation: nd-fade-in .25s ease-out both; }

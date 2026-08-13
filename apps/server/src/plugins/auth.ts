@@ -3,16 +3,19 @@ import { apiTokens } from '@ninedeploy/db';
 import fp from 'fastify-plugin';
 import { resolveUser } from '../lib/auth.js';
 import { sha256 } from '../lib/crypto.js';
-import { unauthorized } from '../lib/errors.js';
+import { forbidden, unauthorized } from '../lib/errors.js';
 
 export interface AuthUser {
   id: number;
+  role: 'admin' | 'member';
 }
 
 declare module 'fastify' {
   interface FastifyInstance {
     /** Pre-handler that verifies a Bearer token (JWT access or API token). */
     authenticate: (req: import('fastify').FastifyRequest, reply: import('fastify').FastifyReply) => Promise<void>;
+    /** Pre-handler that requires the authenticated user to be an admin. Run after `authenticate`. */
+    requireAdmin: (req: import('fastify').FastifyRequest, reply: import('fastify').FastifyReply) => Promise<void>;
   }
   interface FastifyRequest {
     user: AuthUser | null;
@@ -42,6 +45,13 @@ export default fp(
           .set({ lastUsedAt: new Date() })
           .where(eq(apiTokens.hash, sha256(token)));
       }
+    });
+
+    fastify.decorate('requireAdmin', async (req) => {
+      // `authenticate` is expected to run first (as an onRequest hook). A
+      // missing/non-admin user is forbidden — destructive, system-wide actions
+      // are admin-only under the agreed RBAC model.
+      if (!req.user || req.user.role !== 'admin') throw forbidden('Admin access required');
     });
   },
   { name: 'ninedeploy-auth' },

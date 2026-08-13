@@ -1,11 +1,10 @@
 import { eq } from 'drizzle-orm';
+import { audit } from "../lib/audit.js";
 import { sources, type Source } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
-import { createSource } from '@ninedeploy/schemas';
+import { createSource, sourcePatch } from '@ninedeploy/schemas';
 import { encrypt } from '../lib/crypto.js';
-import { notFound } from '../lib/errors.js';
-
-const num = (v: string) => Number(v);
+import { notFound, parseId } from '../lib/errors.js';
 
 function serialize(s: Source) {
   return {
@@ -20,9 +19,11 @@ function serialize(s: Source) {
   };
 }
 
-/** Source (private-repo credential) management. Mounted under /sources. */
+/** Source (private-repo credential) management. Mounted under /sources. Admin-only. */
 export const sourcesRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('onRequest', app.authenticate);
+  // System-wide credentials — admin-only under the agreed RBAC model.
+  app.addHook('preHandler', app.requireAdmin);
 
   app.get('/', async () => {
     const rows = await app.db.query.sources.findMany({ orderBy: (s, { desc }) => [desc(s.id)] });
@@ -41,12 +42,13 @@ export const sourcesRoutes: FastifyPluginAsync = async (app) => {
         defaultBranch: input.defaultBranch ?? 'main',
       })
       .returning();
+    void audit(app.db, req.user!.id, 'source.create', input.name);
     return serialize(created!);
   });
 
   app.patch('/:id', async (req) => {
-    const id = num((req.params as { id: string }).id);
-    const input = (req.body ?? {}) as { name?: string; token?: string; deployKey?: string; defaultBranch?: string };
+    const id = parseId((req.params as { id: string }).id);
+    const input = sourcePatch.parse(req.body ?? {});
     const patch: Partial<Source> = {};
     if (input.name !== undefined) patch.name = input.name;
     if (input.defaultBranch !== undefined) patch.defaultBranch = input.defaultBranch;
@@ -58,8 +60,9 @@ export const sourcesRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.delete('/:id', async (req) => {
-    const id = num((req.params as { id: string }).id);
+    const id = parseId((req.params as { id: string }).id);
     await app.db.delete(sources).where(eq(sources.id, id));
+    void audit(app.db, req.user!.id, 'source.delete', String(id));
     return { ok: true };
   });
 };

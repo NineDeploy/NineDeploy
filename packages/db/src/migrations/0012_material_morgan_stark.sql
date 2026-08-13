@@ -1,0 +1,1 @@
+ALTER TABLE `deployments` ADD `image_digest` text;

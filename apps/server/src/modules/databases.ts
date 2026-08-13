@@ -1,4 +1,5 @@
 import { eq } from 'drizzle-orm';
+import { audit } from "../lib/audit.js";
 import { backups, databaseAttachments, databases, services, type Database } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { createDatabase, setLimits } from '@ninedeploy/schemas';
@@ -77,6 +78,7 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
     }
 
     const updated = await app.db.query.databases.findFirst({ where: eq(databases.id, created.id) });
+    void audit(app.db, req.user!.id, 'database.create', input.name);
     return serialize(updated!);
   });
 
@@ -94,6 +96,7 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
     await app.db.delete(databaseAttachments).where(eq(databaseAttachments.databaseId, d.id));
     await app.db.delete(backups).where(eq(backups.databaseId, d.id));
     await app.db.delete(databases).where(eq(databases.id, d.id));
+    void audit(app.db, req.user!.id, 'database.delete', d.name);
     return { ok: true };
   });
 

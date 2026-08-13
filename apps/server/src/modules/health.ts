@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { sql } from 'drizzle-orm';
-import { config } from '../config.js';
+import { VERSION } from '../version.js';
 
 /** Liveness + readiness. `GET /health` also pings the database. */
 export const healthRoutes: FastifyPluginAsync = async (app) => {
@@ -14,7 +14,7 @@ export const healthRoutes: FastifyPluginAsync = async (app) => {
     return {
       status: db === 'ok' ? 'ok' : 'degraded',
       db,
-      version: config.version,
+      version: VERSION,
       time: new Date().toISOString(),
     };
   });

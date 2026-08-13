@@ -1,17 +1,19 @@
 import { and, eq } from 'drizzle-orm';
 import { deployments, services, webhooks } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
+import { webhookCreate } from '@ninedeploy/schemas';
 import { config } from '../config.js';
 import { decrypt, encrypt, randomToken } from '../lib/crypto.js';
-import { unauthorized } from '../lib/errors.js';
+import { parseId, unauthorized } from '../lib/errors.js';
 import { isPing, parsePush, verifyWebhook } from '../lib/webhooks.js';
-
-const num = (v: string) => Number(v);
 
 /** Public webhook receiver — auto-deploys on verified provider push events. */
 export const hookReceiveRoutes: FastifyPluginAsync = async (app) => {
-  app.post('/:id', async (req, reply) => {
-    const id = num((req.params as { id: string }).id);
+  // Public endpoint (auth bypassed, verified by HMAC) — cap flood attempts.
+  app.post('/:id', { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (req, reply) => {
+    // Public receiver: leave non-numeric ids as NaN so they 404 ("Unknown
+    // webhook") rather than 400 — don't reveal param validation to probers.
+    const id = Number((req.params as { id: string }).id);
     const hook = await app.db.query.webhooks.findFirst({ where: eq(webhooks.id, id) });
     if (!hook || !hook.active) return reply.code(404).send({ error: { code: 'not_found', message: 'Unknown webhook' } });
 
@@ -47,7 +49,7 @@ export const webhookMgmtRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('onRequest', app.authenticate);
 
   app.get('/:id/webhooks', async (req) => {
-    const id = num((req.params as { id: string }).id);
+    const id = parseId((req.params as { id: string }).id);
     const rows = await app.db.query.webhooks.findMany({ where: eq(webhooks.serviceId, id) });
     return rows.map((w) => ({
       id: w.id,
@@ -59,8 +61,8 @@ export const webhookMgmtRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.post('/:id/webhooks', async (req) => {
-    const id = num((req.params as { id: string }).id);
-    const input = (req.body ?? {}) as { branch?: string };
+    const id = parseId((req.params as { id: string }).id);
+    const input = webhookCreate.parse(req.body ?? {});
     const svc = await app.db.query.services.findFirst({ where: eq(services.id, id) });
     if (!svc) throw unauthorized('Service not found');
     const branch = input.branch?.trim() || svc.branch;
@@ -74,8 +76,8 @@ export const webhookMgmtRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.delete('/:id/webhooks/:hookId', async (req) => {
-    const id = num((req.params as { id: string }).id);
-    const hookId = num((req.params as { hookId: string }).hookId);
+    const id = parseId((req.params as { id: string }).id);
+    const hookId = parseId((req.params as { hookId: string }).hookId);
     await app.db.delete(webhooks).where(and(eq(webhooks.id, hookId), eq(webhooks.serviceId, id)));
     return { ok: true };
   });

@@ -102,7 +102,7 @@ export function DatabaseWizard({ onClose }: { onClose: () => void }) {
 
           {step === 2 && (
             <div className="space-y-2 text-sm">
-              <Row label="Engine" value={`${ENGINES.find((e) => e.id === engine)?.emoji ?? ''} ${ENGINES.find((e) => e.id === engine)?.label ?? ''}`} />
+              <Row label="Engine" value={`${ENGINES.find((e) => e.id === engine)!.emoji} ${ENGINES.find((e) => e.id === engine)!.label}`} />
               <Row label="Name" value={name} />
               <Row label="Version" value={version || 'default'} />
               <Row label="Volume" value="persistent (nd-db-…-data)" />

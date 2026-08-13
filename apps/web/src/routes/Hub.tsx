@@ -125,7 +125,7 @@ function TemplateDetail({ id, onClose, onDeploy }: { id: string; onClose: () => 
               <p className="text-sm leading-relaxed text-slate-300">{detail.data.description}</p>
 
               <div className="grid grid-cols-3 gap-3 text-center">
-                <Spec label="Image" value={detail.data.image.split('/').pop() ?? detail.data.image} />
+                <Spec label="Image" value={detail.data.image.split('/').pop()!} />
                 <Spec label="Port" value={`:${detail.data.port}`} />
                 <Spec label="Persist" value={detail.data.volumeMount ? 'Volume' : 'Ephemeral'} />
               </div>

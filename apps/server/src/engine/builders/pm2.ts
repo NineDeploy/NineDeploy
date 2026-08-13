@@ -15,40 +15,67 @@ const withPm2 = async <T>(fn: () => Promise<T>): Promise<T> => {
   }
 };
 
+/**
+ * Split a start command into a PM2 script + args. PM2's `script` option is a
+ * binary/file path, not a shell command — so `node dist/index.js` must become
+ * `script: 'node', args: 'dist/index.js'`, and `npm start` must become
+ * `script: 'npm', args: 'start'`. Without this, PM2 treats the whole string as
+ * a (non-existent) script path.
+ */
+function parseStartCommand(cmd: string): { script: string; args: string } {
+  const parts = cmd.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return { script: 'npm', args: 'start' };
+  return { script: parts[0]!, args: parts.slice(1).join(' ') };
+}
+
 /** PM2 builder: install + build, then run/stop the app via the PM2 daemon. */
 export const pm2Builder: Builder = {
   async buildAndRun(ctx, previous) {
-    const { service, buildConfig, workDir, deploymentId, log } = ctx;
+    const { service, buildConfig, workDir, deploymentId, env, log } = ctx;
 
+    // Build steps run WITH the service env so they can see DB connection
+    // strings and other config the app needs at build time.
     if (buildConfig?.installCmd) {
       log('Installing dependencies …');
-      await run('sh', ['-c', buildConfig.installCmd], { cwd: workDir }, log);
+      await run('sh', ['-c', buildConfig.installCmd], { cwd: workDir, env }, log);
     }
     if (buildConfig?.buildCmd) {
       log('Building …');
-      await run('sh', ['-c', buildConfig.buildCmd], { cwd: workDir }, log);
+      await run('sh', ['-c', buildConfig.buildCmd], { cwd: workDir, env }, log);
     }
+    // PM2 binds the service port, so two versions cannot coexist — the previous
+    // process must stop before the new one starts. True zero-downtime is only
+    // achievable by the Docker builder (blue-green); PM2 accepts a brief gap,
+    // and the pipeline cleans up a failed new process on error.
     if (previous) {
       log(`Stopping previous process ${previous.runtimeId} …`);
       await this.stop(previous.runtimeId);
     }
 
     const name = `${service.slug}-${deploymentId}`;
+    const { script, args } = parseStartCommand(buildConfig?.startCmd ?? '');
     log(`Starting PM2 process ${name} …`);
+
+    // interpreter: 'none' makes PM2 exec the script directly so `npm`/`node`
+    // are run as binaries instead of being re-interpreted through node.
+    const startOpts: Record<string, unknown> = {
+      name,
+      script,
+      args,
+      interpreter: 'none',
+      cwd: workDir,
+      autorestart: true,
+      max_restarts: 10,
+      env,
+    };
+    // Enforce a memory ceiling via PM2's auto-restart-on-OOM, mirroring the
+    // Docker builder's --memory limit.
+    if (service.memLimitMb > 0) startOpts.max_memory_restart = `${service.memLimitMb}M`;
+
     await withPm2(
       () =>
         new Promise<void>((res, rej) =>
-          pm2.start(
-            {
-              name,
-              script: buildConfig?.startCmd || 'npm start',
-              cwd: workDir,
-              autorestart: true,
-              max_restarts: 10,
-              env: ctx.env,
-            },
-            (err) => (err ? rej(err) : res()),
-          ),
+          pm2.start(startOpts, (err) => (err ? rej(err) : res())),
         ),
     );
     return { runtimeId: name, port: service.port ?? null, healthPath: service.healthPath ?? '/' };

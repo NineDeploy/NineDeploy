@@ -53,6 +53,7 @@ export const service = z.object({
   commitSha: z.string().nullable(),
   runtimeId: z.string().nullable(),
   healthPath: z.string(),
+  autoUrl: z.string().nullable(),
   port: z.number().int().nullable(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),

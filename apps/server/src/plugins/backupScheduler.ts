@@ -53,7 +53,7 @@ export default fp(
 
     fastify.addHook('onClose', async () => {
       running = false;
-      if (timer) clearTimeout(timer);
+      clearTimeout(timer);
     });
     // First run in 24h (manual backups cover immediate needs); then daily.
     timer = setTimeout(() => void tick(), DAY_MS);

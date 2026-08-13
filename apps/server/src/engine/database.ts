@@ -1,7 +1,13 @@
+import { writeFileSync } from 'node:fs';
 import type { Database } from '@ninedeploy/db';
 import { decrypt } from '../lib/crypto.js';
 import { capture, run } from '../lib/exec.js';
 import { NETWORK } from './proxy.js';
+
+const swallow = () => {};
+/** Static temp paths used inside managed containers for backup/restore staging. */
+const DUMP_TMP = '/tmp/ninedeploy-dump';
+const RESTORE_TMP = '/tmp/ninedeploy-restore';
 
 interface EngineConfig {
   image: (version?: string) => string;
@@ -129,7 +135,10 @@ export async function databaseSize(d: Database): Promise<number> {
     }
     if (d.engine === 'mysql') {
       const pass = decrypt(d.passwordEncrypted);
-      const out = await capture('docker', ['exec', d.containerName, 'sh', '-c', `mysql -uroot -p${pass} -N -e "SELECT IFNULL(SUM(data_length+index_length),0) FROM information_schema.tables"`]);
+      const out = await capture('docker', [
+        'exec', d.containerName, 'mysql', '-uroot', `--password=${pass}`, '-N',
+        '-e', 'SELECT IFNULL(SUM(data_length+index_length),0) FROM information_schema.tables',
+      ]);
       return Number(out.trim()) || 0;
     }
     if (d.engine === 'mongo') {
@@ -142,38 +151,62 @@ export async function databaseSize(d: Database): Promise<number> {
   return 0;
 }
 
-/** Dump a managed database to `file` (host path). */
+/**
+ * Dump a managed database to `file` (host path). Implemented with arg arrays +
+ * `docker cp` only — never a host `sh -c` — so a crafted password or path can
+ * never break out into shell execution. Passwords travel as a docker argv
+ * `--password=` value (visible to a local admin via `docker inspect`, but not
+ * shell-injectable) rather than an interpolated shell string.
+ */
 export async function backupDatabase(d: Database, file: string, log: (line: string) => void): Promise<void> {
   const cfg = ENGINES[d.engine];
   if (!cfg || !d.containerName) throw new Error('database not runnable');
   const cn = d.containerName;
   if (d.engine === 'postgres') {
-    await run('sh', ['-c', `docker exec ${cn} pg_dump -U ${cfg.username()} -d ${cfg.dbName()} > "${file}"`], {}, log);
+    const dump = await capture('docker', ['exec', cn, 'pg_dump', '-U', cfg.username()!, '-d', cfg.dbName()!]);
+    writeFileSync(file, dump);
   } else if (d.engine === 'mysql') {
     const pass = decrypt(d.passwordEncrypted);
-    await run('sh', ['-c', `docker exec ${cn} mysqldump -uroot -p${pass} --all-databases > "${file}"`], {}, log);
+    const dump = await capture('docker', ['exec', cn, 'mysqldump', '-uroot', `--password=${pass}`, '--all-databases']);
+    writeFileSync(file, dump);
   } else if (d.engine === 'redis') {
-    await run('sh', ['-c', `docker exec ${cn} redis-cli SAVE && docker cp ${cn}:/data/dump.rdb "${file}"`], {}, log);
+    await run('docker', ['exec', cn, 'redis-cli', 'SAVE'], {}, log);
+    await run('docker', ['cp', `${cn}:/data/dump.rdb`, file], {}, log);
   } else if (d.engine === 'mongo') {
-    await run('sh', ['-c', `docker exec ${cn} mongodump --archive --gzip > "${file}"`], {}, log);
+    // mongodump emits a binary archive on stdout; redirect it to a static temp
+    // path inside the container (no interpolation), then copy the file out.
+    await run('docker', ['exec', cn, 'sh', '-c', `mongodump --archive --gzip > ${DUMP_TMP}`], {}, log);
+    await run('docker', ['cp', `${cn}:${DUMP_TMP}`, file], {}, log);
+    await run('docker', ['exec', cn, 'rm', '-f', DUMP_TMP], {}, swallow);
   } else {
     throw new Error(`backup not supported for ${d.engine}`);
   }
 }
 
-/** Restore a managed database from `file` (host path). */
+/**
+ * Restore a managed database from `file` (host path). The dump is copied into
+ * the container at a static temp path, restored via a file-reading flag, then
+ * removed — no host shell, no stdin plumbing, no interpolation.
+ */
 export async function restoreDatabase(d: Database, file: string, log: (line: string) => void): Promise<void> {
   const cfg = ENGINES[d.engine];
   if (!cfg || !d.containerName) throw new Error('database not runnable');
   const cn = d.containerName;
-  if (d.engine === 'postgres') {
-    await run('sh', ['-c', `docker exec -i ${cn} psql -U ${cfg.username()} -d ${cfg.dbName()} < "${file}"`], {}, log);
-  } else if (d.engine === 'mysql') {
-    const pass = decrypt(d.passwordEncrypted);
-    await run('sh', ['-c', `docker exec -i ${cn} mysql -uroot -p${pass} < "${file}"`], {}, log);
-  } else if (d.engine === 'mongo') {
-    await run('sh', ['-c', `docker exec -i ${cn} mongorestore --archive --gzip --drop < "${file}"`], {}, log);
-  } else {
-    throw new Error(`restore not supported for ${d.engine}`);
+  if (d.engine === 'redis') throw new Error('restore not supported for redis');
+
+  await run('docker', ['cp', file, `${cn}:${RESTORE_TMP}`], {}, log);
+  try {
+    if (d.engine === 'postgres') {
+      await run('docker', ['exec', cn, 'psql', '-U', cfg.username()!, '-d', cfg.dbName()!, '-f', RESTORE_TMP], {}, log);
+    } else if (d.engine === 'mysql') {
+      const pass = decrypt(d.passwordEncrypted);
+      await run('docker', ['exec', cn, 'mysql', '-uroot', `--password=${pass}`, '-e', `source ${RESTORE_TMP}`], {}, log);
+    } else if (d.engine === 'mongo') {
+      await run('docker', ['exec', cn, 'mongorestore', `--archive=${RESTORE_TMP}`, '--gzip', '--drop'], {}, log);
+    } else {
+      throw new Error(`restore not supported for ${d.engine}`);
+    }
+  } finally {
+    await run('docker', ['exec', cn, 'rm', '-f', RESTORE_TMP], {}, swallow).catch(() => undefined);
   }
 }

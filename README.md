@@ -9,9 +9,9 @@ Self-hosted deployment platform. Deploy apps from Git or Docker Hub in one click
 
 ## What is NineDeploy?
 
-NineDeploy is a self-hosted PaaS that runs on your own server. It wraps PM2 and Docker behind a web dashboard, gives you Traefik for HTTPS routing, and handles webhooks, managed databases, monitoring, and Cloudflare Tunnels.
+NineDeploy is a self-hosted PaaS that runs on your own server. It wraps PM2 and Docker behind a web dashboard, gives you Traefik for HTTPS routing, and handles webhooks, managed databases, monitoring, notifications, and Cloudflare Tunnels.
 
-You can deploy from a Git repository, a Docker image, or the built-in template hub. All data stays on your server in a single SQLite database.
+You can deploy from a Git repository, a Docker image, or the built-in template hub with 49+ one-click apps. All data stays on your server in a single SQLite database — no external dependencies.
 
 ## Quick start
 
@@ -20,17 +20,6 @@ You can deploy from a Git repository, a Docker image, or the built-in template h
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ninedeploy/ninedeploy/main/install.sh | bash
 ```
-
-The installer does the following:
-
-- Checks for Node.js >= 20, pnpm, and Docker.
-- Clones the repo to `~/ninedeploy`.
-- Installs dependencies and builds the project.
-- Creates `.env` with a generated JWT secret.
-- Runs database migrations.
-- Creates and starts a systemd service.
-
-After it finishes, open `http://your-server:3000` and create the first admin account.
 
 ### Option B: From source (development)
 
@@ -46,122 +35,130 @@ pnpm dev
 
 Open `http://localhost:5173` and create the first admin account.
 
-## First run and default credentials
+## Features
 
-NineDeploy does **not** ship with a default password. The first account created becomes the admin automatically.
+### Deploy
+- **Git repo** (public/private) or **Docker image** — build from source or run pre-built images
+- **PM2 + Docker** — Node apps via PM2, anything via Docker/BuildKit
+- **Multi-step deploy wizard** — Source → Runtime → Environment → Resources → Review
+- **Auto-deploy** — GitHub/GitLab/Gitea webhooks with HMAC signature verification
+- **Live deploy logs** — real-time WebSocket streaming
+- **Health checks** — configurable path, automatic probing with rollback on failure
+- **One-click rollback** — revert to any previous deployment
+- **Service lifecycle** — stop / start / restart from the dashboard
+- **Container exec** — interactive terminal (xterm.js over WebSocket)
+- **Runtime logs** — view running container output
 
-When you open the dashboard for the first time, you will see a setup screen. Enter an email and a strong password. This user gets the `admin` role and can create other users later.
+### Infrastructure
+- **Traefik** reverse proxy with **automatic HTTPS** (TLS)
+- **Secure networking** — containers bound to `127.0.0.1` only; traffic enters via Traefik
+- **Cloudflare Tunnel** — expose services without opening any ports
+- **Persistent volumes** — data survives redeploys; retained volumes auto-reused on DB recreate
+- **Resource limits** — CPU shares + memory caps per service and database
+- **Wildcard domains** — auto-assign `{slug}.your-domain` to every service
 
-If you prefer the terminal, run:
+### Managed Databases
+- **PostgreSQL · MySQL · Redis · MongoDB** — one-click with persistent storage
+- **Auto-generated credentials** — AES-256-GCM encrypted at rest
+- **Connection injection** — `DATABASE_URL` auto-injected into attached services
+- **Database wizard** — step-by-step creation with engine selection
+- **Backups** — `pg_dump`/`mongodump` + restore + download; daily auto-backup (keep 7)
 
-```bash
-npx ninedeploy setup
-```
+### Management
+- **Dashboard** — live service health probes, stats grid, recent activity, hero status banner
+- **Domain management** — centralized routing map + SSL toggle
+- **Volume inventory** — list, inspect sizes, delete, Docker resources + prune
+- **Monitoring** — live CPU/memory per container + sparklines + host overview
+- **Template Hub** — 49+ one-click apps (n8n, Grafana, Jellyfin, Nextcloud, qBittorrent, …)
+- **Topology** — interactive React Flow graph of services ↔ databases ↔ domains
+- **Private repos** — PAT (HTTPS) or SSH deploy keys
+- **Secrets** — encrypted env vars, masked in UI, never returned by API
+- **Multi-user** — role-based access (admin/member), audit log, activity feed
 
-It will prompt for email, name, and password and create the first admin.
+### Notifications & Events
+- **Event system** — every operation (deploy, create, delete, backup, …) emits a real-time event
+- **Live event stream** — WebSocket-powered activity drawer with type filtering
+- **Notification channels** — Telegram, Discord, generic webhook with event-type filtering
+- **Notification wizard** — guided multi-step setup with test messages
 
-If an admin already exists, the setup screen and `ninedeploy setup` command are disabled. You must log in instead.
+### Migration
+- **System export/import** — full backup (DB, master key, .env, Traefik config) as tar.gz
+- **Service export/import** — move individual services between instances as JSON bundles
+
+### UX
+- **Command palette** — ⌘K / Ctrl+K fuzzy search across everything
+- **Two-level menu** — activity bar (icon rail) + secondary panel, collapsible
+- **Dark / Light theme** + 6 accent color palettes
+- **Toast notifications** — instant feedback for all actions
+- **About page** — version, changelog, tech stack, update guide
 
 ## Configuration
-
-The installer creates `.env` automatically. For a manual setup, copy `.env.example` to `.env` and review at least these values:
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `NINEDEPLOY_HOST` | `0.0.0.0` | IP address to bind |
 | `NINEDEPLOY_PORT` | `3000` | Port for the dashboard and API |
-| `NINEDEPLOY_PUBLIC_URL` | `http://localhost:3000` | Public URL used for webhooks and CORS |
-| `NINEDEPLOY_DATA_DIR` | `./.data` | Where SQLite, repos, logs, backups, and Traefik config are stored |
+| `NINEDEPLOY_PUBLIC_URL` | `http://localhost:3000` | Public URL (webhooks, CORS) |
+| `NINEDEPLOY_DATA_DIR` | `./.data` | SQLite, repos, logs, backups, Traefik config |
 | `NINEDEPLOY_DB_PATH` | `./.data/ninedeploy.db` | SQLite database file |
-| `NINEDEPLOY_JWT_SECRET` | generated | JWT signing secret (set by installer) |
-| `NINEDEPLOY_JWT_ACCESS_TTL` | `15m` | Access token lifetime |
-| `NINEDEPLOY_JWT_REFRESH_TTL` | `7d` | Refresh token lifetime |
-| `NINEDEPLOY_MASTER_KEY` | generated | AES-256 key for encrypting secrets at rest |
-
-The master key is generated on first start if `NINEDEPLOY_MASTER_KEY` is empty. Keep the `.env` and generated `master.key` files safe; losing them means losing stored secrets.
-
-## Main features
-
-- Deploy from Git, a Docker image, or the template hub.
-- PM2 or Docker runtime support.
-- Automatic HTTPS with Traefik.
-- Webhook auto-deploy from GitHub, GitLab, or Gitea.
-- Managed PostgreSQL, MySQL, Redis, and MongoDB.
-- Resource monitoring with live CPU, memory, and disk usage.
-- Cloudflare Tunnel support to expose services without opening ports.
-- Encrypted secrets and API tokens.
-- Multi-user support with role-based access.
+| `NINEDEPLOY_JWT_SECRET` | generated | JWT signing secret |
+| `NINEDEPLOY_MASTER_KEY` | generated | AES-256 key for encrypting secrets |
+| `NINEDEPLOY_WILDCARD_DOMAIN` | *(empty)* | Auto-assign `{slug}.domain` URLs |
 
 ## Using the dashboard
 
-1. **Create a service** from the sidebar. Choose Git, Docker image, or a template.
-2. **Set the port** your app listens on.
-3. **Add environment variables** if needed.
-4. **Set CPU and memory limits** if needed.
-5. **Deploy** and watch the live log.
-6. **Add a domain** and enable SSL to get HTTPS.
-7. **Attach a database** to inject `DATABASE_URL` automatically.
+1. **Dashboard** — overview of all services with live health status.
+2. **Hub** — browse 49+ templates, configure & deploy in seconds.
+3. **Services** — create from Git/image, configure env/limits/volumes, deploy.
+4. **Service detail** — live logs, runtime logs, exec terminal, domains, databases, env, webhooks, lifecycle controls, rollback, export.
+5. **Databases** — create via wizard, attach to services, back up & restore.
+6. **Domains** — routing map, SSL toggle per domain.
+7. **Volumes** — inventory, sizes, Docker resources + prune.
+8. **Topology** — visual graph of all connections.
+9. **Monitoring** — live CPU/mem sparklines + host resources.
+10. **Backups** — list, restore, download.
+11. **Tunnels** — Cloudflare Tunnel management.
+12. **Sources** — private repo credentials.
+13. **Users** — team management, role toggle.
+14. **Settings** — theme, accent, wildcard domain, notifications, system migration.
+15. **About** — version, changelog, tech stack.
 
 ## API overview
 
-All API endpoints are under `/v1` and require `Authorization: Bearer <token>`, except for setup, auth, and webhooks.
-
-### Set up the first admin
+All endpoints under `/v1`, require `Authorization: Bearer <token>` (except auth/setup/hooks/events).
 
 ```bash
+# Setup
 curl -X POST http://localhost:3000/v1/setup \
   -H 'Content-Type: application/json' \
   -d '{"email":"admin@example.com","password":"supersecret","name":"Admin"}'
-```
 
-### Log in
-
-```bash
+# Login
 curl -X POST http://localhost:3000/v1/auth/login \
   -H 'Content-Type: application/json' \
   -d '{"email":"admin@example.com","password":"supersecret"}'
-```
 
-Use the returned `accessToken` for all other requests:
-
-```bash
-TOKEN="eyJ..."
-```
-
-### Common endpoints
-
-```bash
-# List services
-curl http://localhost:3000/v1/services -H "Authorization: Bearer $TOKEN"
-
-# Deploy service 1
+# Deploy
 curl -X POST http://localhost:3000/v1/services/1/deploys -H "Authorization: Bearer $TOKEN"
 
-# Create a database
-curl -X POST http://localhost:3000/v1/databases \
-  -H "Authorization: Bearer $TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{"name":"pg","engine":"postgres"}'
+# Stop / Start / Restart
+curl -X POST http://localhost:3000/v1/services/1/stop -H "Authorization: Bearer $TOKEN"
+curl -X POST http://localhost:3000/v1/services/1/restart -H "Authorization: Bearer $TOKEN"
 
-# Add a domain
-curl -X POST http://localhost:3000/v1/services/1/domains \
-  -H "Authorization: Bearer $TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{"hostname":"api.example.com"}'
+# Container exec logs
+curl http://localhost:3000/v1/services/1/logs -H "Authorization: Bearer $TOKEN"
+
+# Export service
+curl -OJ http://localhost:3000/v1/services/1/export -H "Authorization: Bearer $TOKEN"
+
+# Dashboard overview
+curl http://localhost:3000/v1/dashboard -H "Authorization: Bearer $TOKEN"
+
+# System export
+curl -OJ http://localhost:3000/v1/system/export -H "Authorization: Bearer $TOKEN"
 ```
-
-For the full route list, see `apps/server/src/modules/api.ts` and `apps/server/src/modules/*.ts`.
 
 ## CLI
-
-Install the CLI globally:
-
-```bash
-pnpm --filter @ninedeploy/cli build
-ln -s apps/cli/dist/index.js /usr/local/bin/ninedeploy
-```
-
-Commands:
 
 ```bash
 ninedeploy setup          # create the first admin
@@ -171,10 +168,10 @@ ninedeploy services list  # list services
 ninedeploy token create   # create API token for CI
 ```
 
-## Development commands
+## Development
 
 ```bash
-pnpm dev         # start server and web in watch mode
+pnpm dev         # server + web in watch mode
 pnpm build       # production build
 pnpm typecheck   # type-check the monorepo
 pnpm db:generate # generate migration from schema changes
@@ -182,45 +179,6 @@ pnpm db:migrate  # apply migrations
 pnpm db:studio   # open Drizzle Studio
 pnpm clean       # remove dist and node_modules
 ```
-
-## Comparison with alternatives
-
-Based on official docs, GitHub repos, and feature pages (mid-2026).
-
-| Feature | NineDeploy | Coolify | CapRover | Dokploy |
-|---|---|---|---|---|
-| **PM2 support** | ✅ native | ❌ | ❌ | ❌ (open request) |
-| **SQLite (no external DB)** | ✅ | ❌ PostgreSQL | ❌ MongoDB | ❌ PostgreSQL + Redis |
-| **Container loopback-only** | ✅ 127.0.0.1 | ❌ 0.0.0.0 | ❌ 0.0.0.0 | ❌ 0.0.0.0 |
-| **Volume auto-reuse on recreate** | ✅ retained + reused | ⚠️ partial | ⚠️ partial | ❌ warns "data deleted" |
-| **Topology graph** | ✅ React Flow | ❌ | ❌ | ❌ |
-| **Container exec terminal** | ✅ xterm.js | ❌ | ❌ | ❌ |
-| **One-click rollback** | ✅ | ✅ | ❌ | ❌ |
-| Docker deploy | ✅ | ✅ | ✅ | ✅ |
-| Image deploy (no repo) | ✅ | ✅ | ✅ | ✅ |
-| Managed databases | PG/MySQL/Redis/Mongo | ✅ + more | ✅ | ✅ + more |
-| Template hub | 8 apps | **280+** | **hundreds** | ~20 |
-| Auto-deploy webhooks | ✅ | ✅ | ✅ | ✅ |
-| Real-time deploy logs | ✅ WebSocket | ✅ WebSocket | ⚠️ partial | ✅ Redis-relay |
-| Resource monitoring | ✅ sparklines | ✅ + notifications | ✅ NetData | ✅ + AI analysis |
-| Cloudflare Tunnel | ✅ built-in | ✅ built-in | ❌ | ❌ guide only |
-| Auto HTTPS | ✅ Traefik | ✅ | ✅ | ✅ Traefik |
-| CLI | ✅ | ❌ API only | ✅ | ✅ 449 cmds |
-| **License** | **MIT** | Apache-2.0 | Apache-2.0 | Apache-2.0 |
-| GitHub stars | new | **~60k** | ~15k | ~36k |
-
-**NineDeploy unique strengths:**
-- Only PaaS with **PM2 + Docker** dual support
-- **SQLite** — no external database to install/maintain
-- **Container security** — ports bound to `127.0.0.1` only (competitors use `0.0.0.0`)
-- **Volume auto-reuse** — DB deleted → volume retained → recreated → data restored automatically
-- **Interactive topology** — React Flow graph of services ↔ databases ↔ domains
-- **MIT license** — most permissive
-
-**Where competitors lead:**
-- Coolify: 280+ templates, 60k+ stars, mature ecosystem, built-in CF Tunnel
-- Dokploy: AI-powered debugging, MCP server, extensive CLI (449 commands), fast growth
-- CapRover: Docker Swarm clustering, most battle-tested, dedicated CLI since day one
 
 ## License
 

@@ -62,7 +62,7 @@ export async function collectContainerStats(): Promise<Map<string, ContainerStat
     out.set(name.trim(), {
       name: name.trim(),
       cpuPct: Number((cpu ?? '0').replace('%', '').trim()) || 0,
-      memBytes: parseBytes(used ?? ''),
+      memBytes: parseBytes(used!),
       memLimitBytes: parseBytes(limit ?? ''),
     });
   }

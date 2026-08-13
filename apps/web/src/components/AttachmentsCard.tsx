@@ -4,7 +4,7 @@ import { Database, Link2, Trash2 } from 'lucide-react';
 import { api } from '../lib/api.js';
 import { Button, Card, CardBody, Input, Select, Skeleton, StatusBadge } from './ui.js';
 
-function aliasFor(engine: string): string {
+function aliasFor(engine: string | undefined): string {
   return engine === 'redis' ? 'REDIS_URL' : 'DATABASE_URL';
 }
 
@@ -48,7 +48,7 @@ export function AttachmentsCard({ serviceId }: { serviceId: number }) {
             <Input
               value={alias}
               onChange={(e) => setAlias(e.target.value)}
-              placeholder={dbId ? aliasFor(available.find((d) => d.id === Number(dbId))?.engine ?? 'postgres') : 'ALIAS'}
+              placeholder={dbId ? aliasFor(available.find((d) => d.id === Number(dbId))?.engine) : 'ALIAS'}
               className="h-28 w-32 shrink-0 font-mono text-xs"
             />
             <Button size="sm" variant="secondary" disabled={!dbId || attach.isPending} onClick={() => attach.mutate()}>

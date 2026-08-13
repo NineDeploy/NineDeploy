@@ -1,5 +1,5 @@
 import { relations, sql } from 'drizzle-orm';
-import { integer, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 /**
  * NineDeploy — database schema (single source of truth).
@@ -51,6 +51,10 @@ export const users = sqliteTable('users', {
   passwordHash: text('password_hash').notNull(),
   name: text('name'),
   role: text('role', { enum: userRole }).notNull().default('member'),
+  // Monotonic counter baked into issued JWTs (`ver` claim). Bumping it
+  // (logout / role change / password change) invalidates all outstanding tokens
+  // for the user without needing a server-side blocklist.
+  tokenVersion: integer('token_version').notNull().default(0),
   createdAt: ts('created_at'),
   updatedAt: tsUpdatable('updated_at'),
 });
@@ -73,7 +77,9 @@ export const apiTokens = sqliteTable(
     expiresAt: integer('expires_at', { mode: 'timestamp' }),
     createdAt: ts('created_at'),
   },
-  (t) => ({ userIdx: uniqueIndex('api_tokens_user_idx').on(t.userId) }),
+  // Plain index (NOT unique): a user may hold many API tokens. The previous
+  // uniqueIndex here silently capped every user to a single token.
+  (t) => ({ userIdx: index('api_tokens_user_idx').on(t.userId) }),
 );
 
 // ─── projects & services ──────────────────────────────────────────────────
@@ -142,6 +148,9 @@ export const deployments = sqliteTable(
       .references(() => services.id, { onDelete: 'cascade' }),
     status: text('status', { enum: deploymentStatus }).notNull().default('queued'),
     commitSha: text('commit_sha'),
+    // Resolved image digest (sha256:...) the runtime actually ran. Lets rollback
+    // pin the exact image instead of re-pulling a mutable tag like `:latest`.
+    imageDigest: text('image_digest'),
     message: text('message'),
     author: text('author'),
     trigger: text('trigger', { enum: deploymentTrigger }).notNull().default('user'),
@@ -150,7 +159,11 @@ export const deployments = sqliteTable(
     finishedAt: integer('finished_at', { mode: 'timestamp' }),
     createdAt: ts('created_at'),
   },
-  (t) => ({ serviceCreatedIdx: uniqueIndex('deployments_service_created_idx').on(t.serviceId, t.createdAt) }),
+  (t) => ({
+    serviceCreatedIdx: uniqueIndex('deployments_service_created_idx').on(t.serviceId, t.createdAt),
+    // The deploy worker polls WHERE status='queued' every 2s — index status.
+    statusIdx: index('deployments_status_idx').on(t.status),
+  }),
 );
 
 // ─── env vars & secrets ───────────────────────────────────────────────────
@@ -198,7 +211,10 @@ export const domains = sqliteTable(
     createdAt: ts('created_at'),
     updatedAt: tsUpdatable('updated_at'),
   },
-  (t) => ({ hostPathIdx: uniqueIndex('domains_host_path_idx').on(t.hostname, t.path) }),
+  (t) => ({
+    hostPathIdx: uniqueIndex('domains_host_path_idx').on(t.hostname, t.path),
+    serviceIdx: index('domains_service_idx').on(t.serviceId),
+  }),
 );
 
 export const webhooks = sqliteTable('webhooks', {
@@ -215,34 +231,48 @@ export const webhooks = sqliteTable('webhooks', {
 });
 
 // ─── backups & monitoring ─────────────────────────────────────────────────
-export const backups = sqliteTable('backups', {
-  id: id(),
-  databaseId: integer('database_id').references(() => databases.id, { onDelete: 'cascade' }),
-  scope: text('scope', { enum: backupScope }).notNull(),
-  status: text('status', { enum: backupStatus }).notNull().default('pending'),
-  path: text('path').notNull(),
-  sizeBytes: integer('size_bytes').notNull().default(0),
-  createdAt: ts('created_at'),
-});
+export const backups = sqliteTable(
+  'backups',
+  {
+    id: id(),
+    databaseId: integer('database_id').references(() => databases.id, { onDelete: 'cascade' }),
+    scope: text('scope', { enum: backupScope }).notNull(),
+    status: text('status', { enum: backupStatus }).notNull().default('pending'),
+    path: text('path').notNull(),
+    sizeBytes: integer('size_bytes').notNull().default(0),
+    createdAt: ts('created_at'),
+  },
+  (t) => ({ dbStatusIdx: index('backups_db_status_idx').on(t.databaseId, t.status) }),
+);
 
-export const metrics = sqliteTable('metrics', {
-  id: id(),
-  serviceId: integer('service_id')
-    .notNull()
-    .references(() => services.id, { onDelete: 'cascade' }),
-  kind: text('kind').notNull(), // cpu | memory | status | response_ms
-  value: integer('value').notNull(),
-  ts: ts('ts'),
-});
+export const metrics = sqliteTable(
+  'metrics',
+  {
+    id: id(),
+    serviceId: integer('service_id')
+      .notNull()
+      .references(() => services.id, { onDelete: 'cascade' }),
+    kind: text('kind').notNull(), // cpu | memory | status | response_ms
+    value: integer('value').notNull(),
+    ts: ts('ts'),
+  },
+  // High-volume time-series table: every read filters serviceId + kind + ts>=,
+  // and retention deletes by ts. A composite index makes both fast.
+  (t) => ({ serviceKindTsIdx: index('metrics_service_kind_ts_idx').on(t.serviceId, t.kind, t.ts) }),
+);
 
-export const auditLog = sqliteTable('audit_log', {
-  id: id(),
-  userId: integer('user_id').references(() => users.id, { onDelete: 'set null' }),
-  action: text('action').notNull(),
-  entity: text('entity'),
-  meta: text('meta', { mode: 'json' }).$type<Record<string, unknown>>(),
-  ts: ts('ts'),
-});
+export const auditLog = sqliteTable(
+  'audit_log',
+  {
+    id: id(),
+    userId: integer('user_id').references(() => users.id, { onDelete: 'set null' }),
+    action: text('action').notNull(),
+    entity: text('entity'),
+    meta: text('meta', { mode: 'json' }).$type<Record<string, unknown>>(),
+    ts: ts('ts'),
+  },
+  (t) => ({ entityTsIdx: index('audit_log_entity_ts_idx').on(t.entity, t.ts) }),
+);
 
 export const settings = sqliteTable(
   'settings',
@@ -316,6 +346,38 @@ export const tunnels = sqliteTable(
     updatedAt: tsUpdatable('updated_at'),
   },
   (t) => ({ slugIdx: uniqueIndex('tunnels_slug_idx').on(t.slug) }),
+);
+
+// ─── notification channels ────────────────────────────────────────────────
+export const channelType = ['telegram', 'webhook', 'discord'] as const;
+
+export const notificationChannels = sqliteTable(
+  'notification_channels',
+  {
+    id: id(),
+    name: text('name').notNull(),
+    type: text('type', { enum: channelType }).notNull(),
+    targetEncrypted: text('target_encrypted').notNull(),
+    eventFilter: text('event_filter').notNull().default(''),
+    active: integer('active', { mode: 'boolean' }).notNull().default(true),
+    createdAt: ts('created_at'),
+    updatedAt: tsUpdatable('updated_at'),
+  },
+  (t) => ({ nameIdx: uniqueIndex('notification_channels_name_idx').on(t.name) }),
+);
+
+export const notificationLog = sqliteTable(
+  'notification_log',
+  {
+    id: id(),
+    channelId: integer('channel_id').references(() => notificationChannels.id, { onDelete: 'cascade' }),
+    event: text('event').notNull(),
+    entity: text('entity'),
+    status: text('status', { enum: ['sent', 'failed'] as const }).notNull().default('sent'),
+    error: text('error'),
+    ts: ts('ts'),
+  },
+  (t) => ({ channelTsIdx: index('notification_log_channel_ts_idx').on(t.channelId, t.ts) }),
 );
 
 // ─── relations ────────────────────────────────────────────────────────────
@@ -394,3 +456,5 @@ export type Database = typeof databases.$inferSelect;
 export type NewDatabase = typeof databases.$inferInsert;
 export type DatabaseAttachment = typeof databaseAttachments.$inferSelect;
 export type Tunnel = typeof tunnels.$inferSelect;
+export type NotificationChannel = typeof notificationChannels.$inferSelect;
+export type NotificationLog = typeof notificationLog.$inferSelect;

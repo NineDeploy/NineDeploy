@@ -1,0 +1,138 @@
+import { useQuery } from '@tanstack/react-query';
+import { ExternalLink, GitBranch, Heart, Package, Shield, Sparkles, Terminal } from 'lucide-react';
+import { api } from '../lib/api.js';
+import { Card, CardBody, Skeleton } from '../components/ui.js';
+
+export function About() {
+  const about = useQuery({ queryKey: ['about'], queryFn: () => api.about.get(), staleTime: 60000 });
+
+  if (about.isLoading) {
+    return (
+      <div className="max-w-3xl">
+        <Skeleton className="h-8 w-48" />
+        <Skeleton className="mt-4 h-32 w-full" />
+      </div>
+    );
+  }
+
+  const data = about.data;
+  if (!data) return null;
+  const latest = data.changelog[0];
+  if (!latest) return null;
+
+  return (
+    <div className="max-w-3xl">
+      {/* Hero */}
+      <Card className="mb-5 overflow-hidden">
+        <div className="relative px-6 py-8" style={{ background: 'linear-gradient(135deg, rgba(99,102,241,.08), rgba(139,92,246,.04))' }}>
+          <div className="flex items-center gap-4">
+            <div className="grid h-14 w-14 place-items-center rounded-2xl text-2xl font-bold text-white shadow-lg shadow-indigo-500/30"
+              style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6, #d946ef)' }}>
+              9
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold tracking-tight">{data.name}</h1>
+              <p className="text-sm text-slate-400">{data.description}</p>
+            </div>
+          </div>
+          <div className="mt-4 flex flex-wrap gap-3">
+            <Badge icon={<Package size={12} />} label={`v${data.version}`} tone="indigo" />
+            <Badge icon={<Shield size={12} />} label={data.license} tone="emerald" />
+            <Badge icon={<GitBranch size={12} />} label={`${data.stats.services} services`} />
+            <Badge icon={<Terminal size={12} />} label={`${data.stats.deployments} deploys`} />
+            <Badge label={`${data.stats.databases} databases`} />
+            <Badge label={`${data.stats.users} users`} />
+          </div>
+        </div>
+      </Card>
+
+      {/* What's New */}
+      <Card className="mb-5">
+        <CardBody>
+          <div className="mb-4 flex items-center gap-2">
+            <Sparkles size={16} className="text-indigo-400" />
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">What's New — v{latest.version}</h2>
+            <span className="ml-auto text-xs text-slate-600">{latest.date}</span>
+          </div>
+          <p className="mb-3 text-sm font-medium text-slate-300">{latest.title}</p>
+          <ul className="space-y-1.5">
+            {latest.changes.map((change, i) => (
+              <li key={i} className="flex items-start gap-2 text-sm text-slate-400">
+                <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-indigo-400" />
+                {change}
+              </li>
+            ))}
+          </ul>
+        </CardBody>
+      </Card>
+
+      {/* Tech Stack */}
+      <Card className="mb-5">
+        <CardBody>
+          <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-500">Tech Stack</h2>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            {data.techStack.map((group) => (
+              <div key={group.category} className="rounded-lg bg-white/[0.02] p-3">
+                <div className="mb-1.5 text-xs font-medium text-indigo-300">{group.category}</div>
+                {group.items.map((item) => (
+                  <div key={item} className="text-xs text-slate-400">{item}</div>
+                ))}
+              </div>
+            ))}
+          </div>
+        </CardBody>
+      </Card>
+
+      {/* Links */}
+      <Card className="mb-5">
+        <CardBody>
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">Links</h2>
+          <div className="flex flex-wrap gap-2">
+            <a href={data.repo} target="_blank" rel="noreferrer"
+              className="flex items-center gap-2 rounded-lg bg-white/[0.04] px-3 py-2 text-sm text-slate-300 transition hover:bg-white/[0.08]">
+              <GitBranch size={15} /> GitHub
+            </a>
+            <a href={data.docs} target="_blank" rel="noreferrer"
+              className="flex items-center gap-2 rounded-lg bg-white/[0.04] px-3 py-2 text-sm text-slate-300 transition hover:bg-white/[0.08]">
+              <ExternalLink size={15} /> Docs
+            </a>
+          </div>
+        </CardBody>
+      </Card>
+
+      {/* Update info */}
+      <Card>
+        <CardBody>
+          <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">Updates</h2>
+          <p className="text-sm text-slate-400">
+            You're running <span className="font-mono font-medium text-indigo-300">v{data.version}</span>. To update:
+          </p>
+          <pre className="mt-2 overflow-auto rounded-lg bg-black/30 p-3 font-mono text-xs text-slate-300 ring-1 ring-inset ring-white/5">
+{`cd ninedeploy
+git pull origin main
+pnpm install && pnpm build
+pnpm db:migrate
+sudo systemctl restart ninedeploy`}
+          </pre>
+        </CardBody>
+      </Card>
+
+      {/* Footer */}
+      <div className="mt-6 flex items-center justify-center gap-1.5 text-xs text-slate-600">
+        Built with <Heart size={11} className="text-rose-500" /> using TypeScript, React, Fastify &amp; Docker
+      </div>
+    </div>
+  );
+}
+
+function Badge({ icon, label, tone }: { icon?: React.ReactNode; label: string; tone?: 'indigo' | 'emerald' }) {
+  const tones: Record<string, string> = {
+    indigo: 'bg-indigo-500/15 text-indigo-300',
+    emerald: 'bg-emerald-500/15 text-emerald-300',
+  };
+  return (
+    <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ${tone ? tones[tone] : 'bg-white/[0.06] text-slate-300'}`}>
+      {icon} {label}
+    </span>
+  );
+}

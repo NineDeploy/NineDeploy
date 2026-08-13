@@ -1,0 +1,130 @@
+import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { screen, waitFor, fireEvent } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { Databases } from '../src/routes/Databases.js';
+import { api } from '../src/lib/api.js';
+import { renderWithProviders, mockOf } from './helpers.js';
+
+vi.mock('../src/lib/api.js', async () => {
+  const { createFakeApiModule } = await import('./helpers.js');
+  return createFakeApiModule();
+});
+
+vi.mock('../src/components/DatabaseWizard.js', () => ({
+  DatabaseWizard: ({ onClose }: { onClose: () => void }) => (
+    <div data-testid="db-wizard">
+      wizard
+      <button onClick={onClose}>close wizard</button>
+    </div>
+  ),
+}));
+
+const databases = [
+  {
+    id: 1,
+    name: 'main-db',
+    engine: 'postgres',
+    version: '16',
+    status: 'running',
+    connectionString: 'postgres://user:pass@localhost:5432/main',
+  },
+  {
+    id: 2,
+    name: 'cache',
+    engine: 'unknown-engine',
+    version: null,
+    status: 'stopped',
+    connectionString: null,
+  },
+];
+
+describe('Databases', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: vi.fn().mockResolvedValue(undefined) },
+      configurable: true,
+    });
+  });
+
+  it('shows skeleton cards while loading', () => {
+    mockOf(api.databases.list).mockReturnValue(new Promise(() => {}));
+    renderWithProviders(<Databases />);
+    expect(document.querySelectorAll('.animate-pulse').length).toBe(6);
+  });
+
+  it('shows empty state when there are no databases', async () => {
+    mockOf(api.databases.list).mockResolvedValue([] as never);
+    renderWithProviders(<Databases />);
+    await screen.findByText('No databases');
+  });
+
+  it('renders database cards with engine labels, connection strings and gauges', async () => {
+    mockOf(api.databases.list).mockResolvedValue(databases as never);
+    mockOf(api.backups.storage).mockResolvedValue({ sizeBytes: 200 * 1024 * 1024 } as never);
+    renderWithProviders(<Databases />);
+    await screen.findByText('main-db');
+    // known engine label + version
+    expect(screen.getByText('PostgreSQL 16')).toBeInTheDocument();
+    // unknown engine falls back to raw value, no version
+    expect(screen.getByText('unknown-engine')).toBeInTheDocument();
+    // status badges
+    expect(screen.getByText('running')).toBeInTheDocument();
+    expect(screen.getByText('stopped')).toBeInTheDocument();
+    // connection string button for running db
+    expect(screen.getByText('postgres://user:pass@localhost:5432/main')).toBeInTheDocument();
+    // 'Not running' for the stopped one
+    expect(screen.getByText('Not running')).toBeInTheDocument();
+    // StorageGauge rendered for running db (Volume label)
+    await screen.findByText('Volume');
+  });
+
+  it('copies a connection string and shows the check state', async () => {
+    mockOf(api.databases.list).mockResolvedValue(databases as never);
+    mockOf(api.backups.storage).mockResolvedValue({ sizeBytes: 10 * 1024 * 1024 } as never);
+    renderWithProviders(<Databases />);
+    const copyButton = await screen.findByTitle('Copy connection string');
+    await userEvent.click(copyButton);
+    await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith(databases[0]!.connectionString));
+    // the copied indicator (Check icon) resets after the 1500ms timeout
+    await waitFor(() => expect(copyButton.querySelector('.lucide-check')).toBeNull(), { timeout: 2500 });
+  });
+
+  it('ignores clipboard failure', async () => {
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: vi.fn().mockRejectedValue(new Error('blocked')) },
+      configurable: true,
+    });
+    mockOf(api.databases.list).mockResolvedValue(databases as never);
+    mockOf(api.backups.storage).mockResolvedValue({ sizeBytes: 10 * 1024 * 1024 } as never);
+    renderWithProviders(<Databases />);
+    const copyButton = await screen.findByTitle('Copy connection string');
+    await userEvent.click(copyButton);
+    await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalled());
+  });
+
+  it('triggers a backup and removes a database', async () => {
+    mockOf(api.databases.list).mockResolvedValue(databases as never);
+    mockOf(api.backups.storage).mockResolvedValue({ sizeBytes: 10 * 1024 * 1024 } as never);
+    mockOf(api.backups.backupNow).mockResolvedValue({ id: 9 } as never);
+    mockOf(api.databases.remove).mockResolvedValue(undefined as never);
+    renderWithProviders(<Databases />);
+    await screen.findByText('main-db');
+    const backupButtons = screen.getAllByRole('button', { name: /Backup/ });
+    fireEvent.click(backupButtons[0]!);
+    await waitFor(() => expect(api.backups.backupNow).toHaveBeenCalledWith(1));
+    const removeButton = screen.getAllByRole('button', { name: /Remove/ })[0]!;
+    fireEvent.click(removeButton);
+    await waitFor(() => expect(api.databases.remove).toHaveBeenCalledWith(1));
+  });
+
+  it('opens and closes the database wizard', async () => {
+    const user = userEvent.setup();
+    mockOf(api.databases.list).mockResolvedValue([] as never);
+    renderWithProviders(<Databases />);
+    await user.click(await screen.findByRole('button', { name: /New database/ }));
+    expect(screen.getByTestId('db-wizard')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'close wizard' }));
+    expect(screen.queryByTestId('db-wizard')).not.toBeInTheDocument();
+  });
+});

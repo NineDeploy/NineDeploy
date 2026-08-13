@@ -1,4 +1,4 @@
-import { and, count, eq } from 'drizzle-orm';
+import { and, count, eq, sql } from 'drizzle-orm';
 import type { FastifyPluginAsync } from 'fastify';
 import { apiTokens, type DB, users, type User } from '@ninedeploy/db';
 import type { PublicUser, Register, TokenPair } from '@ninedeploy/schemas';
@@ -10,10 +10,12 @@ import { signAccessToken, signRefreshToken, ttlSeconds, verifyJwt } from '../lib
 
 const toUser = (u: User): PublicUser => ({ id: u.id, email: u.email, name: u.name, role: u.role });
 
-async function issueTokens(userId: number): Promise<TokenPair> {
+async function issueTokens(user: User): Promise<TokenPair> {
+  // Bake the user's tokenVersion into the JWT so a later bump (logout / role
+  // change / password change) invalidates these tokens.
   const [accessToken, refreshToken] = await Promise.all([
-    signAccessToken(userId),
-    signRefreshToken(userId),
+    signAccessToken(user.id, user.tokenVersion),
+    signRefreshToken(user.id, user.tokenVersion),
   ]);
   return { accessToken, refreshToken, expiresIn: ttlSeconds(config.jwt.accessTtl) };
 }
@@ -33,7 +35,7 @@ export async function createFirstAdmin(db: DB, input: Register) {
     .values({ email: input.email, passwordHash, name: input.name ?? null, role: 'admin' })
     .returning();
   if (!user) throw badRequest('Could not create user');
-  return { user: toUser(user), tokens: await issueTokens(user.id) };
+  return { user: toUser(user), tokens: await issueTokens(user) };
 }
 
 /** Register a user. The first user becomes admin; everyone else is a member. */
@@ -50,25 +52,30 @@ export async function registerAccount(db: DB, input: Register) {
     throw badRequest('Email is already registered', 'email_taken');
   }
   if (!user) throw badRequest('Could not create user');
-  return { user: toUser(user), tokens: await issueTokens(user.id) };
+  return { user: toUser(user), tokens: await issueTokens(user) };
 }
+
+/** Tighter rate limit for credential-bearing endpoints (brute-force / credential-stuffing defense). */
+const AUTH_LIMIT = { max: 20, timeWindow: '1 minute' };
 
 export const authRoutes: FastifyPluginAsync = async (app) => {
   // Public: whether the instance has any users yet (drives first-run setup UI).
   app.get('/status', async () => ({ initialized: (await userCount(app.db)) > 0 }));
 
-  app.post('/register', async (req) => registerAccount(app.db, register.parse(req.body)));
+  app.post('/register', { config: { rateLimit: AUTH_LIMIT } }, async (req) =>
+    registerAccount(app.db, register.parse(req.body)),
+  );
 
-  app.post('/login', async (req) => {
+  app.post('/login', { config: { rateLimit: AUTH_LIMIT } }, async (req) => {
     const input = login.parse(req.body);
     const user = await app.db.query.users.findFirst({ where: eq(users.email, input.email) });
     if (!user || !(await verifyPassword(user.passwordHash, input.password))) {
       throw unauthorized('Invalid email or password');
     }
-    return { user: toUser(user), tokens: await issueTokens(user.id) };
+    return { user: toUser(user), tokens: await issueTokens(user) };
   });
 
-  app.post('/refresh', async (req) => {
+  app.post('/refresh', { config: { rateLimit: AUTH_LIMIT } }, async (req) => {
     const input = refresh.parse(req.body);
     let payload;
     try {
@@ -80,13 +87,24 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     const userId = Number(payload.sub);
     const user = await app.db.query.users.findFirst({ where: eq(users.id, userId) });
     if (!user) throw unauthorized();
-    return { user: toUser(user), tokens: await issueTokens(userId) };
+    return { user: toUser(user), tokens: await issueTokens(user) };
   });
 
   app.get('/me', { onRequest: [app.authenticate] }, async (req) => {
     const user = await app.db.query.users.findFirst({ where: eq(users.id, req.user!.id) });
     if (!user) throw unauthorized();
     return toUser(user);
+  });
+
+  // Logout: bump the user's tokenVersion so every outstanding JWT (access +
+  // refresh) for this user is rejected on its next verification. Stateless
+  // revocation without a server-side blocklist.
+  app.post('/logout', { onRequest: [app.authenticate] }, async (req) => {
+    await app.db
+      .update(users)
+      .set({ tokenVersion: sql`${users.tokenVersion} + 1` })
+      .where(eq(users.id, req.user!.id));
+    return { ok: true };
   });
 
   // ── API tokens (for the CLI / CI) ────────────────────────────────────────

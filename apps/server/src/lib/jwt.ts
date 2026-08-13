@@ -5,10 +5,14 @@ const secret = new TextEncoder().encode(config.jwt.secret);
 
 export interface AppJwtPayload extends JWTPayload {
   type: 'access' | 'refresh';
+  /** Token-version marker; must match the user's `tokenVersion` or the token is rejected. */
+  ver?: number;
 }
 
-function sign(userId: number, type: 'access' | 'refresh', ttl: string): Promise<string> {
-  return new SignJWT({ type })
+function sign(userId: number, type: 'access' | 'refresh', ttl: string, ver?: number): Promise<string> {
+  const claims: Record<string, unknown> = { type };
+  if (ver !== undefined) claims['ver'] = ver;
+  return new SignJWT(claims)
     .setProtectedHeader({ alg: 'HS256' })
     .setSubject(String(userId))
     .setIssuedAt()
@@ -16,8 +20,8 @@ function sign(userId: number, type: 'access' | 'refresh', ttl: string): Promise<
     .sign(secret);
 }
 
-export const signAccessToken = (userId: number) => sign(userId, 'access', config.jwt.accessTtl);
-export const signRefreshToken = (userId: number) => sign(userId, 'refresh', config.jwt.refreshTtl);
+export const signAccessToken = (userId: number, ver?: number) => sign(userId, 'access', config.jwt.accessTtl, ver);
+export const signRefreshToken = (userId: number, ver?: number) => sign(userId, 'refresh', config.jwt.refreshTtl, ver);
 
 export async function verifyJwt(token: string): Promise<AppJwtPayload> {
   const { payload } = await jwtVerify(token, secret);

@@ -1,4 +1,5 @@
 import { createReadStream, existsSync, statSync, unlinkSync } from 'node:fs';
+import { audit } from "../lib/audit.js";
 import path from 'node:path';
 import { desc, eq } from 'drizzle-orm';
 import { backups, databases } from '@ninedeploy/db';
@@ -58,6 +59,7 @@ export const databaseBackupRoutes: FastifyPluginAsync = async (app) => {
       throw badRequest(`Backup failed: ${err instanceof Error ? err.message : err}`);
     }
     const updated = await app.db.query.backups.findFirst({ where: eq(backups.id, row!.id) });
+    void audit(app.db, req.user!.id, 'backup.create', d.name);
     return serialize(updated!);
   });
 
@@ -74,6 +76,7 @@ export const databaseBackupRoutes: FastifyPluginAsync = async (app) => {
     } catch (err) {
       throw badRequest(`Restore failed: ${err instanceof Error ? err.message : err}`);
     }
+    void audit(app.db, req.user!.id, 'backup.restore', path.basename(b.path));
     return { ok: true };
   });
 };
@@ -94,6 +97,7 @@ export const backupRoutes: FastifyPluginAsync = async (app) => {
     const b = await app.db.query.backups.findFirst({ where: eq(backups.id, bid) });
     if (b && existsSync(b.path)) unlinkSync(b.path);
     await app.db.delete(backups).where(eq(backups.id, bid));
+    void audit(app.db, req.user!.id, 'backup.delete', `#${bid}`);
     return { ok: true };
   });
 

@@ -1,0 +1,103 @@
+import { describe, expect, it } from 'vitest';
+import { encrypt } from '../src/lib/crypto.js';
+import { envRoutes } from '../src/modules/env.js';
+import { asUser, buildTestApp, createFakeDb, envVarRow } from './helpers.js';
+
+describe('env routes (src/modules/env.ts)', () => {
+  it('lists env vars, decrypting non-secret values and masking secrets', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findMany: {
+          envVars: [
+            envVarRow({ id: 1, key: 'PORT', valueEncrypted: encrypt('8080'), isSecret: false }),
+            envVarRow({ id: 2, key: 'TOKEN', valueEncrypted: encrypt('hunter2'), isSecret: true }),
+          ],
+        },
+      }),
+    });
+    await app.register(envRoutes);
+    const res = await app.inject({ method: 'GET', url: '/1/env', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual([
+      { id: 1, key: 'PORT', value: '8080', isSecret: false },
+      { id: 2, key: 'TOKEN', value: '', isSecret: true },
+    ]);
+  });
+
+  it('creates an env var', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({ insert: { env_vars: [envVarRow({ id: 3, key: 'NODE_ENV', isSecret: false, valueEncrypted: encrypt('production') })] } }),
+    });
+    await app.register(envRoutes);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/1/env',
+      headers: asUser(),
+      payload: { key: 'NODE_ENV', value: 'production', isSecret: false },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ id: 3, key: 'NODE_ENV', isSecret: false });
+  });
+
+  it('returns 400 when the key already exists', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({ insert: { env_vars: () => { throw new Error('UNIQUE constraint'); } } }),
+    });
+    await app.register(envRoutes);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/1/env',
+      headers: asUser(),
+      payload: { key: 'PORT', value: '1' },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('updates an env var', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({ update: { env_vars: [envVarRow({ id: 3, key: 'PORT', isSecret: true, valueEncrypted: encrypt('9999') })] } }),
+    });
+    await app.register(envRoutes);
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/1/env/3',
+      headers: asUser(),
+      payload: { key: 'PORT', value: '9999', isSecret: true },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ id: 3, key: 'PORT', value: '', isSecret: true });
+  });
+
+  it('returns 404 when updating a missing env var', async () => {
+    const app = await buildTestApp({ db: createFakeDb({ update: { env_vars: [] } }) });
+    await app.register(envRoutes);
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/1/env/99',
+      headers: asUser(),
+      payload: { key: 'PORT', value: '1' },
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('deletes an env var', async () => {
+    const app = await buildTestApp({ db: createFakeDb() });
+    await app.register(envRoutes);
+    const res = await app.inject({ method: 'DELETE', url: '/1/env/3', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: true });
+  });
+
+  it('rejects an invalid payload with a validation envelope', async () => {
+    const app = await buildTestApp({ db: createFakeDb() });
+    await app.register(envRoutes);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/1/env',
+      headers: asUser(),
+      payload: { value: 'missing-key' },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('validation_error');
+  });
+});

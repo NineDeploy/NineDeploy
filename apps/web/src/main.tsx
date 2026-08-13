@@ -4,6 +4,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter } from 'react-router';
 import App from './App.js';
 import { AuthProvider } from './lib/auth.js';
+import { ThemeProvider } from './lib/theme.js';
+import { ToastProvider } from './components/Toast.js';
 import './index.css';
 
 const rootEl = document.getElementById('root');
@@ -18,11 +20,15 @@ const queryClient = new QueryClient({
 createRoot(rootEl).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <AuthProvider>
-          <App />
-        </AuthProvider>
-      </BrowserRouter>
+      <ThemeProvider>
+        <ToastProvider>
+          <BrowserRouter>
+            <AuthProvider>
+              <App />
+            </AuthProvider>
+          </BrowserRouter>
+        </ToastProvider>
+      </ThemeProvider>
     </QueryClientProvider>
   </StrictMode>,
 );

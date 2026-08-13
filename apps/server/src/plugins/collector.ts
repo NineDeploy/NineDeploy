@@ -51,7 +51,7 @@ export default fp(
     fastify.decorate('stats', { raw: () => cache });
     fastify.addHook('onClose', async () => {
       running = false;
-      if (timer) clearTimeout(timer);
+      clearTimeout(timer);
     });
 
     timer = setTimeout(() => void tick(), 5000);

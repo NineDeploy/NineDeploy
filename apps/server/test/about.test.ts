@@ -1,0 +1,37 @@
+import { describe, expect, it } from 'vitest';
+import { aboutRoutes } from '../src/modules/about.js';
+import { buildTestApp, createFakeDb } from './helpers.js';
+
+describe('about routes', () => {
+  it('returns ABOUT info with counts from the db', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        counts: { services: [{ n: 3 }], databases: [{ n: 2 }], deployments: [{ n: 5 }], users: [{ n: 1 }] },
+      }),
+    });
+    await app.register(aboutRoutes);
+    const res = await app.inject({ method: 'GET', url: '/' });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.name).toBe('NineDeploy');
+    expect(body.stats).toEqual({ services: 3, databases: 2, deployments: 5, users: 1 });
+  });
+
+  it('falls back to zero when count rows are missing', async () => {
+    const app = await buildTestApp({ db: createFakeDb({ counts: {} }) });
+    await app.register(aboutRoutes);
+    const res = await app.inject({ method: 'GET', url: '/' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().stats).toEqual({ services: 0, databases: 0, deployments: 0, users: 0 });
+  });
+
+  it('keeps zeroed stats when the db is unavailable', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({ selectError: { services: new Error('down'), databases: new Error('down'), deployments: new Error('down'), users: new Error('down') } }),
+    });
+    await app.register(aboutRoutes);
+    const res = await app.inject({ method: 'GET', url: '/' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().stats).toEqual({ services: 0, databases: 0, deployments: 0, users: 0 });
+  });
+});

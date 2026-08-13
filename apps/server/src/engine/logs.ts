@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { appendFileSync, existsSync, readFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { config } from '../config.js';
 
@@ -31,3 +31,34 @@ class LogBus extends EventEmitter {
 }
 
 export const logBus = new LogBus();
+
+/**
+ * Remove deploy-log files older than `maxAgeMs` (judged by mtime). Deploy logs
+ * accumulate one file per deployment and are never otherwise cleaned up, so
+ * without this the logs directory grows without bound. Returns the count removed.
+ */
+export function pruneOldLogs(maxAgeMs: number): number {
+  const dir = config.paths.logsDir;
+  const cutoff = Date.now() - maxAgeMs;
+  let removed = 0;
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return 0; // directory missing — nothing to prune
+  }
+  for (const name of entries) {
+    if (!name.endsWith('.log')) continue;
+    const file = path.join(dir, name);
+    try {
+      if (statSync(file).mtimeMs < cutoff) {
+        rmSync(file, { force: true });
+        removed++;
+      }
+    } catch {
+      /* best effort — file may have vanished between readdir and stat */
+    }
+  }
+  return removed;
+}
+

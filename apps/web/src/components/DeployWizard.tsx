@@ -4,6 +4,7 @@ import { ArrowLeft, ArrowRight, Check, Plus, Rocket, X } from 'lucide-react';
 import { useNavigate } from 'react-router';
 import type { Template } from '@ninedeploy/sdk';
 import { api } from '../lib/api.js';
+import { useToast } from './Toast.js';
 import { Button, Input, Select, cn } from './ui.js';
 
 const STEPS = ['Source', 'Runtime', 'Environment', 'Resources', 'Review'];
@@ -13,6 +14,7 @@ interface EnvRow { key: string; value: string; secret: boolean }
 export function DeployWizard({ template, onClose }: { template?: Template; onClose: () => void }) {
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const { toast } = useToast();
   const sources = useQuery({ queryKey: ['sources'], queryFn: () => api.sources.list() });
 
   const [step, setStep] = useState(0);
@@ -55,9 +57,11 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
     },
     onSuccess: (svc) => {
       qc.invalidateQueries({ queryKey: ['services'] });
+      toast('Deploy started — building…', 'info');
       navigate(`/services/${svc.id}`);
       onClose();
     },
+    onError: (err) => toast(err instanceof Error ? err.message : 'Deploy failed', 'error'),
   });
 
   const canNext =
@@ -208,5 +212,5 @@ function L({ label, children }: { label: string; children: React.ReactNode }) {
   return <div><span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-slate-400">{label}</span>{children}</div>;
 }
 function Row({ label, value }: { label: string; value: string }) {
-  return <div className="flex items-center justify-between rounded-lg bg-white/[0.02] px-3 py-2"><span className="text-xs text-slate-500">{label}</span><span className="max-w-[60%] truncate font-medium text-slate-200">{value || '—'}</span></div>;
+  return <div className="flex items-center justify-between rounded-lg bg-white/[0.02] px-3 py-2"><span className="text-xs text-slate-500">{label}</span><span className="max-w-[60%] truncate font-medium text-slate-200">{value}</span></div>;
 }

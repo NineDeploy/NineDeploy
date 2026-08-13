@@ -1,12 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { type RefObject, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Check, Copy, ExternalLink, GitBranch, Globe, Play, Plus, Rocket, RotateCcw, Square, Terminal, Trash2, Webhook } from 'lucide-react';
+import { ArrowLeft, Check, Copy, Download, ExternalLink, GitBranch, Globe, Play, Plus, Rocket, RotateCcw, Square, Terminal, Trash2, Webhook } from 'lucide-react';
 import { Link, useParams } from 'react-router';
-import { api } from '../lib/api.js';
+import { api, getToken } from '../lib/api.js';
 import { useDeployLogs } from '../lib/useDeployLogs.js';
 import { AttachmentsCard } from '../components/AttachmentsCard.js';
 import { ContainerTerminal } from '../components/ContainerTerminal.js';
 import { EnvCard } from '../components/EnvCard.js';
+import { useToast } from '../components/Toast.js';
 import { Button, Card, CardBody, Input, Skeleton, Spinner, StatusBadge, cn } from '../components/ui.js';
 
 const IN_FLIGHT = ['queued', 'building', 'deploying'];
@@ -15,6 +16,7 @@ export function ServiceDetail() {
   const params = useParams();
   const id = Number(params['id']);
   const qc = useQueryClient();
+  const { toast } = useToast();
   const [activeDeploy, setActiveDeploy] = useState<number | null>(null);
 
   const service = useQuery({
@@ -45,7 +47,11 @@ export function ServiceDetail() {
 
   const lifecycle = useMutation({
     mutationFn: (action: 'stop' | 'start' | 'restart') => api.services[action](id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['service', id] }),
+    onSuccess: (_d, action) => {
+      qc.invalidateQueries({ queryKey: ['service', id] });
+      toast(`Service ${action}ed`, 'success');
+    },
+    onError: () => toast('Action failed', 'error'),
   });
 
   const rollback = useMutation({
@@ -54,11 +60,30 @@ export function ServiceDetail() {
       setActiveDeploy(res.deploymentId);
       qc.invalidateQueries({ queryKey: ['deploys', id] });
       qc.invalidateQueries({ queryKey: ['service', id] });
+      toast('Rollback started', 'info');
     },
   });
 
   const [showRuntimeLogs, setShowRuntimeLogs] = useState(false);
   const [showExec, setShowExec] = useState(false);
+
+  const doExportService = async () => {
+    try {
+      toast('Exporting service…', 'info');
+      const res = await fetch(`/v1/services/${id}/export`, { headers: { Authorization: `Bearer ${getToken() ?? ''}` } });
+      if (!res.ok) throw new Error('Export failed');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${svc?.slug ?? 'service'}-export.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast('Service exported', 'success');
+    } catch {
+      toast('Export failed', 'error');
+    }
+  };
   const runtimeLogs = useQuery({
     queryKey: ['runtime-logs', id],
     queryFn: () => api.services.logs(id),
@@ -108,6 +133,16 @@ export function ServiceDetail() {
             {svc.port && <span>: {svc.port}</span>}
             <span className="truncate">{svc.repoUrl}</span>
           </p>
+          {svc.autoUrl && (
+            <a
+              href={`http://${svc.autoUrl}`}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-emerald-500/10 px-3 py-1.5 font-mono text-xs text-emerald-300 ring-1 ring-inset ring-emerald-500/20 transition hover:bg-emerald-500/15"
+            >
+              <ExternalLink size={12} /> {svc.autoUrl}
+            </a>
+          )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button onClick={() => trigger.mutate()} disabled={trigger.isPending}>
@@ -138,6 +173,9 @@ export function ServiceDetail() {
               <Terminal size={15} /> {showExec ? 'Hide shell' : 'Exec'}
             </Button>
           )}
+          <Button variant="ghost" size="md" onClick={doExportService} title="Export service">
+            <Download size={15} /> Export
+          </Button>
         </div>
       </div>
 

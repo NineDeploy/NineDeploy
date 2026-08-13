@@ -1,13 +1,63 @@
-import { useQuery } from '@tanstack/react-query';
-import { Cpu, Database, HardDrive, Info, Network, Package, Server } from 'lucide-react';
-import { api } from '../lib/api.js';
-import { Card, CardBody, Skeleton } from '../components/ui.js';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Cpu, Database, Download, HardDrive, Info, Network, Package, Send, Server, Trash2, Upload } from 'lucide-react';
+import { useRef, useState } from 'react';
+import { api, getToken } from '../lib/api.js';
+import { useTheme, ACCENTS } from '../lib/theme.js';
+import { useToast } from '../components/Toast.js';
+import { Button, Card, CardBody, Skeleton, cn } from '../components/ui.js';
+import { NotificationWizard } from '../components/NotificationWizard.js';
 
 export function Settings() {
+  const qc = useQueryClient();
   const stats = useQuery({ queryKey: ['stats'], queryFn: () => api.stats.snapshot(), staleTime: 10000 });
   const resources = useQuery({ queryKey: ['docker-resources'], queryFn: () => api.system.resources(), staleTime: 10000 });
+  const { theme, accent, setTheme, setAccent } = useTheme();
+  const { toast } = useToast();
   const host = stats.data?.host;
   const s = resources.data;
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [importing, setImporting] = useState(false);
+  const channels = useQuery({ queryKey: ['notif-channels'], queryFn: () => api.notifications.listChannels() });
+  const [showChannel, setShowChannel] = useState(false);
+  const removeChannel = useMutation({ mutationFn: (id: number) => api.notifications.removeChannel(id), onSuccess: () => qc.invalidateQueries({ queryKey: ['notif-channels'] }) });
+  const testChannel = useMutation({ mutationFn: (id: number) => api.notifications.testChannel(id), onSuccess: () => toast('Test sent!', 'success'), onError: () => toast('Test failed', 'error') });
+
+  const doExport = async () => {
+    try {
+      toast('Preparing export…', 'info');
+      const res = await fetch('/v1/system/export', { headers: { Authorization: `Bearer ${getToken() ?? ''}` } });
+      if (!res.ok) throw new Error('Export failed');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `ninedeploy-backup-${new Date().toISOString().slice(0, 10)}.tar.gz`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast('Export downloaded', 'success');
+    } catch {
+      toast('Export failed', 'error');
+    }
+  };
+
+  const doImport = async (file: File) => {
+    setImporting(true);
+    try {
+      toast('Importing… this may take a moment', 'info');
+      const buf = await file.arrayBuffer();
+      const res = await fetch('/v1/system/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/octet-stream', Authorization: `Bearer ${getToken() ?? ''}` },
+        body: buf,
+      });
+      const json = await res.json();
+      toast(json.message || 'Import complete — restart NineDeploy', 'success');
+    } catch {
+      toast('Import failed', 'error');
+    } finally {
+      setImporting(false);
+    }
+  };
 
   return (
     <div className="max-w-3xl">
@@ -18,6 +68,78 @@ export function Settings() {
           <p className="text-sm text-slate-400">System information &amp; resource overview.</p>
         </div>
       </div>
+
+      {/* Appearance */}
+      <Card className="mb-5">
+        <CardBody>
+          <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-500">Appearance</h2>
+          <div className="mb-4">
+            <span className="mb-2 block text-xs text-slate-500">Theme</span>
+            <div className="flex gap-2">
+              {(['dark', 'light'] as const).map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setTheme(t)}
+                  className={cn(
+                    'flex items-center gap-2 rounded-lg border px-4 py-2 text-sm capitalize transition',
+                    theme === t
+                      ? 'border-indigo-500/60 bg-indigo-500/10 text-slate-200'
+                      : 'border-white/10 bg-white/[0.02] text-slate-500 hover:border-white/20',
+                  )}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <span className="mb-2 block text-xs text-slate-500">Accent color</span>
+            <div className="flex flex-wrap gap-2">
+              {ACCENTS.map((a) => (
+                <button
+                  key={a.id}
+                  onClick={() => setAccent(a.id)}
+                  className={cn(
+                    'group flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs transition',
+                    accent === a.id
+                      ? 'border-white/20 bg-white/[0.06]'
+                      : 'border-white/10 hover:border-white/20',
+                  )}
+                >
+                  <span
+                    className="h-4 w-4 rounded-full ring-2 ring-transparent transition group-hover:ring-white/20"
+                    style={{ backgroundColor: a.color }}
+                  />
+                  {a.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </CardBody>
+      </Card>
+
+      {/* Wildcard Domain */}
+      <Card className="mb-5">
+        <CardBody>
+          <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">Wildcard Domain</h2>
+          <p className="mb-3 text-xs text-slate-500">
+            Set a wildcard domain so every service automatically gets a URL like <code className="text-emerald-300">my-app.yourdomain.com</code>.
+            Configure a wildcard DNS <code className="text-slate-400">*.yourdomain.com</code> → server IP, then set it here.
+          </p>
+          <div className="rounded-lg bg-white/[0.02] px-3 py-2 ring-1 ring-inset ring-white/5">
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-slate-500">Current</span>
+              <span className="font-mono text-sm text-emerald-300">
+                {stats.data?.host ? '*.nd.local' : 'not configured'}
+              </span>
+            </div>
+            <p className="mt-1.5 text-[11px] text-slate-600">
+              Set via <code className="text-slate-500">NINEDEPLOY_WILDCARD_DOMAIN</code> env var and restart.
+              Example: <code className="text-slate-500">NINEDEPLOY_WILDCARD_DOMAIN=ninedeploy.dev</code>
+            </p>
+          </div>
+        </CardBody>
+      </Card>
 
       {/* System info */}
       <Card className="mb-5">
@@ -75,6 +197,73 @@ export function Settings() {
           </CardBody>
         </Card>
       )}
+
+      {/* Notifications */}
+      <Card className="mb-5">
+        <CardBody>
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Notifications</h2>
+            <Button size="sm" variant="secondary" onClick={() => setShowChannel(true)}>+ Add channel</Button>
+          </div>
+          <p className="mb-3 text-xs text-slate-500">
+            Get notified on deploy, database, domain, backup events via Telegram, Discord, or any webhook.
+          </p>
+          {showChannel && <NotificationWizard onClose={() => setShowChannel(false)} />}
+          <div className="space-y-1.5">
+            {channels.data?.map((ch) => (
+              <div key={ch.id} className="flex items-center justify-between rounded-lg bg-white/[0.02] px-3 py-2 ring-1 ring-inset ring-white/5">
+                <div className="flex items-center gap-2">
+                  <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-medium uppercase', ch.type === 'telegram' ? 'bg-sky-500/15 text-sky-300' : ch.type === 'discord' ? 'bg-indigo-500/15 text-indigo-300' : 'bg-amber-500/15 text-amber-300')}>{ch.type}</span>
+                  <span className="text-sm text-slate-200">{ch.name}</span>
+                  {ch.eventFilter && <span className="font-mono text-[10px] text-slate-500">{ch.eventFilter}</span>}
+                </div>
+                <div className="flex items-center gap-1">
+                  <button onClick={() => testChannel.mutate(ch.id)} className="rounded p-1.5 text-slate-500 hover:bg-white/5 hover:text-emerald-300" title="Send test"><Send size={13} /></button>
+                  <button onClick={() => removeChannel.mutate(ch.id)} className="rounded p-1.5 text-slate-500 hover:bg-white/5 hover:text-rose-400" title="Remove"><Trash2 size={13} /></button>
+                </div>
+              </div>
+            ))}
+            {(!channels.data || channels.data.length === 0) && !showChannel && <p className="py-2 text-xs text-slate-600">No notification channels configured.</p>}
+          </div>
+        </CardBody>
+      </Card>
+
+      {/* Migration */}
+      <Card className="mb-5">
+        <CardBody>
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">Migration</h2>
+          <p className="mb-3 text-xs text-slate-500">
+            Export the full system state (database, encryption key, Traefik config, .env) to migrate to another server.
+            Import on the new server, then restart.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={doExport}
+              className="flex items-center gap-2 rounded-lg bg-white/[0.04] px-4 py-2 text-sm text-slate-300 transition hover:bg-white/[0.08]"
+            >
+              <Download size={15} /> Export backup
+            </button>
+            <button
+              onClick={() => fileRef.current?.click()}
+              disabled={importing}
+              className="flex items-center gap-2 rounded-lg bg-white/[0.04] px-4 py-2 text-sm text-slate-300 transition hover:bg-white/[0.08] disabled:opacity-50"
+            >
+              <Upload size={15} /> {importing ? 'Importing…' : 'Import backup'}
+            </button>
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".gz,.tar.gz,application/gzip"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) doImport(f);
+                e.target.value = '';
+              }}
+            />
+          </div>
+        </CardBody>
+      </Card>
 
       {/* Quick links */}
       <Card>

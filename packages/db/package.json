@@ -19,6 +19,7 @@
     "build": "tsc",
     "dev": "tsc --watch --preserveWatchOutput",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run --coverage",
     "clean": "rm -rf dist .turbo",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",

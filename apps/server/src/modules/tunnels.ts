@@ -1,4 +1,5 @@
 import { eq } from 'drizzle-orm';
+import { audit } from "../lib/audit.js";
 import { tunnels, type Tunnel } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { createTunnel } from '@ninedeploy/schemas';
@@ -18,9 +19,11 @@ function serialize(t: Tunnel) {
   };
 }
 
-/** Cloudflare Tunnel management. Mounted under /tunnels. */
+/** Cloudflare Tunnel management. Mounted under /tunnels. Admin-only. */
 export const tunnelRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('onRequest', app.authenticate);
+  // System-wide tunnel tokens — admin-only under the agreed RBAC model.
+  app.addHook('preHandler', app.requireAdmin);
 
   app.get('/', async () => {
     const rows = await app.db.query.tunnels.findMany({ orderBy: (t, { desc }) => [desc(t.id)] });
@@ -42,6 +45,7 @@ export const tunnelRoutes: FastifyPluginAsync = async (app) => {
       await app.db.update(tunnels).set({ status: 'error' }).where(eq(tunnels.id, created.id));
       throw badRequest(`Tunnel failed to start: ${err instanceof Error ? err.message : err}`);
     }
+    void audit(app.db, req.user!.id, 'tunnel.create', input.name);
     return serialize(created);
   });
 
@@ -51,6 +55,7 @@ export const tunnelRoutes: FastifyPluginAsync = async (app) => {
     if (!t) throw notFound('Tunnel not found');
     await stopTunnel(t);
     await app.db.delete(tunnels).where(eq(tunnels.id, id));
+    void audit(app.db, req.user!.id, 'tunnel.delete', t.name);
     return { ok: true };
   });
 };

@@ -1,4 +1,5 @@
 import { eq } from 'drizzle-orm';
+import { audit } from "../lib/audit.js";
 import { domains, services } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { writeDynamicConfig } from '../engine/proxy.js';
@@ -36,6 +37,7 @@ export const domainIndexRoutes: FastifyPluginAsync = async (app) => {
     const [d] = await app.db.update(domains).set({ ssl: input.ssl ?? false, status: 'active' }).where(eq(domains.id, id)).returning();
     if (!d) throw notFound('Domain not found');
     await writeDynamicConfig(app.db);
+    void audit(app.db, req.user!.id, 'domain.ssl', d.hostname + ' → ' + (d.ssl ? 'on' : 'off'));
     return { id: d.id, ssl: d.ssl };
   });
 };

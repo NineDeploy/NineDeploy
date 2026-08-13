@@ -57,6 +57,41 @@
       "when": 1786646355820,
       "tag": "0007_furry_thunderball",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1786649682856,
+      "tag": "0008_stormy_mother_askani",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1786654797889,
+      "tag": "0009_chilly_gorgon",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1786655431598,
+      "tag": "0010_freezing_peter_quill",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1786656149015,
+      "tag": "0011_illegal_iron_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1786656361158,
+      "tag": "0012_material_morgan_stark",
+      "breakpoints": true
     }
   ]
 }

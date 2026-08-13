@@ -6,7 +6,9 @@ import { useAuth } from './lib/auth.js';
 import { Login } from './routes/Login.js';
 import { Monitoring } from './routes/Monitoring.js';
 import { NewService } from './routes/NewService.js';
+import { About } from './routes/About.js';
 import { Backups } from './routes/Backups.js';
+import { Dashboard } from './routes/Dashboard.js';
 import { Databases } from './routes/Databases.js';
 import { Domains } from './routes/Domains.js';
 import { Hub } from './routes/Hub.js';
@@ -40,7 +42,8 @@ export default function App() {
           </RequireAuth>
         }
       >
-        <Route index element={<ServicesList />} />
+        <Route index element={<Dashboard />} />
+        <Route path="/old-services" element={<ServicesList />} />
         <Route path="hub" element={<Hub />} />
         <Route path="databases" element={<Databases />} />
         <Route path="domains" element={<Domains />} />
@@ -51,6 +54,7 @@ export default function App() {
         <Route path="backups" element={<Backups />} />
         <Route path="sources" element={<Sources />} />
         <Route path="settings" element={<Settings />} />
+        <Route path="about" element={<About />} />
         <Route path="monitoring" element={<Monitoring />} />
         <Route path="services/new" element={<NewService />} />
         <Route path="services/:id" element={<ServiceDetail />} />

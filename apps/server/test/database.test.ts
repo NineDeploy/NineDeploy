@@ -1,0 +1,418 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  backupDatabase,
+  connectionString,
+  databaseSize,
+  defaultPort,
+  ENGINES,
+  removeVolume,
+  restoreDatabase,
+  startDatabase,
+  stopDatabase,
+  volumeExists,
+} from '../src/engine/database.js';
+
+const h = vi.hoisted(() => {
+  const decrypt = vi.fn((v: string) => `pw:${v}`);
+  const run = vi.fn(async (_cmd: string, _args: unknown[], _opts: unknown, sink?: (line: string) => void) => {
+    sink?.('');
+  });
+  const capture = vi.fn(async () => '[]');
+  const config: { paths: { dataDir: string } } = { paths: { dataDir: '/tmp/nd-db-test' } };
+  return { decrypt, run, capture, config };
+});
+
+vi.mock('../src/lib/crypto.js', () => ({ decrypt: h.decrypt }));
+vi.mock('../src/lib/exec.js', () => ({ run: h.run, capture: h.capture, sleep: vi.fn() }));
+vi.mock('../src/config.js', () => ({ config: h.config }));
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
+
+const dbRow = (over: Record<string, unknown> = {}) =>
+  ({
+    id: 1,
+    projectId: null,
+    name: 'db',
+    slug: 'db',
+    engine: 'postgres',
+    version: null,
+    status: 'running',
+    containerName: 'c',
+    internalHost: null,
+    internalPort: null,
+    username: null,
+    passwordEncrypted: 'enc',
+    dbName: null,
+    volumeName: 'v',
+    cpuShares: 0,
+    memLimitMb: 0,
+    createdAt: new Date(0),
+    updatedAt: new Date(0),
+    ...over,
+  }) as never;
+
+describe('ENGINES metadata', () => {
+  it('maps each engine to image, port, volume and env', () => {
+    expect(ENGINES.postgres.image()).toBe('postgres:16');
+    expect(ENGINES.postgres.image('17')).toBe('postgres:17');
+    expect(ENGINES.mysql.image()).toBe('mysql:8');
+    expect(ENGINES.mysql.image('9')).toBe('mysql:9');
+    expect(ENGINES.redis.image()).toBe('redis:7');
+    expect(ENGINES.redis.image('8')).toBe('redis:8');
+    expect(ENGINES.mongo.image()).toBe('mongo:7');
+    expect(ENGINES.mongo.image('8')).toBe('mongo:8');
+
+    expect(ENGINES.postgres.port).toBe(5432);
+    expect(ENGINES.mysql.port).toBe(3306);
+    expect(ENGINES.redis.port).toBe(6379);
+    expect(ENGINES.mongo.port).toBe(27017);
+
+    expect(ENGINES.postgres.volumePath).toBe('/var/lib/postgresql/data');
+    expect(ENGINES.mysql.volumePath).toBe('/var/lib/mysql');
+    expect(ENGINES.redis.volumePath).toBe('/data');
+    expect(ENGINES.mongo.volumePath).toBe('/data/db');
+
+    expect(ENGINES.postgres.username()).toBe('nine');
+    expect(ENGINES.mysql.username()).toBe('root');
+    expect(ENGINES.mongo.username()).toBe('nine');
+    expect(ENGINES.redis.username()).toBeUndefined();
+    expect(ENGINES.postgres.dbName()).toBe('app');
+    expect(ENGINES.mysql.dbName()).toBeUndefined();
+    expect(ENGINES.redis.dbName()).toBeUndefined();
+    expect(ENGINES.mongo.dbName()).toBeUndefined();
+
+    expect(ENGINES.postgres.env('p')).toEqual({ POSTGRES_USER: 'nine', POSTGRES_PASSWORD: 'p', POSTGRES_DB: 'app' });
+    expect(ENGINES.mysql.env('p')).toEqual({ MYSQL_ROOT_PASSWORD: 'p' });
+    expect(ENGINES.redis.env('p')).toEqual({});
+    expect(ENGINES.mongo.env('p')).toEqual({ MONGO_INITDB_ROOT_USERNAME: 'nine', MONGO_INITDB_ROOT_PASSWORD: 'p' });
+  });
+});
+
+describe('startDatabase', () => {
+  it('starts postgres with volume bind and env flags, reusing a retained volume', async () => {
+    h.capture.mockResolvedValue('[{"Name":"v"}]');
+    const log = vi.fn();
+
+    await startDatabase(dbRow({ engine: 'postgres', version: '16' }), log);
+
+    expect(log).toHaveBeenCalledWith('Reusing retained volume v (previous data restored)');
+    expect(log).toHaveBeenCalledWith('Starting postgres database db (c) …');
+    expect(h.run).toHaveBeenCalledWith(
+      'docker',
+      [
+        'run', '-d', '--name', 'c', '--network', 'ninedeploy', '--restart', 'unless-stopped',
+        '-v', 'v:/var/lib/postgresql/data',
+        '-e', 'POSTGRES_USER=nine', '-e', 'POSTGRES_PASSWORD=pw:enc', '-e', 'POSTGRES_DB=app',
+        'postgres:16',
+      ],
+      {},
+      log,
+    );
+  });
+
+  it('adds cpu/memory flags and defaults the mysql tag when no version is set', async () => {
+    h.capture.mockResolvedValue('No such volume');
+    const log = vi.fn();
+
+    await startDatabase(
+      dbRow({ engine: 'mysql', containerName: 'cm', volumeName: 'vm', cpuShares: 512, memLimitMb: 256 }),
+      log,
+    );
+
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining('Reusing retained volume'));
+    expect(h.run).toHaveBeenCalledWith(
+      'docker',
+      [
+        'run', '-d', '--name', 'cm', '--network', 'ninedeploy', '--restart', 'unless-stopped',
+        '--cpu-shares', '512', '--memory', '256m',
+        '-v', 'vm:/var/lib/mysql',
+        '-e', 'MYSQL_ROOT_PASSWORD=pw:enc',
+        'mysql:8',
+      ],
+      {},
+      log,
+    );
+  });
+
+  it('starts redis without env flags', async () => {
+    h.capture.mockResolvedValue('No such volume');
+    const log = vi.fn();
+
+    await startDatabase(dbRow({ engine: 'redis', version: '8' }), log);
+
+    expect(h.run).toHaveBeenCalledWith(
+      'docker',
+      ['run', '-d', '--name', 'c', '--network', 'ninedeploy', '--restart', 'unless-stopped', '-v', 'v:/data', 'redis:8'],
+      {},
+      log,
+    );
+  });
+
+  it('starts mongo with init root credentials', async () => {
+    h.capture.mockResolvedValue('No such volume');
+    const log = vi.fn();
+
+    await startDatabase(dbRow({ engine: 'mongo' }), log);
+
+    expect(h.run).toHaveBeenCalledWith(
+      'docker',
+      [
+        'run', '-d', '--name', 'c', '--network', 'ninedeploy', '--restart', 'unless-stopped',
+        '-v', 'v:/data/db',
+        '-e', 'MONGO_INITDB_ROOT_USERNAME=nine', '-e', 'MONGO_INITDB_ROOT_PASSWORD=pw:enc',
+        'mongo:7',
+      ],
+      {},
+      log,
+    );
+  });
+
+  it('throws for an unknown engine', async () => {
+    await expect(startDatabase(dbRow({ engine: 'oracle' }), vi.fn())).rejects.toThrow('Unknown engine: oracle');
+  });
+
+  it('throws when the container or volume name is missing', async () => {
+    await expect(
+      startDatabase(dbRow({ containerName: null, volumeName: null }), vi.fn()),
+    ).rejects.toThrow('database has no container/volume name');
+  });
+});
+
+describe('volumeExists', () => {
+  it('returns true when docker reports the volume', async () => {
+    h.capture.mockResolvedValue('[{"Name":"v"}]');
+    await expect(volumeExists('v')).resolves.toBe(true);
+  });
+
+  it('returns false when docker says the volume does not exist', async () => {
+    h.capture.mockResolvedValue('No such volume');
+    await expect(volumeExists('v')).resolves.toBe(false);
+  });
+
+  it('returns false when the inspect command fails', async () => {
+    h.capture.mockRejectedValue(new Error('docker down'));
+    await expect(volumeExists('v')).resolves.toBe(false);
+  });
+});
+
+describe('stopDatabase', () => {
+  it('stops and removes the container but keeps the volume', async () => {
+    const log = vi.fn();
+
+    await stopDatabase(dbRow(), log);
+
+    expect(log).toHaveBeenCalledWith('Stopping c (volume retained) …');
+    expect(h.run).toHaveBeenCalledWith('docker', ['rm', '-f', 'c'], {}, expect.any(Function));
+  });
+
+  it('does nothing when there is no container name', async () => {
+    const log = vi.fn();
+    await stopDatabase(dbRow({ containerName: null }), log);
+    expect(h.run).not.toHaveBeenCalled();
+  });
+
+  it('swallows remove errors', async () => {
+    h.run.mockRejectedValueOnce(new Error('gone'));
+    await expect(stopDatabase(dbRow(), vi.fn())).resolves.toBeUndefined();
+  });
+});
+
+describe('removeVolume', () => {
+  it('deletes the named volume', async () => {
+    const log = vi.fn();
+
+    await removeVolume('v', log);
+
+    expect(log).toHaveBeenCalledWith('Deleting volume v …');
+    expect(h.run).toHaveBeenCalledWith('docker', ['volume', 'rm', 'v'], {}, log);
+  });
+
+  it('swallows errors', async () => {
+    h.run.mockRejectedValueOnce(new Error('volume busy'));
+    await expect(removeVolume('v', vi.fn())).resolves.toBeUndefined();
+  });
+});
+
+describe('connectionString', () => {
+  it('builds a postgres connection string with internal host/port', () => {
+    const d = dbRow({ engine: 'postgres', internalHost: 'pg.internal', internalPort: 15432 });
+    expect(connectionString(d)).toBe('postgres://nine:pw:enc@pg.internal:15432/app');
+    expect(h.decrypt).toHaveBeenCalledWith('enc');
+  });
+
+  it('falls back to the container name and engine port', () => {
+    const d = dbRow({ engine: 'mysql' });
+    expect(connectionString(d)).toBe('mysql://root:pw:enc@c:3306/');
+  });
+
+  it('handles missing host/port and an empty user (redis)', () => {
+    const d = dbRow({ engine: 'redis', internalHost: null, containerName: null, internalPort: null });
+    expect(connectionString(d)).toBe('redis://:6379');
+  });
+
+  it('builds a mongo connection string', () => {
+    expect(connectionString(dbRow({ engine: 'mongo' }))).toBe('mongodb://nine:pw:enc@c:27017');
+  });
+
+  it('throws for an unknown engine', () => {
+    expect(() => connectionString(dbRow({ engine: 'oracle' }))).toThrow('Unknown engine: oracle');
+  });
+});
+
+describe('defaultPort', () => {
+  it('returns the engine port or 0 for unknown engines', () => {
+    expect(defaultPort('postgres')).toBe(5432);
+    expect(defaultPort('bogus')).toBe(0);
+  });
+});
+
+describe('databaseSize', () => {
+  it('returns 0 for unknown engines or missing container names', async () => {
+    await expect(databaseSize(dbRow({ engine: 'oracle' }))).resolves.toBe(0);
+    await expect(databaseSize(dbRow({ containerName: null }))).resolves.toBe(0);
+    expect(h.capture).not.toHaveBeenCalled();
+  });
+
+  it('queries postgres size and falls back to 0 on garbage', async () => {
+    h.capture.mockResolvedValueOnce('12345');
+    await expect(databaseSize(dbRow({ engine: 'postgres' }))).resolves.toBe(12345);
+    expect(h.capture).toHaveBeenCalledWith('docker', ['exec', 'c', 'psql', '-U', 'nine', '-d', 'app', '-tAc', 'SELECT pg_database_size(current_database())']);
+
+    h.capture.mockResolvedValueOnce('not-a-number');
+    await expect(databaseSize(dbRow({ engine: 'postgres' }))).resolves.toBe(0);
+  });
+
+  it('parses redis used_memory and returns 0 when absent', async () => {
+    h.capture.mockResolvedValueOnce('used_memory:456\n');
+    await expect(databaseSize(dbRow({ engine: 'redis' }))).resolves.toBe(456);
+
+    h.capture.mockResolvedValueOnce('no match here');
+    await expect(databaseSize(dbRow({ engine: 'redis' }))).resolves.toBe(0);
+  });
+
+  it('queries mysql size with the decrypted password', async () => {
+    h.capture.mockResolvedValueOnce('789');
+    await expect(databaseSize(dbRow({ engine: 'mysql' }))).resolves.toBe(789);
+    expect(h.decrypt).toHaveBeenCalledWith('enc');
+
+    h.capture.mockResolvedValueOnce('bad');
+    await expect(databaseSize(dbRow({ engine: 'mysql' }))).resolves.toBe(0);
+  });
+
+  it('parses mongo dataSize', async () => {
+    h.capture.mockResolvedValueOnce('123.5');
+    await expect(databaseSize(dbRow({ engine: 'mongo' }))).resolves.toBe(123.5);
+
+    h.capture.mockResolvedValueOnce('nothing');
+    await expect(databaseSize(dbRow({ engine: 'mongo' }))).resolves.toBe(0);
+  });
+
+  it('returns 0 when the query fails', async () => {
+    h.capture.mockRejectedValue(new Error('not ready'));
+    await expect(databaseSize(dbRow({ engine: 'postgres' }))).resolves.toBe(0);
+  });
+
+  it('returns 0 when the engine is not one of the four handled engines', async () => {
+    // A truthy (inherited) ENGINES entry plus a container name passes the guard
+    // and reaches the engine dispatch without matching any handled branch.
+    await expect(databaseSize(dbRow({ engine: 'toString', containerName: 'c' }))).resolves.toBe(0);
+  });
+});
+
+describe('backupDatabase', () => {
+  it('backs up postgres via arg-array capture (no host shell)', async () => {
+    h.capture.mockResolvedValueOnce('PG_DUMP');
+    await backupDatabase(dbRow({ engine: 'postgres' }), '/tmp/nd-test-out.sql', vi.fn());
+    expect(h.capture).toHaveBeenCalledWith('docker', ['exec', 'c', 'pg_dump', '-U', 'nine', '-d', 'app']);
+    expect(h.run).not.toHaveBeenCalled();
+  });
+
+  it('backs up mysql with the decrypted password as a --password arg (not shell-interpolated)', async () => {
+    h.capture.mockResolvedValueOnce('MYSQL_DUMP');
+    await backupDatabase(dbRow({ engine: 'mysql' }), '/tmp/nd-test-mysql.sql', vi.fn());
+    expect(h.capture).toHaveBeenCalledWith('docker', [
+      'exec', 'c', 'mysqldump', '-uroot', '--password=pw:enc', '--all-databases',
+    ]);
+    expect(h.decrypt).toHaveBeenCalledWith('enc');
+    expect(h.run).not.toHaveBeenCalled();
+  });
+
+  it('backs up redis via docker exec SAVE + docker cp (no host shell)', async () => {
+    const log = vi.fn();
+    await backupDatabase(dbRow({ engine: 'redis' }), '/f', log);
+    expect(h.run).toHaveBeenCalledWith('docker', ['exec', 'c', 'redis-cli', 'SAVE'], {}, log);
+    expect(h.run).toHaveBeenCalledWith('docker', ['cp', 'c:/data/dump.rdb', '/f'], {}, log);
+  });
+
+  it('backs up mongo via a static container temp file + docker cp', async () => {
+    const log = vi.fn();
+    await backupDatabase(dbRow({ engine: 'mongo' }), '/f', log);
+    expect(h.run).toHaveBeenCalledWith('docker', ['exec', 'c', 'sh', '-c', 'mongodump --archive --gzip > /tmp/ninedeploy-dump'], {}, log);
+    expect(h.run).toHaveBeenCalledWith('docker', ['cp', 'c:/tmp/ninedeploy-dump', '/f'], {}, log);
+    expect(h.run).toHaveBeenCalledWith('docker', ['exec', 'c', 'rm', '-f', '/tmp/ninedeploy-dump'], {}, expect.any(Function));
+  });
+
+  it('throws for databases that are not runnable', async () => {
+    await expect(backupDatabase(dbRow({ engine: 'oracle' }), '/f', vi.fn())).rejects.toThrow('database not runnable');
+    await expect(backupDatabase(dbRow({ containerName: null }), '/f', vi.fn())).rejects.toThrow('database not runnable');
+  });
+
+  it('hits the unsupported fallback for a non-owned engine key', async () => {
+    await expect(backupDatabase(dbRow({ engine: 'toString', containerName: 'c' }), '/f', vi.fn())).rejects.toThrow(
+      'backup not supported for toString',
+    );
+  });
+});
+
+describe('restoreDatabase', () => {
+  it('restores postgres via docker cp + psql -f (no host shell)', async () => {
+    const log = vi.fn();
+    await restoreDatabase(dbRow({ engine: 'postgres' }), '/f', log);
+    expect(h.run).toHaveBeenCalledWith('docker', ['cp', '/f', 'c:/tmp/ninedeploy-restore'], {}, log);
+    expect(h.run).toHaveBeenCalledWith('docker', ['exec', 'c', 'psql', '-U', 'nine', '-d', 'app', '-f', '/tmp/ninedeploy-restore'], {}, log);
+  });
+
+  it('restores mysql with the decrypted password via source (no shell interpolation)', async () => {
+    const log = vi.fn();
+    await restoreDatabase(dbRow({ engine: 'mysql' }), '/f', log);
+    expect(h.run).toHaveBeenCalledWith('docker', ['cp', '/f', 'c:/tmp/ninedeploy-restore'], {}, log);
+    expect(h.run).toHaveBeenCalledWith('docker', [
+      'exec', 'c', 'mysql', '-uroot', '--password=pw:enc', '-e', 'source /tmp/ninedeploy-restore',
+    ], {}, log);
+    expect(h.decrypt).toHaveBeenCalledWith('enc');
+  });
+
+  it('restores mongo via docker cp + mongorestore --archive=path', async () => {
+    const log = vi.fn();
+    await restoreDatabase(dbRow({ engine: 'mongo' }), '/f', log);
+    expect(h.run).toHaveBeenCalledWith('docker', ['cp', '/f', 'c:/tmp/ninedeploy-restore'], {}, log);
+    expect(h.run).toHaveBeenCalledWith('docker', ['exec', 'c', 'mongorestore', '--archive=/tmp/ninedeploy-restore', '--gzip', '--drop'], {}, log);
+  });
+
+  it('removes the staged restore file afterwards (cleanup)', async () => {
+    await restoreDatabase(dbRow({ engine: 'postgres' }), '/f', vi.fn());
+    expect(h.run).toHaveBeenCalledWith('docker', ['exec', 'c', 'rm', '-f', '/tmp/ninedeploy-restore'], {}, expect.any(Function));
+  });
+
+  it('swallows a failing cleanup after a successful restore', async () => {
+    h.run.mockImplementation(async (_cmd: string, args: unknown[]) => {
+      if (Array.isArray(args) && args.includes('rm')) throw new Error('cleanup failed');
+    });
+    await expect(restoreDatabase(dbRow({ engine: 'postgres' }), '/f', vi.fn())).resolves.toBeUndefined();
+    expect(h.run).toHaveBeenCalledWith('docker', ['exec', 'c', 'rm', '-f', '/tmp/ninedeploy-restore'], {}, expect.any(Function));
+  });
+
+  it('rejects redis restores and non-runnable databases', async () => {
+    await expect(restoreDatabase(dbRow({ engine: 'redis' }), '/f', vi.fn())).rejects.toThrow('restore not supported for redis');
+    await expect(restoreDatabase(dbRow({ engine: 'oracle' }), '/f', vi.fn())).rejects.toThrow('database not runnable');
+    await expect(restoreDatabase(dbRow({ containerName: null }), '/f', vi.fn())).rejects.toThrow('database not runnable');
+  });
+
+  it('hits the unsupported fallback for a non-owned engine key', async () => {
+    await expect(restoreDatabase(dbRow({ engine: 'toString', containerName: 'c' }), '/f', vi.fn())).rejects.toThrow(
+      'restore not supported for toString',
+    );
+  });
+});

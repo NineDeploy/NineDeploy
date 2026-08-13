@@ -1,4 +1,5 @@
 import { and, eq } from 'drizzle-orm';
+import { audit } from "../lib/audit.js";
 import { domains, services, type Domain } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { createDomain } from '@ninedeploy/schemas';
@@ -49,6 +50,7 @@ export const domainsRoutes: FastifyPluginAsync = async (app) => {
       .catch(() => [] as Domain[]);
     if (!d) throw conflict('A domain with that host already exists');
     await writeDynamicConfig(app.db);
+    void audit(app.db, req.user!.id, 'domain.add', input.hostname);
     return serialize(d);
   });
 

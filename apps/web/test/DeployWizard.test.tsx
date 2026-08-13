@@ -1,0 +1,400 @@
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { ToastProvider } from '../src/components/Toast.js';
+import { deferred } from './web-utils.js';
+
+const apiMock = vi.hoisted(() => ({
+  api: {
+    sources: { list: vi.fn() },
+    services: { create: vi.fn() },
+    env: { create: vi.fn() },
+    deploys: { trigger: vi.fn() },
+  },
+}));
+
+vi.mock('../src/lib/api.js', () => apiMock);
+
+import { DeployWizard } from '../src/components/DeployWizard.js';
+
+const TEMPLATE = {
+  id: 'n8n',
+  name: 'n8n',
+  tagline: 'Workflow automation',
+  description: 'd',
+  category: 'automation',
+  emoji: '🤖',
+  image: 'n8nio/n8n',
+  port: 5678,
+  volumeMount: '/home/node/.n8n',
+  env: [
+    { key: 'N8N_BASIC_AUTH_ACTIVE', value: 'true', secret: true },
+    { key: 'N8N_EXTRA', value: 'y' },
+  ],
+};
+
+function LocationProbe() {
+  const location = useLocation();
+  return <div data-testid="location">{location.pathname}</div>;
+}
+
+function renderWizard(props: { template?: typeof TEMPLATE; onClose?: () => void } = {}) {
+  const onClose = props.onClose ?? vi.fn();
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const utils = renderTree(
+    <DeployWizard template={props.template} onClose={onClose} />,
+    queryClient,
+  );
+  return { ...utils, onClose };
+}
+
+function renderTree(ui: React.ReactElement, queryClient: QueryClient) {
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={['/new']}>
+        <ToastProvider>
+          {ui}
+          <Routes>
+            <Route path="*" element={<LocationProbe />} />
+          </Routes>
+        </ToastProvider>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+describe('DeployWizard', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    apiMock.api.sources.list.mockResolvedValue([
+      { id: 3, name: 'github-app', type: 'github' },
+    ]);
+    apiMock.api.services.create.mockResolvedValue({ id: 42, name: 'app' });
+    apiMock.api.env.create.mockResolvedValue({ id: 1, key: 'K', value: 'v', isSecret: false });
+    apiMock.api.deploys.trigger.mockResolvedValue({ deploymentId: 7 });
+  });
+
+  it('renders the repo flow by default with a "New service" title', async () => {
+    renderWizard();
+    expect(screen.getByText('New service')).toBeInTheDocument();
+    expect(screen.getByText('Git repo')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('https://github.com/you/repo')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText('github-app')).toBeInTheDocument());
+  });
+
+  it('renders the image flow when a template is provided', () => {
+    renderWizard({ template: TEMPLATE });
+    expect(screen.getByText('Deploy n8n')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('n8nio/n8n')).toHaveValue('n8nio/n8n');
+  });
+
+  it('requires name and repo URL before continuing (repo mode)', async () => {
+    const user = userEvent.setup();
+    renderWizard();
+    expect(screen.getByRole('button', { name: /continue/i })).toBeDisabled();
+    await user.type(screen.getByPlaceholderText('my-app'), 'my-app');
+    expect(screen.getByRole('button', { name: /continue/i })).toBeDisabled();
+    await user.type(screen.getByPlaceholderText('https://github.com/you/repo'), 'https://github.com/x/y');
+    expect(screen.getByRole('button', { name: /continue/i })).toBeEnabled();
+  });
+
+  it('requires an image in image mode', async () => {
+    const user = userEvent.setup();
+    renderWizard();
+    await user.type(screen.getByPlaceholderText('my-app'), 'app');
+    await user.click(screen.getByText('Image'));
+    expect(screen.getByPlaceholderText('n8nio/n8n')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /continue/i })).toBeDisabled();
+    await user.type(screen.getByPlaceholderText('n8nio/n8n'), 'myimg');
+    expect(screen.getByRole('button', { name: /continue/i })).toBeEnabled();
+  });
+
+  it('walks through every step and deploys', async () => {
+    const { onClose } = renderWizard();
+    const user = userEvent.setup();
+    await user.type(screen.getByPlaceholderText('my-app'), 'app');
+    await user.type(screen.getByPlaceholderText('https://github.com/you/repo'), 'https://github.com/x/y');
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+
+    // Runtime
+    await user.type(screen.getByPlaceholderText('3000'), '8080');
+    await user.type(screen.getByPlaceholderText('/app/data'), '/data');
+    await user.clear(screen.getByPlaceholderText('/'));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+
+    // Environment
+    expect(screen.getByText('No environment variables.')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /add variable/i }));
+    await user.type(screen.getAllByPlaceholderText('KEY')[0], 'FOO');
+    await user.type(screen.getAllByPlaceholderText('value')[0], 'bar');
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+
+    // Resources
+    await user.type(screen.getByPlaceholderText('512'), '512');
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+
+    // Review
+    expect(screen.getByText('Review')).toBeInTheDocument();
+    expect(screen.getByText('app')).toBeInTheDocument();
+    expect(screen.getByText(':8080')).toBeInTheDocument();
+    expect(screen.getByText('/data')).toBeInTheDocument();
+    expect(screen.getByText('512 shares · — MB')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /deploy/i }));
+    await waitFor(() =>
+      expect(apiMock.api.services.create).toHaveBeenCalledWith({
+        name: 'app',
+        type: 'docker',
+        repoUrl: 'https://github.com/x/y',
+        image: undefined,
+        branch: 'main',
+        sourceId: undefined,
+        port: 8080,
+        volumeMount: '/data',
+        healthPath: undefined,
+        cpuShares: 512,
+        memLimitMb: undefined,
+      }),
+    );
+    await waitFor(() =>
+      expect(apiMock.api.env.create).toHaveBeenCalledWith(42, {
+        key: 'FOO',
+        value: 'bar',
+        isSecret: false,
+      }),
+    );
+    await waitFor(() => expect(apiMock.api.deploys.trigger).toHaveBeenCalledWith(42));
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/services/42'));
+    expect(screen.getByText('Deploy started — building…')).toBeInTheDocument();
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+  });
+
+  it('shows the default limits label when no limits are set', async () => {
+    const user = userEvent.setup();
+    renderWizard();
+    await user.type(screen.getByPlaceholderText('my-app'), 'app');
+    await user.type(screen.getByPlaceholderText('https://github.com/you/repo'), 'https://github.com/x/y');
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    expect(screen.getByText('Review')).toBeInTheDocument();
+    expect(screen.getByText('none')).toBeInTheDocument();
+  });
+
+  it('shows an em dash for unset CPU shares when only a memory limit is given', async () => {
+    const user = userEvent.setup();
+    renderWizard();
+    await user.type(screen.getByPlaceholderText('my-app'), 'app');
+    await user.type(screen.getByPlaceholderText('https://github.com/you/repo'), 'https://github.com/x/y');
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.type(screen.getByPlaceholderText('256'), '256');
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    expect(screen.getByText('— shares · 256 MB')).toBeInTheDocument();
+  });
+
+  it('skips env rows with empty keys during deploy', async () => {
+    const { onClose } = renderWizard();
+    const user = userEvent.setup();
+    await user.type(screen.getByPlaceholderText('my-app'), 'app');
+    await user.type(screen.getByPlaceholderText('https://github.com/you/repo'), 'https://github.com/x/y');
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /add variable/i }));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /deploy/i }));
+    await waitFor(() => expect(apiMock.api.env.create).not.toHaveBeenCalled());
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+  });
+
+  it('deploys from a template with prefilled env and image mode', async () => {
+    const { onClose } = renderWizard({ template: TEMPLATE });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    // Step 2 (env): template row is prefilled
+    expect(screen.getAllByDisplayValue('N8N_BASIC_AUTH_ACTIVE')).toHaveLength(1);
+    // Editing one row while another exists exercises the map's identity branch.
+    await user.click(screen.getAllByTitle('Toggle secret')[1]);
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    expect(screen.getByText('n8n')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /deploy/i }));
+    await waitFor(() =>
+      expect(apiMock.api.services.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          image: 'n8nio/n8n',
+          repoUrl: undefined,
+          port: 5678,
+          volumeMount: '/home/node/.n8n',
+        }),
+      ),
+    );
+    await waitFor(() =>
+      expect(apiMock.api.env.create).toHaveBeenCalledWith(42, {
+        key: 'N8N_BASIC_AUTH_ACTIVE',
+        value: 'true',
+        isSecret: true,
+      }),
+    );
+    await waitFor(() =>
+      expect(apiMock.api.env.create).toHaveBeenCalledWith(42, {
+        key: 'N8N_EXTRA',
+        value: 'y',
+        isSecret: true,
+      }),
+    );
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+  });
+
+  it('toggles env row secret mode and removes rows', async () => {
+    const user = userEvent.setup();
+    renderWizard();
+    await user.type(screen.getByPlaceholderText('my-app'), 'app');
+    await user.type(screen.getByPlaceholderText('https://github.com/you/repo'), 'https://github.com/x/y');
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /add variable/i }));
+    const sec = screen.getByTitle('Toggle secret');
+    await user.click(sec);
+    expect(sec.className).toContain('bg-amber-500/20');
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    expect(screen.queryByText('No environment variables.')).not.toBeInTheDocument();
+    const back = screen.getByRole('button', { name: /back/i });
+    await user.click(back);
+    const removeBtn = screen.getAllByRole('button')[2];
+    await user.click(removeBtn);
+    expect(screen.getByText('No environment variables.')).toBeInTheDocument();
+  });
+
+  it('shows Deploying… and disables submit while pending', async () => {
+    const d = deferred();
+    apiMock.api.services.create.mockReturnValue(d.promise);
+    const user = userEvent.setup();
+    renderWizard();
+    await user.type(screen.getByPlaceholderText('my-app'), 'app');
+    await user.type(screen.getByPlaceholderText('https://github.com/you/repo'), 'https://github.com/x/y');
+    for (let i = 0; i < 4; i++) {
+      await user.click(screen.getByRole('button', { name: /continue/i }));
+    }
+    await user.click(screen.getByRole('button', { name: /deploy/i }));
+    expect(screen.getByText('Deploying…')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /deploying/i })).toBeDisabled();
+    d.resolve({ id: 42 });
+  });
+
+  it('shows a failure message and toasts on deploy error', async () => {
+    apiMock.api.services.create.mockRejectedValue(new Error('boom'));
+    const user = userEvent.setup();
+    renderWizard();
+    await user.type(screen.getByPlaceholderText('my-app'), 'app');
+    await user.type(screen.getByPlaceholderText('https://github.com/you/repo'), 'https://github.com/x/y');
+    for (let i = 0; i < 4; i++) {
+      await user.click(screen.getByRole('button', { name: /continue/i }));
+    }
+    await user.click(screen.getByRole('button', { name: /deploy/i }));
+    await waitFor(() => expect(screen.getByText('Failed — try again')).toBeInTheDocument());
+    expect(screen.getByText('boom')).toBeInTheDocument();
+  });
+
+  it('toasts a generic message when the error is not an Error', async () => {
+    apiMock.api.services.create.mockRejectedValue('nope');
+    const user = userEvent.setup();
+    renderWizard();
+    await user.type(screen.getByPlaceholderText('my-app'), 'app');
+    await user.type(screen.getByPlaceholderText('https://github.com/you/repo'), 'https://github.com/x/y');
+    for (let i = 0; i < 4; i++) {
+      await user.click(screen.getByRole('button', { name: /continue/i }));
+    }
+    await user.click(screen.getByRole('button', { name: /deploy/i }));
+    await waitFor(() => expect(screen.getByText('Deploy failed')).toBeInTheDocument());
+  });
+
+  it('hides the back button on the first step and closes via X', async () => {
+    const user = userEvent.setup();
+    const { container, onClose } = renderWizard();
+    const back = screen.getByRole('button', { name: /back/i });
+    expect(back.className).toContain('invisible');
+    const closeBtn = container.querySelector('h2 + button') as HTMLButtonElement;
+    await user.click(closeBtn);
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it('closes when the backdrop is clicked', async () => {
+    const user = userEvent.setup();
+    const { onClose } = renderWizard();
+    await user.click(screen.getByText('New service').closest('.fixed') as HTMLElement);
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it('selects a private source in repo mode', async () => {
+    const user = userEvent.setup();
+    renderWizard();
+    await waitFor(() => expect(screen.getByText('github-app')).toBeInTheDocument());
+    await user.selectOptions(screen.getAllByRole('combobox')[1], '3');
+    await user.type(screen.getByPlaceholderText('my-app'), 'app');
+    await user.type(screen.getByPlaceholderText('https://github.com/you/repo'), 'https://github.com/x/y');
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /deploy/i }));
+    await waitFor(() =>
+      expect(apiMock.api.services.create).toHaveBeenCalledWith(
+        expect.objectContaining({ sourceId: 3 }),
+      ),
+    );
+  });
+
+  it('supports the pm2 type, custom branch, health path and memory limit', async () => {
+    const user = userEvent.setup();
+    renderWizard();
+    // Type pm2 via the <Select> onChange handler.
+    await user.selectOptions(screen.getAllByRole('combobox')[0], 'pm2');
+    await user.type(screen.getByPlaceholderText('my-app'), 'app');
+    await user.type(screen.getByPlaceholderText('https://github.com/you/repo'), 'https://github.com/x/y');
+    // The branch input lives in the Source step (step 0); edit it before continuing.
+    const branchInput = screen.getByPlaceholderText('main');
+    await user.clear(branchInput);
+    await user.type(branchInput, 'develop');
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    // Runtime step: health path input is rendered with placeholder "/".
+    const healthInput = screen.getByPlaceholderText('/') as HTMLInputElement;
+    expect(healthInput).toBeInTheDocument();
+    await user.type(healthInput, '/healthz');
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    // Resources step: fill the cpuShares (placeholder "512") and memory
+    // limit (placeholder "256") so the Limits row uses the conditional
+    // branch (not 'none').
+    await user.type(screen.getByPlaceholderText('512'), '256');
+    await user.type(screen.getByPlaceholderText('256'), '512');
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    // Review row: pm2 type appears. The Limits row value is the
+    // `${cpuShares || '—'} shares · ${memLimitMb || '—'} MB` template.
+    expect(screen.getAllByText('pm2').length).toBeGreaterThan(0);
+    const limitsRow = Array.from(document.querySelectorAll('span.font-medium.text-slate-200')).find(
+      (el) => /shares.*MB/.test(el.textContent ?? ''),
+    ) as HTMLElement | undefined;
+    expect(limitsRow).not.toBeUndefined();
+    expect(limitsRow?.textContent).toContain('shares');
+    expect(limitsRow?.textContent).toContain('MB');
+    await user.click(screen.getByRole('button', { name: /deploy/i }));
+    await waitFor(() =>
+      expect(apiMock.api.services.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'pm2',
+          branch: 'develop',
+          healthPath: '//healthz',
+          cpuShares: 256,
+          memLimitMb: 512,
+        }),
+      ),
+    );
+  });
+});

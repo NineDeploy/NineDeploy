@@ -3,6 +3,8 @@ import type { FastifyPluginAsync } from 'fastify';
 import { buildConfigs, services, type Service } from '@ninedeploy/db';
 import { createService, setLimits, updateService } from '@ninedeploy/schemas';
 import { capture, run } from '../lib/exec.js';
+import { audit } from '../lib/audit.js';
+import { config } from '../config.js';
 import { notFound } from '../lib/errors.js';
 import { slugify } from '../lib/slug.js';
 
@@ -24,6 +26,7 @@ function serialize(s: Service) {
     runtimeId: s.runtimeId,
     healthPath: s.healthPath,
     port: s.port,
+    autoUrl: config.wildcardDomain ? `${s.slug}.${config.wildcardDomain}` : null,
     createdAt: s.createdAt.toISOString(),
     updatedAt: s.updatedAt.toISOString(),
   };
@@ -72,6 +75,7 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
         startCmd: input.build.startCmd ?? null,
         dockerfilePath: input.build.dockerfilePath ?? null,
       });
+    void audit(app.db, req.user!.id, 'service.create', input.name);
     return serialize(svc);
   });
 
@@ -83,10 +87,8 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
 
   app.patch('/:id', async (req) => {
     const id = num((req.params as { id: string }).id);
-    const { build, ...patch } = updateService.parse(req.body ?? {});
-    if (build) {
-      // Build config updates land in F2 alongside the engine.
-    }
+    const { build: _build, ...patch } = updateService.parse(req.body ?? {});
+    // Build config updates land in F2 alongside the engine; not stored on the service row.
     const [svc] = await app.db.update(services).set(patch).where(eq(services.id, id)).returning();
     if (!svc) throw notFound('Service not found');
     return serialize(svc);
@@ -95,6 +97,7 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
   app.delete('/:id', async (req, reply) => {
     const id = num((req.params as { id: string }).id);
     await app.db.delete(services).where(eq(services.id, id));
+    void audit(app.db, req.user!.id, 'service.delete', String(id));
     reply.status(204);
   });
 
@@ -113,6 +116,7 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
     if (!svc?.runtimeId) throw notFound('Service not found or not deployed');
     await run('docker', ['stop', '-t', '5', svc.runtimeId], {}, () => {}).catch(() => undefined);
     await app.db.update(services).set({ status: 'stopped' }).where(eq(services.id, svc.id));
+    void audit(app.db, req.user!.id, 'service.stop', svc.name);
     return { ok: true, status: 'stopped' };
   });
 
@@ -121,6 +125,7 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
     if (!svc?.runtimeId) throw notFound('Service not found or not deployed');
     await run('docker', ['start', svc.runtimeId], {}, () => {}).catch(() => undefined);
     await app.db.update(services).set({ status: 'running' }).where(eq(services.id, svc.id));
+    void audit(app.db, req.user!.id, 'service.start', svc.name);
     return { ok: true, status: 'running' };
   });
 
@@ -128,6 +133,7 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
     const svc = await app.db.query.services.findFirst({ where: eq(services.id, num((req.params as { id: string }).id)) });
     if (!svc?.runtimeId) throw notFound('Service not found or not deployed');
     await run('docker', ['restart', svc.runtimeId], {}, () => {}).catch(() => undefined);
+    void audit(app.db, req.user!.id, 'service.restart', svc.name);
     return { ok: true, status: 'running' };
   });
 

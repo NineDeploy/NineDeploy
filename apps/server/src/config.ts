@@ -3,7 +3,7 @@ import path from 'node:path';
 import { env } from './env.js';
 
 /** Resolve a possibly-relative path against the process cwd. */
-const resolve = (p: string) => (path.isAbsolute(p) ? p : path.resolve(process.cwd(), p));
+const resolve = (p: string) => (p.startsWith('file:') ? p : path.isAbsolute(p) ? p : path.resolve(process.cwd(), p));
 
 const dataDir = resolve(env.NINEDEPLOY_DATA_DIR);
 mkdirSync(dataDir, { recursive: true });
@@ -37,4 +37,5 @@ export const config = {
     refreshTtl: env.NINEDEPLOY_JWT_REFRESH_TTL,
   },
   version: process.env['npm_package_version'] ?? '0.0.0',
+  wildcardDomain: process.env['NINEDEPLOY_WILDCARD_DOMAIN'] ?? '',
 } as const;

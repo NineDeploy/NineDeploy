@@ -25,6 +25,15 @@ export default fp(
         }
       },
     );
+
+    // Allow binary uploads (e.g. system import tar.gz).
+    fastify.addContentTypeParser(
+      'application/octet-stream',
+      { parseAs: 'buffer' },
+      (_req, body, done) => {
+        done(null, body.toString('binary'));
+      },
+    );
   },
   { name: 'ninedeploy-rawbody' },
 );

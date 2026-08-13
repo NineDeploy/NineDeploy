@@ -1,0 +1,70 @@
+import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { screen, waitFor, fireEvent } from '@testing-library/react';
+import { Domains } from '../src/routes/Domains.js';
+import { api } from '../src/lib/api.js';
+import { renderWithProviders, mockOf } from './helpers.js';
+
+vi.mock('../src/lib/api.js', async () => {
+  const { createFakeApiModule } = await import('./helpers.js');
+  return createFakeApiModule();
+});
+
+const domains = [
+  { id: 1, hostname: 'app.example.com', path: '/', serviceId: 5, serviceName: 'app', port: 3000, container: 'nd-app', ssl: true, status: 'running' },
+  { id: 2, hostname: 'blog.example.com', path: '/blog', serviceId: null, serviceName: null, port: null, container: null, ssl: false, status: 'idle' },
+  { id: 3, hostname: 'api.example.com', path: '/', serviceId: 9, serviceName: 'api', port: null, container: 'nd-api', ssl: false, status: 'deploying' },
+];
+
+describe('Domains', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('shows skeleton while loading', () => {
+    mockOf(api.domains.all).mockReturnValue(new Promise(() => {}));
+    renderWithProviders(<Domains />);
+    expect(document.querySelector('.animate-pulse')).not.toBeNull();
+  });
+
+  it('shows empty state when there are no domains', async () => {
+    mockOf(api.domains.all).mockResolvedValue([] as never);
+    renderWithProviders(<Domains />);
+    await screen.findByText('No domains');
+  });
+
+  it('renders the routing table with ssl toggle and status badge', async () => {
+    mockOf(api.domains.all).mockResolvedValue(domains as never);
+    mockOf(api.domains.setSsl).mockResolvedValue({ id: 1, ssl: false } as never);
+    renderWithProviders(<Domains />);
+    await screen.findByText('app.example.com');
+    // ssl on -> https link
+    const link = screen.getByRole('link', { name: 'app.example.com' });
+    expect(link).toHaveAttribute('href', 'https://app.example.com');
+    // ssl off -> http link
+    expect(screen.getByRole('link', { name: 'blog.example.com' })).toHaveAttribute('href', 'http://blog.example.com');
+    // path shown only when !== '/'
+    expect(screen.getByText('/blog')).toBeInTheDocument();
+    // service link and port
+    expect(screen.getByRole('link', { name: /app :3000/ })).toHaveAttribute('href', '/services/5');
+    // port fallback when serviceName exists but port is null
+    expect(screen.getByRole('link', { name: /api :\?/ })).toHaveAttribute('href', '/services/9');
+    // missing service -> dash
+    expect(screen.getAllByText('—').length).toBeGreaterThan(0);
+    // container fallback
+    expect(screen.getByText('nd-app')).toBeInTheDocument();
+    // status badge: ssl true -> active, ssl false -> underlying status
+    expect(screen.getByText('active')).toBeInTheDocument();
+    expect(screen.getByText('idle')).toBeInTheDocument();
+    expect(screen.getByText('deploying')).toBeInTheDocument();
+  });
+
+  it('toggles ssl on click and invalidates the list', async () => {
+    mockOf(api.domains.all).mockResolvedValue(domains as never);
+    mockOf(api.domains.setSsl).mockResolvedValue({ id: 2, ssl: true } as never);
+    renderWithProviders(<Domains />);
+    const toggles = await screen.findAllByRole('button');
+    // second row has ssl false -> click toggles to true
+    fireEvent.click(toggles[1]);
+    await waitFor(() => expect(api.domains.setSsl).toHaveBeenCalledWith(2, true));
+  });
+});

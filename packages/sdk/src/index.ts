@@ -96,6 +96,8 @@ export interface NineDeployClient {
     start: (id: number) => Promise<{ ok: boolean; status: string }>;
     restart: (id: number) => Promise<{ ok: boolean; status: string }>;
     logs: (id: number) => Promise<{ lines: string }>;
+    exportUrl: (id: number) => string;
+    importBundle: (bundle: unknown) => Promise<{ ok: boolean; serviceId: number; slug: string; message: string }>;
   };
   deploys: {
     trigger: (serviceId: number, input?: TriggerDeploy) => Promise<{ deploymentId: number }>;
@@ -116,6 +118,7 @@ export interface NineDeployClient {
   system: {
     resources: () => Promise<DockerResources>;
     pruneImages: () => Promise<{ ok: boolean }>;
+    exportUrl: () => string;
   };
   tunnels: {
     list: () => Promise<TunnelEntry[]>;
@@ -129,6 +132,22 @@ export interface NineDeployClient {
     list: () => Promise<PublicUser[]>;
     setRole: (id: number, role: 'admin' | 'member') => Promise<PublicUser>;
     remove: (id: number) => Promise<void>;
+  };
+  about: {
+    get: () => Promise<{
+      name: string; version: string; description: string; license: string; repo: string; docs: string;
+      techStack: Array<{ category: string; items: string[] }>;
+      changelog: Array<{ version: string; date: string; title: string; changes: string[] }>;
+      stats: { services: number; databases: number; deployments: number; users: number };
+    }>;
+  };
+  notifications: {
+    listChannels: () => Promise<Array<{ id: number; name: string; type: string; eventFilter: string; active: boolean; createdAt: string }>>;
+    createChannel: (input: { name: string; type: string; target: string; eventFilter?: string }) => Promise<{ id: number; name: string; type: string }>;
+    updateChannel: (id: number, input: { eventFilter?: string; active?: boolean }) => Promise<{ id: number; active: boolean }>;
+    removeChannel: (id: number) => Promise<void>;
+    testChannel: (id: number) => Promise<{ ok: boolean }>;
+    log: () => Promise<Array<{ id: number; channelId: number | null; event: string; entity: string | null; status: string; error: string | null; ts: string }>>;
   };
   sources: {
     list: () => Promise<Source[]>;
@@ -161,6 +180,13 @@ export interface NineDeployClient {
   stats: {
     snapshot: () => Promise<StatsSnapshot>;
     metrics: (serviceId: number, opts?: { kind?: 'cpu' | 'memory'; minutes?: number }) => Promise<MetricSeries>;
+  };
+  dashboard: {
+    get: () => Promise<{
+      stats: { services: number; databases: number; deployments: number; domains: number; webhooks: number; running: number; stopped: number; errored: number; dbRunning: number; containers: number };
+      health: Array<{ serviceId: number; name: string; slug: string; type: string; status: string; healthy: boolean; responseMs: number | null; port: number | null; runtimeId: string | null; commitSha: string | null; lastDeploy: string | null }>;
+      recentDeploys: Array<{ id: number; serviceId: number; serviceName: string; status: string; commitSha: string | null; message: string | null; trigger: string; finishedAt: string | null; createdAt: string }>;
+    }>;
   };
   topology: {
     get: () => Promise<TopologyGraph>;
@@ -223,7 +249,7 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
     return parsed as T;
   }
 
-  const get = <T>(path: string) => request<T>(path, { method: 'GET' });
+  const get = <T>(path: string) => request<T>(path);
   const send = <T>(method: string, path: string, body?: unknown) => request<T>(path, { method, body });
 
   return {
@@ -254,6 +280,8 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
       start: (id) => send<{ ok: boolean; status: string }>('POST', `/v1/services/${id}/start`),
       restart: (id) => send<{ ok: boolean; status: string }>('POST', `/v1/services/${id}/restart`),
       logs: (id) => get<{ lines: string }>(`/v1/services/${id}/logs`),
+      exportUrl: (id) => `/v1/services/${id}/export`,
+      importBundle: (bundle) => send('POST', '/v1/services/import', bundle),
     },
     deploys: {
       trigger: (serviceId, input) =>
@@ -280,6 +308,7 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
     system: {
       resources: () => get<DockerResources>('/v1/system/resources'),
       pruneImages: () => send<{ ok: boolean }>('POST', '/v1/system/prune-images'),
+      exportUrl: () => '/v1/system/export',
     },
     tunnels: {
       list: () => get<TunnelEntry[]>('/v1/tunnels'),
@@ -300,6 +329,17 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
       remove: async (id) => {
         await request(`/v1/users/${id}`, { method: 'DELETE' });
       },
+    },
+    about: {
+      get: () => get('/v1/about'),
+    },
+    notifications: {
+      listChannels: () => get('/v1/notifications/channels'),
+      createChannel: (input) => send('POST', '/v1/notifications/channels', input),
+      updateChannel: (id, input) => send('PATCH', `/v1/notifications/channels/${id}`, input),
+      removeChannel: async (id) => { await request(`/v1/notifications/channels/${id}`, { method: 'DELETE' }); },
+      testChannel: (id) => send('POST', `/v1/notifications/channels/${id}/test`),
+      log: () => get('/v1/notifications/log'),
     },
     sources: {
       list: () => get<Source[]>('/v1/sources'),
@@ -345,6 +385,9 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
         get<MetricSeries>(
           `/v1/services/${serviceId}/metrics?kind=${opts?.kind ?? 'cpu'}&minutes=${opts?.minutes ?? 60}`,
         ),
+    },
+    dashboard: {
+      get: () => get('/v1/dashboard'),
     },
     topology: {
       get: () => get<TopologyGraph>('/v1/topology'),

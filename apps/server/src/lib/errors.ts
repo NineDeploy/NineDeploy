@@ -16,3 +16,14 @@ export const unauthorized = (message = 'Unauthorized') => new HttpError(401, 'un
 export const forbidden = (message = 'Forbidden') => new HttpError(403, 'forbidden', message);
 export const notFound = (message = 'Not found') => new HttpError(404, 'not_found', message);
 export const conflict = (message = 'Conflict') => new HttpError(409, 'conflict', message);
+
+/**
+ * Parse a route-param id into a positive integer. Throws 400 (not 404) on
+ * malformed input so an id like `abc` produces a clear validation error
+ * instead of silently becoming NaN and yielding a misleading "not found".
+ */
+export const parseId = (value: string, message = 'Invalid id parameter'): number => {
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 1) throw badRequest(message, 'invalid_id');
+  return n;
+};

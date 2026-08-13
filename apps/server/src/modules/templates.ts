@@ -1,4 +1,5 @@
 import { deployments, envVars, services } from '@ninedeploy/db';
+import { audit } from "../lib/audit.js";
 import type { FastifyPluginAsync } from 'fastify';
 import { TEMPLATES, type Template } from '../templates/registry.js';
 import { encrypt } from '../lib/crypto.js';
@@ -46,6 +47,7 @@ export const templateRoutes: FastifyPluginAsync = async (app) => {
       .insert(deployments)
       .values({ serviceId: svc!.id, status: 'queued', trigger: 'user', message: `Deploy from template: ${t.name}` })
       .returning();
+    void audit(app.db, req.user!.id, 'template.deploy', t.name);
     return { serviceId: svc!.id, deploymentId: dep!.id };
   });
 };

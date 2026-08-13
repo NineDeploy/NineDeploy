@@ -8,6 +8,11 @@ export interface BuildContext {
   workDir: string;
   /** Resolved commit SHA. */
   commitSha: string;
+  /**
+   * For image deploys: an explicit image digest to run instead of `service.image`
+   * (used by rollback to pin the exact image). When absent, `service.image` is used.
+   */
+  imageDigest?: string;
   /** Environment variables to inject at runtime (service env vars + attached DB connection strings). */
   env: Record<string, string>;
   /** Append a log line (persisted + broadcast to subscribers). */
@@ -20,6 +25,8 @@ export interface DeployRuntime {
   runtimeId: string;
   port: number | null;
   healthPath: string;
+  /** Resolved image digest the runtime is actually running (for exact rollback). */
+  imageDigest?: string;
 }
 
 /** A runtime backend (Docker / PM2). Implementations live in ./builders. */

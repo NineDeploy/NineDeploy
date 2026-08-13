@@ -1,0 +1,267 @@
+import { describe, expect, it, vi } from 'vitest';
+import { encrypt } from '../src/lib/crypto.js';
+import { notificationRoutes } from '../src/modules/notifications.js';
+import { asUser, buildTestApp, channelRow, createFakeDb, notifLogRow } from './helpers.js';
+
+describe('notification routes', () => {
+  it('lists channels', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findMany: {
+          notificationChannels: [
+            channelRow({ id: 1, name: 'ops', targetEncrypted: encrypt('target') }),
+            channelRow({ id: 2, name: 'empty', targetEncrypted: '' }),
+          ],
+        },
+      }),
+    });
+    await app.register(notificationRoutes);
+    const res = await app.inject({ method: 'GET', url: '/channels', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    const rows = res.json();
+    expect(rows[0]).toMatchObject({ id: 1, name: 'ops', hasTarget: true });
+    expect(rows[1]).toMatchObject({ id: 2, name: 'empty', hasTarget: false });
+  });
+
+  it('creates a channel', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({ insert: { notification_channels: [channelRow({ id: 5, name: 'ops', type: 'webhook' })] } }),
+    });
+    await app.register(notificationRoutes);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/channels',
+      headers: asUser(),
+      payload: { name: 'ops', type: 'webhook', target: 'https://example.com/hook' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ id: 5, name: 'ops', type: 'webhook', active: true });
+  });
+
+  it('rejects channels missing required fields', async () => {
+    const app = await buildTestApp({ db: createFakeDb() });
+    await app.register(notificationRoutes);
+    const res = await app.inject({
+      method: 'POST', url: '/channels', headers: asUser(), payload: { name: 'x' },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('rejects a channel request without a body', async () => {
+    const app = await buildTestApp({ db: createFakeDb() });
+    await app.register(notificationRoutes);
+    const res = await app.inject({ method: 'POST', url: '/channels', headers: asUser() });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('rejects an invalid channel type', async () => {
+    const app = await buildTestApp({ db: createFakeDb() });
+    await app.register(notificationRoutes);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/channels',
+      headers: asUser(),
+      payload: { name: 'x', type: 'slack', target: 't' },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('patches a channel eventFilter and active state', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({ update: { notification_channels: [channelRow({ id: 5, eventFilter: 'deploy.', active: false })] } }),
+    });
+    await app.register(notificationRoutes);
+    const both = await app.inject({
+      method: 'PATCH', url: '/channels/5', headers: asUser(), payload: { eventFilter: 'deploy.', active: false },
+    });
+    expect(both.statusCode).toBe(200);
+    expect(both.json()).toMatchObject({ eventFilter: 'deploy.', active: false });
+    const filterOnly = await app.inject({
+      method: 'PATCH', url: '/channels/5', headers: asUser(), payload: { eventFilter: 'backup.' },
+    });
+    expect(filterOnly.statusCode).toBe(200);
+  });
+
+  it('returns 404 when patching a missing channel', async () => {
+    const app = await buildTestApp({ db: createFakeDb({ update: { notification_channels: [] } }) });
+    await app.register(notificationRoutes);
+    const res = await app.inject({
+      method: 'PATCH', url: '/channels/99', headers: asUser(), payload: { active: true },
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('patches a channel with an empty body', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({ update: { notification_channels: [channelRow({ id: 5 })] } }),
+    });
+    await app.register(notificationRoutes);
+    const res = await app.inject({ method: 'PATCH', url: '/channels/5', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ id: 5 });
+  });
+
+  it('deletes a channel', async () => {
+    const app = await buildTestApp({ db: createFakeDb() });
+    await app.register(notificationRoutes);
+    const res = await app.inject({ method: 'DELETE', url: '/channels/5', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: true });
+  });
+
+  it('tests a telegram channel successfully', async () => {
+    const fetchMock = vi.fn(async () => ({ ok: true, status: 200 })) as unknown as typeof fetch;
+    vi.stubGlobal('fetch', fetchMock);
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { notificationChannels: channelRow({ id: 5, type: 'telegram', targetEncrypted: encrypt('bot:chat') }) },
+      }),
+    });
+    await app.register(notificationRoutes);
+    const res = await app.inject({ method: 'POST', url: '/channels/5/test', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: true });
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.telegram.org/botbot/sendMessage',
+      expect.objectContaining({ method: 'POST' }),
+    );
+  });
+
+  it('fails a telegram channel test when the API errors', async () => {
+    const fetchMock = vi.fn(async () => ({ ok: false, status: 403 })) as unknown as typeof fetch;
+    vi.stubGlobal('fetch', fetchMock);
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { notificationChannels: channelRow({ id: 5, type: 'telegram', targetEncrypted: encrypt('bot:chat') }) },
+      }),
+    });
+    await app.register(notificationRoutes);
+    const res = await app.inject({ method: 'POST', url: '/channels/5/test', headers: asUser() });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.message).toContain('Telegram 403');
+  });
+
+  it('tests a webhook channel', async () => {
+    const fetchMock = vi.fn(async () => ({ ok: true })) as unknown as typeof fetch;
+    vi.stubGlobal('fetch', fetchMock);
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { notificationChannels: channelRow({ id: 5, type: 'webhook', targetEncrypted: encrypt('https://h.example.com') }) },
+      }),
+    });
+    await app.register(notificationRoutes);
+    const res = await app.inject({ method: 'POST', url: '/channels/5/test', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('fails a webhook channel test on a non-ok response', async () => {
+    const fetchMock = vi.fn(async () => ({ ok: false, status: 500 })) as unknown as typeof fetch;
+    vi.stubGlobal('fetch', fetchMock);
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { notificationChannels: channelRow({ id: 5, type: 'webhook', targetEncrypted: encrypt('https://h.example.com') }) },
+      }),
+    });
+    await app.register(notificationRoutes);
+    const res = await app.inject({ method: 'POST', url: '/channels/5/test', headers: asUser() });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.message).toContain('Webhook 500');
+  });
+
+  it('tests a discord channel', async () => {
+    const fetchMock = vi.fn(async () => ({ ok: true })) as unknown as typeof fetch;
+    vi.stubGlobal('fetch', fetchMock);
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { notificationChannels: channelRow({ id: 5, type: 'discord', targetEncrypted: encrypt('https://discord.example.com') }) },
+      }),
+    });
+    await app.register(notificationRoutes);
+    const res = await app.inject({ method: 'POST', url: '/channels/5/test', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('fails a discord channel test when fetch rejects', async () => {
+    const fetchMock = vi.fn(async () => { throw new Error('network'); }) as unknown as typeof fetch;
+    vi.stubGlobal('fetch', fetchMock);
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { notificationChannels: channelRow({ id: 5, type: 'discord', targetEncrypted: encrypt('https://discord.example.com') }) },
+      }),
+    });
+    await app.register(notificationRoutes);
+    const res = await app.inject({ method: 'POST', url: '/channels/5/test', headers: asUser() });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.message).toContain('network');
+  });
+
+  it('fails a discord channel test on a non-ok response', async () => {
+    const fetchMock = vi.fn(async () => ({ ok: false, status: 502 })) as unknown as typeof fetch;
+    vi.stubGlobal('fetch', fetchMock);
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { notificationChannels: channelRow({ id: 5, type: 'discord', targetEncrypted: encrypt('https://discord.example.com') }) },
+      }),
+    });
+    await app.register(notificationRoutes);
+    const res = await app.inject({ method: 'POST', url: '/channels/5/test', headers: asUser() });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.message).toContain('Discord 502');
+  });
+
+  it('succeeds for an unknown channel type without calling fetch', async () => {
+    const fetchMock = vi.fn() as unknown as typeof fetch;
+    vi.stubGlobal('fetch', fetchMock);
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { notificationChannels: channelRow({ id: 5, type: 'slack', targetEncrypted: encrypt('x') }) },
+      }),
+    });
+    await app.register(notificationRoutes);
+    const res = await app.inject({ method: 'POST', url: '/channels/5/test', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: true });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('formats non-Error test failures', async () => {
+    const fetchMock = vi.fn(async () => { throw 'plain string'; }) as unknown as typeof fetch;
+    vi.stubGlobal('fetch', fetchMock);
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { notificationChannels: channelRow({ id: 5, type: 'webhook', targetEncrypted: encrypt('https://h.example.com') }) },
+      }),
+    });
+    await app.register(notificationRoutes);
+    const res = await app.inject({ method: 'POST', url: '/channels/5/test', headers: asUser() });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.message).toContain('plain string');
+  });
+
+  it('returns 404 when testing a missing channel', async () => {
+    const app = await buildTestApp({ db: createFakeDb() });
+    await app.register(notificationRoutes);
+    const res = await app.inject({ method: 'POST', url: '/channels/99/test', headers: asUser() });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('lists the notification log', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({ findMany: { notificationLog: [notifLogRow({ id: 3, event: 'deploy.completed' })] } }),
+    });
+    await app.register(notificationRoutes);
+    const res = await app.inject({ method: 'GET', url: '/log', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual([
+      {
+        id: 3,
+        channelId: 1,
+        event: 'deploy.completed',
+        entity: null,
+        status: 'sent',
+        error: null,
+        ts: '2026-01-01T00:00:00.000Z',
+      },
+    ]);
+  });
+});

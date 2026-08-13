@@ -44,13 +44,15 @@ export const deploysRoutes: FastifyPluginAsync = async (app) => {
     }));
   });
 
-  // Rollback to a previous deployment (redeploys at that commit SHA).
+  // Rollback to a previous deployment. Re-runs the exact commit SHA (repo
+  // deploys) or the exact image digest (image deploys) so a moved `:latest`
+  // tag can't silently change what gets deployed.
   app.post('/:id/deploys/:depId/rollback', { onRequest: [app.authenticate] }, async (req) => {
     const id = num((req.params as { id: string }).id);
     const depId = num((req.params as { depId: string }).depId);
     const old = await app.db.query.deployments.findFirst({ where: eq(deployments.id, depId) });
     if (!old || old.serviceId !== id) throw notFound('Deployment not found');
-    void audit(app.db, req.user!.id, 'deploy.rollback', `#${depId} → ${old.commitSha?.slice(0, 7) ?? '—'}`);
+    void audit(app.db, req.user!.id, 'deploy.rollback', `#${depId} → ${old.commitSha?.slice(0, 7) ?? old.imageDigest?.slice(0, 15) ?? '—'}`);
     const [dep] = await app.db
       .insert(deployments)
       .values({
@@ -58,6 +60,7 @@ export const deploysRoutes: FastifyPluginAsync = async (app) => {
         status: 'queued',
         trigger: 'user',
         commitSha: old.commitSha,
+        imageDigest: old.imageDigest,
         message: `Rollback to #${depId}`,
       })
       .returning();

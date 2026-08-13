@@ -1,0 +1,140 @@
+import type { ManagedDatabase, TemplateSummary } from '@ninedeploy/sdk';
+import type { NineDeployClient } from '../client.js';
+import { c, error, fmtTime, header, info, kv, spinner, success, table, banner } from '../lib/format.js';
+import { prompt } from '../prompts.js';
+
+/** `ninedeploy databases list` */
+export async function dbList(client: NineDeployClient): Promise<void> {
+  header('Databases');
+  await spinner('Fetching', async () => {
+    const dbs = await client.databases.list();
+    if (dbs.length === 0) { info('No databases.'); return; }
+    table(dbs.map((d: ManagedDatabase) => ({ id: d.id, name: d.name, engine: d.engine, status: d.status, port: d.port ?? '—' })), ['id', 'name', 'engine', 'status', 'port']);
+  });
+}
+
+/** `ninedeploy databases create` */
+export async function dbCreate(client: NineDeployClient): Promise<void> {
+  header('Create Database');
+  const name = await prompt('Database name');
+  if (!name) return error('Name required');
+  console.log('  Engines: 1=PostgreSQL  2=MySQL  3=Redis  4=MongoDB');
+  const choice = await prompt('Select engine (1-4)', '1');
+  const engines = ['postgres', 'mysql', 'redis', 'mongo'] as const;
+  const engine = engines[Number(choice) - 1] ?? 'postgres';
+  try {
+    const db = await spinner('Creating database', () => client.databases.create({ name, engine }));
+    success(`Database "${db.name}" created (id: ${db.id})`);
+    if (db.connectionString) { info(`Connection: ${c.cyan(db.connectionString)}`); }
+  } catch (err) { error(err instanceof Error ? err.message : String(err)); }
+}
+
+/** `ninedeploy templates list` */
+export async function tplList(client: NineDeployClient): Promise<void> {
+  header('Template Hub');
+  await spinner('Fetching templates', async () => {
+    const templates = await client.templates.list();
+    if (templates.length === 0) { info('No templates.'); return; }
+    table(templates.map((t: TemplateSummary) => ({ emoji: t.emoji, name: t.name, category: t.category, featured: t.featured ? '★' : '' })), ['emoji', 'name', 'category', 'featured']);
+  });
+}
+
+/** `ninedeploy templates deploy <id>` */
+export async function tplDeploy(client: NineDeployClient, id: string): Promise<void> {
+  if (!id) return error('Usage: ninedeploy templates deploy <template-id>');
+  try {
+    const res = await spinner(`Deploying ${id}`, () => client.templates.deploy(id));
+    success(`Deployed! Service ID: ${res.serviceId}`);
+    info(`Watch: ninedeploy services logs ${res.serviceId}`);
+  } catch (err) { error(err instanceof Error ? err.message : String(err)); }
+}
+
+/** `ninedeploy deploys list <serviceId>` */
+export async function deploysList(client: NineDeployClient, svcIdStr: string): Promise<void> {
+  const svcId = Number(svcIdStr);
+  if (!svcId) return error('Usage: ninedeploy deploys list <serviceId>');
+  header('Deployments');
+  await spinner('Fetching', async () => {
+    const deps = await client.deploys.list(svcId);
+    if (deps.length === 0) { info('No deployments.'); return; }
+    table(deps.map((d) => ({ id: d.id, status: d.status, commit: d.commitSha?.slice(0, 7) ?? '—', trigger: d.trigger, time: fmtTime(d.createdAt) })), ['id', 'status', 'commit', 'trigger', 'time']);
+  });
+}
+
+/** `ninedeploy deploys rollback <serviceId> <deployId>` */
+export async function deploysRollback(client: NineDeployClient, svcIdStr: string, depIdStr: string): Promise<void> {
+  const svcId = Number(svcIdStr);
+  const depId = Number(depIdStr);
+  if (!svcId || !depId) return error('Usage: ninedeploy deploys rollback <serviceId> <deployId>');
+  try {
+    const res = await spinner('Rolling back', () => client.deploys.rollback(svcId, depId));
+    success(`Rollback to #${depId} queued (new deploy: #${res.deploymentId}).`);
+  } catch (err) { error(err instanceof Error ? err.message : String(err)); }
+}
+
+/** `ninedeploy token create` */
+export async function tokenCreate(client: NineDeployClient): Promise<void> {
+  const name = await prompt('Token name', 'ci');
+  try {
+    const tok = await spinner('Creating token', () => client.auth.tokens.create({ name }));
+    success(`Token created: ${c.cyan(tok.token)}`);
+    info('Store this securely — it won\'t be shown again.');
+  } catch (err) { error(err instanceof Error ? err.message : String(err)); }
+}
+
+/** `ninedeploy token list` */
+export async function tokenList(client: NineDeployClient): Promise<void> {
+  header('API Tokens');
+  await spinner('Fetching', async () => {
+    const tokens = await client.auth.tokens.list();
+    if (tokens.length === 0) { info('No tokens.'); return; }
+    table(tokens.map((t) => ({ id: t.id, name: t.name, last_used: fmtTime(t.lastUsedAt), created: fmtTime(t.createdAt) })), ['id', 'name', 'last_used', 'created']);
+  });
+}
+
+/** `ninedeploy system info` */
+export async function systemInfo(client: NineDeployClient): Promise<void> {
+  header('System');
+  await spinner('Fetching', async () => {
+    const about = await client.about.get();
+    banner();
+    kv('Version', c.bold(`v${about.version}`));
+    kv('License', about.license);
+    kv('Services', about.stats.services);
+    kv('Databases', about.stats.databases);
+    kv('Deploys', about.stats.deployments);
+    kv('Users', about.stats.users);
+    kv('Repo', about.repo);
+    console.log();
+    header('Tech Stack');
+    for (const group of about.techStack) {
+      kv(group.category, group.items.join(', '));
+    }
+  });
+}
+
+/** `ninedeploy system dashboard` */
+export async function systemDashboard(client: NineDeployClient): Promise<void> {
+  header('Dashboard');
+  await spinner('Probing health', async () => {
+    const dash = await client.dashboard.get();
+    const s = dash.stats;
+    const allHealthy = dash.health.every((h) => h.healthy || h.status !== 'running');
+    console.log(`  ${allHealthy ? '✅ All systems operational' : '⚠️  Some services need attention'}`);
+    console.log();
+    kv('Services', `${s.running} running / ${s.services} total`);
+    kv('Databases', `${s.dbRunning} running / ${s.databases} total`);
+    kv('Containers', s.containers);
+    kv('Domains', s.domains);
+    kv('Webhooks', s.webhooks);
+    kv('Deployments', s.deployments);
+    console.log();
+    header('Service Health');
+    if (dash.health.length === 0) { info('No services.'); return; }
+    table(dash.health.map((h) => ({ id: h.serviceId, name: h.name, status: h.healthy ? 'healthy' : h.status, ms: h.responseMs ? `${h.responseMs}ms` : '—', type: h.type })), ['id', 'name', 'status', 'ms', 'type']);
+    console.log();
+    header('Recent Deploys');
+    if (dash.recentDeploys.length === 0) { info('No deployments.'); return; }
+    table(dash.recentDeploys.map((d) => ({ id: d.id, service: d.serviceName, status: d.status, time: fmtTime(d.createdAt) })), ['id', 'service', 'status', 'time']);
+  });
+}

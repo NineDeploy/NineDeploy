@@ -38,3 +38,8 @@ Thumbs.db
 repos
 volumes
 backups
+
+.wrongstack/
+!/.wrongstack/
+/.wrongstack/*
+!/.wrongstack/project.json

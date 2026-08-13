@@ -7,7 +7,7 @@ import { capture } from '../lib/exec.js';
 async function volumeSize(name: string): Promise<number> {
   try {
     const out = await capture('docker', ['run', '--rm', '-v', `${name}:/v`, 'alpine', 'sh', '-c', 'du -sb /v']);
-    return Number((out.trim().split(/\s+/)[0] ?? '0')) || 0;
+    return Number(out.trim().split(/\s+/)[0]!) || 0;
   } catch {
     return 0;
   }

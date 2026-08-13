@@ -27,6 +27,11 @@ export interface CreateDbResult {
  */
 export function createDb(opts: CreateDbOptions): CreateDbResult {
   const client = createClient({ url: opts.url, authToken: opts.authToken });
+  // SQLite defaults `foreign_keys` to OFF, which would silently disable every
+  // `onDelete cascade` / `set null` rule declared in the schema. Enable it per
+  // connection. Fired without awaiting — execute calls on a single libSQL client
+  // are serialized, so this runs before any subsequent query on this connection.
+  void client.execute('PRAGMA foreign_keys = ON;').catch(() => undefined);
   const db = drizzle(client, { schema });
   return { db, client };
 }

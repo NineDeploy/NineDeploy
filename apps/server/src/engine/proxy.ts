@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { domains, services, type DB } from '@ninedeploy/db';
 import { config } from '../config.js';
@@ -9,6 +9,23 @@ const TRAEFIK_IMAGE = 'traefik:v3.3';
 
 /** Shared Docker network that app + database containers join to reach each other. */
 export const NETWORK = 'ninedeploy';
+
+/**
+ * Whitelists for Traefik rule operands. Hostnames may contain DNS chars plus a
+ * leading wildcard (`*.example.com`); paths may contain URL-safe chars. Anything
+ * else — backticks, `)`, newlines, braces — is stripped so a crafted hostname or
+ * path can never break out of the `Host(...)`/`PathPrefix(...)` rule or inject
+ * arbitrary YAML into the dynamic config.
+ */
+const HOST_RE = /[^A-Za-z0-9.\-*]/g;
+const PATH_RE = /[^A-Za-z0-9.\-/_]/g;
+
+/** Atomically replace `file`'s contents: write to a sibling temp file then rename. */
+function writeAtomic(file: string, content: string): void {
+  const tmp = `${file}.tmp`;
+  writeFileSync(tmp, content);
+  renameSync(tmp, file);
+}
 
 /** Ensure the shared `ninedeploy` network exists (idempotent). */
 export async function ensureNetwork(log: (line: string) => void): Promise<void> {
@@ -110,11 +127,14 @@ export async function writeDynamicConfig(db: DB): Promise<void> {
     const svc = servicesById.get(d.serviceId);
     if (!svc || !svc.port || !svc.runtimeId) continue; // need a running container to route to
     const key = `${svc.slug}_${d.id}`;
-    const host = d.hostname.replace(/[`"]/g, '');
+    // Sanitize operands against rule/YAML injection (see HOST_RE/PATH_RE).
+    const host = String(d.hostname ?? '').replace(HOST_RE, '');
+    if (!host) continue; // every char was stripped → the hostname is unusable/unsafe
+    const cleanPath = String(d.path ?? '').replace(PATH_RE, '');
     const entry = d.ssl ? 'websecure' : 'web';
     routers.push(
       `    ${key}:\n` +
-        `      rule: "Host(\`${host}\`)${d.path && d.path !== '/' ? ` && PathPrefix(\`${d.path}\`)` : ''}"\n` +
+        `      rule: "Host(\`${host}\`)${cleanPath && cleanPath !== '/' ? ` && PathPrefix(\`${cleanPath}\`)` : ''}"\n` +
         `      service: svc_${key}\n` +
         `      entryPoints:\n        - ${entry}` +
         (d.ssl ? `\n      tls: {}` : ''),
@@ -138,5 +158,5 @@ export async function writeDynamicConfig(db: DB): Promise<void> {
     '  services:\n' +
     (svcBlocks.length ? svcBlocks.join('\n') + '\n' : '    {}\n');
 
-  writeFileSync(dynamicPath(), yaml);
+  writeAtomic(dynamicPath(), yaml);
 }
