@@ -210,6 +210,7 @@ Zero-downtime for Docker, brief-gap-with-rollback for PM2. The worker processes 
 ## Key design decisions
 
 - **Single SQLite database** — no PostgreSQL/MongoDB/Redis dependency; everything in one file; `PRAGMA foreign_keys = ON` so cascade rules fire
+- **Forward-only, additive migrations** — drizzle-kit emits no down-SQL, so rollback is manual; every migration is strictly additive (CREATE TABLE / ADD COLUMN / CREATE INDEX), so a bad migration leaves an unused object rather than data loss. To revert, drop the objects the migration created
 - **Core runs bare-metal** (systemd) — direct PM2 + Docker daemon access
 - **Traefik file provider** — dynamic config regenerated on every deploy/domain change
 - **Container-name routing** — Traefik reaches containers by name over the shared network, not host ports
