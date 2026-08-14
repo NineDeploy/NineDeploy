@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { deployments, services, webhooks } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { webhookCreate } from '@ninedeploy/schemas';
@@ -28,6 +28,21 @@ export const hookReceiveRoutes: FastifyPluginAsync = async (app) => {
     if (!push) return { ok: 'ignored', reason: 'not_a_push' };
 
     if (push.branch !== hook.branch) return { ok: 'skipped', reason: 'branch', branch: push.branch };
+
+    // Replay dedup: a captured valid push replays indefinitely (the HMAC covers
+    // the body, not freshness). Skip when a deployment for this exact commit is
+    // already queued/building/running for the service, so a re-sent payload
+    // cannot flood the deploy queue.
+    if (push.sha) {
+      const existing = await app.db.query.deployments.findFirst({
+        where: and(
+          eq(deployments.serviceId, hook.serviceId),
+          eq(deployments.commitSha, push.sha),
+          inArray(deployments.status, ['queued', 'building', 'running']),
+        ),
+      });
+      if (existing) return { ok: 'skipped', reason: 'duplicate', deploymentId: existing.id };
+    }
 
     const [dep] = await app.db
       .insert(deployments)

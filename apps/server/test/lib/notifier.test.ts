@@ -214,4 +214,34 @@ describe('notifyEvent', () => {
     // and a null entity produces no suffix.
     expect(fetchMock.mock.calls[0]![1]!.body).toContain('• custom custom');
   });
+
+  it('HTML-escapes a hostile entity so Telegram parse_mode cannot break', async () => {
+    fetchMock.mockResolvedValue(okResponse());
+    const channels = [
+      { id: 14, type: 'telegram', targetEncrypted: encrypt('123:abc,456'), eventFilter: '', active: true },
+    ];
+    const { db } = makeDb(channels);
+    await notifyEvent(db, { id: 4, action: 'service.created', entity: '<b>&x</b>', ts: event.ts });
+    const body = JSON.parse(fetchMock.mock.calls[0]![1]!.body as string) as { text: string };
+    expect(body.text).toContain('&lt;b&gt;&amp;x&lt;/b&gt;');
+    expect(body.text).not.toContain('<b>');
+  });
+
+  it('sends every dispatch with an abort signal (bounded timeout) and records failures', async () => {
+    // A stalled target aborts via the signal; simulate by rejecting when one is present.
+    fetchMock.mockImplementation((_url: string, init: RequestInit) =>
+      init.signal instanceof AbortSignal
+        ? Promise.reject(new Error('The operation was aborted'))
+        : Promise.resolve(okResponse()),
+    );
+    const channels = [
+      { id: 15, type: 'webhook', targetEncrypted: encrypt('https://hooks.example.com'), eventFilter: '', active: true },
+    ];
+    const { db, logs } = makeDb(channels);
+    await notifyEvent(db, { id: 5, action: 'service.created', entity: 'x', ts: event.ts });
+    const init = fetchMock.mock.calls[0]![1] as RequestInit;
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+    // The aborted dispatch failed fast and was recorded — it did not hang.
+    expect(logs.some((l) => l.status === 'failed')).toBe(true);
+  });
 });

@@ -65,10 +65,13 @@ type Emit = (ev: string, ...a: unknown[]) => void;
 function fakeChild(trigger: (emit: Emit) => void) {
   const handlers: Record<string, Array<(...a: unknown[]) => void>> = {};
   const emit: Emit = (ev, ...a) => { for (const cb of handlers[ev] ?? []) cb(...a); };
+  // Minimal stdout stream so consumers attaching 'data' listeners don't crash.
+  const stdoutHandlers: Array<(...a: unknown[]) => void> = [];
   queueMicrotask(() => trigger(emit));
   return {
     on: (ev: string, cb: (...a: unknown[]) => void) => { (handlers[ev] ??= []).push(cb); },
     emit,
+    stdout: { on: (ev: string, cb: (...a: unknown[]) => void) => { if (ev === 'data') stdoutHandlers.push(cb); } },
   };
 }
 
@@ -367,6 +370,33 @@ describe('system resources routes', () => {
     expect(res.statusCode).toBe(200);
     expect(res.json().ok).toBe(true);
     expect(fs.existsSync(configMock.paths.dbFile)).toBe(false);
+  });
+
+  it('rejects an archive with path-traversal members (tar-slip)', async () => {
+    // Build a real archive whose member is renamed to `../evil` via --transform.
+    const uploadDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nd-slip-'));
+    createdDirs.push(uploadDir);
+    const staging = fs.mkdtempSync(path.join(os.tmpdir(), 'nd-slip-stage-'));
+    createdDirs.push(staging);
+    fs.writeFileSync(path.join(staging, 'payload'), 'x');
+    const archive = path.join(uploadDir, 'evil.tar.gz');
+    await new Promise<void>((resolve, reject) => {
+      const child = spawnMock.spawn('tar', ['--transform', 's,payload,../evil-payload,', '-czf', archive, '-C', staging, 'payload']);
+      child.on('close', (code: number) => (code === 0 ? resolve() : reject(new Error(`tar ${code}`))));
+      child.on('error', reject);
+    });
+
+    const app = await appWith();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/import',
+      headers: { 'content-type': 'application/octet-stream', ...asUser() },
+      payload: fs.readFileSync(archive),
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.message).toContain('unsafe member');
+    // The extraction dir is cleaned up.
+    expect(fs.existsSync(path.join(configMock.paths.dataDir, '_import'))).toBe(false);
   });
 
   it('imports an archive with a master key into a fresh data dir', async () => {

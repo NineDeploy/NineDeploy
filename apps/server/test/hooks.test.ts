@@ -99,6 +99,26 @@ describe('webhook receiver', () => {
     expect(res.json()).toEqual({ ok: true, provider: 'github', deploymentId: 7 });
   });
 
+  it('skips a replayed push whose commit is already deployed (dedup)', async () => {
+    const existing = depRow({ id: 42, trigger: 'webhook', commitSha: 'deadbeef', status: 'running' });
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { webhooks: hook(), deployments: existing },
+      }),
+      rawBody: true,
+    });
+    await app.register(hookReceiveRoutes);
+    const body = JSON.stringify(pushPayload('main')); // head_commit.id = deadbeef
+    const res = await app.inject({
+      method: 'POST',
+      url: '/1',
+      headers: { 'content-type': 'application/json', 'x-github-event': 'push', 'x-hub-signature-256': sig(body) },
+      payload: body,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: 'skipped', reason: 'duplicate', deploymentId: 42 });
+  });
+
   it('queues a push with missing commit metadata', async () => {
     const app = await buildTestApp({
       db: createFakeDb({

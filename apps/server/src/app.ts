@@ -30,7 +30,21 @@ function formatZodError(error: ZodError) {
 
 /** Build a Fastify instance — exported so tests can spin up an isolated app. */
 export async function buildApp(): Promise<FastifyInstance> {
-  const app = Fastify({ logger: true });
+  const app = Fastify({
+    logger: {
+      // Never persist query strings: WebSocket auth passes the bearer token in
+      // ?token=…, and the default req serializer logs the full URL at info level.
+      serializers: {
+        req(req: { method?: string; url?: string; remoteAddress?: string; hostname?: string }) {
+          const url = (req.url ?? '').split('?')[0]!;
+          return { method: req.method, url, remoteAddress: req.remoteAddress, hostname: req.hostname };
+        },
+      },
+    },
+    // System import uploads a full backup tarball (SQLite + Traefik config);
+    // the default 1 MB cap would reject every real backup.
+    bodyLimit: 256 * 1024 * 1024,
+  });
 
   // Restrict CORS to a known allowlist instead of reflecting any origin
   // (`origin: true`). The dashboard is same-origin in production; the extra

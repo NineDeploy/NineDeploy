@@ -59,7 +59,12 @@ export const systemRoutes: FastifyPluginAsync = async (app) => {
   // ── Export: download a tar.gz of the entire system state ──────────────
   app.get('/export', async (_req, reply) => {
     const files: string[] = [];
-    const archive = path.join(config.paths.dataDir, 'ninedeploy-backup.tar.gz');
+    // Unique temp names so two concurrent exports can't delete each other's
+    // artifacts mid-stream via the finally-cleanup below.
+    const stamp = `${process.pid}-${Date.now()}`;
+    const archive = path.join(config.paths.dataDir, `ninedeploy-backup-${stamp}.tar.gz`);
+    const envTmp = `_env-${stamp}`;
+    const metaTmp = `_meta-${stamp}.json`;
 
     try {
       const dbRel = path.relative(config.paths.dataDir, config.paths.dbFile);
@@ -67,8 +72,8 @@ export const systemRoutes: FastifyPluginAsync = async (app) => {
       if (existsSync(config.paths.masterKeyFile)) files.push(path.relative(config.paths.dataDir, config.paths.masterKeyFile));
       const envFile = path.join(process.cwd(), '.env');
       if (existsSync(envFile)) {
-        writeFileSync(path.join(config.paths.dataDir, '_env'), readFileSync(envFile, 'utf8'));
-        files.push('_env');
+        writeFileSync(path.join(config.paths.dataDir, envTmp), readFileSync(envFile, 'utf8'));
+        files.push(envTmp);
       }
       const traefikDir = path.join(config.paths.dataDir, 'traefik');
       if (existsSync(traefikDir)) files.push('traefik');
@@ -84,8 +89,8 @@ export const systemRoutes: FastifyPluginAsync = async (app) => {
         stats: { services: s[0]?.n ?? 0, databases: d[0]?.n ?? 0, deployments: dep[0]?.n ?? 0, users: u[0]?.n ?? 0 },
         files,
       };
-      writeFileSync(path.join(config.paths.dataDir, '_meta.json'), JSON.stringify(meta, null, 2));
-      files.push('_meta.json');
+      writeFileSync(path.join(config.paths.dataDir, metaTmp), JSON.stringify(meta, null, 2));
+      files.push(metaTmp);
 
       await new Promise<void>((resolve, reject) => {
         const child = spawn('tar', ['-czf', archive, '-C', config.paths.dataDir, ...files]);
@@ -99,8 +104,8 @@ export const systemRoutes: FastifyPluginAsync = async (app) => {
         .header('content-length', size);
       return reply.send(createReadStream(archive));
     } finally {
-      try { unlinkSync(path.join(config.paths.dataDir, '_env')); } catch { /* */ }
-      try { unlinkSync(path.join(config.paths.dataDir, '_meta.json')); } catch { /* */ }
+      try { unlinkSync(path.join(config.paths.dataDir, envTmp)); } catch { /* */ }
+      try { unlinkSync(path.join(config.paths.dataDir, metaTmp)); } catch { /* */ }
       try { unlinkSync(archive); } catch { /* */ }
     }
   });
@@ -116,6 +121,25 @@ export const systemRoutes: FastifyPluginAsync = async (app) => {
     const archivePath = path.join(tmpDir, 'upload.tar.gz');
     mkdirSync(tmpDir, { recursive: true });
     writeFileSync(archivePath, Buffer.from(body, 'binary'));
+
+    // Tar-slip guard: list the members FIRST and refuse anything that would
+    // escape the extraction dir (absolute paths, .., or a parent ref) — GNU tar
+    // strips leading '/' but happily extracts '../..' entries.
+    const listing = await new Promise<string>((resolve, reject) => {
+      let out = '';
+      const child = spawn('tar', ['-tzf', archivePath]);
+      child.stdout.on('data', (d) => (out += d.toString()));
+      child.on('error', reject);
+      child.on('close', (code) => (code === 0 ? resolve(out) : reject(new Error(`tar list exited ${code}`))));
+    });
+    const safe = (name: string) =>
+      !name.startsWith('/') && !name.split('/').includes('..') && !path.isAbsolute(name);
+    for (const member of listing.split('\n').map((l) => l.trim()).filter(Boolean)) {
+      if (!safe(member)) {
+        rmSync(tmpDir, { recursive: true, force: true });
+        return reply.status(400).send({ error: { code: 'bad_request', message: `Invalid archive: unsafe member ${JSON.stringify(member)}` } });
+      }
+    }
 
     await new Promise<void>((resolve, reject) => {
       const child = spawn('tar', ['-xzf', archivePath, '-C', tmpDir]);
