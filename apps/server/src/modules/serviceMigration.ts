@@ -38,9 +38,13 @@ interface ServiceBundle {
   attachments: Array<{ envAlias: string; databaseName: string; databaseEngine: string }>;
 }
 
-/** Per-service export/import. Mounted under /services. */
+/**
+ * Per-service export/import. Mounted under /services. Admin-only: the exported
+ * bundle contains every secret (env vars, webhook secrets) in PLAINTEXT.
+ */
 export const serviceMigrationRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('onRequest', app.authenticate);
+  app.addHook('preHandler', app.requireAdmin);
 
   // ── Export: download a service as a JSON bundle ──────────────────────
   app.get('/:id/export', async (req, reply) => {

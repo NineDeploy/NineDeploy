@@ -43,6 +43,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(session.user);
     },
     logout: () => {
+      // Revoke the session server-side (bumps tokenVersion so outstanding
+      // access/refresh tokens die), then clear the local state. Best-effort:
+      // local cleanup must happen even if the API call fails (e.g. offline).
+      void api.auth.logout().catch(() => undefined);
       setToken(null);
       setUser(null);
     },

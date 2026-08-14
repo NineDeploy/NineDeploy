@@ -79,6 +79,7 @@ export interface NineDeployClient {
     register: (input: Register) => Promise<Session>;
     login: (input: Login) => Promise<Session>;
     refresh: (input: Refresh) => Promise<Session>;
+    logout: () => Promise<{ ok: boolean }>;
     me: () => Promise<PublicUser>;
     tokens: {
       create: (input?: CreateApiToken) => Promise<CreatedApiToken>;
@@ -243,9 +244,19 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
 
     const res = await fetchImpl(`${baseUrl}${path}`, { method: init.method ?? 'GET', headers, body });
     const text = await res.text();
-    const parsed = text ? (JSON.parse(text) as unknown) : undefined;
+    // Guard the parse: proxies (HTML 502 pages, empty bodies) must surface as a
+    // typed error, not an opaque SyntaxError.
+    let parsed: unknown;
+    try {
+      parsed = text ? (JSON.parse(text) as unknown) : undefined;
+    } catch {
+      parsed = undefined;
+    }
 
-    if (!res.ok) throw NineDeployError.fromBody(res.status, parsed);
+    if (!res.ok) {
+      if (parsed === undefined) throw new NineDeployError(res.status, 'http_error', `Request failed (${res.status})`);
+      throw NineDeployError.fromBody(res.status, parsed);
+    }
     return parsed as T;
   }
 
@@ -259,6 +270,8 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
       register: (input) => send<Session>('POST', '/v1/auth/register', input),
       login: (input) => send<Session>('POST', '/v1/auth/login', input),
       refresh: (input) => send<Session>('POST', '/v1/auth/refresh', input),
+      /** Revoke this user's outstanding JWTs server-side (tokenVersion bump). */
+      logout: () => send<{ ok: boolean }>('POST', '/v1/auth/logout', {}),
       me: () => get<PublicUser>('/v1/auth/me'),
       tokens: {
         create: (input) => send<CreatedApiToken>('POST', '/v1/auth/tokens', input ?? {}),

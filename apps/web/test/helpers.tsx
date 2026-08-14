@@ -33,6 +33,7 @@ export function createFakeApiModule() {
       register: vi.fn(),
       login: vi.fn(),
       refresh: vi.fn(),
+      logout: vi.fn(),
       me: vi.fn(),
       tokens: { create: vi.fn(), list: vi.fn(), remove: vi.fn() },
     },

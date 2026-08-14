@@ -126,6 +126,17 @@ describe('createClient', () => {
     });
   });
 
+  it('throws a typed error (not SyntaxError) when the failure body is not JSON', async () => {
+    // e.g. an HTML 502 page from a reverse proxy.
+    const { fetchMock } = makeFetch(() => err(502, '<html>Bad Gateway</html>'));
+    const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
+    await expect(client.services.list()).rejects.toBeInstanceOf(NineDeployError);
+    await expect(client.services.list()).rejects.toMatchObject({
+      status: 502,
+      message: expect.stringContaining('502'),
+    });
+  });
+
   it('falls back to globalThis.fetch when opts.fetch is omitted', async () => {
     const { fetchMock, calls } = makeFetch(() => ok({ status: 'ok' }));
     vi.stubGlobal('fetch', fetchMock);
@@ -168,6 +179,10 @@ describe('createClient', () => {
 
       await client.auth.refresh({ refreshToken: 'r' });
       expect(last(calls).url).toBe('/v1/auth/refresh');
+
+      await client.auth.logout();
+      expect(last(calls).url).toBe('/v1/auth/logout');
+      expect(last(calls).init.method).toBe('POST');
 
       await client.auth.me();
       expect(last(calls).url).toBe('/v1/auth/me');

@@ -7,7 +7,11 @@ import { deploysRoutes } from '../src/modules/deploys.js';
 import { asUser, buildTestApp, collectMessages, createFakeDb, depRow, listen, openWs, svcRow, waitFor, wsUrl } from './helpers.js';
 
 const authMocks = vi.hoisted(() => ({
-  resolveUser: vi.fn(async (_db: unknown, token: string) => (token === 'valid' ? { id: 1 } : null)),
+  // 'valid' = admin session; 'member' = non-admin (used for the RBAC test).
+  resolveUser: vi.fn(
+    async (_db: unknown, token: string) =>
+      token === 'valid' ? { id: 1, role: 'admin' as const } : token === 'member' ? { id: 2, role: 'member' as const } : null,
+  ),
 }));
 vi.mock('../src/lib/auth.js', () => authMocks);
 
@@ -27,7 +31,8 @@ const childProc = vi.hoisted(() => {
   function makeFakeChild() {
     const emitter = makeEmitter();
     const child = {
-      stdin: { write: vi.fn() },
+      // stdin is also an emitter so the route can attach its EPIPE guard.
+      stdin: Object.assign(makeEmitter(), { write: vi.fn() }),
       stdout: makeEmitter(),
       stderr: makeEmitter(),
       killed: false,
@@ -213,6 +218,43 @@ describe('deploys routes', () => {
     await closed;
     child.emit('close');
     await waitFor(() => (child.kill as ReturnType<typeof vi.fn>).mock.calls.length > 0);
+    ws.close();
+    await app.close();
+  });
+
+  it('rejects a non-admin session from the exec terminal (RBAC)', async () => {
+    const app = await buildTestApp({
+      websocket: true,
+      db: createFakeDb({ findFirst: { services: svcRow({ id: 1, runtimeId: 'c1' }) } }),
+    });
+    await app.register(deploysRoutes, { prefix: '/services' });
+    const port = await listen(app);
+    const ws = await openWs(wsUrl(port, '/services/1/exec?token=member'));
+    sockets.push(ws);
+    const closed = new Promise<void>((resolve) => ws.addEventListener('close', (ev) => resolve()));
+    await closed;
+    expect((ws as unknown as { _code?: number })._code ?? 1008).toBe(1008);
+    expect(childProc.spawn).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('absorbs an EPIPE on the exec child stdin (a late keystroke must not crash)', async () => {
+    const app = await buildTestApp({
+      websocket: true,
+      db: createFakeDb({ findFirst: { services: svcRow({ id: 1, runtimeId: 'c1' }) } }),
+    });
+    await app.register(deploysRoutes, { prefix: '/services' });
+    const port = await listen(app);
+    const ws = await openWs(wsUrl(port, '/services/1/exec?token=valid'));
+    sockets.push(ws);
+    await waitFor(() => childProc.children.length === 1);
+    const child = childProc.children[0]!;
+
+    // A keystroke racing the child's exit triggers EPIPE on stdin; the error
+    // handler must swallow it instead of crashing the process.
+    child.stdin.emit('error', Object.assign(new Error('EPIPE'), { code: 'EPIPE' }));
+    ws.send('late');
+    await waitFor(() => (child.stdin.write as ReturnType<typeof vi.fn>).mock.calls.length > 0);
     ws.close();
     await app.close();
   });

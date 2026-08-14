@@ -68,7 +68,9 @@ export const databaseBackupRoutes: FastifyPluginAsync = async (app) => {
     const bid = num((req.params as { bid: string }).bid);
     const d = await getDb(app, id);
     const b = await app.db.query.backups.findFirst({ where: eq(backups.id, bid) });
-    if (!b || !existsSync(b.path)) throw notFound('Backup not found');
+    // Ownership: without this check a backup of database A could be restored
+    // into database B (cross-database data corruption).
+    if (!b || b.databaseId !== d.id || !existsSync(b.path)) throw notFound('Backup not found');
     const log = (line: string) => app.log.info({ component: 'backup' }, line);
     try {
       log(`Restoring ${d.name} from ${path.basename(b.path)}`);

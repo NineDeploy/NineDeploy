@@ -1,5 +1,6 @@
 import { databases, services } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
+import { audit } from '../lib/audit.js';
 import { removeVolume } from '../engine/database.js';
 import { capture } from '../lib/exec.js';
 
@@ -52,11 +53,14 @@ export const volumeRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // Permanently delete a retained volume (the real, destructive cleanup).
-  app.delete('/:name', async (req) => {
+  // Admin-only + audited: this irreversibly destroys a service's or database's
+  // persistent data.
+  app.delete('/:name', { preHandler: [app.requireAdmin] }, async (req) => {
     const name = (req.params as { name: string }).name;
     if (!name.startsWith('nd-svc-') && !name.startsWith('nd-db-')) {
       return { ok: false, error: 'not a managed volume' };
     }
+    void audit(app.db, req.user!.id, 'volume.delete', name);
     await removeVolume(name, (line) => req.log.info(line));
     return { ok: true };
   });

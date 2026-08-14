@@ -10,6 +10,7 @@ const apiMock = vi.hoisted(() => ({
       me: vi.fn(),
       login: vi.fn(),
       setup: vi.fn(),
+      logout: vi.fn(),
     },
   },
   getToken: vi.fn(),
@@ -127,9 +128,25 @@ describe('AuthProvider', () => {
     expect(screen.getByTestId('email')).toHaveTextContent('a@b.c');
   });
 
-  it('logs out by clearing token and user', async () => {
+  it('logs out by revoking server-side and clearing token and user', async () => {
     apiMock.getToken.mockReturnValue('tok');
     apiMock.api.auth.me.mockResolvedValue(USER);
+    apiMock.api.auth.logout.mockResolvedValue({ ok: true });
+    const user = userEvent.setup();
+    renderAuth();
+    await waitFor(() => expect(screen.getByTestId('email')).toHaveTextContent('a@b.c'));
+    await user.click(screen.getByText('logout'));
+    // The session is revoked on the server (tokenVersion bump)…
+    expect(apiMock.api.auth.logout).toHaveBeenCalled();
+    // …and the local state is cleared regardless.
+    expect(apiMock.setToken).toHaveBeenCalledWith(null);
+    expect(screen.getByTestId('email')).toHaveTextContent('none');
+  });
+
+  it('still clears local state when the server logout call fails', async () => {
+    apiMock.getToken.mockReturnValue('tok');
+    apiMock.api.auth.me.mockResolvedValue(USER);
+    apiMock.api.auth.logout.mockRejectedValue(new Error('offline'));
     const user = userEvent.setup();
     renderAuth();
     await waitFor(() => expect(screen.getByTestId('email')).toHaveTextContent('a@b.c'));

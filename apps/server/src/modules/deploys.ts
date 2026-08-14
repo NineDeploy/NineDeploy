@@ -91,11 +91,18 @@ export const deploysRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // Container exec — interactive shell via WebSocket (docker exec -i).
+  // Admin-only + audited: this is a root shell inside the service container
+  // (it can read env vars incl. DB credentials and mounted data).
   app.get('/:id/exec', { websocket: true }, async (socket, req) => {
     const token = (req.query as { token?: string }).token;
     const id = num((req.params as { id: string }).id);
-    if (!token || !(await resolveUser(app.db, token))) {
+    const user = token ? await resolveUser(app.db, token) : null;
+    if (!user) {
       socket.close(1008, 'unauthorized');
+      return;
+    }
+    if (user.role !== 'admin') {
+      socket.close(1008, 'admin access required');
       return;
     }
     const svc = await app.db.query.services.findFirst({ where: eq(services.id, id) });
@@ -103,9 +110,13 @@ export const deploysRoutes: FastifyPluginAsync = async (app) => {
       socket.close(1008, 'no running container');
       return;
     }
+    void audit(app.db, user.id, 'service.exec', svc.name);
 
     const child = spawn('docker', ['exec', '-i', svc.runtimeId, 'sh'], {});
-    socket.on('message', (data) => child.stdin.write(data as Buffer));
+    // Absorb EPIPE on stdin: a keystroke racing the child's exit must never
+    // crash the process (unhandled 'error' on a stream is fatal).
+    child.stdin.on('error', () => { /* child already gone */ });
+    socket.on('message', (data) => { child.stdin.write(data as Buffer); });
     child.stdout.on('data', (data) => { try { socket.send(data); } catch { /* closed */ } });
     child.stderr.on('data', (data) => { try { socket.send(data); } catch { /* closed */ } });
     socket.on('close', () => child.kill());
