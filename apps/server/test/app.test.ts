@@ -73,6 +73,21 @@ describe('buildApp', () => {
     await app.close();
   });
 
+  it('never logs query strings (WebSocket ?token= must not reach the logs)', async () => {
+    const app = await buildApp();
+    const infoSpy = vi.spyOn(app.log, 'info');
+    // Wait for startup logs, then fire a request WITH a query string.
+    await app.ready();
+    infoSpy.mockClear();
+    await app.inject({ method: 'GET', url: '/v1/health?token=super-secret-token' });
+    for (const call of infoSpy.mock.calls) {
+      const serialized = JSON.stringify(call);
+      expect(serialized).not.toContain('super-secret-token');
+      expect(serialized).not.toContain('?token');
+    }
+    await app.close();
+  });
+
   it('turns ZodError into a 400 validation_error envelope', async () => {
     const app = await buildApp();
     const res = await app.inject({

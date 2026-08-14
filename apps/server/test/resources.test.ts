@@ -1,4 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { execSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -39,6 +40,10 @@ vi.mock('node:fs', async (importOriginal) => {
 // failure via error/exit-code branches.
 const spawnMock = vi.hoisted(() => ({
   force: { error: false, code: null as number | null },
+  // Force failure on the Nth spawn (1-based) instead of the first — the import
+  // path now spawns tar twice (member listing, then extraction).
+  forceNth: null as number | null,
+  calls: 0,
   spawn: null as unknown as (...a: unknown[]) => unknown,
 }));
 vi.mock('node:child_process', async (importOriginal) => {
@@ -47,13 +52,17 @@ vi.mock('node:child_process', async (importOriginal) => {
   return {
     ...real,
     spawn: (cmd: string, args: string[], opts?: unknown) => {
-      if (spawnMock.force.error) {
+      spawnMock.calls += 1;
+      const nth = spawnMock.forceNth === spawnMock.calls;
+      if ((spawnMock.force.error && !spawnMock.forceNth) || (nth && spawnMock.force.error)) {
         spawnMock.force.error = false;
+        spawnMock.forceNth = null;
         return fakeChild((emit) => { emit('error', new Error('spawn failed')); });
       }
-      if (spawnMock.force.code !== null) {
+      if ((spawnMock.force.code !== null && !spawnMock.forceNth) || (nth && spawnMock.force.code !== null)) {
         const code = spawnMock.force.code;
         spawnMock.force.code = null;
+        spawnMock.forceNth = null;
         return fakeChild((emit) => { emit('close', code); });
       }
       return real.spawn(cmd, args, opts);
@@ -113,6 +122,8 @@ describe('system resources routes', () => {
   beforeEach(() => {
     newDataDir();
     vi.restoreAllMocks();
+    spawnMock.calls = 0;
+    spawnMock.forceNth = null;
   });
 
   afterAll(() => {
@@ -372,19 +383,14 @@ describe('system resources routes', () => {
     expect(fs.existsSync(configMock.paths.dbFile)).toBe(false);
   });
 
-  it('rejects an archive with path-traversal members (tar-slip)', async () => {
-    // Build a real archive whose member is renamed to `../evil` via --transform.
+  it('rejects an archive with path-traversal members (tar-slip)', async () => {    // Craft an archive with a literal `../evil` member via python's tarfile
+    // (portable — bsdtar on macOS has no --transform).
     const uploadDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nd-slip-'));
     createdDirs.push(uploadDir);
-    const staging = fs.mkdtempSync(path.join(os.tmpdir(), 'nd-slip-stage-'));
-    createdDirs.push(staging);
-    fs.writeFileSync(path.join(staging, 'payload'), 'x');
     const archive = path.join(uploadDir, 'evil.tar.gz');
-    await new Promise<void>((resolve, reject) => {
-      const child = spawnMock.spawn('tar', ['--transform', 's,payload,../evil-payload,', '-czf', archive, '-C', staging, 'payload']);
-      child.on('close', (code: number) => (code === 0 ? resolve() : reject(new Error(`tar ${code}`))));
-      child.on('error', reject);
-    });
+    execSync(
+      `python3 -c "import tarfile;t=tarfile.open('${archive}','w:gz');i=tarfile.TarInfo('../evil');i.size=1;t.addfile(i,__import__('io').BytesIO(b'x'));t.close()"`,
+    );
 
     const app = await appWith();
     const res = await app.inject({
@@ -397,6 +403,28 @@ describe('system resources routes', () => {
     expect(res.json().error.message).toContain('unsafe member');
     // The extraction dir is cleaned up.
     expect(fs.existsSync(path.join(configMock.paths.dataDir, '_import'))).toBe(false);
+  });
+
+  it('fails the import when the EXTRACTION tar fails after a clean listing', async () => {
+    const buildDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nd-build-'));
+    createdDirs.push(buildDir);
+    fs.writeFileSync(path.join(buildDir, '_meta.json'), JSON.stringify({ version: '1.0.0', stats: {} }));
+    const body = await makeArchive(buildDir);
+
+    // Spawn #1 (member listing) runs the REAL tar; spawn #2 (extraction) fails.
+    spawnMock.forceNth = 2;
+    spawnMock.force.code = 2;
+
+    const app = await appWith();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/import',
+      headers: { 'content-type': 'application/octet-stream', ...asUser() },
+      payload: body,
+    });
+    expect(res.statusCode).toBe(500);
+    expect(res.json().error.message).toContain('tar extract exited 2');
+    await app.close();
   });
 
   it('imports an archive with a master key into a fresh data dir', async () => {

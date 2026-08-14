@@ -237,11 +237,11 @@ describe('notifyEvent', () => {
     const channels = [
       { id: 15, type: 'webhook', targetEncrypted: encrypt('https://hooks.example.com'), eventFilter: '', active: true },
     ];
-    const { db, logs } = makeDb(channels);
+    const { db, lastValues } = makeDb(channels);
     await notifyEvent(db, { id: 5, action: 'service.created', entity: 'x', ts: event.ts });
     const init = fetchMock.mock.calls[0]![1] as RequestInit;
     expect(init.signal).toBeInstanceOf(AbortSignal);
     // The aborted dispatch failed fast and was recorded — it did not hang.
-    expect(logs.some((l) => l.status === 'failed')).toBe(true);
+    expect(lastValues()).toHaveBeenCalledWith(expect.objectContaining({ status: 'failed' }));
   });
 });

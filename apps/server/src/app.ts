@@ -35,8 +35,8 @@ export async function buildApp(): Promise<FastifyInstance> {
       // Never persist query strings: WebSocket auth passes the bearer token in
       // ?token=…, and the default req serializer logs the full URL at info level.
       serializers: {
-        req(req: { method?: string; url?: string; remoteAddress?: string; hostname?: string }) {
-          const url = (req.url ?? '').split('?')[0]!;
+        req(req: { method?: string; url: string; remoteAddress?: string; hostname?: string }) {
+          const url = req.url.split('?')[0]!;
           return { method: req.method, url, remoteAddress: req.remoteAddress, hostname: req.hostname };
         },
       },
