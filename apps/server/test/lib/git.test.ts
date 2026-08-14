@@ -35,6 +35,16 @@ function existingCheckout(name: string): string {
   return dir;
 }
 
+/** A git whose bare `clone` fails, simulating an interrupted authenticated clone. */
+function makeFailingCloneGit() {
+  const g = makeGit();
+  g.clone = vi.fn(async () => {
+    // Half-written clone: repo dir exists with a .git skeleton before dying.
+    throw new Error('connection reset mid-clone');
+  });
+  return g;
+}
+
 beforeEach(() => {
   gitState.simpleGit.mockReset();
   gitState.simpleGit.mockImplementation(() => makeGit());
@@ -135,6 +145,47 @@ describe('checkoutCommit — fresh clone', () => {
     });
     const bare = gitState.simpleGit.mock.results[0]!.value;
     expect(bare.clone).toHaveBeenCalledWith('ftp://example.com/repo', dir, expect.any(Array));
+  });
+
+  it('still scrubs the tokenized remote when the clone itself fails midway', async () => {
+    // First simpleGit() call: the bare instance whose clone dies mid-transfer.
+    const bare = makeFailingCloneGit();
+    // Later simpleGit(dir) calls (the finally-block re-open): a working handle.
+    const reopened = makeGit();
+    gitState.simpleGit.mockImplementationOnce(() => bare).mockImplementation(() => reopened);
+    // Simulate the half-written clone leaving a .git skeleton on disk.
+    const dir = gitDir('fresh-clone-fail');
+    bare.clone.mockImplementationOnce(async () => {
+      mkdirSync(path.join(dir, '.git'), { recursive: true });
+      throw new Error('connection reset mid-clone');
+    });
+
+    await expect(
+      checkoutCommit('https://github.com/org/private.git', 'main', undefined, dir, vi.fn(), {
+        token: 'secret-tok',
+      }),
+    ).rejects.toThrow('mid-clone');
+
+    // The finally block re-opened the partial repo and reset origin to the
+    // tokenless URL, so the token is not left in .git/config.
+    expect(reopened.remote).toHaveBeenCalledWith([
+      'set-url', 'origin', 'https://github.com/org/private.git',
+    ]);
+  });
+
+  it('skips the remote reset when a failed clone leaves no .git directory at all', async () => {
+    const bare = makeFailingCloneGit();
+    const reopened = makeGit();
+    gitState.simpleGit.mockImplementationOnce(() => bare).mockImplementation(() => reopened);
+
+    await expect(
+      checkoutCommit('https://github.com/org/private.git', 'main', undefined, gitDir('fresh-clone-clean-fail'), vi.fn(), {
+        token: 'secret-tok',
+      }),
+    ).rejects.toThrow('mid-clone');
+
+    // Nothing on disk to clean → no set-url call on the reopened handle.
+    expect(reopened.remote).not.toHaveBeenCalled();
   });
 });
 

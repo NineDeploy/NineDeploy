@@ -41,7 +41,7 @@ export const deploymentStatus = [
 export const deploymentTrigger = ['user', 'webhook', 'cli', 'schedule'] as const;
 export const domainStatus = ['pending', 'active', 'error'] as const;
 export const sourceType = ['github', 'gitlab', 'gitea', 'bitbucket', 'custom'] as const;
-export const backupScope = ['db', 'volumes', 'full'] as const;
+export const backupScope = ['db', 'scheduled', 'volumes', 'full'] as const;
 export const backupStatus = ['pending', 'running', 'completed', 'failed'] as const;
 
 // ─── users & auth ─────────────────────────────────────────────────────────

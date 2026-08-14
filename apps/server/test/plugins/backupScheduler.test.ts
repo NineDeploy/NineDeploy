@@ -79,8 +79,13 @@ describe('backup scheduler plugin', () => {
     for (let i = 0; i < KEEP_PER_DB + 2; i++) {
       // rows[7] and rows[8] fall past the KEEP_PER_DB window; rows[7] exists on
       // disk (gets unlinked), rows[8] does not.
-      rows.push({ id: i + 1, databaseId: 1, path: i === 7 ? stalePath : missingPath, createdAt: new Date() });
+      rows.push({ id: i + 1, databaseId: 1, scope: 'scheduled', path: i === 7 ? stalePath : missingPath, createdAt: new Date() });
     }
+    // A MANUAL backup is never pruned by the scheduler — even far past the
+    // retention window it must survive.
+    const manualPath = path.join(tmp, 'manual.dump');
+    writeFileSync(manualPath, 'manual');
+    rows.push({ id: 99, databaseId: 1, scope: 'db', path: manualPath, createdAt: new Date(0) });
 
     const { db, insert, del, findMany } = makeDb({
       dbs: [
@@ -112,13 +117,13 @@ describe('backup scheduler plugin', () => {
     expect(insert).toHaveBeenCalledWith(backups);
     const valuesFn = (insert.mock.results[0]!.value as { values: ReturnType<typeof vi.fn> }).values;
     expect(valuesFn).toHaveBeenCalledWith(
-      expect.objectContaining({ databaseId: 1, scope: 'db', status: 'completed', sizeBytes: expect.any(Number) }),
+      expect.objectContaining({ databaseId: 1, scope: 'scheduled', status: 'completed', sizeBytes: expect.any(Number) }),
     );
     // sizeBytes reflects the file written by the mocked backup.
     const inserted = valuesFn.mock.calls[0]![0] as { sizeBytes: number };
     expect(inserted.sizeBytes).toBe(Buffer.byteLength('dump-data'));
 
-    // Prune: two stale rows past KEEP_PER_DB; one file exists (unlinked), one does not.
+    // Prune: two stale SCHEDULED rows past KEEP_PER_DB; one file exists (unlinked), one does not.
     expect(findMany).toHaveBeenCalled();
     expect(del).toHaveBeenCalledWith(backups);
     expect(existsSync(stalePath)).toBe(false); // unlinked
@@ -126,7 +131,9 @@ describe('backup scheduler plugin', () => {
       (n, r) => n + (r.value as { where: ReturnType<typeof vi.fn> }).where.mock.calls.length,
       0,
     );
-    expect(whereCalls).toBe(2); // one delete per stale row
+    expect(whereCalls).toBe(2); // one delete per stale scheduled row
+    // The manual backup (scope 'db') was NOT pruned.
+    expect(existsSync(manualPath)).toBe(true);
     expect(logSpy).toHaveBeenCalledWith('backup scheduler armed (daily)');
     await app.close();
   });

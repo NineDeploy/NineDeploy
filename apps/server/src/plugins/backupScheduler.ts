@@ -26,7 +26,7 @@ export default fp(
             await backupDatabase(d, file, log);
             await fastify.db.insert(backups).values({
               databaseId: d.id,
-              scope: 'db',
+              scope: 'scheduled',
               status: 'completed',
               path: file,
               sizeBytes: existsSync(file) ? statSync(file).size : 0,
@@ -34,13 +34,20 @@ export default fp(
           } catch (err) {
             fastify.log.error({ err }, `scheduled backup failed for ${d.name}`);
           }
-          // Prune to the latest KEEP_PER_DB for this database.
+          // Prune the latest KEEP_PER_DB SCHEDULED backups for this database.
+          // Manual (user-initiated) backups are never touched by the scheduler
+          // and must be deleted explicitly from the UI.
           const rows = await fastify.db.query.backups.findMany({
             where: eq(backups.databaseId, d.id),
             orderBy: desc(backups.createdAt),
           });
-          for (const stale of rows.slice(KEEP_PER_DB)) {
-            if (existsSync(stale.path)) unlinkSync(stale.path);
+          const scheduled = rows.filter((r) => r.scope === 'scheduled');
+          for (const stale of scheduled.slice(KEEP_PER_DB)) {
+            try {
+              if (existsSync(stale.path)) unlinkSync(stale.path);
+            } catch {
+              /* file may be unreadable — still drop the row */
+            }
             await fastify.db.delete(backups).where(eq(backups.id, stale.id));
           }
         }

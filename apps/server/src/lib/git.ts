@@ -99,11 +99,16 @@ export async function checkoutCommit(
     return resolved;
   } finally {
     // Security cleanup — never leave credentials on disk or in .git/config
-    // after the checkout completes (or throws).
-    if (creds?.token && git) {
-      // Reset origin to the tokenless URL so the access token does not persist
-      // in .git/config (nor leak into later git error output).
-      await git.remote(['set-url', 'origin', repoUrl]).catch(() => undefined);
+    // after the checkout completes (or throws). Re-open the working copy
+    // directly (git may be unset if the clone itself failed midway and left a
+    // partially-initialized repo with the tokenized origin URL on disk).
+    if (creds?.token) {
+      const cleaner = git ?? (existsSync(path.join(dir, '.git')) ? simpleGit(dir) : null);
+      if (cleaner) {
+        // Reset origin to the tokenless URL so the access token does not persist
+        // in .git/config (nor leak into later git error output).
+        await cleaner.remote(['set-url', 'origin', repoUrl]).catch(() => undefined);
+      }
     }
     if (creds?.deployKey) {
       rmSync(keyFile, { force: true });
