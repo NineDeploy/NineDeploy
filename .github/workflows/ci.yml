@@ -88,6 +88,6 @@ jobs:
       # the REAL backup/restore path end-to-end — arg-array docker exec,
       # docker cp, and the at-rest backup encryption round-trip.
       - name: Run integration tests
-        run: pnpm --filter @ninedeploy/server exec vitest run test/integration --no-coverage
+        run: pnpm --filter @ninedeploy/server exec vitest run --config vitest.integration.config.ts
         env:
           RUN_INTEGRATION: '1'
