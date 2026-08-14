@@ -184,6 +184,10 @@ describe('createClient', () => {
       expect(last(calls).url).toBe('/v1/auth/logout');
       expect(last(calls).init.method).toBe('POST');
 
+      await client.auth.changePassword({ currentPassword: 'a', newPassword: 'b' });
+      expect(last(calls).url).toBe('/v1/auth/password');
+      expect(JSON.parse(last(calls).init.body ?? '{}')).toEqual({ currentPassword: 'a', newPassword: 'b' });
+
       await client.auth.me();
       expect(last(calls).url).toBe('/v1/auth/me');
 
@@ -375,6 +379,11 @@ describe('createClient', () => {
       expect(last(calls).url).toBe('/v1/users/1/role');
       expect(last(calls).init.method).toBe('PATCH');
       expect(JSON.parse(last(calls).init.body ?? '{}')).toEqual({ role: 'admin' });
+
+      await client.users.resetPassword(1, { newPassword: 'fresh-pass-123' });
+      expect(last(calls).url).toBe('/v1/users/1/password');
+      expect(last(calls).init.method).toBe('PATCH');
+      expect(JSON.parse(last(calls).init.body ?? '{}')).toEqual({ newPassword: 'fresh-pass-123' });
 
       await client.users.remove(1);
       expect(last(calls)).toMatchObject({ url: '/v1/users/1', init: { method: 'DELETE' } });

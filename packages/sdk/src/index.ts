@@ -19,6 +19,8 @@ import type {
   EnvVar,
   Login,
   ManagedDatabase,
+  PasswordChange,
+  PasswordReset,
   MetricSeries,
   PublicUser,
   Refresh,
@@ -80,6 +82,8 @@ export interface NineDeployClient {
     login: (input: Login) => Promise<Session>;
     refresh: (input: Refresh) => Promise<Session>;
     logout: () => Promise<{ ok: boolean }>;
+    /** Self-service password change; revokes other sessions, returns a fresh token pair. */
+    changePassword: (input: PasswordChange) => Promise<Session>;
     me: () => Promise<PublicUser>;
     tokens: {
       create: (input?: CreateApiToken) => Promise<CreatedApiToken>;
@@ -133,6 +137,8 @@ export interface NineDeployClient {
     list: () => Promise<PublicUser[]>;
     setRole: (id: number, role: 'admin' | 'member') => Promise<PublicUser>;
     remove: (id: number) => Promise<void>;
+    /** Admin reset of another user's password (revokes their sessions). */
+    resetPassword: (id: number, input: PasswordReset) => Promise<{ ok: boolean }>;
   };
   about: {
     get: () => Promise<{
@@ -272,6 +278,7 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
       refresh: (input) => send<Session>('POST', '/v1/auth/refresh', input),
       /** Revoke this user's outstanding JWTs server-side (tokenVersion bump). */
       logout: () => send<{ ok: boolean }>('POST', '/v1/auth/logout', {}),
+      changePassword: (input) => send<Session>('POST', '/v1/auth/password', input),
       me: () => get<PublicUser>('/v1/auth/me'),
       tokens: {
         create: (input) => send<CreatedApiToken>('POST', '/v1/auth/tokens', input ?? {}),
@@ -339,6 +346,7 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
     users: {
       list: () => get<PublicUser[]>('/v1/users'),
       setRole: (id, role) => send<PublicUser>('PATCH', `/v1/users/${id}/role`, { role }),
+      resetPassword: (id, input) => send<{ ok: boolean }>('PATCH', `/v1/users/${id}/password`, input),
       remove: async (id) => {
         await request(`/v1/users/${id}`, { method: 'DELETE' });
       },

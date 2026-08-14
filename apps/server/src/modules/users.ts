@@ -2,8 +2,9 @@ import { and, count, eq, ne, sql } from 'drizzle-orm';
 import { audit } from "../lib/audit.js";
 import { users } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
-import { rolePatch } from '@ninedeploy/schemas';
+import { passwordReset, rolePatch } from '@ninedeploy/schemas';
 import { badRequest, forbidden, notFound, parseId } from '../lib/errors.js';
+import { hashPassword } from '../lib/crypto.js';
 
 function serialize(u: typeof users.$inferSelect) {
   return { id: u.id, email: u.email, name: u.name, role: u.role };
@@ -59,6 +60,22 @@ export const userRoutes: FastifyPluginAsync = async (app) => {
 
     await app.db.delete(users).where(eq(users.id, id));
     void audit(app.db, req.user!.id, 'user.delete', String(id));
+    return { ok: true };
+  });
+
+  // Admin-initiated password reset: sets a new password and bumps tokenVersion
+  // so the target user's sessions (including stolen ones) are all revoked.
+  app.patch('/:id/password', async (req) => {
+    const id = parseId((req.params as { id: string }).id);
+    const input = passwordReset.parse(req.body);
+    const passwordHash = await hashPassword(input.newPassword);
+    const [updated] = await app.db
+      .update(users)
+      .set({ passwordHash, tokenVersion: sql`${users.tokenVersion} + 1` })
+      .where(eq(users.id, id))
+      .returning();
+    if (!updated) throw notFound('User not found');
+    void audit(app.db, req.user!.id, 'user.password', `reset for #${id}`);
     return { ok: true };
   });
 };

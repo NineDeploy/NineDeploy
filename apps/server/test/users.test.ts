@@ -1,6 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { userRoutes } from '../src/modules/users.js';
 import { asUser, buildTestApp, createFakeDb, userRow } from './helpers.js';
+
+const cryptoMock = vi.hoisted(() => ({ hashPassword: vi.fn(async () => 'new-hash') }));
+vi.mock('../src/lib/crypto.js', () => cryptoMock);
 
 const admin = () => userRow({ id: 1, role: 'admin' });
 const member = () => userRow({ id: 1, role: 'member' });
@@ -177,5 +180,44 @@ describe('users routes', () => {
     });
     const res = await app.inject({ method: 'DELETE', url: '/2', headers: asUser(1) });
     expect(res.statusCode).toBe(200);
+  });
+
+  it('resets a user password as admin (hash + tokenVersion bump)', async () => {
+    const app = await appWith({
+      findFirst: { users: admin() },
+      update: { users: [userRow({ id: 2 })] },
+    });
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/2/password',
+      headers: asUser(1),
+      payload: { newPassword: 'fresh-pass-123' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: true });
+    expect(cryptoMock.hashPassword).toHaveBeenCalledWith('fresh-pass-123');
+  });
+
+  it('404s when resetting the password of a missing user', async () => {
+    const app = await appWith({ findFirst: { users: admin() }, update: { users: [] } });
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/99/password',
+      headers: asUser(1),
+      payload: { newPassword: 'fresh-pass-123' },
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('rejects a password reset shorter than 8 chars', async () => {
+    const app = await appWith({ findFirst: { users: admin() } });
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/2/password',
+      headers: asUser(1),
+      payload: { newPassword: 'short' },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('validation_error');
   });
 });

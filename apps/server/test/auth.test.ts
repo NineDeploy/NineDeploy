@@ -248,6 +248,73 @@ describe('auth routes', () => {
     expect(res.statusCode).toBe(401);
   });
 
+  it('changes the password, bumps tokenVersion and issues fresh tokens', async () => {
+    // Current password verifies; update returns the bumped user.
+    cryptoMocks.verifyPassword.mockResolvedValueOnce(true);
+    const db = createFakeDb({
+      findFirst: { users: userRow({ id: 1, tokenVersion: 3 }) },
+      update: { users: [userRow({ id: 1, tokenVersion: 4 })] },
+    });
+    const app = await buildTestApp({ db });
+    await app.register(authRoutes);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/password',
+      headers: asUser(),
+      payload: { currentPassword: 'old-pass-123', newPassword: 'new-pass-456' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(cryptoMocks.verifyPassword).toHaveBeenCalledWith('hash', 'old-pass-123');
+    expect(cryptoMocks.hashPassword).toHaveBeenCalledWith('new-pass-456');
+    const body = res.json();
+    expect(body.user.id).toBe(1);
+    expect(body.tokens.accessToken).toBe('access-token');
+  });
+
+  it('rejects a password change with a wrong current password', async () => {
+    cryptoMocks.verifyPassword.mockResolvedValueOnce(false);
+    const app = await buildTestApp({
+      db: createFakeDb({ findFirst: { users: userRow({ id: 1 }) } }),
+    });
+    await app.register(authRoutes);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/password',
+      headers: asUser(),
+      payload: { currentPassword: 'wrong', newPassword: 'new-pass-456' },
+    });
+    expect(res.statusCode).toBe(401);
+    expect(res.json().error.message).toContain('current password');
+  });
+
+  it('returns 401 when the password update returns no row (user vanished)', async () => {
+    cryptoMocks.verifyPassword.mockResolvedValueOnce(true);
+    const app = await buildTestApp({
+      db: createFakeDb({ findFirst: { users: userRow({ id: 1 }) }, update: { users: [] } }),
+    });
+    await app.register(authRoutes);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/password',
+      headers: asUser(),
+      payload: { currentPassword: 'old-pass-123', newPassword: 'new-pass-456' },
+    });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('rejects a too-short new password (validation)', async () => {
+    const app = await buildTestApp({ db: createFakeDb() });
+    await app.register(authRoutes);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/password',
+      headers: asUser(),
+      payload: { currentPassword: 'old-pass-123', newPassword: 'short' },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('validation_error');
+  });
+
   it('creates an API token with a custom name', async () => {
     const app = await buildTestApp({
       db: createFakeDb({ insert: { api_tokens: [tokenRow({ id: 5, name: 'ci' })] } }),

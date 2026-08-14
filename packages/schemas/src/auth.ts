@@ -17,6 +17,19 @@ export const login = z.object({
 });
 export type Login = z.infer<typeof login>;
 
+/** Self-service password change: requires the current password. */
+export const passwordChange = z.object({
+  currentPassword: z.string().min(1),
+  newPassword: z.string().min(8).max(128),
+});
+export type PasswordChange = z.infer<typeof passwordChange>;
+
+/** Admin-initiated password reset for another user. */
+export const passwordReset = z.object({
+  newPassword: z.string().min(8).max(128),
+});
+export type PasswordReset = z.infer<typeof passwordReset>;
+
 /** Tokens issued after a successful login/refresh. */
 export const tokenPair = z.object({
   accessToken: z.string(),

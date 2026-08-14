@@ -2,7 +2,7 @@ import { and, count, eq, sql } from 'drizzle-orm';
 import type { FastifyPluginAsync } from 'fastify';
 import { apiTokens, type DB, users, type User } from '@ninedeploy/db';
 import type { PublicUser, Register, TokenPair } from '@ninedeploy/schemas';
-import { login, refresh, register } from '@ninedeploy/schemas';
+import { login, passwordChange, refresh, register } from '@ninedeploy/schemas';
 import { config } from '../config.js';
 import { hashPassword, randomToken, sha256, verifyPassword } from '../lib/crypto.js';
 import { badRequest, conflict, unauthorized } from '../lib/errors.js';
@@ -111,6 +111,25 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       .set({ tokenVersion: sql`${users.tokenVersion} + 1` })
       .where(eq(users.id, req.user!.id));
     return { ok: true };
+  });
+
+  // Self-service password change. Requires the CURRENT password; bumps
+  // tokenVersion so every other session of this user is logged out, then
+  // issues a fresh token pair for the caller.
+  app.post('/password', { onRequest: [app.authenticate], config: { rateLimit: AUTH_LIMIT } }, async (req) => {
+    const input = passwordChange.parse(req.body);
+    const user = await app.db.query.users.findFirst({ where: eq(users.id, req.user!.id) });
+    if (!user || !(await verifyPassword(user.passwordHash, input.currentPassword))) {
+      throw unauthorized('Invalid current password');
+    }
+    const passwordHash = await hashPassword(input.newPassword);
+    const [updated] = await app.db
+      .update(users)
+      .set({ passwordHash, tokenVersion: sql`${users.tokenVersion} + 1` })
+      .where(eq(users.id, user.id))
+      .returning();
+    if (!updated) throw unauthorized();
+    return { user: toUser(updated), tokens: await issueTokens(updated) };
   });
 
   // ── API tokens (for the CLI / CI) ────────────────────────────────────────
