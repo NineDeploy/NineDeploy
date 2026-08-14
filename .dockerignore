@@ -1,0 +1,16 @@
+# Keep the build context small and hermetic.
+node_modules
+**/node_modules
+**/dist
+.turbo
+.data
+.wrongstack
+.git
+.github
+.env
+.env.*
+*.log
+coverage
+repos
+backups
+volumes

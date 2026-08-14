@@ -1,0 +1,52 @@
+# ── NineDeploy development environment ──────────────────────────────────
+# Boots the API server + web dev server with the host Docker socket mounted.
+# SQLite, repos, logs and backups live in the `ninedeploy-data` volume.
+#
+#   docker compose up
+#
+# Dashboard: http://localhost:5173 (Vite dev, proxies /v1 to the API)
+# API:       http://localhost:3000
+#
+# NOTE: this is for development only. Production installs should use the
+# bare-metal installer (install.sh + systemd), which has native PM2 access.
+
+services:
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: build
+    command: sh -c "pnpm db:migrate && pnpm --filter @ninedeploy/server dev"
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: development
+      NINEDEPLOY_DATA_DIR: /data
+      NINEDEPLOY_DB_PATH: /data/ninedeploy.db
+      NINEDEPLOY_PUBLIC_URL: http://localhost:3000
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ninedeploy-data:/data
+      - ./apps:/app/apps:ro
+      - ./packages:/app/packages:ro
+
+  web:
+    image: node:20-slim
+    working_dir: /app
+    command: sh -c "corepack enable && pnpm install --frozen-lockfile && pnpm --filter @ninedeploy/web dev --host 0.0.0.0"
+    ports:
+      - "5173:5173"
+    environment:
+      # Vite proxies /v1 requests to the API service.
+      VITE_API_URL: http://server:3000
+    volumes:
+      - ./apps/web:/app/apps/web:ro
+      - ./packages:/app/packages:ro
+      - ./package.json:/app/package.json:ro
+      - ./pnpm-workspace.yaml:/app/pnpm-workspace.yaml:ro
+      - ./pnpm-lock.yaml:/app/pnpm-lock.yaml:ro
+    depends_on:
+      - server
+
+volumes:
+  ninedeploy-data:

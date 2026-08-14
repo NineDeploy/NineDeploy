@@ -48,3 +48,14 @@ jobs:
 
       - name: Test
         run: pnpm test
+
+  docker-image:
+    name: Docker image build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      # Verifies the release workflow's Dockerfile compiles; no push happens here.
+      - name: Build the image
+        run: docker build -t ninedeploy:ci .

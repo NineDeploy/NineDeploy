@@ -43,3 +43,5 @@ backups
 !/.wrongstack/
 /.wrongstack/*
 !/.wrongstack/project.json
+
+.zcode/
