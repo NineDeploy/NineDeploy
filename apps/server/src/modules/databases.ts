@@ -1,8 +1,9 @@
+import { existsSync, unlinkSync } from 'node:fs';
 import { eq } from 'drizzle-orm';
 import { audit } from "../lib/audit.js";
 import { backups, databaseAttachments, databases, services, type Database } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
-import { createDatabase, setLimits } from '@ninedeploy/schemas';
+import { createAttachment, createDatabase, setLimits } from '@ninedeploy/schemas';
 import { connectionString, defaultPort, ENGINES, startDatabase, stopDatabase } from '../engine/database.js';
 import { encrypt, randomToken } from '../lib/crypto.js';
 import { badRequest, notFound } from '../lib/errors.js';
@@ -92,10 +93,26 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
     const d = await app.db.query.databases.findFirst({ where: eq(databases.id, num((req.params as { id: string }).id)) });
     if (!d) throw notFound('Database not found');
     await stopDatabase(d, (line) => app.log.info({ component: 'database' }, line));
-    // Remove dependents explicitly (volume is intentionally kept = retained).
-    await app.db.delete(databaseAttachments).where(eq(databaseAttachments.databaseId, d.id));
-    await app.db.delete(backups).where(eq(backups.databaseId, d.id));
-    await app.db.delete(databases).where(eq(databases.id, d.id));
+    // Capture the dump paths BEFORE the transaction deletes the rows.
+    const backupRows = await app.db.query.backups.findMany({ where: eq(backups.databaseId, d.id) });
+    // Atomic row removal (attachments + backups + the database itself commit
+    // together) — a mid-delete failure must never leave live rows pointing at
+    // already-destroyed artifacts. The volume is intentionally kept = retained.
+    await app.db.transaction(async (tx) => {
+      await tx.delete(databaseAttachments).where(eq(databaseAttachments.databaseId, d.id));
+      await tx.delete(backups).where(eq(backups.databaseId, d.id));
+      await tx.delete(databases).where(eq(databases.id, d.id));
+    });
+    // Post-commit best-effort cleanup: unlink the dump files (dumps contain DB
+    // credentials, plaintext once decrypted). Files are not transactional — a
+    // failure here leaves an orphaned dump, which is logged, not silent.
+    for (const b of backupRows) {
+      try {
+        if (existsSync(b.path)) unlinkSync(b.path);
+      } catch (err) {
+        req.log.warn({ err, path: b.path }, 'failed to unlink backup file after database delete');
+      }
+    }
     void audit(app.db, req.user!.id, 'database.delete', d.name);
     return { ok: true };
   });
@@ -136,21 +153,22 @@ export const attachmentRoutes: FastifyPluginAsync = async (app) => {
 
   app.post('/:id/attachments', async (req) => {
     const id = num((req.params as { id: string }).id);
-    const input = (req.body ?? {}) as { databaseId?: number; envAlias?: string };
-    const dbId = Number(input.databaseId);
-    if (!dbId) throw badRequest('databaseId is required');
+    // Validates databaseId (positive int) and the env alias charset — an alias
+    // like `MY ALIAS` would otherwise be injected verbatim into the service's
+    // runtime env and break `docker run --env-file` at deploy time.
+    const input = createAttachment.parse(req.body ?? {});
     const svc = await app.db.query.services.findFirst({ where: eq(services.id, id) });
     if (!svc) throw notFound('Service not found');
-    const d = await app.db.query.databases.findFirst({ where: eq(databases.id, dbId) });
+    const d = await app.db.query.databases.findFirst({ where: eq(databases.id, input.databaseId) });
     if (!d) throw notFound('Database not found');
-    const envAlias = input.envAlias?.trim() || aliasFor(d.engine);
+    const envAlias = input.envAlias ?? aliasFor(d.engine);
     const [a] = await app.db
       .insert(databaseAttachments)
-      .values({ serviceId: id, databaseId: dbId, envAlias })
+      .values({ serviceId: id, databaseId: input.databaseId, envAlias })
       .returning()
       .catch(() => [] as typeof databaseAttachments.$inferSelect[]);
     if (!a) throw badRequest('Already attached');
-    return { id: a.id, databaseId: dbId, envAlias };
+    return { id: a.id, databaseId: input.databaseId, envAlias };
   });
 
   app.delete('/:id/attachments/:attId', async (req) => {

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
 import { getClient } from './client.js';
-import { loadConfig } from './config.js';
+import { loadConfig, saveConfig } from './config.js';
 import { banner } from './lib/format.js';
 import { loginAction } from './commands/login.js';
 import { setupAction } from './commands/setup.js';
@@ -38,7 +38,6 @@ program
   .command('logout')
   .description('Clear stored credentials')
   .action(() => {
-    const { saveConfig } = require('./config.js');
     saveConfig({ baseUrl: loadConfig().baseUrl });
     console.log('  ✓ Signed out.');
   });
@@ -60,7 +59,6 @@ program
   .description('Show or change the server URL')
   .option('-s, --server <url>', 'Set server URL')
   .action((opts: { server?: string }) => {
-    const { loadConfig, saveConfig } = require('./config.js');
     if (opts.server) {
       saveConfig({ baseUrl: opts.server, token: loadConfig().token });
       console.log(`  ✓ Server set to ${opts.server}`);

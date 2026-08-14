@@ -159,7 +159,13 @@ export function createFakeDb(opts: FakeDbOpts = {}): DB {
       opts.runError ? rej(new Error('db unavailable')) : ok(undefined),
   });
 
-  return { query, select, insert, update, delete: del, run } as unknown as DB;
+  const dbish = { query, select, insert, update, delete: del, run };
+  return {
+    ...dbish,
+    // Drizzle-style transaction: runs the callback against the same fake db
+    // (single-connection fake — no isolation semantics needed for route tests).
+    transaction: async <T>(fn: (tx: typeof dbish) => Promise<T>): Promise<T> => fn(dbish),
+  } as unknown as DB;
 }
 
 // ── Fastify test app ──────────────────────────────────────────────────────

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import type { ProcessDescription } from 'pm2';
 import pm2 from 'pm2';
 import type { Builder } from '../types.js';
@@ -102,3 +103,45 @@ export const pm2Builder: Builder = {
     );
   },
 };
+
+/**
+ * Stop a PM2 process (keeps it registered; status → stopped). Unlike the
+ * deploy-engine teardown above (`stop` deletes the process), lifecycle stop
+ * preserves the process so `start` can resume it without a full redeploy.
+ */
+export async function pm2Stop(runtimeId: string): Promise<void> {
+  await withPm2(() => new Promise<void>((res, rej) => pm2.stop(runtimeId, (err) => (err ? rej(err) : res()))));
+}
+
+/** Start (resume) an existing PM2 process. Rejects when it was deleted. */
+export async function pm2Start(runtimeId: string): Promise<void> {
+  await withPm2(() => new Promise<void>((res, rej) => pm2.restart(runtimeId, (err) => (err ? rej(err) : res()))));
+}
+
+/** Restart a PM2 process. */
+export async function pm2Restart(runtimeId: string): Promise<void> {
+  await withPm2(() => new Promise<void>((res, rej) => pm2.restart(runtimeId, (err) => (err ? rej(err) : res()))));
+}
+
+/** Tail the last 300 lines of a process's combined stdout+stderr log files. */
+export async function pm2Logs(runtimeId: string): Promise<string> {
+  return withPm2(async () => {
+    const procs = await new Promise<ProcessDescription[]>((res, rej) =>
+      pm2.describe(runtimeId, (err, desc) => (err ? rej(err) : res(desc ?? []))),
+    );
+    const proc = procs.find((p) => p?.name === runtimeId);
+    const tail = (file: string | undefined): string => {
+      if (!file) return '';
+      try {
+        const lines = readFileSync(file, 'utf8').split('\n');
+        // A trailing newline yields a final empty element — drop it so joined
+        // out+err logs don't end in a stray blank line.
+        if (lines[lines.length - 1] === '') lines.pop();
+        return lines.slice(-300).join('\n');
+      } catch {
+        return '';
+      }
+    };
+    return [tail(proc?.pm2_env?.pm_out_log_path), tail(proc?.pm2_env?.pm_err_log_path)].filter(Boolean).join('\n');
+  });
+}

@@ -5,8 +5,11 @@ import { createService, setLimits, updateService } from '@ninedeploy/schemas';
 import { capture, run } from '../lib/exec.js';
 import { audit } from '../lib/audit.js';
 import { config } from '../config.js';
-import { notFound } from '../lib/errors.js';
+import { badRequest, notFound } from '../lib/errors.js';
 import { slugify } from '../lib/slug.js';
+import { dockerBuilder } from '../engine/builders/docker.js';
+import { pm2Builder, pm2Logs, pm2Restart, pm2Start, pm2Stop } from '../engine/builders/pm2.js';
+import { writeDynamicConfig } from '../engine/proxy.js';
 
 /** Shape a DB row into the API representation (Date → ISO string). */
 function serialize(s: Service) {
@@ -96,8 +99,30 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
 
   app.delete('/:id', async (req, reply) => {
     const id = num((req.params as { id: string }).id);
+    const svc = await app.db.query.services.findFirst({ where: eq(services.id, id) });
+    if (!svc) throw notFound('Service not found');
+    // Row first (a single DELETE is atomic; FK cascade removes the build
+    // config, env vars, domains and deployments) — a failed delete must never
+    // leave a live row whose runtime has already been destroyed.
     await app.db.delete(services).where(eq(services.id, id));
-    void audit(app.db, req.user!.id, 'service.delete', String(id));
+    // Rewrite Traefik routing — the service's domains cascade-deleted with the
+    // row, so its routers/services drop out of the dynamic config. Routing must
+    // never block delete, so failures are logged, not thrown.
+    try {
+      await writeDynamicConfig(app.db);
+    } catch (err) {
+      req.log.warn({ err }, 'failed to rewrite traefik config after service delete');
+    }
+    // Retire the runtime AFTER the row commit — mirrors the blue-green rule
+    // (routing flips before the old container stops). Both builders' `stop` is
+    // contractually non-throwing (they swallow missing/dead runtimes). An
+    // unknown type cannot silently misroute to the docker teardown.
+    if (svc.runtimeId) {
+      if (svc.type === 'pm2') await pm2Builder.stop(svc.runtimeId);
+      else if (svc.type === 'docker') await dockerBuilder.stop(svc.runtimeId);
+      else req.log.warn({ type: svc.type, runtimeId: svc.runtimeId }, 'unsupported service type — leaving runtime in place');
+    }
+    void audit(app.db, req.user!.id, 'service.delete', svc.name);
     reply.status(204);
   });
 
@@ -111,10 +136,24 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // ── Lifecycle: stop / start / restart ──────────────────────────────────
+  // PM2 services run as host processes under the PM2 daemon and must be
+  // managed through it — `docker stop/start/restart` would silently no-op on a
+  // PM2 process name. Docker services are managed through the docker CLI.
   app.post('/:id/stop', async (req) => {
     const svc = await app.db.query.services.findFirst({ where: eq(services.id, num((req.params as { id: string }).id)) });
     if (!svc?.runtimeId) throw notFound('Service not found or not deployed');
-    await run('docker', ['stop', '-t', '5', svc.runtimeId], {}, () => {}).catch(() => undefined);
+    // PM2 and Docker have disjoint runtimes — an unknown type must not silently
+    // misroute to the docker CLI (which would no-op on a PM2 process name).
+    if (svc.type === 'pm2') {
+      await pm2Stop(svc.runtimeId).catch((err) =>
+        req.log.warn({ err, runtimeId: svc.runtimeId }, 'failed to stop pm2 process'));
+    } else if (svc.type === 'docker') {
+      await run('docker', ['stop', '-t', '5', svc.runtimeId], {}, () => {}).catch((err) =>
+        req.log.warn({ err, runtimeId: svc.runtimeId }, 'failed to stop docker container'));
+    } else {
+      req.log.warn({ type: svc.type, runtimeId: svc.runtimeId }, 'unsupported service type — cannot stop runtime');
+      throw badRequest('Unsupported service type');
+    }
     await app.db.update(services).set({ status: 'stopped' }).where(eq(services.id, svc.id));
     void audit(app.db, req.user!.id, 'service.stop', svc.name);
     return { ok: true, status: 'stopped' };
@@ -123,7 +162,16 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
   app.post('/:id/start', async (req) => {
     const svc = await app.db.query.services.findFirst({ where: eq(services.id, num((req.params as { id: string }).id)) });
     if (!svc?.runtimeId) throw notFound('Service not found or not deployed');
-    await run('docker', ['start', svc.runtimeId], {}, () => {}).catch(() => undefined);
+    if (svc.type === 'pm2') {
+      await pm2Start(svc.runtimeId).catch((err) =>
+        req.log.warn({ err, runtimeId: svc.runtimeId }, 'failed to start pm2 process'));
+    } else if (svc.type === 'docker') {
+      await run('docker', ['start', svc.runtimeId], {}, () => {}).catch((err) =>
+        req.log.warn({ err, runtimeId: svc.runtimeId }, 'failed to start docker container'));
+    } else {
+      req.log.warn({ type: svc.type, runtimeId: svc.runtimeId }, 'unsupported service type — cannot start runtime');
+      throw badRequest('Unsupported service type');
+    }
     await app.db.update(services).set({ status: 'running' }).where(eq(services.id, svc.id));
     void audit(app.db, req.user!.id, 'service.start', svc.name);
     return { ok: true, status: 'running' };
@@ -132,15 +180,31 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
   app.post('/:id/restart', async (req) => {
     const svc = await app.db.query.services.findFirst({ where: eq(services.id, num((req.params as { id: string }).id)) });
     if (!svc?.runtimeId) throw notFound('Service not found or not deployed');
-    await run('docker', ['restart', svc.runtimeId], {}, () => {}).catch(() => undefined);
+    if (svc.type === 'pm2') {
+      await pm2Restart(svc.runtimeId).catch((err) =>
+        req.log.warn({ err, runtimeId: svc.runtimeId }, 'failed to restart pm2 process'));
+    } else if (svc.type === 'docker') {
+      await run('docker', ['restart', svc.runtimeId], {}, () => {}).catch((err) =>
+        req.log.warn({ err, runtimeId: svc.runtimeId }, 'failed to restart docker container'));
+    } else {
+      req.log.warn({ type: svc.type, runtimeId: svc.runtimeId }, 'unsupported service type — cannot restart runtime');
+      throw badRequest('Unsupported service type');
+    }
     void audit(app.db, req.user!.id, 'service.restart', svc.name);
     return { ok: true, status: 'running' };
   });
 
-  // Runtime container logs (docker logs --tail).
+  // Runtime logs: PM2 reads the daemon's log files; Docker reads container logs.
   app.get('/:id/logs', async (req) => {
     const svc = await app.db.query.services.findFirst({ where: eq(services.id, num((req.params as { id: string }).id)) });
     if (!svc?.runtimeId) throw notFound('Service not found or not deployed');
+    if (svc.type === 'pm2') {
+      try {
+        return { lines: await pm2Logs(svc.runtimeId) };
+      } catch {
+        return { lines: '' };
+      }
+    }
     try {
       const out = await capture('docker', ['logs', '--tail', '300', '--timestamps', svc.runtimeId]);
       return { lines: out };

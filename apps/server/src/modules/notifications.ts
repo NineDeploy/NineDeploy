@@ -48,7 +48,12 @@ export const notificationRoutes: FastifyPluginAsync = async (app) => {
   app.patch('/channels/:id', async (req) => {
     const id = parseId((req.params as { id: string }).id);
     const input = notificationChannelPatch.parse(req.body ?? {});
+    // Apply every field the schema accepts — name and target were previously
+    // accepted but silently dropped. The target is stored encrypted, exactly
+    // like at creation.
     const patch: Partial<typeof notificationChannels.$inferSelect> = {};
+    if (input.name !== undefined) patch.name = input.name;
+    if (input.target !== undefined) patch.targetEncrypted = encrypt(input.target);
     if (input.eventFilter !== undefined) patch.eventFilter = input.eventFilter;
     if (input.active !== undefined) patch.active = input.active;
     const [ch] = await app.db.update(notificationChannels).set(patch).where(eq(notificationChannels.id, id)).returning();

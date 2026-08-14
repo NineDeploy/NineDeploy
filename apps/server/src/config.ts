@@ -38,4 +38,7 @@ export const config = {
   },
   version: process.env['npm_package_version'] ?? '0.0.0',
   wildcardDomain: process.env['NINEDEPLOY_WILDCARD_DOMAIN'] ?? '',
+  // When set, Traefik's ACME resolver issues real Let's Encrypt certificates
+  // for domains with the SSL toggle enabled (null disables automatic HTTPS).
+  acmeEmail: env.NINEDEPLOY_ACME_EMAIL ?? null,
 } as const;

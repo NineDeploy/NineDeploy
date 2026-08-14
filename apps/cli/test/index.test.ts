@@ -1,9 +1,4 @@
-import * as fs from 'node:fs';
-import { Module } from 'node:module';
-import * as os from 'node:os';
-import * as path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * index.ts runs `program.parseAsync().catch(...)` at module load and several
@@ -11,14 +6,11 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
  * and kill the worker. We mock 'commander' with a recording fake, stub
  * process.exit / process.argv, and drive each registered action directly.
  *
- * The logout/config actions call `require('./config.js')`. The vitest module
- * runner executes that with native `createRequire` resolution, which only finds
- * real files — and src/config.js does not exist (it is config.ts). We therefore
- * patch Module._resolveFilename to redirect './config.js' requests that come
- * from src/index.ts to a per-test CJS shim under os.tmpdir().
+ * The config/logout actions use the module-level `loadConfig`/`saveConfig`
+ * imports, which resolve to the mocked '../src/config.js' — asserting on those
+ * mocks verifies the wiring and would have caught the previous ESM
+ * `require()` crash (require is undefined under "type": "module").
  */
-
-const INDEX_PATH = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'src', 'index.ts');
 
 const h = vi.hoisted(() => {
   class FakeCommand {
@@ -135,48 +127,7 @@ vi.mock('../src/commands/misc.js', () => ({
 }));
 vi.mock('../src/lib/format.js', () => ({ banner: h.banner }));
 
-// ── require('./config.js') shim ─────────────────────────────────────────────
-
-// The runner caches a required module after the first load, so per-test shim
-// files are not re-resolved. Instead, one fixed shim reads a per-test state
-// file at call time and writes a fixed record file — the cached module always
-// sees the current test's values.
-
-let shimDir = '';
-let shimFile = '';
-let stateFile = '';
-let recordFile = '';
-
-function setupShim(config: { baseUrl: string; token?: string }) {
-  const state = 'token' in config ? config : { baseUrl: config.baseUrl, token: undefined };
-  fs.writeFileSync(stateFile, JSON.stringify(state));
-  fs.rmSync(recordFile, { force: true });
-}
-
-function readRecord(): Record<string, unknown> {
-  return JSON.parse(fs.readFileSync(recordFile, 'utf8')) as Record<string, unknown>;
-}
-
-const origResolveFilename = Module._resolveFilename;
-
-beforeAll(() => {
-  shimDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ninedeploy-cli-require-'));
-  shimFile = path.join(shimDir, 'config.cjs');
-  stateFile = path.join(shimDir, 'state.json');
-  recordFile = path.join(shimDir, 'record.json');
-  fs.writeFileSync(
-    shimFile,
-    "const fs = require('node:fs');\n" +
-      'module.exports = {\n' +
-      `  loadConfig: () => JSON.parse(fs.readFileSync(${JSON.stringify(stateFile)}, 'utf8')),\n` +
-      `  saveConfig: (cfg) => fs.writeFileSync(${JSON.stringify(recordFile)}, JSON.stringify(cfg)),\n` +
-      '};\n',
-  );
-});
-
-afterAll(() => {
-  fs.rmSync(shimDir, { recursive: true, force: true });
-});
+// ── helpers ─────────────────────────────────────────────────────────────────
 
 let argvBackup: string[];
 
@@ -190,25 +141,12 @@ beforeEach(() => {
   // A normal CLI invocation: node + script + at least one argument.
   process.argv = ['/usr/bin/node', '/app/dist/index.js', 'some', 'args'];
 
-  Module._resolveFilename = function (this: unknown, request, parent, isMain, options) {
-    const parentFilename = (parent as { filename?: string } | null | undefined)?.filename;
-    if (
-      request === './config.js' &&
-      typeof parentFilename === 'string' &&
-      path.resolve(parentFilename) === INDEX_PATH
-    ) {
-      return shimFile;
-    }
-    return origResolveFilename.call(this, request, parent, isMain, options);
-  };
-
   vi.spyOn(process, 'exit').mockImplementation(h.exit);
   h.loadConfig.mockReturnValue({ baseUrl: 'http://localhost:3000' });
   h.getClient.mockReturnValue({ auth: { me: vi.fn(), tokens: { create: vi.fn(), list: vi.fn() } } });
 });
 
 afterEach(() => {
-  Module._resolveFilename = origResolveFilename;
   process.argv = argvBackup;
   vi.restoreAllMocks();
 });
@@ -338,18 +276,18 @@ describe('whoami action', () => {
 
 describe('config action', () => {
   it('sets a new server URL', async () => {
-    setupShim({ baseUrl: 'http://old:3000', token: 'tok' });
+    h.loadConfig.mockReturnValue({ baseUrl: 'http://old:3000', token: 'tok' });
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
     await loadIndex();
     await findCommand('config').actionFn!({ server: 'http://new:3000' });
 
-    expect(readRecord()).toEqual({ baseUrl: 'http://new:3000', token: 'tok' });
+    expect(h.saveConfig).toHaveBeenCalledWith({ baseUrl: 'http://new:3000', token: 'tok' });
     expect(logSpy).toHaveBeenCalledWith('  ✓ Server set to http://new:3000');
   });
 
   it('shows the current server and token state', async () => {
-    setupShim({ baseUrl: 'http://srv:3000', token: 'tok' });
+    h.loadConfig.mockReturnValue({ baseUrl: 'http://srv:3000', token: 'tok' });
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
     await loadIndex();
@@ -357,10 +295,11 @@ describe('config action', () => {
 
     expect(logSpy).toHaveBeenCalledWith('  Server:  http://srv:3000');
     expect(logSpy).toHaveBeenCalledWith('  Token:   ✓ configured');
+    expect(h.saveConfig).not.toHaveBeenCalled();
   });
 
   it('reports a missing token', async () => {
-    setupShim({ baseUrl: 'http://srv:3000' });
+    h.loadConfig.mockReturnValue({ baseUrl: 'http://srv:3000' });
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
     await loadIndex();
@@ -368,19 +307,38 @@ describe('config action', () => {
 
     expect(logSpy).toHaveBeenCalledWith('  Server:  http://srv:3000');
     expect(logSpy).toHaveBeenCalledWith('  Token:   ✗ not set');
+    expect(h.saveConfig).not.toHaveBeenCalled();
+  });
+
+  it('re-consults loadConfig after config --server (no module-scope memoization)', async () => {
+    h.loadConfig.mockReturnValue({ baseUrl: 'http://old:3000', token: 'tok' });
+    h.getClient.mockReturnValue({
+      auth: { me: vi.fn().mockResolvedValue({ email: 'a@b.com', role: 'admin' }) },
+    });
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await loadIndex();
+    await findCommand('config').actionFn!({ server: 'http://new:3000' });
+    // Simulate the persisted config being read back: every action must re-read
+    // loadConfig rather than trust a module-scope cache of the old value.
+    h.loadConfig.mockReturnValue({ baseUrl: 'http://new:3000', token: 'tok' });
+    await findCommand('whoami').actionFn!();
+
+    // config (for the token) + whoami each consult loadConfig exactly once.
+    expect(h.loadConfig).toHaveBeenCalledTimes(2);
+    expect(logSpy).toHaveBeenCalledWith('  a@b.com  (admin)  @  http://new:3000');
   });
 });
 
 describe('logout action', () => {
   it('clears stored credentials', async () => {
-    setupShim({ baseUrl: 'http://srv:3000', token: 'tok' });
     h.loadConfig.mockReturnValue({ baseUrl: 'http://srv:3000', token: 'tok' });
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
     await loadIndex();
     await findCommand('logout').actionFn!();
 
-    expect(readRecord()).toEqual({ baseUrl: 'http://srv:3000' });
+    expect(h.saveConfig).toHaveBeenCalledWith({ baseUrl: 'http://srv:3000' });
     expect(logSpy).toHaveBeenCalledWith('  ✓ Signed out.');
   });
 });

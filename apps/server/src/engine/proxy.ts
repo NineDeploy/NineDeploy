@@ -39,7 +39,26 @@ export async function ensureNetwork(log: (line: string) => void): Promise<void> 
   }
 }
 
-const STATIC_CONFIG = `# Managed by NineDeploy — do not edit by hand.
+/**
+ * Render the Traefik static config. When an ACME email is configured, a
+ * Let's Encrypt resolver is attached to the `websecure` entry point via the
+ * HTTP-01 challenge on :80 — this is what lets the per-domain SSL toggle issue
+ * real certificates. Without an email the resolver is omitted so an
+ * unconfigured instance keeps working (routing still functions; `ssl` domains
+ * fall back to Traefik's default self-signed certificate).
+ */
+function renderStaticConfig(acmeEmail: string | null): string {
+  const acme = acmeEmail
+    ? `certificatesResolvers:
+  letsencrypt:
+    acme:
+      email: ${acmeEmail}
+      storage: /etc/traefik/acme.json
+      httpChallenge:
+        entryPoint: web
+`
+    : '';
+  return `# Managed by NineDeploy — do not edit by hand.
 entryPoints:
   web:
     address: ":80"
@@ -54,12 +73,16 @@ api:
 log:
   level: INFO
 accessLog: {}
-`;
+${acme}`;
+}
 
 /** Path helpers for the Traefik config directory under the data dir. */
 const dir = () => path.join(config.paths.dataDir, 'traefik');
 const staticPath = () => path.join(dir(), 'traefik.yml');
 const dynamicPath = () => path.join(dir(), 'dynamic.yml');
+// ACME account key + issued certificates live here; persisted under the data
+// dir so renewals survive container recreates.
+const acmePath = () => path.join(dir(), 'acme.json');
 
 /** Whether `container` is attached to `network`. */
 async function onNetwork(container: string, network: string): Promise<boolean> {
@@ -73,9 +96,16 @@ async function onNetwork(container: string, network: string): Promise<boolean> {
 
 /** Ensure the Traefik reverse-proxy container is running on the shared network (idempotent). */
 export async function ensureTraefik(log: (line: string) => void): Promise<void> {
+  const acmeEmail = config.acmeEmail ?? null;
   mkdirSync(dir(), { recursive: true });
-  writeFileSync(staticPath(), STATIC_CONFIG);
+  writeFileSync(staticPath(), renderStaticConfig(acmeEmail));
   if (!existsSync(dynamicPath())) writeFileSync(dynamicPath(), 'http:\n  routers:\n  services:\n');
+  if (acmeEmail && !existsSync(acmePath())) {
+    // Seed the ACME storage file so the bind mount below is a FILE and not an
+    // auto-created directory (Docker creates a directory when the host path of
+    // a bind mount does not exist, which would break Traefik).
+    writeFileSync(acmePath(), '{}', { mode: 0o600 });
+  }
 
   try {
     const running = (await capture('docker', ['ps', '-q', '-f', `name=^${TRAEFIK_CONTAINER}$`])).trim();
@@ -92,15 +122,23 @@ export async function ensureTraefik(log: (line: string) => void): Promise<void> 
     // (temp file + rename → new inode) would never be seen by the container on
     // Linux — Traefik would silently keep reading the original file forever.
     // With a directory mount, the rename is visible and the file watcher fires.
+    const runArgs = [
+      'run', '-d', '--name', TRAEFIK_CONTAINER, '--restart', 'unless-stopped',
+      '--network', NETWORK,
+      '-p', '80:80', '-p', '443:443',
+      '-v', `${dir()}:/etc/traefik:ro`,
+    ];
+    if (acmeEmail) {
+      // ACME needs a writable storage file for the account key + certificates.
+      // Mount just that single file read-write (Traefik writes it; we never
+      // atomically rename it, so the pinned-inode caveat does not apply) while
+      // keeping the config directory read-only.
+      runArgs.push('-v', `${acmePath()}:/etc/traefik/acme.json`);
+    }
+    runArgs.push(TRAEFIK_IMAGE);
     await run(
       'docker',
-      [
-        'run', '-d', '--name', TRAEFIK_CONTAINER, '--restart', 'unless-stopped',
-        '--network', NETWORK,
-        '-p', '80:80', '-p', '443:443',
-        '-v', `${dir()}:/etc/traefik:ro`,
-        TRAEFIK_IMAGE,
-      ],
+      runArgs,
       {},
       log,
     );
@@ -136,12 +174,19 @@ export async function writeDynamicConfig(db: DB): Promise<void> {
     if (!host) continue; // every char was stripped → the hostname is unusable/unsafe
     const cleanPath = String(d.path ?? '').replace(PATH_RE, '');
     const entry = d.ssl ? 'websecure' : 'web';
+    // TLS routers reference the ACME resolver when automatic HTTPS is enabled;
+    // otherwise keep the old behavior (Traefik's default self-signed cert).
+    const tlsBlock = d.ssl
+      ? config.acmeEmail
+        ? '\n      tls:\n        certResolver: letsencrypt'
+        : '\n      tls: {}'
+      : '';
     routers.push(
       `    ${key}:\n` +
         `      rule: "Host(\`${host}\`)${cleanPath && cleanPath !== '/' ? ` && PathPrefix(\`${cleanPath}\`)` : ''}"\n` +
         `      service: svc_${key}\n` +
         `      entryPoints:\n        - ${entry}` +
-        (d.ssl ? `\n      tls: {}` : ''),
+        tlsBlock,
     );
     if (!seen.has(`svc_${key}`)) {
       seen.add(`svc_${key}`);

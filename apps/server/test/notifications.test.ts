@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { encrypt } from '../src/lib/crypto.js';
+import { decrypt, encrypt } from '../src/lib/crypto.js';
 import { notificationRoutes } from '../src/modules/notifications.js';
 import { asUser, buildTestApp, channelRow, createFakeDb, notifLogRow } from './helpers.js';
 
@@ -80,6 +80,58 @@ describe('notification routes', () => {
       method: 'PATCH', url: '/channels/5', headers: asUser(), payload: { eventFilter: 'backup.' },
     });
     expect(filterOnly.statusCode).toBe(200);
+  });
+
+  it('patches a channel name and target, encrypting the target at rest', async () => {
+    let setPatch: Record<string, unknown> | null = null;
+    const app = await buildTestApp({
+      db: createFakeDb({
+        update: {
+          notification_channels: (patch: unknown) => {
+            const p = patch as Record<string, unknown>;
+            setPatch = p;
+            return [channelRow({ id: 5, ...p })];
+          },
+        },
+      }),
+    });
+    await app.register(notificationRoutes);
+    const res = await app.inject({
+      method: 'PATCH', url: '/channels/5', headers: asUser(),
+      payload: { name: 'ops-renamed', target: 'https://hooks.example.com/new' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ id: 5, name: 'ops-renamed', hasTarget: true });
+    expect(setPatch).toMatchObject({ name: 'ops-renamed' });
+    // The target is stored encrypted — a later read must decrypt it back.
+    expect(typeof setPatch?.targetEncrypted).toBe('string');
+    expect(decrypt(setPatch?.targetEncrypted as string)).toBe('https://hooks.example.com/new');
+    // Fields not present in the request are omitted from the UPDATE, not blanked.
+    expect('eventFilter' in (setPatch ?? {})).toBe(false);
+    expect('active' in (setPatch ?? {})).toBe(false);
+  });
+
+  it('applies only the fields present in the patch', async () => {
+    let setPatch: Record<string, unknown> | null = null;
+    const app = await buildTestApp({
+      db: createFakeDb({
+        update: {
+          notification_channels: (patch: unknown) => {
+            const p = patch as Record<string, unknown>;
+            setPatch = p;
+            return [channelRow({ id: 5, ...p })];
+          },
+        },
+      }),
+    });
+    await app.register(notificationRoutes);
+    const res = await app.inject({
+      method: 'PATCH', url: '/channels/5', headers: asUser(), payload: { name: 'x', active: true },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(setPatch).toMatchObject({ name: 'x', active: true });
+    expect('targetEncrypted' in (setPatch ?? {})).toBe(false);
+    expect('eventFilter' in (setPatch ?? {})).toBe(false);
   });
 
   it('returns 404 when patching a missing channel', async () => {

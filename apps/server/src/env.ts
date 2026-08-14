@@ -15,6 +15,8 @@ const schema = z.object({
   NINEDEPLOY_JWT_ACCESS_TTL: z.string().default('15m'),
   NINEDEPLOY_JWT_REFRESH_TTL: z.string().default('7d'),
   NINEDEPLOY_MASTER_KEY: z.string().optional(),
+  // Let's Encrypt registration email — enables automatic HTTPS (Traefik ACME).
+  NINEDEPLOY_ACME_EMAIL: z.string().optional(),
 });
 
 export type Env = z.infer<typeof schema>;

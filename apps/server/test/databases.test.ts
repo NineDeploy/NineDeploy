@@ -1,6 +1,9 @@
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { attachmentRoutes, databasesRoutes } from '../src/modules/databases.js';
-import { asUser, attachmentRow, buildTestApp, createFakeDb, dbRow, svcRow } from './helpers.js';
+import { asUser, attachmentRow, backupRow, buildTestApp, createFakeDb, dbRow, svcRow } from './helpers.js';
 
 const engineMocks = vi.hoisted(() => ({
   startDatabase: vi.fn(async (_d: unknown, log: (l: string) => void) => { log('starting'); }),
@@ -158,15 +161,52 @@ describe('databases routes', () => {
     expect(res.statusCode).toBe(404);
   });
 
-  it('deletes a database and its dependents', async () => {
-    const app = await buildTestApp({
-      db: createFakeDb({ findFirst: { databases: dbRow({ id: 7 }) } }),
-    });
-    await app.register(databasesRoutes);
-    const res = await app.inject({ method: 'DELETE', url: '/7', headers: asUser() });
-    expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ ok: true });
-    expect(engineMocks.stopDatabase).toHaveBeenCalled();
+  it('deletes a database and unlinks its backup files', async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'nd-dbdel-'));
+    const dump = path.join(dir, 'backup.dump');
+    writeFileSync(dump, 'data');
+    try {
+      const app = await buildTestApp({
+        db: createFakeDb({
+          findFirst: { databases: dbRow({ id: 7 }) },
+          findMany: { backups: [backupRow({ id: 1, path: dump })] },
+        }),
+      });
+      await app.register(databasesRoutes);
+      const res = await app.inject({ method: 'DELETE', url: '/7', headers: asUser() });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ ok: true });
+      expect(engineMocks.stopDatabase).toHaveBeenCalled();
+      // The orphaned backup FILE is gone, not just the row.
+      expect(existsSync(dump)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('tolerates backup files that are missing or cannot be unlinked', async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'nd-dbdel-'));
+    const locked = path.join(dir, 'not-a-file'); // a directory — unlink throws EISDIR
+    mkdirSync(locked);
+    try {
+      const app = await buildTestApp({
+        db: createFakeDb({
+          findFirst: { databases: dbRow({ id: 7 }) },
+          findMany: {
+            backups: [
+              backupRow({ id: 1, path: '/tmp/does-not-exist.dump' }),
+              backupRow({ id: 2, path: locked }),
+            ],
+          },
+        }),
+      });
+      await app.register(databasesRoutes);
+      const res = await app.inject({ method: 'DELETE', url: '/7', headers: asUser() });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ ok: true });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('returns 404 when deleting a missing database', async () => {
@@ -316,6 +356,20 @@ describe('attachment routes', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ envAlias: 'CACHE_URL' });
+  });
+
+  it('rejects an env alias whose charset would break docker --env-file', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { services: svcRow(), databases: dbRow({ id: 2 }) },
+      }),
+    });
+    await app.register(attachmentRoutes);
+    const res = await app.inject({
+      method: 'POST', url: '/1/attachments', headers: asUser(), payload: { databaseId: 2, envAlias: 'MY ALIAS' },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('validation_error');
   });
 
   it('defaults the redis alias to REDIS_URL', async () => {

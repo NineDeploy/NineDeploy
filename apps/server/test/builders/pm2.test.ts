@@ -1,5 +1,8 @@
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { pm2Builder } from '../../src/engine/builders/pm2.js';
+import { pm2Builder, pm2Logs, pm2Restart, pm2Start, pm2Stop } from '../../src/engine/builders/pm2.js';
 
 const h = vi.hoisted(() => {
   const pm2 = {
@@ -8,6 +11,8 @@ const h = vi.hoisted(() => {
     start: vi.fn((_opts: unknown, cb: (err?: Error | null) => void) => cb(null)),
     describe: vi.fn((_name: string, cb: (err: Error | null, desc?: unknown[]) => void) => cb(null, [])),
     delete: vi.fn((_name: string, cb: (err?: Error | null) => void) => cb(null)),
+    stop: vi.fn((_name: string, cb: (err?: Error | null) => void) => cb(null)),
+    restart: vi.fn((_name: string, cb: (err?: Error | null) => void) => cb(null)),
   };
   const run = vi.fn(async () => undefined);
   const sleep = vi.fn(async () => undefined);
@@ -194,5 +199,94 @@ describe('pm2Builder.stop', () => {
     h.pm2.connect.mockImplementationOnce((cb: (err?: Error | null) => void) => cb(new Error('daemon down')));
 
     await expect(pm2Builder.stop('api-2')).resolves.toBeUndefined();
+  });
+});
+
+describe('pm2 lifecycle helpers', () => {
+  it('pm2Stop stops the process but keeps it registered', async () => {
+    await expect(pm2Stop('api-1')).resolves.toBeUndefined();
+
+    expect(h.pm2.stop).toHaveBeenCalledWith('api-1', expect.any(Function));
+    expect(h.pm2.connect).toHaveBeenCalledTimes(1);
+    expect(h.pm2.disconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it('pm2Stop rejects when the daemon errors', async () => {
+    h.pm2.stop.mockImplementationOnce((_n: string, cb: (err?: Error | null) => void) =>
+      cb(new Error('daemon down')));
+
+    await expect(pm2Stop('api-1')).rejects.toThrow('daemon down');
+    expect(h.pm2.disconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it('pm2Start resumes an existing process via restart', async () => {
+    await expect(pm2Start('api-1')).resolves.toBeUndefined();
+    expect(h.pm2.restart).toHaveBeenCalledWith('api-1', expect.any(Function));
+  });
+
+  it('pm2Start rejects when the process was deleted', async () => {
+    h.pm2.restart.mockImplementationOnce((_n: string, cb: (err?: Error | null) => void) =>
+      cb(new Error('process not found')));
+
+    await expect(pm2Start('api-1')).rejects.toThrow('process not found');
+  });
+
+  it('pm2Restart restarts an existing process', async () => {
+    await expect(pm2Restart('api-1')).resolves.toBeUndefined();
+    expect(h.pm2.restart).toHaveBeenCalledWith('api-1', expect.any(Function));
+  });
+
+  it('pm2Restart rejects when the daemon errors', async () => {
+    h.pm2.restart.mockImplementationOnce((_n: string, cb: (err?: Error | null) => void) =>
+      cb(new Error('daemon down')));
+
+    await expect(pm2Restart('api-1')).rejects.toThrow('daemon down');
+  });
+
+  it('pm2Logs tails the last 300 lines of the out+err log files', async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'nd-pm2-'));
+    const out = path.join(dir, 'out.log');
+    const err = path.join(dir, 'err.log');
+    writeFileSync(out, Array.from({ length: 320 }, (_, i) => `out-${i}`).join('\n') + '\n');
+    // No trailing newline — exercises the branch that skips the blank-line trim.
+    writeFileSync(err, 'boom');
+    h.pm2.describe.mockImplementationOnce((_n: string, cb: (err: Error | null, desc?: unknown[]) => void) =>
+      cb(null, [{ name: 'api-1', pm2_env: { pm_out_log_path: out, pm_err_log_path: err } }]));
+    try {
+      const logs = await pm2Logs('api-1');
+      expect(logs).toContain('out-20'); // the first 20 lines were trimmed
+      expect(logs).not.toContain('out-0');
+      expect(logs).toContain('boom');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('pm2Logs returns empty when the process has no log paths', async () => {
+    h.pm2.describe.mockImplementationOnce((_n: string, cb: (err: Error | null, desc?: unknown[]) => void) =>
+      cb(null, [{ name: 'other' }]));
+
+    await expect(pm2Logs('api-1')).resolves.toBe('');
+  });
+
+  it('pm2Logs returns empty when the log files are missing', async () => {
+    h.pm2.describe.mockImplementationOnce((_n: string, cb: (err: Error | null, desc?: unknown[]) => void) =>
+      cb(null, [{ name: 'api-1', pm2_env: { pm_out_log_path: '/nonexistent/out.log' } }]));
+
+    await expect(pm2Logs('api-1')).resolves.toBe('');
+  });
+
+  it('pm2Logs rejects when describe errors', async () => {
+    h.pm2.describe.mockImplementationOnce((_n: string, cb: (err: Error | null, desc?: unknown[]) => void) =>
+      cb(new Error('not found'), null));
+
+    await expect(pm2Logs('api-1')).rejects.toThrow('not found');
+  });
+
+  it('pm2Logs falls back to an empty description list when describe returns null', async () => {
+    h.pm2.describe.mockImplementationOnce((_n: string, cb: (err: Error | null, desc?: unknown[]) => void) =>
+      cb(null, null));
+
+    await expect(pm2Logs('api-1')).resolves.toBe('');
   });
 });

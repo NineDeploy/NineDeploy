@@ -135,7 +135,7 @@ describe('session token storage', () => {
     expect(localStorage.getItem(REFRESH_KEY)).toBeNull();
   });
 
-  it('ignores storage failures on write and read of the refresh token', () => {
+  it('ignores storage failures on write and read of the refresh token', async () => {
     const spy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
       throw new Error('denied');
     });
@@ -146,7 +146,7 @@ describe('session token storage', () => {
     });
     // A denied read surfaces as "no refresh token" → refresh declines safely.
     localStorage.setItem(REFRESH_KEY, 'r');
-    expect(refreshAccessToken()).resolves.toBe(false);
+    await expect(refreshAccessToken()).resolves.toBe(false);
     getItem.mockRestore();
   });
 });

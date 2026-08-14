@@ -112,6 +112,7 @@ Open `http://localhost:5173` and create the first admin account. Requires Node �
 | `NINEDEPLOY_MASTER_KEYS` | *(empty)* | Key ring for rotation: `0:<old-hex>,1:<new-hex>` — highest version encrypts, lower versions keep old secrets readable |
 | `NINEDEPLOY_MIGRATIONS_DIR` | auto | Override the SQL migrations folder (auto-resolved otherwise) |
 | `NINEDEPLOY_WILDCARD_DOMAIN` | *(empty)* | Auto-assign `{slug}.domain` URLs |
+| `NINEDEPLOY_ACME_EMAIL` | *(empty)* | Let's Encrypt registration email — enables automatic HTTPS (the domain SSL toggle then issues real certificates via Traefik ACME) |
 
 ## API
 

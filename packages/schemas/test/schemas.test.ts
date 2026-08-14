@@ -6,6 +6,7 @@ import {
   backupWithDb,
   containerStat,
   createApiToken,
+  createAttachment,
   createDatabase,
   createDomain,
   createService,
@@ -472,6 +473,15 @@ describe('service', () => {
       expect(attachment.safeParse({ id: 1, databaseId: 2, envAlias: 'DB_URL', database: { name: 'db', engine: 'redis', status: 'running' } }).success).toBe(true);
       bad(attachment, { id: 1, databaseId: 2, envAlias: 'DB_URL', database: { name: 'db' } });
     });
+
+    it('createAttachment validates the env alias charset', () => {
+      ok(createAttachment, { databaseId: 1 });
+      ok(createAttachment, { databaseId: 1, envAlias: 'CACHE_URL' });
+      ok(createAttachment, { databaseId: 1, envAlias: '  CACHE_URL  ' });
+      bad(createAttachment, { databaseId: 0 });
+      bad(createAttachment, { databaseId: 1, envAlias: 'MY ALIAS' });
+      bad(createAttachment, { databaseId: 1, envAlias: '' });
+    });
   });
 
   describe('env vars', () => {
@@ -480,6 +490,13 @@ describe('service', () => {
       expect(upsertEnvVar.safeParse({ key: 'TOKEN', value: 'x', isSecret: true }).success).toBe(true);
       bad(upsertEnvVar, { key: '', value: 'x' });
       bad(upsertEnvVar, { key: 'K', value: 'x', isSecret: 'yes' });
+      // Charset: keys that would break `docker run --env-file` are rejected;
+      // surrounding whitespace is trimmed (env aliases share this rule).
+      bad(upsertEnvVar, { key: 'MY VAR', value: 'x' });
+      bad(upsertEnvVar, { key: '1BAD', value: 'x' });
+      bad(upsertEnvVar, { key: 'A-B', value: 'x' });
+      expect(upsertEnvVar.safeParse({ key: '  PORT  ', value: 'x' }).success).toBe(true);
+      expect(upsertEnvVar.parse({ key: '  PORT  ', value: 'x' }).key).toBe('PORT');
     });
 
     it('envVar accepts a row', () => {

@@ -11,7 +11,10 @@ const h = vi.hoisted(() => {
     sink?.('');
   });
   const sleep = vi.fn(async () => undefined);
-  const config: { paths: { dataDir: string } } = { paths: { dataDir: '' } };
+  const config: { paths: { dataDir: string }; acmeEmail: string | null } = {
+    paths: { dataDir: '' },
+    acmeEmail: null,
+  };
   return { capture, run, sleep, config };
 });
 
@@ -313,5 +316,106 @@ describe('ensureTraefik', () => {
 
     expect(readFileSync(path.join(traefikDir, 'dynamic.yml'), 'utf8')).toBe('# keep me');
     expect(log).toHaveBeenCalledWith('traefik already running on shared network');
+  });
+});
+
+describe("ACME / Let's Encrypt", () => {
+  beforeEach(() => {
+    mkdirSync(traefikDir, { recursive: true });
+    rmSync(path.join(traefikDir, 'acme.json'), { force: true });
+  });
+
+  it('omits the ACME resolver from the static config when no email is configured', async () => {
+    const psWith = (ps: string) =>
+      h.capture.mockImplementation((cmd: string, args: string[]) =>
+        args[0] === 'ps' ? Promise.resolve(ps) : Promise.resolve('{}'),
+      );
+    psWith('abc123\n');
+    const log = vi.fn();
+
+    await ensureTraefik(log);
+
+    const yaml = readFileSync(path.join(traefikDir, 'traefik.yml'), 'utf8');
+    expect(yaml).not.toContain('certificatesResolvers');
+    expect(existsSync(path.join(traefikDir, 'acme.json'))).toBe(false);
+  });
+
+  it('writes a letsencrypt certificatesResolver when an email is configured', async () => {
+    h.config.acmeEmail = 'ops@example.com';
+    try {
+      h.capture.mockImplementation((cmd: string, args: string[]) =>
+        args[0] === 'ps' ? Promise.resolve('abc123\n') : Promise.resolve('{"ninedeploy":{}}'),
+      );
+      const log = vi.fn();
+
+      await ensureTraefik(log);
+
+      const yaml = readFileSync(path.join(traefikDir, 'traefik.yml'), 'utf8');
+      expect(yaml).toContain('certificatesResolvers:');
+      expect(yaml).toContain('letsencrypt:');
+      expect(yaml).toContain('email: ops@example.com');
+      expect(yaml).toContain('storage: /etc/traefik/acme.json');
+      expect(yaml).toContain('httpChallenge:');
+      expect(yaml).toContain('entryPoint: web');
+      // acme.json is seeded so the bind mount is a FILE, not an auto-created dir.
+      expect(existsSync(path.join(traefikDir, 'acme.json'))).toBe(true);
+    } finally {
+      h.config.acmeEmail = null;
+    }
+  });
+
+  it('mounts acme.json read-write and keeps the config dir read-only', async () => {
+    h.config.acmeEmail = 'ops@example.com';
+    try {
+      h.capture.mockImplementation((cmd: string, args: string[]) =>
+        args[0] === 'ps' ? Promise.resolve('') : Promise.resolve('{}'),
+      );
+      // The stale-container rm is allowed to fail; the main run succeeds.
+      h.run.mockRejectedValueOnce(new Error('no such container')).mockResolvedValueOnce(undefined);
+      const log = vi.fn();
+
+      await ensureTraefik(log);
+
+      const runCall = h.run.mock.calls.find((c) => (c[1] as string[])[0] === 'run');
+      expect(runCall).toBeDefined();
+      const args = runCall![1] as string[];
+      expect(args).toContain('-v');
+      const dirIdx = args.indexOf('-v');
+      expect(args[dirIdx + 1]).toBe(`${traefikDir}:/etc/traefik:ro`);
+      expect(args).toContain(`${path.join(traefikDir, 'acme.json')}:/etc/traefik/acme.json`);
+    } finally {
+      h.config.acmeEmail = null;
+    }
+  });
+
+  it('emits certResolver: letsencrypt on ssl routers when ACME is configured', async () => {
+    h.config.acmeEmail = 'ops@example.com';
+    try {
+      const db = makeDb(
+        [{ id: 1, serviceId: 1, hostname: 'app.example.com', path: '/', ssl: true }],
+        [{ id: 1, slug: 'web', port: 3000, runtimeId: 'web-1' }],
+      );
+
+      await writeDynamicConfig(db as never);
+
+      const yaml = readFileSync(path.join(traefikDir, 'dynamic.yml'), 'utf8');
+      expect(yaml).toContain('tls:\n        certResolver: letsencrypt');
+      expect(yaml).not.toContain('tls: {}');
+    } finally {
+      h.config.acmeEmail = null;
+    }
+  });
+
+  it('keeps tls: {} on ssl routers when ACME is not configured', async () => {
+    const db = makeDb(
+      [{ id: 1, serviceId: 1, hostname: 'app.example.com', path: '/', ssl: true }],
+      [{ id: 1, slug: 'web', port: 3000, runtimeId: 'web-1' }],
+    );
+
+    await writeDynamicConfig(db as never);
+
+    const yaml = readFileSync(path.join(traefikDir, 'dynamic.yml'), 'utf8');
+    expect(yaml).toContain('tls: {}');
+    expect(yaml).not.toContain('certResolver');
   });
 });

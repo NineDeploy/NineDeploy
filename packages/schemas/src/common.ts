@@ -7,6 +7,21 @@ export const slug = z
   .max(63)
   .regex(/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/, 'lowercase letters, digits and hyphens');
 
+/**
+ * POSIX environment-variable name, as accepted by `docker run --env-file` and
+ * shells: letters, digits and underscores, starting with a letter or
+ * underscore. Surrounding whitespace is trimmed so sloppy input is normalized;
+ * anything else (e.g. `MY VAR`) is rejected — such a key would otherwise break
+ * the deploy at `docker run --env-file` time.
+ */
+export const envVarName = z
+  .string()
+  .trim()
+  .regex(
+    /^[A-Za-z_][A-Za-z0-9_]*$/,
+    'must be a valid environment variable name (letters, digits, underscore; cannot start with a digit)',
+  );
+
 export const id = z.number().int().positive();
 
 /** Cursor-style pagination params. */

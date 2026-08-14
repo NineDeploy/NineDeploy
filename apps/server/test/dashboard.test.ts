@@ -1,14 +1,20 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dashboardRoutes } from '../src/modules/dashboard.js';
 import { asUser, buildTestApp, createFakeDb, depRow, svcRow } from './helpers.js';
 
 const execMocks = vi.hoisted(() => ({
-  capture: vi.fn(async () => 'a\nb\n'),
+  capture: vi.fn(async (_c: unknown, args: unknown[]) =>
+    (args as string[])[0] === 'inspect' ? 'running|172.18.0.2' : 'a\nb\n'),
   run: vi.fn(async (_c: unknown, _a: unknown, _o: unknown, sink?: (l: string) => void) => { sink?.('out'); }),
 }));
 vi.mock('../src/lib/exec.js', () => execMocks);
 
 describe('dashboard routes', () => {
+  beforeEach(() => {
+    // Isolate capture/run call history per test (assertions like "not called
+    // with inspect" must not see earlier tests' calls).
+    vi.clearAllMocks();
+  });
   it('aggregates stats, health and recent deploys', async () => {
     const fetchMock = vi.fn(async () => ({ status: 200, ok: true })) as unknown as typeof fetch;
     vi.stubGlobal('fetch', fetchMock);
@@ -78,7 +84,7 @@ describe('dashboard routes', () => {
     vi.stubGlobal('fetch', fetchMock);
     const app = await buildTestApp({
       db: createFakeDb({
-        select: { services: [svcRow({ id: 1, status: 'running', port: 3000 })] },
+        select: { services: [svcRow({ id: 1, status: 'running', port: 3000, runtimeId: 'c1' })] },
         counts: {},
       }),
     });
@@ -93,7 +99,7 @@ describe('dashboard routes', () => {
     vi.stubGlobal('fetch', fetchMock);
     const app = await buildTestApp({
       db: createFakeDb({
-        select: { services: [svcRow({ id: 1, status: 'running', port: 3000, commitSha: 'long-sha' })] },
+        select: { services: [svcRow({ id: 1, status: 'running', port: 3000, runtimeId: 'c1', commitSha: 'long-sha' })] },
         counts: {},
       }),
     });
@@ -101,6 +107,76 @@ describe('dashboard routes', () => {
     const res = await app.inject({ method: 'GET', url: '/', headers: asUser() });
     expect(res.statusCode).toBe(200);
     expect(res.json().health[0]).toMatchObject({ healthy: false, responseMs: null });
+  });
+
+  it('probes docker services on the container network IP, never loopback', async () => {
+    const fetchMock = vi.fn(async () => ({ status: 200, ok: true })) as unknown as typeof fetch;
+    vi.stubGlobal('fetch', fetchMock);
+    const app = await buildTestApp({
+      db: createFakeDb({
+        select: { services: [svcRow({ id: 1, status: 'running', port: 3000, runtimeId: 'c1', healthPath: '/health' })] },
+        counts: {},
+      }),
+    });
+    await app.register(dashboardRoutes);
+    const res = await app.inject({ method: 'GET', url: '/', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    expect(fetchMock).toHaveBeenCalledWith('http://172.18.0.2:3000/health', expect.anything());
+    expect(res.json().health[0]).toMatchObject({ healthy: true });
+  });
+
+  it('probes pm2 services on loopback since they are host processes', async () => {
+    const fetchMock = vi.fn(async () => ({ status: 200, ok: true })) as unknown as typeof fetch;
+    vi.stubGlobal('fetch', fetchMock);
+    const app = await buildTestApp({
+      db: createFakeDb({
+        select: { services: [svcRow({ id: 1, status: 'running', port: 3000, runtimeId: 'app-1', type: 'pm2', healthPath: '' })] },
+        counts: {},
+      }),
+    });
+    await app.register(dashboardRoutes);
+    const res = await app.inject({ method: 'GET', url: '/', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:3000/', expect.anything());
+    // The PM2 path must not try to resolve a docker container IP.
+    expect(execMocks.capture).not.toHaveBeenCalledWith('docker', expect.arrayContaining(['inspect']));
+  });
+
+  it('marks a docker service unhealthy when its container is not running', async () => {
+    // Once-only override: 'exited|' resolves to no IP; later tests keep the
+    // default running-container fixture (a leaked persistent implementation
+    // would silently change their assertions).
+    execMocks.capture.mockImplementationOnce(async (_c: unknown, args: unknown[]) =>
+      (args as string[])[0] === 'inspect' ? 'exited|' : 'a\nb\n');
+    const fetchMock = vi.fn(async () => ({ status: 200, ok: true })) as unknown as typeof fetch;
+    vi.stubGlobal('fetch', fetchMock);
+    const app = await buildTestApp({
+      db: createFakeDb({
+        select: { services: [svcRow({ id: 1, status: 'running', port: 3000, runtimeId: 'c1' })] },
+        counts: {},
+      }),
+    });
+    await app.register(dashboardRoutes);
+    const res = await app.inject({ method: 'GET', url: '/', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().health[0]).toMatchObject({ healthy: false, responseMs: null });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('treats a running docker service without a runtime id as unhealthy', async () => {
+    const fetchMock = vi.fn(async () => ({ status: 200, ok: true })) as unknown as typeof fetch;
+    vi.stubGlobal('fetch', fetchMock);
+    const app = await buildTestApp({
+      db: createFakeDb({
+        select: { services: [svcRow({ id: 1, status: 'running', port: 3000, runtimeId: null })] },
+        counts: {},
+      }),
+    });
+    await app.register(dashboardRoutes);
+    const res = await app.inject({ method: 'GET', url: '/', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().health[0]).toMatchObject({ healthy: false, responseMs: null });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('treats a missing docker binary as zero containers', async () => {

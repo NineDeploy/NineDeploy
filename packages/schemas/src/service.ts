@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { slug } from './common.js';
+import { envVarName, slug } from './common.js';
 
 export const serviceType = z.enum(['pm2', 'docker']);
 export const buildPack = z.enum(['auto', 'nixpacks', 'dockerfile']);
@@ -163,6 +163,15 @@ export const managedDatabase = z.object({
 });
 export type ManagedDatabase = z.infer<typeof managedDatabase>;
 
+/** Input for attaching a managed database to a service. The env alias, when
+ *  provided, must be a valid environment-variable name (trimmed) — it is
+ *  injected verbatim into the service's runtime env at deploy time. */
+export const createAttachment = z.object({
+  databaseId: z.number().int().positive(),
+  envAlias: envVarName.optional(),
+});
+export type CreateAttachmentInput = z.input<typeof createAttachment>;
+
 export const attachment = z.object({
   id: z.number().int(),
   databaseId: z.number().int(),
@@ -173,7 +182,7 @@ export type Attachment = z.infer<typeof attachment>;
 
 // ── Environment variables ──────────────────────────────────────────────────
 export const upsertEnvVar = z.object({
-  key: z.string().min(1).max(100),
+  key: envVarName.max(100),
   value: z.string(),
   isSecret: z.boolean().optional(),
 });

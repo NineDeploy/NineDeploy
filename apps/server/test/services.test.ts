@@ -1,4 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { servicesRoutes } from '../src/modules/services.js';
 import { asUser, buildTestApp, createFakeDb, svcRow } from './helpers.js';
 
@@ -7,6 +10,23 @@ const execMocks = vi.hoisted(() => ({
   run: vi.fn(async (_c: unknown, _a: unknown, _o: unknown, sink?: (l: string) => void) => { sink?.('out'); }),
 }));
 vi.mock('../src/lib/exec.js', () => execMocks);
+
+const pm2Mocks = vi.hoisted(() => ({
+  connect: vi.fn((cb: (err?: Error | null) => void) => cb(null)),
+  disconnect: vi.fn(),
+  stop: vi.fn((_name: string, cb: (err?: Error | null) => void) => cb(null)),
+  restart: vi.fn((_name: string, cb: (err?: Error | null) => void) => cb(null)),
+  delete: vi.fn((_name: string, cb: (err?: Error | null) => void) => cb(null)),
+  describe: vi.fn((_name: string, cb: (err: Error | null, desc?: unknown[]) => void) => cb(null, [])),
+}));
+vi.mock('pm2', () => ({ default: pm2Mocks }));
+
+const proxyMocks = vi.hoisted(() => ({
+  writeDynamicConfig: vi.fn(async () => undefined),
+  // docker.ts imports NETWORK from proxy.js; provide it so the mock stays complete.
+  NETWORK: 'ninedeploy',
+}));
+vi.mock('../src/engine/proxy.js', () => proxyMocks);
 
 const configMock = vi.hoisted(() => ({
   wildcardDomain: '',
@@ -27,6 +47,12 @@ const validCreate = {
 };
 
 describe('services routes', () => {
+  beforeEach(() => {
+    // Isolate exec/pm2 call history per test (assertions like "not called with
+    // docker logs" must not see earlier tests' calls).
+    vi.clearAllMocks();
+  });
+
   it('lists services', async () => {
     const app = await buildTestApp({
       db: createFakeDb({ findMany: { services: [svcRow({ id: 1, name: 'web' })] } }),
@@ -137,7 +163,57 @@ describe('services routes', () => {
   });
 
   it('deletes a service', async () => {
+    // No runtime id — covers the "nothing to retire" branch.
+    const app = await buildTestApp({
+      db: createFakeDb({ findFirst: { services: svcRow({ id: 1, name: 'web' }) } }),
+    });
+    await app.register(servicesRoutes);
+    const res = await app.inject({ method: 'DELETE', url: '/1', headers: asUser() });
+    expect(res.statusCode).toBe(204);
+    expect(execMocks.run).not.toHaveBeenCalled();
+  });
+
+  it('stops and removes the docker container and rewrites traefik config on delete', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { services: svcRow({ id: 1, name: 'web', type: 'docker', runtimeId: 'c1' }) },
+      }),
+    });
+    await app.register(servicesRoutes);
+    const res = await app.inject({ method: 'DELETE', url: '/1', headers: asUser() });
+    expect(res.statusCode).toBe(204);
+    expect(execMocks.run).toHaveBeenCalledWith('docker', ['stop', '-t', '5', 'c1'], {}, expect.any(Function));
+    expect(execMocks.run).toHaveBeenCalledWith('docker', ['rm', '-f', 'c1'], {}, expect.any(Function));
+    expect(proxyMocks.writeDynamicConfig).toHaveBeenCalled();
+  });
+
+  it('deletes a pm2 service through the pm2 daemon and rewrites traefik config', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { services: svcRow({ id: 1, name: 'api', type: 'pm2', runtimeId: 'api-1' }) },
+      }),
+    });
+    await app.register(servicesRoutes);
+    const res = await app.inject({ method: 'DELETE', url: '/1', headers: asUser() });
+    expect(res.statusCode).toBe(204);
+    expect(pm2Mocks.delete).toHaveBeenCalledWith('api-1', expect.any(Function));
+    expect(proxyMocks.writeDynamicConfig).toHaveBeenCalled();
+  });
+
+  it('returns 404 when deleting a missing service', async () => {
     const app = await buildTestApp({ db: createFakeDb() });
+    await app.register(servicesRoutes);
+    const res = await app.inject({ method: 'DELETE', url: '/99', headers: asUser() });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('deletes the row even when rewriting traefik config fails', async () => {
+    proxyMocks.writeDynamicConfig.mockRejectedValueOnce(new Error('yaml write failed'));
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { services: svcRow({ id: 1, name: 'web', type: 'docker', runtimeId: 'c1' }) },
+      }),
+    });
     await app.register(servicesRoutes);
     const res = await app.inject({ method: 'DELETE', url: '/1', headers: asUser() });
     expect(res.statusCode).toBe(204);
@@ -295,5 +371,161 @@ describe('services routes', () => {
     } finally {
       configMock.wildcardDomain = '';
     }
+  });
+
+  it('stops a pm2 service through the pm2 daemon, not docker', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { services: svcRow({ id: 1, runtimeId: 'api-1', type: 'pm2', name: 'api' }) },
+      }),
+    });
+    await app.register(servicesRoutes);
+    const res = await app.inject({ method: 'POST', url: '/1/stop', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: true, status: 'stopped' });
+    expect(pm2Mocks.stop).toHaveBeenCalledWith('api-1', expect.any(Function));
+    expect(execMocks.run).not.toHaveBeenCalledWith('docker', expect.arrayContaining(['stop']));
+  });
+
+  it('starts a pm2 service through the pm2 daemon', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { services: svcRow({ id: 1, runtimeId: 'api-1', type: 'pm2' }) },
+      }),
+    });
+    await app.register(servicesRoutes);
+    const res = await app.inject({ method: 'POST', url: '/1/start', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: true, status: 'running' });
+    expect(pm2Mocks.restart).toHaveBeenCalledWith('api-1', expect.any(Function));
+  });
+
+  it('restarts a pm2 service through the pm2 daemon', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { services: svcRow({ id: 1, runtimeId: 'api-1', type: 'pm2' }) },
+      }),
+    });
+    await app.register(servicesRoutes);
+    const res = await app.inject({ method: 'POST', url: '/1/restart', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: true, status: 'running' });
+    expect(pm2Mocks.restart).toHaveBeenCalledWith('api-1', expect.any(Function));
+  });
+
+  it('tolerates pm2 daemon failures during stop', async () => {
+    pm2Mocks.stop.mockImplementationOnce((_n: string, cb: (err?: Error | null) => void) =>
+      cb(new Error('daemon down')));
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { services: svcRow({ id: 1, runtimeId: 'api-1', type: 'pm2' }) },
+      }),
+    });
+    await app.register(servicesRoutes);
+    const res = await app.inject({ method: 'POST', url: '/1/stop', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('tolerates pm2 daemon failures during start', async () => {
+    pm2Mocks.restart.mockImplementationOnce((_n: string, cb: (err?: Error | null) => void) =>
+      cb(new Error('daemon down')));
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { services: svcRow({ id: 1, runtimeId: 'api-1', type: 'pm2' }) },
+      }),
+    });
+    await app.register(servicesRoutes);
+    const res = await app.inject({ method: 'POST', url: '/1/start', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('tolerates pm2 daemon failures during restart', async () => {
+    pm2Mocks.restart.mockImplementationOnce((_n: string, cb: (err?: Error | null) => void) =>
+      cb(new Error('daemon down')));
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { services: svcRow({ id: 1, runtimeId: 'api-1', type: 'pm2' }) },
+      }),
+    });
+    await app.register(servicesRoutes);
+    const res = await app.inject({ method: 'POST', url: '/1/restart', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('rejects lifecycle ops for an unsupported service type', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { services: svcRow({ id: 1, runtimeId: 'x-1', type: 'k8s' }) },
+      }),
+    });
+    await app.register(servicesRoutes);
+    for (const op of ['stop', 'start', 'restart']) {
+      const res = await app.inject({ method: 'POST', url: `/1/${op}`, headers: asUser() });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error.code).toBe('bad_request');
+    }
+    // Neither the docker CLI nor the pm2 daemon was touched.
+    expect(execMocks.run).not.toHaveBeenCalled();
+    expect(pm2Mocks.stop).not.toHaveBeenCalled();
+    expect(pm2Mocks.restart).not.toHaveBeenCalled();
+  });
+
+  it('deletes a service of an unsupported type without touching its runtime', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { services: svcRow({ id: 1, name: 'odd', type: 'k8s', runtimeId: 'x-1' }) },
+      }),
+    });
+    await app.register(servicesRoutes);
+    const res = await app.inject({ method: 'DELETE', url: '/1', headers: asUser() });
+    expect(res.statusCode).toBe(204);
+    expect(execMocks.run).not.toHaveBeenCalled();
+    expect(pm2Mocks.delete).not.toHaveBeenCalled();
+    expect(proxyMocks.writeDynamicConfig).toHaveBeenCalled();
+  });
+
+  it('returns pm2 process logs from the daemon log files', async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'nd-pm2logs-'));
+    const out = path.join(dir, 'out.log');
+    const err = path.join(dir, 'err.log');
+    writeFileSync(out, 'line1\nline2\nline3\n');
+    writeFileSync(err, 'boom\n');
+    pm2Mocks.describe.mockImplementationOnce((_n: string, cb: (err: Error | null, desc?: unknown[]) => void) =>
+      cb(null, [{ name: 'api-1', pm2_env: { pm_out_log_path: out, pm_err_log_path: err } }]));
+    try {
+      const app = await buildTestApp({
+        db: createFakeDb({
+          findFirst: { services: svcRow({ id: 1, runtimeId: 'api-1', type: 'pm2' }) },
+        }),
+      });
+      await app.register(servicesRoutes);
+      const res = await app.inject({ method: 'GET', url: '/1/logs', headers: asUser() });
+      expect(res.statusCode).toBe(200);
+      // Structural, not exact: the log bus may reorder/tail lines without the
+      // test breaking (the join of out+err is an implementation detail).
+      const lines = res.json().lines as string;
+      expect(lines).toContain('line1');
+      expect(lines).toContain('line2');
+      expect(lines).toContain('line3');
+      expect(lines).toContain('boom');
+      expect(lines.split('\n')).toHaveLength(4);
+      expect(execMocks.capture).not.toHaveBeenCalledWith('docker', expect.arrayContaining(['logs']));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('returns empty pm2 logs when the daemon cannot describe the process', async () => {
+    pm2Mocks.describe.mockImplementationOnce((_n: string, cb: (err: Error | null, desc?: unknown[]) => void) =>
+      cb(new Error('not found'), null));
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { services: svcRow({ id: 1, runtimeId: 'api-1', type: 'pm2' }) },
+      }),
+    });
+    await app.register(servicesRoutes);
+    const res = await app.inject({ method: 'GET', url: '/1/logs', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ lines: '' });
   });
 });

@@ -2,6 +2,7 @@ import { count, desc, eq } from 'drizzle-orm';
 import { databases, deployments, domains, services, webhooks } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { capture } from '../lib/exec.js';
+import { containerIp } from '../engine/builders/docker.js';
 
 interface HealthStatus {
   serviceId: number;
@@ -17,15 +18,34 @@ interface HealthStatus {
   lastDeploy: string | null;
 }
 
-/** Probe a single service's health endpoint. */
-async function probeHealth(port: number): Promise<{ healthy: boolean; responseMs: number | null }> {
+/** Probe a URL with a short per-attempt timeout (never blocks the request). */
+async function probeUrl(url: string): Promise<{ healthy: boolean; responseMs: number | null }> {
   const start = Date.now();
   try {
-    const res = await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(3000) });
+    const res = await fetch(url, { signal: AbortSignal.timeout(3000) });
     return { healthy: res.status < 500, responseMs: Date.now() - start };
   } catch {
     return { healthy: false, responseMs: null };
   }
+}
+
+/**
+ * Probe a running service's health endpoint. Docker services publish no host
+ * ports (Traefik is the only ingress, per the container-security model), so
+ * they are probed on their container network IP — probing 127.0.0.1 would fail
+ * for every Docker deploy. PM2 services are host processes, so they are probed
+ * on loopback like before.
+ */
+async function probeService(svc: {
+  type: string;
+  runtimeId: string | null;
+  port: number;
+  healthPath: string;
+}): Promise<{ healthy: boolean; responseMs: number | null }> {
+  const path = svc.healthPath || '/';
+  if (svc.type === 'pm2') return probeUrl(`http://127.0.0.1:${svc.port}${path}`);
+  const ip = svc.runtimeId ? await containerIp(svc.runtimeId) : null;
+  return ip ? probeUrl(`http://${ip}:${svc.port}${path}`) : { healthy: false, responseMs: null };
 }
 
 /** Dashboard overview: stats + per-service health + recent deploys. */
@@ -84,7 +104,12 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
       let responseMs: number | null = null;
 
       if (svc.status === 'running' && svc.port) {
-        const probe = await probeHealth(svc.port);
+        const probe = await probeService({
+          type: svc.type,
+          runtimeId: svc.runtimeId,
+          port: svc.port,
+          healthPath: svc.healthPath,
+        });
         healthy = probe.healthy;
         responseMs = probe.responseMs;
       } else if (svc.status === 'stopped') {

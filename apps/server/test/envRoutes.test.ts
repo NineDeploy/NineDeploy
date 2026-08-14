@@ -100,4 +100,34 @@ describe('env routes (src/modules/env.ts)', () => {
     expect(res.statusCode).toBe(400);
     expect(res.json().error.code).toBe('validation_error');
   });
+
+  it('rejects env keys whose charset would break docker --env-file', async () => {
+    const app = await buildTestApp({ db: createFakeDb() });
+    await app.register(envRoutes);
+    const create = await app.inject({
+      method: 'POST', url: '/1/env', headers: asUser(), payload: { key: 'MY VAR', value: 'x' },
+    });
+    expect(create.statusCode).toBe(400);
+    expect(create.json().error.code).toBe('validation_error');
+    const update = await app.inject({
+      method: 'PATCH', url: '/1/env/3', headers: asUser(), payload: { key: '1BAD', value: 'x' },
+    });
+    expect(update.statusCode).toBe(400);
+    expect(update.json().error.code).toBe('validation_error');
+  });
+
+  it('trims surrounding whitespace from env keys', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        insert: { env_vars: [envVarRow({ id: 3, key: 'PORT', isSecret: false, valueEncrypted: encrypt('3000') })] },
+      }),
+    });
+    await app.register(envRoutes);
+    // `  PORT  ` would fail the charset check if it were not trimmed first.
+    const res = await app.inject({
+      method: 'POST', url: '/1/env', headers: asUser(), payload: { key: '  PORT  ', value: '3000' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ id: 3, key: 'PORT' });
+  });
 });

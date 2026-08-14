@@ -31,7 +31,7 @@ function writeEnvFile(env: Record<string, string>): string | null {
  * port — so blue-green never fights over `127.0.0.1:<port>` and rollback probes
  * always resolve the current address fresh from the runtime id.
  */
-async function containerIp(name: string): Promise<string | null> {
+export async function containerIp(name: string): Promise<string | null> {
   try {
     const out = await capture('docker', [
       'inspect', name,
