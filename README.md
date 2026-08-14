@@ -21,41 +21,55 @@ You can deploy from a Git repository, a Docker image, or the built-in template h
 curl -fsSL https://raw.githubusercontent.com/ninedeploy/ninedeploy/main/install.sh | bash
 ```
 
-### Option B: From source (development)
+### Option B: Docker (with a persistent data volume)
+
+```bash
+docker run -d --name ninedeploy \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v ninedeploy-data:/data \
+  -p 3000:3000 \
+  -e NINEDEPLOY_JWT_SECRET=$(openssl rand -hex 32) \
+  ghcr.io/ninedeploy/ninedeploy
+```
+
+All state (SQLite, repos, logs, backups, master key) lives in the `ninedeploy-data` volume; schema migrations apply automatically on startup. The host Docker socket is mounted so the deploy engine can manage your other containers. Note: PM2-based services need the bare-metal install (Option A); Docker services and templates work in both modes.
+
+### Option C: From source (development)
 
 ```bash
 git clone https://github.com/ninedeploy/ninedeploy.git
 cd ninedeploy
 pnpm install
 cp .env.example .env
-pnpm db:migrate
 pnpm build
 pnpm dev
 ```
 
-Open `http://localhost:5173` and create the first admin account.
+Open `http://localhost:5173` and create the first admin account. Requires Node ≥ 22.13 (pnpm 11) and Docker.
 
 ## Features
 
 ### Deploy
 - **Git repo** (public/private) or **Docker image** — build from source or run pre-built images
 - **PM2 + Docker** — Node apps via PM2, anything via Docker/BuildKit
+- **Zero-downtime deploys (Docker)** — blue-green: the new container is healthchecked before the old one retires; on failure the previous version keeps serving
 - **Multi-step deploy wizard** — Source → Runtime → Environment → Resources → Review
 - **Auto-deploy** — GitHub/GitLab/Gitea webhooks with HMAC signature verification
 - **Live deploy logs** — real-time WebSocket streaming
-- **Health checks** — configurable path, automatic probing with rollback on failure
-- **One-click rollback** — revert to any previous deployment
+- **Health checks** — container liveness + HTTP probe, automatic rollback on failure
+- **One-click rollback** — redeploys the exact commit (or pinned image digest), never a moved `:latest` tag
 - **Service lifecycle** — stop / start / restart from the dashboard
 - **Container exec** — interactive terminal (xterm.js over WebSocket)
 - **Runtime logs** — view running container output
 
 ### Infrastructure
-- **Traefik** reverse proxy with **automatic HTTPS** (TLS)
-- **Secure networking** — containers bound to `127.0.0.1` only; traffic enters via Traefik
+- **Traefik** reverse proxy with **automatic HTTPS** (TLS), config updated atomically
+- **Secure networking** — app containers publish no host ports at all; traffic enters via Traefik over a shared Docker network
 - **Cloudflare Tunnel** — expose services without opening any ports
 - **Persistent volumes** — data survives redeploys; retained volumes auto-reused on DB recreate
 - **Resource limits** — CPU shares + memory caps per service and database
 - **Wildcard domains** — auto-assign `{slug}.your-domain` to every service
+- **Bounded retention** — metrics, deploy logs, audit log and Docker dangling images pruned automatically
 
 ### Managed Databases
 - **PostgreSQL · MySQL · Redis · MongoDB** — one-click with persistent storage
@@ -99,10 +113,13 @@ Open `http://localhost:5173` and create the first admin account.
 | `NINEDEPLOY_HOST` | `0.0.0.0` | IP address to bind |
 | `NINEDEPLOY_PORT` | `3000` | Port for the dashboard and API |
 | `NINEDEPLOY_PUBLIC_URL` | `http://localhost:3000` | Public URL (webhooks, CORS) |
+| `NINEDEPLOY_CORS_ORIGINS` | *(empty)* | Comma-separated extra origins allowed by CORS |
 | `NINEDEPLOY_DATA_DIR` | `./.data` | SQLite, repos, logs, backups, Traefik config |
-| `NINEDEPLOY_DB_PATH` | `./.data/ninedeploy.db` | SQLite database file |
-| `NINEDEPLOY_JWT_SECRET` | generated | JWT signing secret |
+| `NINEDEPLOY_DB_PATH` | `./.data/ninedeploy.db` | SQLite database file (migrated automatically on startup) |
+| `NINEDEPLOY_JWT_SECRET` | generated | JWT signing secret — **required to be custom in production** (the server refuses the insecure default) |
 | `NINEDEPLOY_MASTER_KEY` | generated | AES-256 key for encrypting secrets |
+| `NINEDEPLOY_MASTER_KEYS` | *(empty)* | Key ring for rotation: `0:<old-hex>,1:<new-hex>` — highest version encrypts, lower versions keep old secrets readable |
+| `NINEDEPLOY_MIGRATIONS_DIR` | auto | Override the SQL migrations folder (auto-resolved otherwise) |
 | `NINEDEPLOY_WILDCARD_DOMAIN` | *(empty)* | Auto-assign `{slug}.domain` URLs |
 
 ## Using the dashboard
@@ -171,11 +188,12 @@ ninedeploy token create   # create API token for CI
 ## Development
 
 ```bash
-pnpm dev         # server + web in watch mode
+pnpm dev         # server + web in watch mode (migrations apply on startup)
 pnpm build       # production build
 pnpm typecheck   # type-check the monorepo
+pnpm test        # run the full test suite (all packages, 100% coverage gates)
 pnpm db:generate # generate migration from schema changes
-pnpm db:migrate  # apply migrations
+pnpm db:migrate  # apply migrations manually (optional — the server self-migrates)
 pnpm db:studio   # open Drizzle Studio
 pnpm clean       # remove dist and node_modules
 ```
