@@ -30,10 +30,29 @@ vi.mock('../src/config.js', () => ({ config: configMock }));
 // the export branch completes deterministically.
 const fsMocks = vi.hoisted(() => ({
   createReadStream: vi.fn(() => 'mocked-archive-payload'),
+  // When set, renameSync calls whose destination path contains this substring throw.
+  failRename: null as string | null,
+  // Same idea for copyFileSync destinations.
+  failCopy: null as string | null,
 }));
 vi.mock('node:fs', async (importOriginal) => {
   const real = await importOriginal<typeof import('node:fs')>();
-  return { ...real, createReadStream: fsMocks.createReadStream };
+  return {
+    ...real,
+    createReadStream: fsMocks.createReadStream,
+    renameSync: (from: string, to: string) => {
+      if (fsMocks.failRename && to.includes(fsMocks.failRename)) {
+        throw Object.assign(new Error('EACCES: read-only file system'), { code: 'EACCES' });
+      }
+      return real.renameSync(from, to);
+    },
+    copyFileSync: (from: string, to: string) => {
+      if (fsMocks.failCopy && to.includes(fsMocks.failCopy)) {
+        throw Object.assign(new Error('EACCES: read-only file system'), { code: 'EACCES' });
+      }
+      return real.copyFileSync(from, to);
+    },
+  };
 });
 
 // Wrap the real child_process spawn so real tar runs, while tests can force
@@ -124,6 +143,8 @@ describe('system resources routes', () => {
     vi.restoreAllMocks();
     spawnMock.calls = 0;
     spawnMock.forceNth = null;
+    fsMocks.failRename = null;
+    fsMocks.failCopy = null;
   });
 
   afterAll(() => {
@@ -405,8 +426,7 @@ describe('system resources routes', () => {
     expect(fs.existsSync(path.join(configMock.paths.dataDir, '_import'))).toBe(false);
   });
 
-  it('fails the import when the EXTRACTION tar fails after a clean listing', async () => {
-    const buildDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nd-build-'));
+  it('fails the import when the EXTRACTION tar fails after a clean listing', async () => {    const buildDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nd-build-'));
     createdDirs.push(buildDir);
     fs.writeFileSync(path.join(buildDir, '_meta.json'), JSON.stringify({ version: '1.0.0', stats: {} }));
     const body = await makeArchive(buildDir);
@@ -425,6 +445,87 @@ describe('system resources routes', () => {
     expect(res.statusCode).toBe(500);
     expect(res.json().error.message).toContain('tar extract exited 2');
     await app.close();
+  });
+
+  it('rolls the original state back when a move fails midway (import rollback)', async () => {
+    // Existing state that must survive a failed import.
+    const dir = configMock.paths.dataDir;
+    fs.mkdirSync(path.join(dir, 'traefik'), { recursive: true });
+    fs.writeFileSync(configMock.paths.dbFile, 'original-db');
+    fs.writeFileSync(configMock.paths.masterKeyFile, 'original-key');
+
+    // Build a full bundle (db + key).
+    const buildDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nd-build-'));
+    createdDirs.push(buildDir);
+    fs.writeFileSync(path.join(buildDir, '_meta.json'), JSON.stringify({ version: '1.0.0', stats: {} }));
+    fs.writeFileSync(path.join(buildDir, 'ninedeploy.db'), 'imported-db');
+    fs.writeFileSync(path.join(buildDir, 'master.key'), 'imported-key');
+    const body = await makeArchive(buildDir);
+
+    // Fail the SECOND move (master.key) — after the db was already replaced.
+    fsMocks.failRename = 'master.key';
+    try {
+      const app = await appWith();
+      const res = await app.inject({
+        method: 'POST',
+        url: '/import',
+        headers: { 'content-type': 'application/octet-stream', ...asUser() },
+        payload: body,
+      });
+      expect(res.statusCode).toBe(500);
+
+      // Rollback: the ORIGINAL db and key are back in place.
+      expect(fs.readFileSync(configMock.paths.dbFile, 'utf8')).toBe('original-db');
+      expect(fs.readFileSync(configMock.paths.masterKeyFile, 'utf8')).toBe('original-key');
+      await app.close();
+    } finally {
+      fsMocks.failRename = null;
+    }
+  });
+
+  it('rolls back traefik and .env too when the LAST import step fails', async () => {
+    const dir = configMock.paths.dataDir;
+    fs.mkdirSync(path.join(dir, 'traefik'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'traefik', 'dynamic.yml'), 'original-routing');
+    fs.writeFileSync(configMock.paths.dbFile, 'original-db');
+    fs.writeFileSync(configMock.paths.masterKeyFile, 'original-key');
+
+    const buildDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nd-build-'));
+    createdDirs.push(buildDir);
+    fs.writeFileSync(path.join(buildDir, '_meta.json'), JSON.stringify({ version: '1.0.0', stats: {} }));
+    fs.writeFileSync(path.join(buildDir, 'ninedeploy.db'), 'imported-db');
+    fs.writeFileSync(path.join(buildDir, 'master.key'), 'imported-key');
+    fs.writeFileSync(path.join(buildDir, '_env'), 'IMPORTED=1');
+    fs.mkdirSync(path.join(buildDir, 'traefik'));
+    fs.writeFileSync(path.join(buildDir, 'traefik', 'dynamic.yml'), 'imported-routing');
+    const body = await makeArchive(buildDir);
+
+    const cwdDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nd-cwd-'));
+    createdDirs.push(cwdDir);
+    fs.writeFileSync(path.join(cwdDir, '.env'), 'ORIGINAL=1');
+    const oldCwd = process.cwd();
+    fsMocks.failCopy = '.env'; // the final step (copying the imported .env) fails
+    try {
+      process.chdir(cwdDir);
+      const app = await appWith();
+      const res = await app.inject({
+        method: 'POST',
+        url: '/import',
+        headers: { 'content-type': 'application/octet-stream', ...asUser() },
+        payload: body,
+      });
+      expect(res.statusCode).toBe(500);
+
+      // Everything original is restored: db, key, traefik, and the .env.
+      expect(fs.readFileSync(configMock.paths.dbFile, 'utf8')).toBe('original-db');
+      expect(fs.readFileSync(configMock.paths.masterKeyFile, 'utf8')).toBe('original-key');
+      expect(fs.readFileSync(path.join(dir, 'traefik', 'dynamic.yml'), 'utf8')).toBe('original-routing');
+      expect(fs.readFileSync(path.join(cwdDir, '.env'), 'utf8')).toBe('ORIGINAL=1');
+      await app.close();
+    } finally {
+      process.chdir(oldCwd);
+      fsMocks.failCopy = null;
+    }
   });
 
   it('imports an archive with a master key into a fresh data dir', async () => {

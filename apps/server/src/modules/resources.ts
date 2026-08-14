@@ -158,34 +158,64 @@ export const systemRoutes: FastifyPluginAsync = async (app) => {
 
     const backupDir = path.join(config.paths.dataDir, `_backup-${Date.now()}`);
 
-    const importedDb = path.join(tmpDir, path.relative(config.paths.dataDir, config.paths.dbFile));
-    if (existsSync(importedDb)) {
-      mkdirSync(backupDir, { recursive: true });
-      if (existsSync(config.paths.dbFile)) renameSync(config.paths.dbFile, path.join(backupDir, 'ninedeploy.db'));
-      renameSync(importedDb, config.paths.dbFile);
-    }
+    // Restore-from-backup: if any move fails midway (e.g. a read-only cwd), put
+    // the ORIGINAL files back so we never leave a moved DB with an old key
+    // (which would make every secret undecryptable).
+    const restoreFrom = (dir: string) => {
+      // No per-file try/catch: anything that could be moved INTO the backup can
+      // be moved back (same filesystem); letting an error surface here is more
+      // honest than silently skipping a restore step.
+      for (const name of ['ninedeploy.db', 'master.key', '.env', 'traefik']) {
+        const b = path.join(dir, name);
+        if (!existsSync(b)) continue;
+        if (name === 'ninedeploy.db') renameSync(b, config.paths.dbFile);
+        else if (name === 'master.key') renameSync(b, config.paths.masterKeyFile);
+        else if (name === '.env') renameSync(b, path.join(process.cwd(), '.env'));
+        else {
+          // The half-imported traefik dir may occupy the target — rename(2)
+          // cannot replace a non-empty directory, so clear it first (rmSync
+          // with force is a no-op when the target is already gone).
+          const target = path.join(config.paths.dataDir, 'traefik');
+          rmSync(target, { recursive: true, force: true });
+          renameSync(b, target);
+        }
+      }
+    };
 
-    const importedKey = path.join(tmpDir, path.relative(config.paths.dataDir, config.paths.masterKeyFile));
-    if (existsSync(importedKey)) {
-      mkdirSync(backupDir, { recursive: true });
-      if (existsSync(config.paths.masterKeyFile)) renameSync(config.paths.masterKeyFile, path.join(backupDir, 'master.key'));
-      renameSync(importedKey, config.paths.masterKeyFile);
-    }
+    try {
+      const importedDb = path.join(tmpDir, path.relative(config.paths.dataDir, config.paths.dbFile));
+      if (existsSync(importedDb)) {
+        mkdirSync(backupDir, { recursive: true });
+        if (existsSync(config.paths.dbFile)) renameSync(config.paths.dbFile, path.join(backupDir, 'ninedeploy.db'));
+        renameSync(importedDb, config.paths.dbFile);
+      }
 
-    const importedEnv = path.join(tmpDir, '_env');
-    if (existsSync(importedEnv)) {
-      mkdirSync(backupDir, { recursive: true });
-      const envPath = path.join(process.cwd(), '.env');
-      if (existsSync(envPath)) renameSync(envPath, path.join(backupDir, '.env'));
-      copyFileSync(importedEnv, envPath);
-    }
+      const importedKey = path.join(tmpDir, path.relative(config.paths.dataDir, config.paths.masterKeyFile));
+      if (existsSync(importedKey)) {
+        mkdirSync(backupDir, { recursive: true });
+        if (existsSync(config.paths.masterKeyFile)) renameSync(config.paths.masterKeyFile, path.join(backupDir, 'master.key'));
+        renameSync(importedKey, config.paths.masterKeyFile);
+      }
 
-    const importedTraefik = path.join(tmpDir, 'traefik');
-    if (existsSync(importedTraefik)) {
-      mkdirSync(backupDir, { recursive: true });
-      const traefikDir = path.join(config.paths.dataDir, 'traefik');
-      if (existsSync(traefikDir)) renameSync(traefikDir, path.join(backupDir, 'traefik'));
-      renameSync(importedTraefik, traefikDir);
+      const importedTraefik = path.join(tmpDir, 'traefik');
+      if (existsSync(importedTraefik)) {
+        mkdirSync(backupDir, { recursive: true });
+        const traefikDir = path.join(config.paths.dataDir, 'traefik');
+        if (existsSync(traefikDir)) renameSync(traefikDir, path.join(backupDir, 'traefik'));
+        renameSync(importedTraefik, traefikDir);
+      }
+
+      const importedEnv = path.join(tmpDir, '_env');
+      if (existsSync(importedEnv)) {
+        mkdirSync(backupDir, { recursive: true });
+        const envPath = path.join(process.cwd(), '.env');
+        if (existsSync(envPath)) renameSync(envPath, path.join(backupDir, '.env'));
+        copyFileSync(importedEnv, envPath);
+      }
+    } catch (err) {
+      restoreFrom(backupDir);
+      rmSync(tmpDir, { recursive: true, force: true });
+      throw err;
     }
 
     rmSync(tmpDir, { recursive: true, force: true });
