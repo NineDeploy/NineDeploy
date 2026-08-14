@@ -14,7 +14,8 @@ const apiMock = vi.hoisted(() => ({
     },
   },
   getToken: vi.fn(),
-  setToken: vi.fn(),
+  setSessionTokens: vi.fn(),
+  clearTokens: vi.fn(),
 }));
 
 vi.mock('../src/lib/api.js', () => apiMock);
@@ -78,7 +79,7 @@ describe('AuthProvider', () => {
     apiMock.api.auth.me.mockRejectedValue(new Error('nope'));
     renderAuth();
     await waitFor(() => expect(screen.getByTestId('loading')).toHaveTextContent('false'));
-    expect(apiMock.setToken).toHaveBeenCalledWith(null);
+    expect(apiMock.clearTokens).toHaveBeenCalled();
     expect(screen.getByTestId('email')).toHaveTextContent('none');
   });
 
@@ -87,7 +88,7 @@ describe('AuthProvider', () => {
     renderAuth();
     await user.click(screen.getByText('login'));
     expect(apiMock.api.auth.login).toHaveBeenCalledWith({ email: 'a@b.c', password: 'pw' });
-    await waitFor(() => expect(apiMock.setToken).toHaveBeenCalledWith('access-1'));
+    await waitFor(() => expect(apiMock.setSessionTokens).toHaveBeenCalledWith('access-1', 'refresh-1'));
     expect(screen.getByTestId('email')).toHaveTextContent('a@b.c');
   });
 
@@ -115,7 +116,7 @@ describe('AuthProvider', () => {
       })(),
     ).resolves.toBeUndefined();
     await waitFor(() => expect(apiMock.api.auth.login).toHaveBeenCalled());
-    expect(apiMock.setToken).not.toHaveBeenCalled();
+    expect(apiMock.setSessionTokens).not.toHaveBeenCalled();
     expect(captured?.user).toBeNull();
   });
 
@@ -124,7 +125,7 @@ describe('AuthProvider', () => {
     renderAuth();
     await user.click(screen.getByText('setup'));
     expect(apiMock.api.auth.setup).toHaveBeenCalledWith({ email: 'a@b.c', password: 'pw', name: 'Ann' });
-    await waitFor(() => expect(apiMock.setToken).toHaveBeenCalledWith('access-1'));
+    await waitFor(() => expect(apiMock.setSessionTokens).toHaveBeenCalledWith('access-1', 'refresh-1'));
     expect(screen.getByTestId('email')).toHaveTextContent('a@b.c');
   });
 
@@ -139,7 +140,7 @@ describe('AuthProvider', () => {
     // The session is revoked on the server (tokenVersion bump)…
     expect(apiMock.api.auth.logout).toHaveBeenCalled();
     // …and the local state is cleared regardless.
-    expect(apiMock.setToken).toHaveBeenCalledWith(null);
+    expect(apiMock.clearTokens).toHaveBeenCalled();
     expect(screen.getByTestId('email')).toHaveTextContent('none');
   });
 
@@ -151,7 +152,7 @@ describe('AuthProvider', () => {
     renderAuth();
     await waitFor(() => expect(screen.getByTestId('email')).toHaveTextContent('a@b.c'));
     await user.click(screen.getByText('logout'));
-    expect(apiMock.setToken).toHaveBeenCalledWith(null);
+    expect(apiMock.clearTokens).toHaveBeenCalled();
     expect(screen.getByTestId('email')).toHaveTextContent('none');
   });
 });

@@ -1,6 +1,6 @@
 import { type ReactNode, createContext, useContext, useEffect, useState } from 'react';
 import type { PublicUser } from '@ninedeploy/sdk';
-import { api, getToken, setToken } from './api.js';
+import { api, clearTokens, getToken, setSessionTokens } from './api.js';
 
 interface AuthContextValue {
   user: PublicUser | null;
@@ -25,7 +25,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     api.auth
       .me()
       .then(setUser)
-      .catch(() => setToken(null))
+      .catch(() => clearTokens())
       .finally(() => setLoading(false));
   }, []);
 
@@ -34,12 +34,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     loading,
     login: async (email, password) => {
       const session = await api.auth.login({ email, password });
-      setToken(session.tokens.accessToken);
+      setSessionTokens(session.tokens.accessToken, session.tokens.refreshToken);
       setUser(session.user);
     },
     setup: async (email, password, name) => {
       const session = await api.auth.setup({ email, password, name });
-      setToken(session.tokens.accessToken);
+      setSessionTokens(session.tokens.accessToken, session.tokens.refreshToken);
       setUser(session.user);
     },
     logout: () => {
@@ -47,7 +47,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // access/refresh tokens die), then clear the local state. Best-effort:
       // local cleanup must happen even if the API call fails (e.g. offline).
       void api.auth.logout().catch(() => undefined);
-      setToken(null);
+      clearTokens();
       setUser(null);
     },
   };
