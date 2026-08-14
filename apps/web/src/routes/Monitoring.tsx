@@ -70,6 +70,10 @@ function AlertRulesCard({ isAdmin }: { isAdmin: boolean }) {
   const [metric, setMetric] = useState<'cpu' | 'memory' | 'cert-expiry'>('cpu');
   const [operator, setOperator] = useState<'>' | '<'>('>');
   const [threshold, setThreshold] = useState('80');
+  // cert-expiry is host-wide — the server rejects service-scoped rules for it.
+  const services = useQuery({ queryKey: ['services'], queryFn: () => api.services.list(), staleTime: 60_000 });
+  const [serviceId, setServiceId] = useState('');
+  const [windows, setWindows] = useState('2');
 
   const create = useMutation({
     mutationFn: () =>
@@ -78,8 +82,8 @@ function AlertRulesCard({ isAdmin }: { isAdmin: boolean }) {
         metric,
         operator,
         threshold: Number(threshold),
-        serviceId: null,
-        durationWindows: 2,
+        serviceId: metric === 'cert-expiry' ? null : serviceId ? Number(serviceId) : null,
+        durationWindows: Number(windows) || 1,
       }),
     onSuccess: () => {
       setName('');
@@ -159,6 +163,25 @@ function AlertRulesCard({ isAdmin }: { isAdmin: boolean }) {
               <option value="<">&lt;</option>
             </Select>
             <Input value={threshold} onChange={(e) => setThreshold(e.target.value)} placeholder="threshold" className="h-8 w-20 font-mono text-xs" />
+            <Select
+              value={metric === 'cert-expiry' ? '' : serviceId}
+              onChange={(e) => setServiceId(e.target.value)}
+              disabled={metric === 'cert-expiry'}
+              className="h-8 w-36 text-xs"
+              title={metric === 'cert-expiry' ? 'cert-expiry rules are host-wide' : 'Scope (empty = host-wide)'}
+            >
+              <option value="">host-wide</option>
+              {(services.data ?? []).map((svc) => (
+                <option key={svc.id} value={svc.id}>{svc.name}</option>
+              ))}
+            </Select>
+            <Input
+              value={windows}
+              onChange={(e) => setWindows(e.target.value)}
+              placeholder="windows"
+              className="h-8 w-20 font-mono text-xs"
+              title="Consecutive 30s samples before firing"
+            />
             <Button type="submit" size="sm" variant="ghost" className="ml-auto h-8 px-3 text-xs" disabled={create.isPending}>
               {create.isPending ? '…' : 'Add rule'}
             </Button>

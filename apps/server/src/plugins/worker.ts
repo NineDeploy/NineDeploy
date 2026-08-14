@@ -1,6 +1,7 @@
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, notInArray } from 'drizzle-orm';
 import { deployments } from '@ninedeploy/db';
 import fp from 'fastify-plugin';
+import { config } from '../config.js';
 import { runDeployment } from '../engine/pipeline.js';
 
 const POLL_MS = 2000;
@@ -15,12 +16,21 @@ declare module 'fastify' {
   }
 }
 
-/** Background worker: polls for `queued` deployments and runs the pipeline (one at a time). */
+/** Background worker: polls for `queued` deployments and runs the pipeline.
+ *
+ * Concurrency model:
+ *   • `NINEDEPLOY_DEPLOY_CONCURRENCY` independent claim loops (default 1).
+ *   • Each loop claims atomically (queued→building UPDATE guarded by
+ *     rowsAffected === 1), so loops — and any future second process sharing
+ *     the database — can never double-run a deployment.
+ *   • The claim query skips services with a `building` deployment, so the
+ *     same service is never deployed concurrently.
+ */
 export default fp(
   async (fastify) => {
     let running = true;
-    let current: Promise<void> = Promise.resolve();
-    let timer: NodeJS.Timeout | undefined;
+    const currents: Array<Promise<void>> = [];
+    const timers: NodeJS.Timeout[] = [];
 
     // Crash recovery: a deploy interrupted by a restart is left stranded in
     // `building`. Mark it failed so it can never hang forever. `queued` rows are
@@ -35,21 +45,30 @@ export default fp(
       fastify.log.warn({ err }, 'could not sweep stale building deployments');
     }
 
+    /** The oldest queued deployment of a service with nothing in `building`. */
+    const nextClaimable = async (): Promise<{ id: number } | undefined> => {
+      const building = fastify.db
+        .select({ serviceId: deployments.serviceId })
+        .from(deployments)
+        .where(eq(deployments.status, 'building'));
+      const [row] = await fastify.db
+        .select({ id: deployments.id })
+        .from(deployments)
+        .where(and(eq(deployments.status, 'queued'), notInArray(deployments.serviceId, building)))
+        .orderBy(asc(deployments.createdAt))
+        .limit(1);
+      return row;
+    };
+
     const tick = async () => {
       if (!running) return;
       try {
-        const [queued] = await fastify.db
-          .select({ id: deployments.id })
-          .from(deployments)
-          .where(eq(deployments.status, 'queued'))
-          .orderBy(asc(deployments.createdAt))
-          .limit(1);
-
+        const queued = await nextClaimable();
         if (queued) {
           // Atomically claim: only flip queued→building if still queued, then
           // verify we won the claim via rowsAffected. A single-row update
           // affects exactly 1 row on success, so `=== 1` is a precise win test.
-          // This keeps a future multi-worker setup from double-running a deploy.
+          // This keeps multiple loops / workers from double-running a deploy.
           const claimed = (await fastify.db
             .update(deployments)
             .set({ status: 'building' })
@@ -59,8 +78,15 @@ export default fp(
 
           if (claimed?.rowsAffected === 1) {
             fastify.log.info({ deploymentId: queued.id }, 'processing deployment');
-            current = runDeployment(fastify.db, queued.id);
-            await current;
+            const run = runDeployment(fastify.db, queued.id);
+            currents.push(run);
+            try {
+              await run;
+            } finally {
+              // Drop the settled entry so stop() waits only on live work.
+              // indexOf always finds it: we pushed before awaiting.
+              currents.splice(currents.indexOf(run), 1);
+            }
           } else {
             fastify.log.info({ deploymentId: queued.id }, 'deployment already claimed, skipping');
           }
@@ -68,29 +94,35 @@ export default fp(
       } catch (err) {
         fastify.log.error({ err }, 'worker tick failed');
       } finally {
-        if (running) timer = setTimeout(() => void tick(), POLL_MS);
+        if (running) timers.push(setTimeout(() => void tick(), POLL_MS));
       }
     };
 
     fastify.decorate('worker', {
       stop: async () => {
         running = false;
-        clearTimeout(timer);
-        // Wait for an in-flight deploy, but only up to a bounded grace period.
+        for (const t of timers.splice(0)) clearTimeout(t);
+        // Wait for in-flight deploys, but only up to a bounded grace period.
         // The grace timer is unref'd so it can never keep the process alive.
         const grace = new Promise<void>((resolve) => {
           const t = setTimeout(resolve, STOP_GRACE_MS);
           t.unref();
         });
-        await Promise.race([current.catch(() => undefined), grace]);
+        await Promise.race([
+          Promise.allSettled([...currents]).then(() => undefined),
+          grace,
+        ]);
       },
     });
     fastify.addHook('onClose', async () => {
       await fastify.worker.stop();
     });
 
-    timer = setTimeout(() => void tick(), POLL_MS);
-    fastify.log.info('deploy worker started');
+    // One loop per concurrency slot; all loops share the same claim guard.
+    for (let slot = 0; slot < config.deployConcurrency; slot++) {
+      timers.push(setTimeout(() => void tick(), POLL_MS + slot * 100));
+    }
+    fastify.log.info({ concurrency: config.deployConcurrency }, 'deploy worker started');
   },
   { name: 'ninedeploy-worker' },
 );

@@ -84,6 +84,13 @@ describe('Hub', () => {
     expect(screen.queryByText('Publishing platform')).not.toBeInTheDocument();
   });
 
+  it('shows a custom-registry badge when a source is configured', async () => {
+    mockOf(api.settings.get).mockResolvedValue({ allowRegistration: true, acmeEmail: null, templatesSource: 'https://registry.example.com/r.json', dnsProvider: null, hasDnsToken: false, wildcardApex: null } as never);
+    mockOf(api.templates.list).mockResolvedValue(templates as never);
+    renderWithProviders(<Hub />);
+    expect(await screen.findByText('custom registry')).toBeInTheDocument();
+  });
+
   it('shows the template detail modal and deploys', async () => {
     const user = userEvent.setup();
     mockOf(api.templates.list).mockResolvedValue(templates as never);

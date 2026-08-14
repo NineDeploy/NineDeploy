@@ -8,6 +8,9 @@ import { DeployWizard } from '../components/DeployWizard.js';
 
 export function Hub() {
   const list = useQuery({ queryKey: ['templates'], queryFn: () => api.templates.list() });
+  // Surface when the registry comes from a custom source (Settings → Hub).
+  const settings = useQuery({ queryKey: ['instance-settings'], queryFn: () => api.settings.get(), staleTime: 60_000 });
+  const customSource = settings.data?.templatesSource ?? null;
   const [category, setCategory] = useState('All');
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<string | null>(null);
@@ -30,7 +33,17 @@ export function Hub() {
       <div className="mb-6 flex items-center gap-2">
         <Sparkles size={20} className="text-indigo-400" />
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Hub</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">
+            Hub
+            {customSource && (
+              <span
+                className="ml-2 align-middle rounded-full bg-indigo-500/10 px-2 py-0.5 text-[10px] font-medium text-indigo-300 ring-1 ring-inset ring-indigo-500/20"
+                title={`Custom registry: ${customSource}`}
+              >
+                custom registry
+              </span>
+            )}
+          </h1>
           <p className="text-sm text-slate-400">One-click apps — deploy in seconds.</p>
         </div>
       </div>

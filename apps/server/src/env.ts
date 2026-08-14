@@ -17,6 +17,15 @@ const schema = z.object({
   NINEDEPLOY_MASTER_KEY: z.string().optional(),
   // Let's Encrypt registration email — enables automatic HTTPS (Traefik ACME).
   NINEDEPLOY_ACME_EMAIL: z.string().optional(),
+  // Template registry source override: an https URL or an absolute path to a
+  // JSON registry bundle. Falls back to the bundled registry when unset.
+  NINEDEPLOY_TEMPLATES_SOURCE: z.string().optional(),
+  // ACME DNS-01 challenge (wildcard certificates). DB settings win over these.
+  NINEDEPLOY_DNS_PROVIDER: z.string().optional(),
+  NINEDEPLOY_DNS_TOKEN: z.string().optional(),
+  // How many deployments the worker processes in parallel (1-8). The same
+  // service is never deployed concurrently regardless of this value.
+  NINEDEPLOY_DEPLOY_CONCURRENCY: z.coerce.number().int().min(1).max(8).default(1),
 });
 
 export type Env = z.infer<typeof schema>;

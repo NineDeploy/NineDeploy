@@ -1,8 +1,6 @@
 name: Release
 
 # Builds and publishes a Docker image when a version tag is pushed.
-# The Dockerfile itself is added in a later phase; this workflow is the
-# skeleton so tagging is wired up ahead of time.
 
 on:
   push:

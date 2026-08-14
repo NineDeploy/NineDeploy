@@ -4,6 +4,7 @@ import { domains, services, type DB } from '@ninedeploy/db';
 import { config } from '../config.js';
 import { capture, run, sleep } from '../lib/exec.js';
 import { getSettingString } from '../lib/settings.js';
+import { decrypt, encrypt } from '../lib/crypto.js';
 
 const TRAEFIK_CONTAINER = 'ninedeploy-traefik';
 const TRAEFIK_IMAGE = 'traefik:v3.3';
@@ -41,23 +42,83 @@ export async function ensureNetwork(log: (line: string) => void): Promise<void> 
 }
 
 /**
- * Render the Traefik static config. When an ACME email is configured, a
- * Let's Encrypt resolver is attached to the `websecure` entry point via the
- * HTTP-01 challenge on :80 — this is what lets the per-domain SSL toggle issue
- * real certificates. Without an email the resolver is omitted so an
- * unconfigured instance keeps working (routing still functions; `ssl` domains
- * fall back to Traefik's default self-signed certificate).
+ * DNS providers supported for the ACME DNS-01 challenge (wildcard certs).
+ * Each maps to the single env var Traefik/lego expects in the container.
  */
-function renderStaticConfig(acmeEmail: string | null): string {
+export const DNS_PROVIDERS: Record<string, string> = {
+  cloudflare: 'CF_DNS_API_TOKEN',
+  digitalocean: 'DO_AUTH_TOKEN',
+  hetzner: 'HETZNER_API_TOKEN',
+  linode: 'LINODE_TOKEN',
+  gandi: 'GANDI_API_KEY',
+  duckdns: 'DUCKDNS_TOKEN',
+};
+
+export interface DnsConfig {
+  provider: string;
+  token: string | null;
+  /** Bare apex (e.g. example.com) whose `*.apex` wildcard cert we request. */
+  wildcardApex: string | null;
+}
+
+/**
+ * Resolve the DNS-01 challenge config: DB settings win, the
+ * `NINEDEPLOY_DNS_*` env vars are the fallback. The token is stored
+ * ENCRYPTED (settings key `dns_token_encrypted`) and only decrypted here.
+ * Never throws — a missing settings table must not break config generation.
+ */
+export async function getDnsConfig(db: DB): Promise<DnsConfig> {
+  const envCfg: DnsConfig = {
+    provider: config.dnsProvider ?? '',
+    token: config.dnsToken ?? null,
+    wildcardApex: config.wildcardDomain ? config.wildcardDomain.replace(/^\*\./, '') : null,
+  };
+  try {
+    const provider = (await getSettingString(db, 'dns_provider', null)) ?? envCfg.provider;
+    const encToken = await getSettingString(db, 'dns_token_encrypted', null);
+    const apex = (await getSettingString(db, 'wildcard_domain', null)) ?? envCfg.wildcardApex ?? null;
+    const token = encToken
+      ? decrypt(encToken)
+      : provider === envCfg.provider
+        ? envCfg.token
+        : null;
+    return { provider, token, wildcardApex: apex ? apex.replace(/^\*\./, '') : null };
+  } catch {
+    return envCfg;
+  }
+}
+
+/** Encrypt a DNS token for at-rest storage in the settings table. */
+export function encryptDnsToken(token: string): string {
+  return encrypt(token);
+}
+
+/**
+ * Render the Traefik static config. When an ACME email is configured, a
+ * Let's Encrypt resolver is attached to the `websecure` entry point. With a
+ * DNS provider configured the resolver uses the DNS-01 challenge (required
+ * for wildcard certificates); otherwise HTTP-01 on :80 lets the per-domain
+ * SSL toggle issue real certificates. Without an email the resolver is
+ * omitted so an unconfigured instance keeps working (routing still
+ * functions; `ssl` domains fall back to Traefik's default self-signed cert).
+ */
+export function renderStaticConfig(acmeEmail: string | null, dns: DnsConfig | null = null): string {
+  const useDns = !!(dns?.provider && dns.token && DNS_PROVIDERS[dns.provider]);
+  const challenge = useDns
+    ? `      dnsChallenge:
+        provider: ${dns!.provider}
+        delayBeforeCheck: 30
+`
+    : `      httpChallenge:
+        entryPoint: web
+`;
   const acme = acmeEmail
     ? `certificatesResolvers:
   letsencrypt:
     acme:
       email: ${acmeEmail}
       storage: /etc/traefik/acme.json
-      httpChallenge:
-        entryPoint: web
-`
+${challenge}`
     : '';
   return `# Managed by NineDeploy — do not edit by hand.
 entryPoints:
@@ -84,6 +145,18 @@ const dynamicPath = () => path.join(dir(), 'dynamic.yml');
 // ACME account key + issued certificates live here; persisted under the data
 // dir so renewals survive container recreates.
 const acmePath = () => path.join(dir(), 'acme.json');
+// DNS provider credentials for the ACME DNS-01 challenge. Written as a docker
+// --env-file (0600) so the token never appears in `ps` argv or the config dir
+// mounts; docker injects the vars into the Traefik container at start.
+const dnsEnvPath = () => path.join(dir(), 'dns.env');
+
+/** Render the docker --env-file content for the DNS-01 provider token. */
+function renderDnsEnvFile(dns: DnsConfig): string | null {
+  if (!dns.provider || !dns.token) return null;
+  const varName = DNS_PROVIDERS[dns.provider];
+  if (!varName) return null;
+  return `${varName}=${dns.token}\n`;
+}
 
 /**
  * Resolve the ACME account email: the DB setting (Settings → Security) wins,
@@ -168,9 +241,13 @@ async function onNetwork(container: string, network: string): Promise<boolean> {
 }
 
 /** Ensure the Traefik reverse-proxy container is running on the shared network (idempotent). */
-export async function ensureTraefik(log: (line: string) => void, acmeEmail: string | null = config.acmeEmail ?? null): Promise<void> {
+export async function ensureTraefik(
+  log: (line: string) => void,
+  acmeEmail: string | null = config.acmeEmail ?? null,
+  dns: DnsConfig | null = null,
+): Promise<void> {
   mkdirSync(dir(), { recursive: true });
-  writeFileSync(staticPath(), renderStaticConfig(acmeEmail));
+  writeFileSync(staticPath(), renderStaticConfig(acmeEmail, dns));
   if (!existsSync(dynamicPath())) writeFileSync(dynamicPath(), 'http:\n  routers:\n  services:\n');
   if (acmeEmail && !existsSync(acmePath())) {
     // Seed the ACME storage file so the bind mount below is a FILE and not an
@@ -207,6 +284,13 @@ export async function ensureTraefik(log: (line: string) => void, acmeEmail: stri
       // keeping the config directory read-only.
       runArgs.push('-v', `${acmePath()}:/etc/traefik/acme.json`);
     }
+    const dnsEnv = dns ? renderDnsEnvFile(dns) : null;
+    if (dnsEnv) {
+      // The token reaches the container via --env-file: the docker CLI reads
+      // the file on the host (argv carries only the path, never the secret).
+      writeFileSync(dnsEnvPath(), dnsEnv, { mode: 0o600 });
+      runArgs.push('--env-file', dnsEnvPath());
+    }
     runArgs.push(TRAEFIK_IMAGE);
     await run(
       'docker',
@@ -233,6 +317,8 @@ export async function writeDynamicConfig(db: DB): Promise<void> {
     (await db.select().from(services)).map((s) => [s.id, s]),
   );
   const acmeEmail = await getAcmeEmail(db);
+  const dns = await getDnsConfig(db);
+  const dnsReady = !!(dns.provider && dns.token && DNS_PROVIDERS[dns.provider]);
 
   const routers: string[] = [];
   const svcBlocks: string[] = [];
@@ -254,9 +340,14 @@ export async function writeDynamicConfig(db: DB): Promise<void> {
         ? '\n      tls:\n        certResolver: letsencrypt'
         : '\n      tls: {}'
       : '';
+    // Traefik's Host() matcher is literal — a wildcard hostname needs a
+    // HostRegexp rule instead (`*.example.com` → one label + the suffix).
+    const hostMatcher = host.startsWith('*.')
+      ? `HostRegexp(\`^[a-zA-Z0-9-]+\\.${escapeRegexp(host.slice(2))}$\`)`
+      : `Host(\`${host}\`)`;
     routers.push(
       `    ${key}:\n` +
-        `      rule: "Host(\`${host}\`)${cleanPath && cleanPath !== '/' ? ` && PathPrefix(\`${cleanPath}\`)` : ''}"\n` +
+        `      rule: "${hostMatcher}${cleanPath && cleanPath !== '/' ? ` && PathPrefix(\`${cleanPath}\`)` : ''}"\n` +
         `      service: svc_${key}\n` +
         `      entryPoints:\n        - ${entry}` +
         tlsBlock,
@@ -272,13 +363,34 @@ export async function writeDynamicConfig(db: DB): Promise<void> {
     }
   }
 
+  // A configured wildcard apex requests ONE wildcard certificate up front via
+  // the DNS-01 resolver (Traefik does not derive wildcard certs from
+  // HostRegexp routers on its own). The bare apex rides along as a SAN.
+  let tlsCerts = '';
+  const apex = (dns.wildcardApex ?? '').replace(HOST_RE, '');
+  if (dnsReady && acmeEmail && apex) {
+    tlsCerts =
+      'tls:\n' +
+      '  certificates:\n' +
+      '    - certResolver: letsencrypt\n' +
+      '      domains:\n' +
+      `        - main: "*.${apex}"\n` +
+      `          sans:\n            - "${apex}"\n`;
+  }
+
   const yaml =
     '# Managed by NineDeploy — regenerated on deploy/domain changes.\n' +
     'http:\n' +
     '  routers:\n' +
     (routers.length ? routers.join('\n') + '\n' : '    {}\n') +
     '  services:\n' +
-    (svcBlocks.length ? svcBlocks.join('\n') + '\n' : '    {}\n');
+    (svcBlocks.length ? svcBlocks.join('\n') + '\n' : '    {}\n') +
+    tlsCerts;
 
   writeAtomic(dynamicPath(), yaml);
+}
+
+/** Escape regex metacharacters in a (already sanitized) domain suffix. */
+function escapeRegexp(s: string): string {
+  return s.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
 }

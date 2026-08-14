@@ -270,6 +270,11 @@ describe('Settings', () => {
     expect(screen.queryByTestId('notif-wizard')).not.toBeInTheDocument();
   });
 
+  const saveButtonNextTo = (label: string) => {
+    const input = screen.getByLabelText(label) as HTMLInputElement;
+    return input.parentElement!.querySelector('button')!;
+  };
+
   it('shows and saves the ACME email', async () => {
     const user = userEvent.setup();
     mockOf(api.settings.get).mockResolvedValue({ allowRegistration: true, acmeEmail: 'ops@example.com' } as never);
@@ -281,9 +286,92 @@ describe('Settings', () => {
     expect(screen.getByText(/Not configured|Configured/)).toHaveTextContent('Configured.');
     await user.clear(input);
     await user.type(input, 'new@example.com');
-    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await user.click(saveButtonNextTo('ACME account email'));
     await waitFor(() => expect(api.settings.setAcmeEmail).toHaveBeenCalledWith('new@example.com'));
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('ACME email saved — applies on next restart', 'success'));
+  });
+
+  it('shows and saves the template registry source', async () => {
+    const user = userEvent.setup();
+    mockOf(api.settings.get).mockResolvedValue({ allowRegistration: true, acmeEmail: null, templatesSource: null } as never);
+    mockOf(api.settings.setTemplatesSource).mockResolvedValue({ ok: true, templatesSource: 'https://registry.example.com/r.json' } as never);
+    renderWithProviders(<Settings />);
+
+    const input = await screen.findByLabelText('Template registry source') as HTMLInputElement;
+    expect(input.value).toBe('');
+    expect(screen.getByText(/bundled registry from this repo/)).toBeInTheDocument();
+    await user.type(input, 'https://registry.example.com/r.json');
+    await user.click(saveButtonNextTo('Template registry source'));
+    await waitFor(() => expect(api.settings.setTemplatesSource).toHaveBeenCalledWith('https://registry.example.com/r.json'));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Template registry source saved', 'success'));
+  });
+
+  it('shows and saves the DNS challenge config', async () => {
+    const user = userEvent.setup();
+    mockOf(api.settings.get).mockResolvedValue({ allowRegistration: true, acmeEmail: null, templatesSource: null, dnsProvider: 'cloudflare', hasDnsToken: true, wildcardApex: 'example.com' } as never);
+    mockOf(api.settings.setDns).mockResolvedValue({ ok: true, dnsProvider: 'cloudflare', wildcardApex: 'example.com', applied: 'restart' } as never);
+    renderWithProviders(<Settings />);
+
+    const provider = await screen.findByLabelText('DNS provider') as HTMLSelectElement;
+    await waitFor(() => expect(provider.value).toBe('cloudflare'));
+    expect((screen.getByLabelText('Wildcard domain apex') as HTMLInputElement).value).toBe('example.com');
+    expect(screen.getByText(/API token configured/)).toBeInTheDocument();
+
+    await user.selectOptions(provider, 'hetzner');
+    await user.type(screen.getByLabelText('DNS API token'), 'fresh-token');
+    const apex = screen.getByLabelText('Wildcard domain apex') as HTMLInputElement;
+    await user.clear(apex);
+    await user.type(apex, 'example.org');
+    fireEvent.click(saveButtonNextTo('Wildcard domain apex'));
+    await waitFor(() =>
+      expect(api.settings.setDns).toHaveBeenCalledWith({ provider: 'hetzner', token: 'fresh-token', wildcardApex: 'example.org' }),
+    );
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('DNS challenge saved — applies on next restart', 'success'));
+  });
+
+  it('keeps the stored token when the field is left empty and reports failures', async () => {
+    mockOf(api.settings.get).mockResolvedValue({ allowRegistration: true, acmeEmail: null, templatesSource: null, dnsProvider: '', hasDnsToken: true, wildcardApex: '' } as never);
+    mockOf(api.settings.setDns).mockRejectedValue(new Error('500'));
+    renderWithProviders(<Settings />);
+
+    await screen.findByLabelText('DNS provider');
+    fireEvent.click(saveButtonNextTo('Wildcard domain apex'));
+    await waitFor(() =>
+      expect(api.settings.setDns).toHaveBeenCalledWith({ provider: '', token: undefined, wildcardApex: '' }),
+    );
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Could not save the DNS challenge settings', 'error'));
+  });
+
+  it('shows the saving state while the DNS config is in flight', async () => {
+    mockOf(api.settings.get).mockResolvedValue({ allowRegistration: true, acmeEmail: null, templatesSource: null, dnsProvider: '', hasDnsToken: false, wildcardApex: '' } as never);
+    mockOf(api.settings.setDns).mockReturnValue(new Promise(() => {}) as never);
+    renderWithProviders(<Settings />);
+
+    await screen.findByLabelText('DNS provider');
+    fireEvent.click(saveButtonNextTo('Wildcard domain apex'));
+    expect(await screen.findByText('Saving…')).toBeInTheDocument();
+  });
+
+  it('shows the saving state while the template source is in flight', async () => {
+    mockOf(api.settings.get).mockResolvedValue({ allowRegistration: true, acmeEmail: null, templatesSource: null } as never);
+    mockOf(api.settings.setTemplatesSource).mockReturnValue(new Promise(() => {}) as never);
+    renderWithProviders(<Settings />);
+
+    await screen.findByLabelText('Template registry source');
+    fireEvent.click(saveButtonNextTo('Template registry source'));
+    await waitFor(() => expect(screen.getAllByText('Saving…').length).toBeGreaterThan(0));
+  });
+
+  it('reports template source save failures and shows a custom source', async () => {
+    mockOf(api.settings.get).mockResolvedValue({ allowRegistration: true, acmeEmail: null, templatesSource: '/etc/ninedeploy/registry.json' } as never);
+    mockOf(api.settings.setTemplatesSource).mockRejectedValue(new Error('500'));
+    renderWithProviders(<Settings />);
+
+    const input = await screen.findByLabelText('Template registry source') as HTMLInputElement;
+    await waitFor(() => expect(input.value).toBe('/etc/ninedeploy/registry.json'));
+    expect(screen.getByText(/custom \(\/etc\/ninedeploy\/registry\.json\)/)).toBeInTheDocument();
+    fireEvent.click(saveButtonNextTo('Template registry source'));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Could not save the template source', 'error'));
   });
 
   it('shows the saving state while the ACME email is in flight', async () => {
@@ -292,7 +380,7 @@ describe('Settings', () => {
     renderWithProviders(<Settings />);
 
     await screen.findByLabelText('ACME account email');
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(saveButtonNextTo('ACME account email'));
     expect(await screen.findByText('Saving…')).toBeInTheDocument();
   });
 
@@ -304,7 +392,7 @@ describe('Settings', () => {
     const input = await screen.findByLabelText('ACME account email') as HTMLInputElement;
     expect(input.value).toBe('');
     expect(screen.getByText(/Not configured/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(saveButtonNextTo('ACME account email'));
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Could not save the ACME email', 'error'));
   });
 

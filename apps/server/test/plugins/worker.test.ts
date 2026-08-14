@@ -8,9 +8,23 @@ const pipelineMock = vi.hoisted(() => ({
 
 vi.mock('../../src/engine/pipeline.js', () => pipelineMock);
 
+const configMock = vi.hoisted(() => ({ config: { deployConcurrency: 1 } }));
+vi.mock('../../src/config.js', () => configMock);
+
 const workerPlugin = (await import('../../src/plugins/worker.js')).default;
 
 const POLL_MS = 2000;
+
+/** A controllable promise for gating worker runs. */
+function deferred() {
+  let resolve!: () => void;
+  let reject!: (e: unknown) => void;
+  const promise = new Promise<void>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
 
 interface RecordedUpdate {
   table: unknown;
@@ -27,15 +41,23 @@ function makeDb(opts: {
   claimResult?: unknown;
 }) {
   const updates: RecordedUpdate[] = [];
-  const select = vi.fn(() => ({
-    from: vi.fn(() => ({
-      where: vi.fn(() => ({
-        orderBy: vi.fn(() => ({
-          limit: vi.fn(opts.selectImpl ?? (async () => opts.queued)),
+  // The claim query runs a notInArray subquery through db.select too; both
+  // paths share this builder and only the outer limit() resolves rows. Only
+  // outer calls (cols = { id }) are counted by `outerSelect`.
+  const outerSelect = vi.fn();
+  const select = vi.fn((cols: unknown) => {
+    const isOuter = cols !== undefined && 'id' in (cols as Record<string, unknown>);
+    if (isOuter) outerSelect();
+    return {
+      from: vi.fn(() => ({
+        where: vi.fn(() => ({
+          orderBy: vi.fn(() => ({
+            limit: vi.fn(opts.selectImpl ?? (async () => opts.queued)),
+          })),
         })),
       })),
-    })),
-  }));
+    };
+  });
   const update = vi.fn((table: unknown) => ({
     set: (values: Record<string, unknown>) => ({
       where: (whereArgs?: unknown) => {
@@ -48,7 +70,7 @@ function makeDb(opts: {
       },
     }),
   }));
-  return { db: { select, update } as never, select, update, updates };
+  return { db: { select, update } as never, select, outerSelect, update, updates };
 }
 
 async function buildApp(db: ReturnType<typeof makeDb>['db']) {
@@ -189,12 +211,12 @@ describe('worker plugin', () => {
 
   it('polls repeatedly while running', async () => {
     vi.useFakeTimers();
-    const { db, select } = makeDb({ queued: [] });
+    const { db, outerSelect } = makeDb({ queued: [] });
     const app = await buildApp(db);
     await vi.advanceTimersByTimeAsync(POLL_MS);
     await vi.advanceTimersByTimeAsync(POLL_MS);
-    // select is called once per tick (after the startup recovery).
-    expect(select).toHaveBeenCalledTimes(2);
+    // One outer claim query per tick (the subquery does not count).
+    expect(outerSelect).toHaveBeenCalledTimes(2);
     await app.close();
   });
 
@@ -237,13 +259,88 @@ describe('worker plugin', () => {
     expect(pipelineMock.runDeployment).not.toHaveBeenCalled();
   });
 
+  it('runs multiple concurrency slots in parallel', async () => {
+    vi.useFakeTimers();
+    configMock.config.deployConcurrency = 2;
+    // Each slot's claim query sees a different queued deployment (outer calls
+    // only — the notInArray subquery reuses db.select without the {id} cols).
+    let outerCalls = 0;
+    const { db } = makeDb({
+      queued: [],
+      selectImpl: async () => {
+        outerCalls++;
+        return outerCalls <= 2 ? [{ id: outerCalls }] : [];
+      },
+    });
+    // Both runs stay in flight until the test releases them.
+    const gate1 = deferred();
+    const gate2 = deferred();
+    pipelineMock.runDeployment.mockReturnValueOnce(gate1.promise as never).mockReturnValueOnce(gate2.promise as never);
+
+    const app = await buildApp(db);
+    await vi.advanceTimersByTimeAsync(POLL_MS + 1000);
+    expect(pipelineMock.runDeployment).toHaveBeenCalledTimes(2);
+    expect(pipelineMock.runDeployment).toHaveBeenCalledWith(db, 1);
+    expect(pipelineMock.runDeployment).toHaveBeenCalledWith(db, 2);
+
+    // Releasing both lets the slots settle and close cleanly.
+    gate1.resolve();
+    gate2.resolve();
+    configMock.config.deployConcurrency = 1;
+    await app.close();
+  });
+
+  it('stop() waits for all in-flight slots and re-polls none', async () => {
+    vi.useFakeTimers();
+    configMock.config.deployConcurrency = 2;
+    let outerCalls = 0;
+    const { db } = makeDb({
+      queued: [],
+      selectImpl: async () => {
+        outerCalls++;
+        return outerCalls <= 2 ? [{ id: outerCalls }] : [];
+      },
+    });
+    const gate1 = deferred();
+    const gate2 = deferred();
+    pipelineMock.runDeployment.mockReturnValueOnce(gate1.promise as never).mockReturnValueOnce(gate2.promise as never);
+
+    const app = await buildApp(db);
+    await vi.advanceTimersByTimeAsync(POLL_MS + 1000);
+    expect(pipelineMock.runDeployment).toHaveBeenCalledTimes(2);
+
+    // stop() resolves once BOTH in-flight runs settle (no grace needed).
+    const stopping = app.worker.stop();
+    gate1.resolve();
+    gate2.resolve();
+    await stopping;
+    await vi.advanceTimersByTimeAsync(POLL_MS * 10);
+    expect(pipelineMock.runDeployment).toHaveBeenCalledTimes(2);
+    configMock.config.deployConcurrency = 1;
+  });
+
+  it('stop() gives up after the grace period when runs hang', async () => {
+    vi.useFakeTimers();
+    configMock.config.deployConcurrency = 1;
+    const { db } = makeDb({ queued: [{ id: 4 }] });
+    pipelineMock.runDeployment.mockReturnValue(new Promise(() => {}) as never);
+
+    const app = await buildApp(db);
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    const stopping = app.worker.stop();
+    // Hit the 60s backstop; the unref'd grace timer settles the race.
+    await vi.advanceTimersByTimeAsync(61_000);
+    await stopping;
+    expect(pipelineMock.runDeployment).toHaveBeenCalledTimes(1);
+  });
+
   it('does not reschedule after close while a tick is in flight', async () => {
     vi.useFakeTimers();
     let resolveQueued: (rows: Array<{ id: number }>) => void = () => undefined;
     const pending = new Promise<Array<{ id: number }>>((r) => {
       resolveQueued = r;
     });
-    const { db, select } = makeDb({ queued: [], selectImpl: () => pending });
+    const { db, outerSelect } = makeDb({ queued: [], selectImpl: () => pending });
     const app = await buildApp(db);
 
     vi.advanceTimersByTime(POLL_MS); // first tick starts, suspends on the pending query
@@ -252,7 +349,7 @@ describe('worker plugin', () => {
     await vi.advanceTimersByTimeAsync(0);
 
     await vi.advanceTimersByTimeAsync(POLL_MS * 10);
-    expect(select).toHaveBeenCalledTimes(1); // no further polls scheduled
+    expect(outerSelect).toHaveBeenCalledTimes(1); // no further polls scheduled
     expect(pipelineMock.runDeployment).not.toHaveBeenCalled();
   });
 });

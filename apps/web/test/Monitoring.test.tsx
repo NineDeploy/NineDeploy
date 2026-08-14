@@ -191,6 +191,53 @@ describe('Monitoring', () => {
     await waitFor(() => expect(api.alerts.remove).toHaveBeenCalledWith(7));
   });
 
+  it('scopes a rule to a service and sets the window count', async () => {
+    mockOf(api.stats.snapshot).mockResolvedValue(snapshot as never);
+    mockOf(api.alerts.list).mockResolvedValue([] as never);
+    mockOf(api.alerts.create).mockResolvedValue({ id: 3 } as never);
+    mockOf(api.services.list).mockResolvedValue([{ id: 4, name: 'api', slug: 'api', type: 'docker', status: 'running' }] as never);
+    renderWithProviders(<Monitoring />);
+    await screen.findByPlaceholderText('rule name');
+    await userEvent.type(screen.getByPlaceholderText('rule name'), 'svc-cpu');
+    await userEvent.selectOptions(screen.getByDisplayValue('host-wide'), '4');
+    await userEvent.clear(screen.getByPlaceholderText('windows'));
+    await userEvent.type(screen.getByPlaceholderText('windows'), '5');
+    fireEvent.submit(screen.getByPlaceholderText('rule name').closest('form')!);
+    await waitFor(() =>
+      expect(api.alerts.create).toHaveBeenCalledWith({ name: 'svc-cpu', metric: 'cpu', operator: '>', threshold: 80, serviceId: 4, durationWindows: 5 }),
+    );
+  });
+
+  it('falls back to one window for a non-numeric window count', async () => {
+    mockOf(api.stats.snapshot).mockResolvedValue(snapshot as never);
+    mockOf(api.alerts.list).mockResolvedValue([] as never);
+    mockOf(api.alerts.create).mockResolvedValue({ id: 5 } as never);
+    renderWithProviders(<Monitoring />);
+    await screen.findByPlaceholderText('rule name');
+    await userEvent.type(screen.getByPlaceholderText('rule name'), 'quick');
+    await userEvent.clear(screen.getByPlaceholderText('windows'));
+    await userEvent.type(screen.getByPlaceholderText('windows'), 'soon');
+    fireEvent.submit(screen.getByPlaceholderText('rule name').closest('form')!);
+    await waitFor(() =>
+      expect(api.alerts.create).toHaveBeenCalledWith(expect.objectContaining({ durationWindows: 1 })),
+    );
+  });
+
+  it('forces cert-expiry rules host-wide and parses the window count', async () => {
+    mockOf(api.stats.snapshot).mockResolvedValue(snapshot as never);
+    mockOf(api.alerts.list).mockResolvedValue([] as never);
+    mockOf(api.alerts.create).mockResolvedValue({ id: 4 } as never);
+    renderWithProviders(<Monitoring />);
+    await screen.findByPlaceholderText('rule name');
+    await userEvent.type(screen.getByPlaceholderText('rule name'), 'cert-renew');
+    await userEvent.selectOptions(screen.getByDisplayValue('cpu %'), 'cert-expiry');
+    // The scope select is disabled for cert-expiry — must submit host-wide.
+    fireEvent.submit(screen.getByPlaceholderText('rule name').closest('form')!);
+    await waitFor(() =>
+      expect(api.alerts.create).toHaveBeenCalledWith(expect.objectContaining({ metric: 'cert-expiry', serviceId: null, durationWindows: 2 })),
+    );
+  });
+
   it('creates an alert rule with a custom metric and operator', async () => {
     mockOf(api.stats.snapshot).mockResolvedValue(snapshot as never);
     mockOf(api.alerts.list).mockResolvedValue([] as never);

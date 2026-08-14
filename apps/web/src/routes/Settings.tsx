@@ -51,6 +51,16 @@ export function Settings() {
   // ── Security: ACME (Let's Encrypt) email ────────────────────────────────
   const acmeEmail = instanceSettings.data?.acmeEmail ?? null;
   const [acmeInput, setAcmeInput] = useState<string | null>(null);
+  // ── Template hub registry source ────────────────────────────────────────
+  const templatesSource = instanceSettings.data?.templatesSource ?? null;
+  const [tplInput, setTplInput] = useState<string | null>(null);
+  // ── Security: DNS-01 challenge (wildcard SSL) ───────────────────────────
+  const dnsProvider = instanceSettings.data?.dnsProvider ?? '';
+  const hasDnsToken = instanceSettings.data?.hasDnsToken ?? false;
+  const wildcardApex = instanceSettings.data?.wildcardApex ?? '';
+  const [dnsProviderInput, setDnsProviderInput] = useState<string | null>(null);
+  const [dnsTokenInput, setDnsTokenInput] = useState('');
+  const [dnsApexInput, setDnsApexInput] = useState<string | null>(null);
   const setAcmeEmail = useMutation({
     mutationFn: (email: string) => api.settings.setAcmeEmail(email),
     onSuccess: () => {
@@ -59,6 +69,26 @@ export function Settings() {
       toast('ACME email saved — applies on next restart', 'success');
     },
     onError: () => toast('Could not save the ACME email', 'error'),
+  });
+  const setTemplatesSource = useMutation({
+    mutationFn: (source: string) => api.settings.setTemplatesSource(source),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['instance-settings'] });
+      setTplInput(null);
+      toast('Template registry source saved', 'success');
+    },
+    onError: () => toast('Could not save the template source', 'error'),
+  });
+  const setDns = useMutation({
+    mutationFn: (input: { provider: string; token?: string; wildcardApex: string }) => api.settings.setDns(input),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['instance-settings'] });
+      setDnsProviderInput(null);
+      setDnsApexInput(null);
+      setDnsTokenInput('');
+      toast('DNS challenge saved — applies on next restart', 'success');
+    },
+    onError: () => toast('Could not save the DNS challenge settings', 'error'),
   });
 
   const submitPassword = () => {
@@ -222,6 +252,84 @@ export function Settings() {
             </Button>
           </div>
           <p className="mt-1.5 text-xs text-slate-500">Applies when the server next restarts (Traefik is recreated then).</p>
+
+          <p className="mb-2 mt-6 text-sm text-slate-300">
+            Template hub registry source
+            {templatesSource ? ` — custom (${templatesSource}).` : ' — bundled registry from this repo.'}
+          </p>
+          <div className="flex max-w-md items-center gap-2">
+            <input
+              type="text"
+              value={tplInput ?? templatesSource ?? ''}
+              onChange={(e) => setTplInput(e.target.value)}
+              placeholder="https://example.com/registry.json veya /path/to/registry.json"
+              className="h-9 w-full rounded-lg border border-slate-800 bg-slate-900/40 px-3 font-mono text-xs text-slate-200 outline-none focus:border-indigo-500/60"
+              aria-label="Template registry source"
+            />
+            <Button
+              size="sm"
+              onClick={() => setTemplatesSource.mutate((tplInput ?? templatesSource ?? '').trim())}
+              disabled={setTemplatesSource.isPending}
+            >
+              {setTemplatesSource.isPending ? 'Saving…' : 'Save'}
+            </Button>
+          </div>
+          <p className="mt-1.5 text-xs text-slate-500">JSON formatı: {'{ version, templates: [{ id, name, tagline, description, category, emoji, image, port, … }] }'} — uzak kaynaklar 6 saatte bir yenilenir, hata olursa önbellek/built-in devreye girer.</p>
+
+          <p className="mb-2 mt-6 text-sm text-slate-300">
+            DNS challenge (wildcard SSL){hasDnsToken ? ' — API token configured.' : ' — no API token yet.'}
+          </p>
+          <div className="max-w-md space-y-2">
+            <select
+              value={dnsProviderInput ?? dnsProvider}
+              onChange={(e) => setDnsProviderInput(e.target.value)}
+              className="h-9 w-full rounded-lg border border-slate-800 bg-slate-900/40 px-3 text-xs text-slate-200 outline-none focus:border-indigo-500/60"
+              aria-label="DNS provider"
+            >
+              <option value="">None (HTTP-01 only)</option>
+              <option value="cloudflare">Cloudflare</option>
+              <option value="digitalocean">DigitalOcean</option>
+              <option value="hetzner">Hetzner</option>
+              <option value="linode">Linode</option>
+              <option value="gandi">Gandi</option>
+              <option value="duckdns">DuckDNS</option>
+            </select>
+            <input
+              type="password"
+              value={dnsTokenInput}
+              onChange={(e) => setDnsTokenInput(e.target.value)}
+              placeholder={hasDnsToken ? 'API token (stored — leave empty to keep)' : 'API token'}
+              className="h-9 w-full rounded-lg border border-slate-800 bg-slate-900/40 px-3 font-mono text-xs text-slate-200 outline-none focus:border-indigo-500/60"
+              aria-label="DNS API token"
+            />
+            <input
+              type="text"
+              value={dnsApexInput ?? wildcardApex}
+              onChange={(e) => setDnsApexInput(e.target.value)}
+              placeholder="example.com → *.example.com wildcard certificate"
+              className="h-9 w-full rounded-lg border border-slate-800 bg-slate-900/40 px-3 font-mono text-xs text-slate-200 outline-none focus:border-indigo-500/60"
+              aria-label="Wildcard domain apex"
+            />
+            <div>
+              <Button
+                size="sm"
+                onClick={() =>
+                  setDns.mutate({
+                    provider: (dnsProviderInput ?? dnsProvider).trim(),
+                    token: dnsTokenInput.trim() || undefined,
+                    wildcardApex: (dnsApexInput ?? wildcardApex).trim(),
+                  })
+                }
+                disabled={setDns.isPending}
+              >
+                {setDns.isPending ? 'Saving…' : 'Save'}
+              </Button>
+            </div>
+          </div>
+          <p className="mt-1.5 text-xs text-slate-500">
+            DNS-01 enables wildcard certificates (<code>*.example.com</code>) via your DNS provider; the token is stored
+            encrypted and reaches Traefik through a docker --env-file. Applies on next restart.
+          </p>
         </CardBody>
       </Card>
 

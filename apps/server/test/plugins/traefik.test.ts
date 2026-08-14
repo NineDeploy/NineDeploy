@@ -10,6 +10,7 @@ const proxyMock = vi.hoisted(() => ({
   }),
   writeDynamicConfig: vi.fn(async () => undefined),
   getAcmeEmail: vi.fn(async () => null),
+  getDnsConfig: vi.fn(async () => ({ provider: '', token: null, wildcardApex: null })),
 }));
 
 vi.mock('../../src/engine/proxy.js', () => proxyMock);
@@ -43,6 +44,32 @@ describe('traefik plugin', () => {
     await app.close();
   });
 
+  it('passes the resolved DNS config to ensureTraefik', async () => {
+    proxyMock.getDnsConfig.mockResolvedValueOnce({ provider: 'cloudflare', token: 'tok', wildcardApex: 'example.com' });
+    proxyMock.ensureTraefik.mockClear();
+
+    const app = await buildApp({ select: vi.fn() });
+    await app.ready();
+
+    expect(proxyMock.ensureTraefik).toHaveBeenCalledWith(
+      expect.any(Function),
+      null,
+      { provider: 'cloudflare', token: 'tok', wildcardApex: 'example.com' },
+    );
+    await app.close();
+  });
+
+  it('tolerates a failing DNS config read', async () => {
+    proxyMock.getDnsConfig.mockRejectedValueOnce(new Error('no table'));
+    proxyMock.ensureTraefik.mockClear();
+
+    const app = await buildApp({ select: vi.fn() });
+    await app.ready();
+
+    expect(proxyMock.ensureTraefik).toHaveBeenCalledWith(expect.any(Function), null, null);
+    await app.close();
+  });
+
   it('passes the resolved ACME email to ensureTraefik', async () => {
     proxyMock.getAcmeEmail.mockResolvedValueOnce('ops@example.com');
     proxyMock.ensureTraefik.mockClear();
@@ -50,7 +77,7 @@ describe('traefik plugin', () => {
     const app = await buildApp({ select: vi.fn() });
     await app.ready();
 
-    expect(proxyMock.ensureTraefik).toHaveBeenCalledWith(expect.any(Function), 'ops@example.com');
+    expect(proxyMock.ensureTraefik).toHaveBeenCalledWith(expect.any(Function), 'ops@example.com', { provider: '', token: null, wildcardApex: null });
     await app.close();
   });
 
@@ -61,7 +88,7 @@ describe('traefik plugin', () => {
     const app = await buildApp({ select: vi.fn() });
     await app.ready();
 
-    expect(proxyMock.ensureTraefik).toHaveBeenCalledWith(expect.any(Function), null);
+    expect(proxyMock.ensureTraefik).toHaveBeenCalledWith(expect.any(Function), null, { provider: '', token: null, wildcardApex: null });
     await app.close();
   });
 

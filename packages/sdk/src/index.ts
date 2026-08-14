@@ -142,9 +142,12 @@ export interface NineDeployClient {
     remove: (id: number) => Promise<void>;
   };
   settings: {
-    get: () => Promise<{ allowRegistration: boolean; acmeEmail: string | null }>;
+    get: () => Promise<{ allowRegistration: boolean; acmeEmail: string | null; templatesSource: string | null; dnsProvider: string | null; hasDnsToken: boolean; wildcardApex: string | null }>;
     setAllowRegistration: (enabled: boolean) => Promise<{ ok: boolean; allowRegistration: boolean }>;
     setAcmeEmail: (email: string) => Promise<{ ok: boolean; acmeEmail: string | null; applied: string }>;
+    setTemplatesSource: (source: string) => Promise<{ ok: boolean; templatesSource: string | null }>;
+    /** Configure the ACME DNS-01 challenge (wildcard certificates). */
+    setDns: (input: { provider: string; token?: string; wildcardApex: string }) => Promise<{ ok: boolean; dnsProvider: string | null; wildcardApex: string | null; applied: string }>;
   };
   users: {
     list: () => Promise<PublicUser[]>;
@@ -371,11 +374,15 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
     },
   },
     settings: {
-      get: () => get<{ allowRegistration: boolean; acmeEmail: string | null }>('/v1/settings'),
+      get: () => get<{ allowRegistration: boolean; acmeEmail: string | null; templatesSource: string | null; dnsProvider: string | null; hasDnsToken: boolean; wildcardApex: string | null }>('/v1/settings'),
       setAllowRegistration: (enabled) =>
         send<{ ok: boolean; allowRegistration: boolean }>('PUT', '/v1/settings/allow-registration', { enabled }),
       setAcmeEmail: (email) =>
         send<{ ok: boolean; acmeEmail: string | null; applied: string }>('PUT', '/v1/settings/acme-email', { email }),
+      setTemplatesSource: (source) =>
+        send<{ ok: boolean; templatesSource: string | null }>('PUT', '/v1/settings/templates-source', { source }),
+      setDns: (input) =>
+        send<{ ok: boolean; dnsProvider: string | null; wildcardApex: string | null; applied: string }>('PUT', '/v1/settings/dns', input),
     },
     users: {
       list: () => get<PublicUser[]>('/v1/users'),

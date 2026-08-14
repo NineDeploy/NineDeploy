@@ -124,7 +124,7 @@ describe('NotificationWizard', () => {
         name: 'telegram channel',
         type: 'telegram',
         target: 'tok:chat',
-        eventFilter: 'deploy,service',
+        eventFilter: 'deploy,service,alert',
       }),
     );
     await waitFor(() => expect(apiMock.api.notifications.testChannel).toHaveBeenCalledWith(1));
@@ -246,6 +246,7 @@ describe('NotificationWizard', () => {
     await user.click(screen.getByRole('button', { name: /continue/i }));
     await user.click(screen.getByText('Deployments'));
     await user.click(screen.getByText('Services'));
+    await user.click(screen.getByText('Alerts'));
     await user.click(screen.getByRole('button', { name: /continue/i }));
     expect(screen.getByText('all')).toBeInTheDocument();
   });

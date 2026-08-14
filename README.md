@@ -88,9 +88,10 @@ Open `http://localhost:5173` and create the first admin account. Requires Node �
 
 - **Dashboard** — live health probes, stats grid, recent activity
 - **Domain management** — routing map + SSL toggle; wildcard auto-assign (`{slug}.your-domain`); **certificate expiry badges** (warning under 14 days) from Traefik's ACME storage
+- **Wildcard SSL (DNS-01)** — ACME DNS challenge via Cloudflare/DigitalOcean/Hetzner/Linode/Gandi/DuckDNS API tokens (encrypted at rest, delivered to Traefik via docker `--env-file`); one `*.your-domain` certificate issued up front and routed with `HostRegexp`
 - **Monitoring** — live CPU/memory per container + host overview + **alert rules**
 - **Alerting** — threshold rules on `cpu` (%), `memory` (MiB), and `cert-expiry` (days); sustained-breach duration windows (30 s samples), one-shot firing with cooldown, recovery notifications — delivered through the notification channels
-- **Template Hub** — 49+ one-click apps (n8n, Grafana, Jellyfin, Nextcloud, …)
+- **Template Hub** — 49+ one-click apps (n8n, Grafana, Jellyfin, Nextcloud, …) from a JSON registry bundle (`src/templates/registry.json`, schema-validated); the source is swappable (Settings → Hub: https URL or local path) with disk caching and offline fallback
 - **Topology** — interactive graph of services ↔ databases ↔ domains
 - **Notifications** — Telegram / Discord / Slack / ntfy / email (SMTP, encrypted credentials) / generic webhooks, with event filters, timeouts, HTML-safe messages, and retry with exponential backoff (3 attempts)
 - **Multi-user** — roles, audit log, activity feed, registration toggle, ACME email setting
@@ -114,6 +115,10 @@ Open `http://localhost:5173` and create the first admin account. Requires Node �
 | `NINEDEPLOY_MIGRATIONS_DIR` | auto | Override the SQL migrations folder (auto-resolved otherwise) |
 | `NINEDEPLOY_WILDCARD_DOMAIN` | *(empty)* | Auto-assign `{slug}.domain` URLs |
 | `NINEDEPLOY_ACME_EMAIL` | *(empty)* | Let's Encrypt registration email fallback — the Settings → Security ACME email overrides it; enables automatic HTTPS (the domain SSL toggle then issues real certificates via Traefik ACME) |
+| `NINEDEPLOY_DEPLOY_CONCURRENCY` | `1` | Parallel deploy slots in the worker (1-8). The same service is never deployed concurrently — busy services' queued deploys wait |
+| `NINEDEPLOY_DNS_PROVIDER` | *(empty)* | DNS-01 challenge provider for wildcard certificates (cloudflare, digitalocean, hetzner, linode, gandi, duckdns) — the Settings → Security DNS config wins |
+| `NINEDEPLOY_DNS_TOKEN` | *(empty)* | DNS provider API token (env fallback; stored encrypted when set via Settings) |
+| `NINEDEPLOY_TEMPLATES_SOURCE` | *(empty)* | Template registry source override (https URL or absolute path to a JSON bundle) — the Settings → Hub setting wins; bundled `registry.json` is the fallback. Remote sources are cached (6 h TTL) with offline fallback |
 
 ## API
 
@@ -152,7 +157,7 @@ pnpm db:studio   # open Drizzle Studio
 pnpm clean       # remove dist and node_modules
 ```
 
-CI runs typecheck, lint, build, the full test suite, and a Docker image build on every PR; releases publish the image to GHCR on tags. Integration tests (real PostgreSQL/MySQL/Redis/MongoDB via testcontainers + an end-to-end deploy pipeline run) live under `apps/server/test/integration/` and run with `RUN_INTEGRATION=1` (the deploy e2e additionally requires a host-routable Docker bridge — Linux/CI).
+CI runs typecheck, build, the full test suite (100% coverage gated), advisory lint, and a Docker image build on every PR; releases publish the image to GHCR on tags. Integration tests (real PostgreSQL/MySQL/Redis/MongoDB via testcontainers + an end-to-end deploy pipeline run) live under `apps/server/test/integration/` and run with `RUN_INTEGRATION=1` (the deploy e2e additionally requires a host-routable Docker bridge — Linux/CI).
 
 See [ARCHITECTURE.md](./ARCHITECTURE.md) for the system diagram, deploy pipeline, and design decisions.
 

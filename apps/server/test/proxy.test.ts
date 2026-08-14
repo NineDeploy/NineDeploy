@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { domains, services } from '@ninedeploy/db';
-import { ensureNetwork, ensureTraefik, getAcmeEmail, NETWORK, parseCertExpiry, readCertificates, writeDynamicConfig } from '../src/engine/proxy.js';
+import { encryptDnsToken, ensureNetwork, ensureTraefik, getAcmeEmail, getDnsConfig, NETWORK, parseCertExpiry, readCertificates, renderStaticConfig, writeDynamicConfig } from '../src/engine/proxy.js';
 
 const h = vi.hoisted(() => {
   const capture = vi.fn(async () => '');
@@ -510,5 +510,170 @@ describe("ACME / Let's Encrypt", () => {
     const yaml = readFileSync(path.join(traefikDir, 'dynamic.yml'), 'utf8');
     expect(yaml).toContain('tls: {}');
     expect(yaml).not.toContain('certResolver');
+  });
+});
+
+
+describe('DNS-01 challenge (wildcard SSL)', () => {
+  beforeEach(() => {
+    mkdirSync(traefikDir, { recursive: true });
+    rmSync(path.join(traefikDir, 'dns.env'), { force: true });
+  });
+
+  it('renders a dnsChallenge resolver when a provider+token are configured', () => {
+    const yml = renderStaticConfig('ops@example.com', { provider: 'cloudflare', token: 'tok', wildcardApex: 'example.com' });
+    expect(yml).toContain('dnsChallenge:');
+    expect(yml).toContain('provider: cloudflare');
+    expect(yml).not.toContain('httpChallenge:');
+  });
+
+  it('keeps httpChallenge without a DNS provider', () => {
+    const yml = renderStaticConfig('ops@example.com', null);
+    expect(yml).toContain('httpChallenge:');
+    expect(yml).not.toContain('dnsChallenge:');
+
+    // An unknown provider or a missing token also falls back to HTTP-01.
+    const unknown = renderStaticConfig('ops@example.com', { provider: 'nope', token: 'tok', wildcardApex: null });
+    expect(unknown).toContain('httpChallenge:');
+    const tokenless = renderStaticConfig('ops@example.com', { provider: 'cloudflare', token: null, wildcardApex: null });
+    expect(tokenless).toContain('httpChallenge:');
+  });
+
+  it('writes the provider token to a 0600 dns.env and passes --env-file to the container', async () => {
+    h.config.acmeEmail = 'ops@example.com';
+    await ensureTraefik(() => undefined, 'ops@example.com', { provider: 'cloudflare', token: 'sekrit', wildcardApex: 'example.com' });
+    const envFile = path.join(traefikDir, 'dns.env');
+    expect(readFileSync(envFile, 'utf8')).toBe('CF_DNS_API_TOKEN=sekrit\n');
+    const args = h.run.mock.calls.at(-1)![1] as string[];
+    const idx = args.indexOf('--env-file');
+    expect(idx).toBeGreaterThan(-1);
+    expect(args[idx + 1]).toBe(envFile);
+    h.config.acmeEmail = null;
+  });
+
+  it('skips the env file without a provider/token', async () => {
+    h.config.acmeEmail = 'ops@example.com';
+    await ensureTraefik(() => undefined, 'ops@example.com', null);
+    expect(existsSync(path.join(traefikDir, 'dns.env'))).toBe(false);
+    h.config.acmeEmail = null;
+  });
+
+  it('getDnsConfig prefers DB settings, decrypts the token, and normalizes the apex', async () => {
+    const { encrypt } = await import('../src/lib/crypto.js');
+    vi.stubEnv('NINEDEPLOY_MASTER_KEY', 'b'.repeat(64));
+    const values: Record<string, unknown> = {
+      dns_provider: 'hetzner',
+      dns_token_encrypted: encrypt('sekrit'),
+      wildcard_domain: '*.example.com',
+    };
+    // getDnsConfig reads the three settings in a fixed order — answer each
+    // lookup with its own value via a sequential mock.
+    const ordered = [values['dns_provider'], values['dns_token_encrypted'], values['wildcard_domain']].map((value) => ({ value }));
+    const db = {
+      query: {
+        settings: {
+          findFirst: vi.fn()
+            .mockResolvedValueOnce(ordered[0])
+            .mockResolvedValueOnce(ordered[1])
+            .mockResolvedValueOnce(ordered[2]),
+        },
+      },
+    } as never;
+    const result = await getDnsConfig(db);
+    expect(result).toEqual({ provider: 'hetzner', token: 'sekrit', wildcardApex: 'example.com' });
+    vi.unstubAllEnvs();
+  });
+
+  it('encryptDnsToken round-trips through the master-key envelope', async () => {
+    vi.stubEnv('NINEDEPLOY_MASTER_KEY', 'b'.repeat(64));
+    const { decrypt } = await import('../src/lib/crypto.js');
+    expect(decrypt(encryptDnsToken('roundtrip'))).toBe('roundtrip');
+    vi.unstubAllEnvs();
+  });
+
+  it('does not leak the env token when the DB names a different provider', async () => {
+    h.config.dnsProvider = 'cloudflare';
+    h.config.dnsToken = 'cf-env-token';
+    const db = {
+      query: {
+        settings: {
+          findFirst: vi.fn()
+            .mockResolvedValueOnce({ value: 'hetzner' }) // dns_provider (DB wins)
+            .mockResolvedValueOnce(undefined) // no stored token
+            .mockResolvedValueOnce(undefined), // no stored apex
+        },
+      },
+    } as never;
+    const result = await getDnsConfig(db);
+    expect(result.provider).toBe('hetzner');
+    expect(result.token).toBeNull(); // env token belongs to cloudflare, not hetzner
+    h.config.dnsProvider = null;
+    h.config.dnsToken = null;
+  });
+
+  it('renderDnsEnvFile returns null without provider/token or for unknown providers', async () => {
+    h.config.acmeEmail = 'ops@example.com';
+    // No token → no env file, no --env-file flag.
+    await ensureTraefik(() => undefined, 'ops@example.com', { provider: 'cloudflare', token: null, wildcardApex: null });
+    expect(existsSync(path.join(traefikDir, 'dns.env'))).toBe(false);
+    // Unknown provider → also skipped (falls back to HTTP-01).
+    await ensureTraefik(() => undefined, 'ops@example.com', { provider: 'nope', token: 'tok', wildcardApex: null });
+    expect(existsSync(path.join(traefikDir, 'dns.env'))).toBe(false);
+    h.config.acmeEmail = null;
+  });
+
+  it('getDnsConfig falls back to env vars and never throws on db errors', async () => {
+    h.config.dnsProvider = 'cloudflare';
+    h.config.dnsToken = 'env-tok';
+    h.config.wildcardDomain = '*.example.com';
+    const noRows = { query: { settings: { findFirst: async () => undefined } } } as never;
+    expect(await getDnsConfig(noRows)).toEqual({ provider: 'cloudflare', token: 'env-tok', wildcardApex: 'example.com' });
+    const broken = { query: { settings: { findFirst: async () => { throw new Error('no table'); } } } } as never;
+    expect(await getDnsConfig(broken)).toEqual({ provider: 'cloudflare', token: 'env-tok', wildcardApex: 'example.com' });
+    h.config.dnsProvider = null;
+    h.config.dnsToken = null;
+    h.config.wildcardDomain = '';
+  });
+
+  it('writes a wildcard certificate block and HostRegexp routes for wildcard hosts', async () => {
+    vi.stubEnv('NINEDEPLOY_MASTER_KEY', 'b'.repeat(64));
+    h.config.acmeEmail = 'ops@example.com';
+    h.config.dnsProvider = 'cloudflare';
+    h.config.dnsToken = 'tok';
+    h.config.wildcardDomain = 'example.com';
+
+    const db = makeDb(
+      [
+        { id: 1, serviceId: 1, hostname: '*.example.com', path: '/', ssl: true },
+        { id: 2, serviceId: 1, hostname: 'plain.example.com', path: '/', ssl: true },
+      ],
+      [{ id: 1, slug: 'web', port: 3000, runtimeId: 'web-1' }],
+    );
+    await writeDynamicConfig(db as never);
+    const yml = readFileSync(path.join(traefikDir, 'dynamic.yml'), 'utf8');
+    // Wildcard host → HostRegexp with an escaped suffix.
+    expect(yml).toContain('HostRegexp(`^[a-zA-Z0-9-]+\\.example\\.com$`)');
+    // Plain host keeps the literal matcher.
+    expect(yml).toContain('Host(`plain.example.com`)');
+    // One wildcard cert for the apex, apex as SAN.
+    expect(yml).toContain('main: "*.example.com"');
+    expect(yml).toContain('- "example.com"');
+
+    h.config.acmeEmail = null;
+    h.config.dnsProvider = null;
+    h.config.dnsToken = null;
+    h.config.wildcardDomain = '';
+    vi.unstubAllEnvs();
+  });
+
+  it('omits the wildcard block without DNS-01 readiness', async () => {
+    h.config.acmeEmail = 'ops@example.com';
+    h.config.dnsProvider = null; // no provider → HTTP-01 only
+    h.config.wildcardDomain = 'example.com';
+    await writeDynamicConfig(makeDb([], []) as never);
+    const yml = readFileSync(path.join(traefikDir, 'dynamic.yml'), 'utf8');
+    expect(yml).not.toContain('main: "*.example.com"');
+    h.config.acmeEmail = null;
+    h.config.wildcardDomain = '';
   });
 });

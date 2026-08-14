@@ -91,6 +91,27 @@ describe('alert routes', () => {
     expect(res.statusCode).toBe(400);
   });
 
+  it('rejects a service-scoped cert-expiry rule (host-wide metric)', async () => {
+    const app = await buildTestApp({ db: createFakeDb({ insert: { alert_rules: [ruleRow({ id: 6, metric: 'cert-expiry' })] } }) });
+    await app.register(alertRoutes);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/',
+      headers: asUser(),
+      payload: { name: 'cert', metric: 'cert-expiry', threshold: 14, serviceId: 3 },
+    });
+    expect(res.statusCode).toBe(400);
+    // Host-wide cert-expiry stays valid.
+    const okRes = await app.inject({
+      method: 'POST',
+      url: '/',
+      headers: asUser(),
+      payload: { name: 'cert-host', metric: 'cert-expiry', threshold: 14 },
+    });
+    expect(okRes.statusCode).toBe(200);
+    expect(okRes.statusCode).toBe(200);
+  });
+
   it('forbids members from creating rules', async () => {
     const app = await buildTestApp({ db: createFakeDb() });
     await app.register(alertRoutes);

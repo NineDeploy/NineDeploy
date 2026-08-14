@@ -21,6 +21,7 @@ const TYPES = [
 const EVENT_GROUPS = [
   { id: 'deploy', label: 'Deployments', emoji: '🚀', desc: 'Deploy, rollback, build logs' },
   { id: 'service', label: 'Services', emoji: '🖥️', desc: 'Create, delete, stop, start' },
+  { id: 'alert', label: 'Alerts', emoji: '🔔', desc: 'Metric threshold fired / recovered' },
   { id: 'database', label: 'Databases', emoji: '🗄️', desc: 'Create, delete, backup' },
   { id: 'domain', label: 'Domains', emoji: '🌐', desc: 'Add, SSL toggle' },
   { id: 'backup', label: 'Backups', emoji: '💾', desc: 'Create, restore' },
@@ -36,7 +37,7 @@ export function NotificationWizard({ onClose }: { onClose: () => void }) {
   const [type, setType] = useState<typeof TYPES[number]['id'] | null>(null);
   const [name, setName] = useState('');
   const [target, setTarget] = useState('');
-  const [selectedEvents, setSelectedEvents] = useState<Set<string>>(new Set(['deploy', 'service']));
+  const [selectedEvents, setSelectedEvents] = useState<Set<string>>(new Set(['deploy', 'service', 'alert']));
   const [testing, setTesting] = useState(false);
   const [tested, setTested] = useState<'ok' | 'fail' | null>(null);
 

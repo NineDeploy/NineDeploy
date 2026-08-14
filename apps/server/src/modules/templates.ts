@@ -1,7 +1,7 @@
 import { deployments, envVars, services } from '@ninedeploy/db';
 import { audit } from "../lib/audit.js";
 import type { FastifyPluginAsync } from 'fastify';
-import { TEMPLATES, type Template } from '../templates/registry.js';
+import { getTemplates, type Template } from '../templates/registry.js';
 import { encrypt } from '../lib/crypto.js';
 import { notFound } from '../lib/errors.js';
 import { slugify } from '../lib/slug.js';
@@ -12,16 +12,16 @@ const summary = (t: Template) => ({ id: t.id, name: t.name, tagline: t.tagline, 
 export const templateRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('onRequest', app.authenticate);
 
-  app.get('/', async () => TEMPLATES.map(summary));
+  app.get('/', async () => (await getTemplates(app.db)).map(summary));
 
   app.get('/:id', async (req) => {
-    const t = TEMPLATES.find((x) => x.id === (req.params as { id: string }).id);
+    const t = (await getTemplates(app.db)).find((x) => x.id === (req.params as { id: string }).id);
     if (!t) throw notFound('Template not found');
     return t;
   });
 
   app.post('/:id/deploy', async (req) => {
-    const t = TEMPLATES.find((x) => x.id === (req.params as { id: string }).id);
+    const t = (await getTemplates(app.db)).find((x) => x.id === (req.params as { id: string }).id);
     if (!t) throw notFound('Template not found');
 
     // Unique slug to allow deploying the same template multiple times.

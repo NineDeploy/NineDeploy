@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  alertRuleCreate,
+  alertRulePatch,
   apiToken,
   attachment,
   backup,
   backupWithDb,
+  notificationChannelCreate,
   containerStat,
   createApiToken,
   createAttachment,
@@ -619,6 +622,31 @@ describe('service', () => {
       });
       expect(data?.containers).toBe(2);
       bad(dockerResources, { network: 'ninedeploy', containers: 2, volumes: 1, imagesSummary: { total: '10', active: '5', size: '1GB' }, images: [] });
+    });
+  });
+
+  describe('management (settings/alerts/channels)', () => {
+    it('alertRuleCreate accepts host-wide and service-scoped metric rules', () => {
+      ok(alertRuleCreate, { name: 'cpu', metric: 'cpu', threshold: 80 });
+      ok(alertRuleCreate, { name: 'svc', metric: 'memory', threshold: 512, serviceId: 7, operator: '<', durationWindows: 3, enabled: false });
+    });
+
+    it('alertRuleCreate rejects service-scoped cert-expiry rules', () => {
+      bad(alertRuleCreate, { name: 'cert', metric: 'cert-expiry', threshold: 14, serviceId: 3 });
+      ok(alertRuleCreate, { name: 'cert', metric: 'cert-expiry', threshold: 14 });
+    });
+
+    it('alertRulePatch rejects converting a rule into service-scoped cert-expiry', () => {
+      ok(alertRulePatch, { metric: 'cert-expiry' });
+      ok(alertRulePatch, { metric: 'memory', serviceId: 2 });
+      bad(alertRulePatch, { metric: 'cert-expiry', serviceId: 2 });
+    });
+
+    it('notificationType accepts every channel type', () => {
+      for (const type of ['telegram', 'webhook', 'discord', 'slack', 'ntfy', 'email']) {
+        ok(notificationChannelCreate, { name: 'n', type, target: 't' });
+      }
+      bad(notificationChannelCreate, { name: 'n', type: 'pigeon', target: 't' });
     });
   });
 

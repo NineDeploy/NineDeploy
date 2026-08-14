@@ -76,7 +76,7 @@ ninedeploy/
 │   │   └── test/integration/      testcontainers (real PostgreSQL), RUN_INTEGRATION=1
 │   │
 │   ├── web/                       React 19 + Vite 8 + Tailwind v4
-│   │   ├── src/routes/            15 pages (Dashboard, Hub, Services, Databases,
+│   │   ├── src/routes/            17 pages (Dashboard, Hub, Services, Databases,
 │   │   │                          Domains, Tunnels, Volumes, Topology, Backups,
 │   │   │                          Sources, Users, Monitoring, Settings, About,
 │   │   │                          Login)
@@ -104,7 +104,7 @@ ninedeploy/
 └── ARCHITECTURE.md                This file
 ```
 
-## Database schema (20 tables)
+## Database schema (21 tables)
 
 ```
 users              id, email, password_hash, name, role(admin|member),
@@ -155,7 +155,7 @@ alert_state            rule_id (unique), status(ok|breaching|firing), breach_sin
 | backups | /backups | list all, delete, download |
 | env | /services/:id/env | env var CRUD |
 | hooks | /hooks + /services | receive (HMAC + replay dedup), manage CRUD |
-| templates | /templates | list, detail, deploy |
+| templates | /templates | list, detail, deploy — served from a schema-validated registry bundle (bundled JSON by default; DB/env source override with 6 h cached remote fetch + offline fallback) |
 | topology | /topology | graph (services+DBs+domains+attachments) |
 | stats | /stats + /services/:id/metrics | live snapshot, time series |
 | dashboard | /dashboard | aggregate stats + health probes + recent |
@@ -163,7 +163,7 @@ alert_state            rule_id (unique), status(ok|breaching|firing), breach_sin
 | tunnels | /tunnels | CRUD (cloudflared) — admin-only |
 | volumes | /volumes | inventory; delete — admin-only, audited |
 | system | /system | resources, prune, export, import (tar-slip guarded, rollback) — admin-only |
-| settings | /settings | instance flags: allow-registration toggle, ACME email — admin-only, audited |
+| settings | /settings | instance flags: allow-registration toggle, ACME email, template registry source, DNS-01 challenge (wildcard SSL) — admin-only, audited |
 | users | /users | list, role change, password reset, delete — admin-only |
 | notifications | /notifications | channels CRUD, test, log — admin-only |
 | about | /about | version, changelog, tech stack, stats |
@@ -180,8 +180,8 @@ alert_state            rule_id (unique), status(ok|breaching|firing), breach_sin
 | db | Decorates `fastify.db` with Drizzle; enables `PRAGMA foreign_keys`; **applies pending migrations via the runtime migrator** (idempotent startup — no drizzle-kit in production) |
 | auth | `authenticate` pre-handler (JWT + API token, role fetched fresh per request) + `requireAdmin` guard |
 | rateLimit | Global + per-route IP rate limiting (auth/setup/webhook tighter) |
-| worker | Polls queued deployments, claims atomically (rowsAffected-verified), runs the pipeline one at a time, sweeps stale `building` rows on boot |
-| traefik | Ensures network + Traefik container (config **directory** bind mount) + writes dynamic config atomically |
+| worker | Polls queued deployments and runs the pipeline with N parallel slots (`NINEDEPLOY_DEPLOY_CONCURRENCY`, default 1). Claims are atomic (queued→building UPDATE verified via rowsAffected) and skip services that already have a `building` deployment — so slots (or any future second process sharing the DB) can deploy different services simultaneously but never double-run or race one service. Sweeps stale `building` rows to `failed` on boot |
+| traefik | Ensures network + Traefik container (config **directory** bind mount) + writes dynamic config atomically; ACME uses DNS-01 (wildcard certs) when a DNS provider+token are configured, else HTTP-01 |
 | collector | Samples container stats every 30s → metrics table; prunes metrics older than 24h; feeds the alert evaluator (cpu %, memory MiB, host, cert-expiry days) |
 | backupScheduler | Daily database backups (`scheduled` scope), keeps last 7 per DB — never prunes manual backups |
 | housekeeping | Hourly retention: deploy logs (30d), audit log (90d), notification log (30d), dangling Docker images |

@@ -24,7 +24,7 @@ describe('version', () => {
     expect(ABOUT.changelog).toBe(CHANGELOG);
     expect(CHANGELOG.length).toBeGreaterThan(0);
     expect(CHANGELOG[0]?.version).toBe(VERSION);
-    expect(CHANGELOG[0]?.title).toBe('Alerting, notification channels, CLI parity');
+    expect(CHANGELOG[0]?.title).toBe('Initial pre-release');
     expect(CHANGELOG[0]?.changes.length).toBeGreaterThan(0);
   });
 

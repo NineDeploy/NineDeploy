@@ -414,6 +414,26 @@ describe('createClient', () => {
     });
   });
 
+  describe('settings (dns challenge)', () => {
+    it('saves the DNS-01 challenge config', async () => {
+      const { fetchMock, calls } = makeFetch(() => ok({}));
+      const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
+      await client.settings.setDns({ provider: 'cloudflare', token: 'tok', wildcardApex: 'example.com' });
+      expect(last(calls)).toMatchObject({ url: '/v1/settings/dns', init: { method: 'PUT' } });
+      expect(JSON.parse(last(calls).init.body ?? '{}')).toEqual({ provider: 'cloudflare', token: 'tok', wildcardApex: 'example.com' });
+    });
+  });
+
+  describe('settings (templates source)', () => {
+    it('saves the template registry source', async () => {
+      const { fetchMock, calls } = makeFetch(() => ok({}));
+      const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
+      await client.settings.setTemplatesSource('https://registry.example.com/r.json');
+      expect(last(calls)).toMatchObject({ url: '/v1/settings/templates-source', init: { method: 'PUT' } });
+      expect(JSON.parse(last(calls).init.body ?? '{}')).toEqual({ source: 'https://registry.example.com/r.json' });
+    });
+  });
+
   describe('settings (acme email)', () => {
     it('saves the ACME email', async () => {
       const { fetchMock, calls } = makeFetch(() => ok({}));

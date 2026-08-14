@@ -25,6 +25,13 @@ services:
       NINEDEPLOY_DATA_DIR: /data
       NINEDEPLOY_DB_PATH: /data/ninedeploy.db
       NINEDEPLOY_PUBLIC_URL: http://localhost:3000
+      # Optional (see .env.example for details):
+      #   NINEDEPLOY_ACME_EMAIL: admin@example.com
+      #   NINEDEPLOY_DNS_PROVIDER: cloudflare
+      #   NINEDEPLOY_DNS_TOKEN: <api-token>
+      #   NINEDEPLOY_WILDCARD_DOMAIN: example.com
+      #   NINEDEPLOY_TEMPLATES_SOURCE: https://example.com/registry.json
+      #   NINEDEPLOY_DEPLOY_CONCURRENCY: "1"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ninedeploy-data:/data

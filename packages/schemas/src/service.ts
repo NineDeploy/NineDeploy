@@ -283,6 +283,7 @@ export const template = z.object({
   volumeMount: z.string().nullable().optional(),
   env: z.array(z.object({ key: z.string(), value: z.string(), secret: z.boolean().optional() })).optional(),
   website: z.string().optional(),
+  docs: z.string().optional(),
   featured: z.boolean().optional(),
 });
 export type Template = z.infer<typeof template>;

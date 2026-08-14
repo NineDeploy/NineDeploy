@@ -36,9 +36,12 @@ export const config = {
     accessTtl: env.NINEDEPLOY_JWT_ACCESS_TTL,
     refreshTtl: env.NINEDEPLOY_JWT_REFRESH_TTL,
   },
-  version: process.env['npm_package_version'] ?? '0.0.0',
   wildcardDomain: process.env['NINEDEPLOY_WILDCARD_DOMAIN'] ?? '',
   // When set, Traefik's ACME resolver issues real Let's Encrypt certificates
   // for domains with the SSL toggle enabled (null disables automatic HTTPS).
   acmeEmail: env.NINEDEPLOY_ACME_EMAIL ?? null,
+  templatesSource: env.NINEDEPLOY_TEMPLATES_SOURCE ?? null,
+  deployConcurrency: env.NINEDEPLOY_DEPLOY_CONCURRENCY,
+  dnsProvider: env.NINEDEPLOY_DNS_PROVIDER ?? null,
+  dnsToken: env.NINEDEPLOY_DNS_TOKEN ?? null,
 } as const;
