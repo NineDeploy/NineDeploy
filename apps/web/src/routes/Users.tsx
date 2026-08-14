@@ -1,12 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Shield, Trash2, Users as UsersIcon } from 'lucide-react';
+import { KeyRound, Shield, Trash2, Users as UsersIcon } from 'lucide-react';
+import { useState } from 'react';
 import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.js';
+import { useToast } from '../components/Toast.js';
 import { Card, EmptyState, Skeleton, cn } from '../components/ui.js';
 
 export function Users() {
   const qc = useQueryClient();
   const { user: me } = useAuth();
+  const { toast } = useToast();
   const list = useQuery({ queryKey: ['users'], queryFn: () => api.users.list() });
   const setRole = useMutation({
     mutationFn: ({ id, role }: { id: number; role: 'admin' | 'member' }) => api.users.setRole(id, role),
@@ -16,6 +19,27 @@ export function Users() {
     mutationFn: (id: number) => api.users.remove(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
   });
+
+  // ── Admin password reset ────────────────────────────────────────────────
+  const [resetFor, setResetFor] = useState<number | null>(null);
+  const [resetPw, setResetPw] = useState('');
+  const resetPassword = useMutation({
+    mutationFn: ({ id, newPassword }: { id: number; newPassword: string }) => api.users.resetPassword(id, { newPassword }),
+    onSuccess: () => {
+      setResetFor(null);
+      setResetPw('');
+      toast('Password reset — the user must sign in again', 'success');
+    },
+    onError: () => toast('Password reset failed', 'error'),
+  });
+  const submitReset = () => {
+    if (resetPw.length < 8) {
+      toast('Password must be at least 8 characters', 'error');
+      return;
+    }
+    // The Save button only renders while a reset row is open, so resetFor is set.
+    resetPassword.mutate({ id: resetFor as number, newPassword: resetPw });
+  };
 
   return (
     <div className="max-w-3xl">
@@ -74,15 +98,53 @@ export function Users() {
                       </button>
                     </td>
                     <td className="px-5 py-3 text-right">
-                      {!isMe && (
-                        <button
-                          onClick={() => confirm(`Delete user ${u.email}?`) && remove.mutate(u.id)}
-                          className="text-slate-600 transition hover:text-rose-400"
-                          title="Delete user"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      )}
+                      <div className="flex items-center justify-end gap-3">
+                        {!isMe && (
+                          <>
+                            {resetFor === u.id ? (
+                              <span className="inline-flex items-center gap-1.5">
+                                <input
+                                  type="password"
+                                  value={resetPw}
+                                  onChange={(e) => setResetPw(e.target.value)}
+                                  placeholder="new password (min 8)"
+                                  className="w-44 rounded-lg border border-slate-700 bg-slate-900/60 px-2 py-1 text-xs outline-none focus:border-indigo-500"
+                                  autoFocus
+                                />
+                                <button
+                                  onClick={submitReset}
+                                  disabled={resetPassword.isPending}
+                                  className="text-xs font-medium text-emerald-400 transition hover:brightness-125"
+                                  title="Apply the new password"
+                                >
+                                  {resetPassword.isPending ? 'Saving…' : 'Save'}
+                                </button>
+                                <button
+                                  onClick={() => { setResetFor(null); setResetPw(''); }}
+                                  className="text-xs text-slate-500 transition hover:text-slate-300"
+                                >
+                                  Cancel
+                                </button>
+                              </span>
+                            ) : (
+                              <button
+                                onClick={() => { setResetFor(u.id); setResetPw(''); }}
+                                className="text-slate-600 transition hover:text-amber-400"
+                                title="Reset password (signs the user out everywhere)"
+                              >
+                                <KeyRound size={14} />
+                              </button>
+                            )}
+                            <button
+                              onClick={() => confirm(`Delete user ${u.email}?`) && remove.mutate(u.id)}
+                              className="text-slate-600 transition hover:text-rose-400"
+                              title="Delete user"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );

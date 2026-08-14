@@ -90,4 +90,72 @@ describe('Users', () => {
     fireEvent.click((await screen.findAllByTitle('Delete user'))[0]!);
     expect(api.users.remove).not.toHaveBeenCalled();
   });
+
+  it('resets another user password via the inline form', async () => {
+    mockOf(api.users.list).mockResolvedValue(users as never);
+    mockOf(api.users.resetPassword).mockResolvedValue({ ok: true } as never);
+    renderWithProviders(<Users />);
+
+    fireEvent.click((await screen.findAllByTitle(/Reset password/))[0]!);
+    const input = await screen.findByPlaceholderText('new password (min 8)');
+    fireEvent.change(input, { target: { value: 'fresh-pass-123' } });
+    fireEvent.click(screen.getByText('Save'));
+
+    await waitFor(() => expect(api.users.resetPassword).toHaveBeenCalledWith(2, { newPassword: 'fresh-pass-123' }));
+    // The inline form closes after success.
+    await waitFor(() => expect(screen.queryByPlaceholderText('new password (min 8)')).not.toBeInTheDocument());
+  });
+
+  it('rejects a too-short reset password without calling the API', async () => {
+    mockOf(api.users.list).mockResolvedValue(users as never);
+    renderWithProviders(<Users />);
+
+    fireEvent.click((await screen.findAllByTitle(/Reset password/))[0]!);
+    const input = await screen.findByPlaceholderText('new password (min 8)');
+    fireEvent.change(input, { target: { value: 'short' } });
+    fireEvent.click(screen.getByText('Save'));
+
+    expect(api.users.resetPassword).not.toHaveBeenCalled();
+  });
+
+  it('cancels the inline reset form without calling the API', async () => {
+    mockOf(api.users.list).mockResolvedValue(users as never);
+    renderWithProviders(<Users />);
+
+    fireEvent.click((await screen.findAllByTitle(/Reset password/))[0]!);
+    fireEvent.click(screen.getByText('Cancel'));
+    expect(screen.queryByPlaceholderText('new password (min 8)')).not.toBeInTheDocument();
+    expect(api.users.resetPassword).not.toHaveBeenCalled();
+  });
+
+  it('shows the pending state while the reset is in flight', async () => {
+    mockOf(api.users.list).mockResolvedValue(users as never);
+    let resolveReset!: (v: unknown) => void;
+    mockOf(api.users.resetPassword).mockReturnValue(
+      new Promise((r) => {
+        resolveReset = r;
+      }) as never,
+    );
+    renderWithProviders(<Users />);
+
+    fireEvent.click((await screen.findAllByTitle(/Reset password/))[0]!);
+    fireEvent.change(screen.getByPlaceholderText('new password (min 8)'), { target: { value: 'fresh-pass-123' } });
+    fireEvent.click(screen.getByText('Save'));
+
+    await waitFor(() => expect(screen.getByText('Saving…')).toBeInTheDocument());
+    resolveReset({ ok: true });
+    await waitFor(() => expect(screen.queryByText('Saving…')).not.toBeInTheDocument());
+  });
+
+  it('reports a failed reset as an error toast and keeps the form open', async () => {
+    mockOf(api.users.list).mockResolvedValue(users as never);
+    mockOf(api.users.resetPassword).mockRejectedValue(new Error('500'));
+    renderWithProviders(<Users />);
+
+    fireEvent.click((await screen.findAllByTitle(/Reset password/))[0]!);
+    fireEvent.change(screen.getByPlaceholderText('new password (min 8)'), { target: { value: 'fresh-pass-123' } });
+    fireEvent.click(screen.getByText('Save'));
+
+    await waitFor(() => expect(screen.queryByPlaceholderText('new password (min 8)')).toBeInTheDocument());
+  });
 });

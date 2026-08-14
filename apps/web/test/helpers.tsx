@@ -34,6 +34,7 @@ export function createFakeApiModule() {
       login: vi.fn(),
       refresh: vi.fn(),
       logout: vi.fn(),
+      changePassword: vi.fn(),
       me: vi.fn(),
       tokens: { create: vi.fn(), list: vi.fn(), remove: vi.fn() },
     },
@@ -56,7 +57,7 @@ export function createFakeApiModule() {
     system: { resources: vi.fn(), pruneImages: vi.fn(), exportUrl: vi.fn() },
     tunnels: { list: vi.fn(), create: vi.fn(), remove: vi.fn() },
     activity: { list: vi.fn() },
-    users: { list: vi.fn(), setRole: vi.fn(), remove: vi.fn() },
+    users: { list: vi.fn(), setRole: vi.fn(), remove: vi.fn(), resetPassword: vi.fn() },
     about: { get: vi.fn() },
     notifications: {
       listChannels: vi.fn(),
@@ -91,6 +92,8 @@ export function createFakeApiModule() {
     api,
     getToken: vi.fn(() => 'test-token'),
     setToken: vi.fn(),
+    setSessionTokens: vi.fn(),
+    clearTokens: vi.fn(),
     deployLogsWsUrl: vi.fn(() => 'ws://localhost/v1/logs'),
   };
 }

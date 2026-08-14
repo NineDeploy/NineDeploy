@@ -269,4 +269,93 @@ describe('Settings', () => {
     await user.click(screen.getByRole('button', { name: 'close wizard' }));
     expect(screen.queryByTestId('notif-wizard')).not.toBeInTheDocument();
   });
+
+  it('changes the password and persists the fresh token pair', async () => {
+    const user = userEvent.setup();
+    mockOf(api.auth.changePassword).mockResolvedValue({
+      user: { id: 1 },
+      tokens: { accessToken: 'new-acc', refreshToken: 'new-ref', expiresIn: 900 },
+    } as never);
+    renderWithProviders(<Settings />);
+
+    await user.type(await screen.findByLabelText('Current password'), 'old-pass-123');
+    await user.type(screen.getByLabelText('New password'), 'new-pass-456');
+    await user.type(screen.getByLabelText('Confirm new password'), 'new-pass-456');
+    await user.click(screen.getByRole('button', { name: 'Change password' }));
+
+    await waitFor(() =>
+      expect(api.auth.changePassword).toHaveBeenCalledWith({
+        currentPassword: 'old-pass-123',
+        newPassword: 'new-pass-456',
+      }),
+    );
+    expect(toastSpy.toast).toHaveBeenCalledWith(
+      expect.stringContaining('other sessions signed out'),
+      'success',
+    );
+  });
+
+  it('rejects mismatched confirmation without calling the API', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<Settings />);
+
+    await user.type(await screen.findByLabelText('Current password'), 'old-pass-123');
+    await user.type(screen.getByLabelText('New password'), 'new-pass-456');
+    await user.type(screen.getByLabelText('Confirm new password'), 'different-789');
+    await user.click(screen.getByRole('button', { name: 'Change password' }));
+
+    expect(api.auth.changePassword).not.toHaveBeenCalled();
+    expect(toastSpy.toast).toHaveBeenCalledWith('New passwords do not match', 'error');
+  });
+
+  it('rejects a too-short new password without calling the API', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<Settings />);
+
+    await user.type(await screen.findByLabelText('Current password'), 'old-pass-123');
+    await user.type(screen.getByLabelText('New password'), 'short');
+    await user.type(screen.getByLabelText('Confirm new password'), 'short');
+    await user.click(screen.getByRole('button', { name: 'Change password' }));
+
+    expect(api.auth.changePassword).not.toHaveBeenCalled();
+    expect(toastSpy.toast).toHaveBeenCalledWith('New password must be at least 8 characters', 'error');
+  });
+
+  it('shows the pending state while the password change is in flight', async () => {
+    const user = userEvent.setup();
+    let resolveChange!: (v: unknown) => void;
+    mockOf(api.auth.changePassword).mockReturnValue(
+      new Promise((r) => {
+        resolveChange = r;
+      }) as never,
+    );
+    renderWithProviders(<Settings />);
+
+    await user.type(await screen.findByLabelText('Current password'), 'old-pass-123');
+    await user.type(screen.getByLabelText('New password'), 'new-pass-456');
+    await user.type(screen.getByLabelText('Confirm new password'), 'new-pass-456');
+    await user.click(screen.getByRole('button', { name: 'Change password' }));
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Changing…' })).toBeDisabled());
+    resolveChange({ tokens: { accessToken: 'a', refreshToken: 'r', expiresIn: 900 } });
+    // Back to idle (and disabled again — the fields were cleared on success).
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Change password' })).toBeDisabled(),
+    );
+  });
+
+  it('reports a failed password change as an error toast', async () => {
+    const user = userEvent.setup();
+    mockOf(api.auth.changePassword).mockRejectedValue(new Error('401'));
+    renderWithProviders(<Settings />);
+
+    await user.type(await screen.findByLabelText('Current password'), 'wrong-old');
+    await user.type(screen.getByLabelText('New password'), 'new-pass-456');
+    await user.type(screen.getByLabelText('Confirm new password'), 'new-pass-456');
+    await user.click(screen.getByRole('button', { name: 'Change password' }));
+
+    await waitFor(() =>
+      expect(toastSpy.toast).toHaveBeenCalledWith('Password change failed', 'error'),
+    );
+  });
 });
