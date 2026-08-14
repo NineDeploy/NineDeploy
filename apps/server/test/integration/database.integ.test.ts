@@ -32,7 +32,9 @@ describe.skipIf(!ENABLED)('database backup/restore (real PostgreSQL container)',
     container = await new PostgreSqlContainer('postgres:16')
       .withUsername('nine') // matches ENGINES.postgres.username()
       .withDatabase('app') // matches ENGINES.postgres.dbName()
-      .withPassword(' integ-test-pw ')
+      // NOTE: no leading/trailing spaces — the image's pg_isready health check
+      // authenticates with this password and fails to become healthy otherwise.
+      .withPassword('integ-test-pw!9')
       .start();
     db = { engine: 'postgres', containerName: container.getName(), passwordEncrypted: '' };
     dumpFile = path.join(os.tmpdir(), `nd-integ-${process.pid}-${Date.now()}.sql`);
