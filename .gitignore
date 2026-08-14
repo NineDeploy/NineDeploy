@@ -45,3 +45,5 @@ backups
 !/.wrongstack/project.json
 
 .zcode/
+# test coverage artifacts
+coverage

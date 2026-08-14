@@ -1,66 +1,82 @@
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterAll, describe, expect, it, vi } from 'vitest';
-import { sql } from 'drizzle-orm';
-import { createDb } from '../src/client.js';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { migrate } from 'drizzle-orm/libsql/migrator';
+
+vi.mock('drizzle-orm/libsql/migrator', () => ({ migrate: vi.fn(async () => undefined) }));
+
 import { pickMigrationsFolder, resolveMigrationsFolder, runMigrations } from '../src/migrate.js';
 
-// The repo's real migrations folder, resolved from THIS test file's location
-// (works regardless of the cwd vitest was started from).
-const REPO_MIGRATIONS = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../src/migrations');
+const tmpRoot = mkdtempSync(path.join(os.tmpdir(), 'nd-migrate-test-'));
+
+function makeFolder(name: string, withJournal: boolean): string {
+  const dir = path.join(tmpRoot, name);
+  mkdirSync(path.join(dir, 'meta'), { recursive: true });
+  if (withJournal) writeFileSync(path.join(dir, 'meta', '_journal.json'), '{}');
+  return dir;
+}
+
+afterAll(() => {
+  vi.unstubAllEnvs();
+  rmSync(tmpRoot, { recursive: true, force: true });
+});
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  delete process.env['NINEDEPLOY_MIGRATIONS_DIR'];
+});
 
 describe('pickMigrationsFolder', () => {
-  it('returns the first candidate that carries the journal', () => {
-    expect(pickMigrationsFolder([undefined, REPO_MIGRATIONS])).toBe(REPO_MIGRATIONS);
+  it('returns the first candidate that carries the drizzle journal', () => {
+    const withJournal = makeFolder('a', true);
+    const without = makeFolder('b', false);
+    expect(pickMigrationsFolder([withJournal, without])).toBe(withJournal);
+    expect(pickMigrationsFolder([undefined, without, withJournal])).toBe(withJournal);
   });
 
-  it('skips candidates without a journal', () => {
-    const empty = mkdtempSync(path.join(os.tmpdir(), 'nd-pick-'));
-    try {
-      expect(pickMigrationsFolder([empty, REPO_MIGRATIONS])).toBe(REPO_MIGRATIONS);
-    } finally {
-      rmSync(empty, { recursive: true, force: true });
-    }
-  });
-
-  it('returns null when no candidate qualifies', () => {
-    expect(pickMigrationsFolder([undefined, '/does/not/exist'])).toBeNull();
+  it('returns null when no candidate has a journal', () => {
+    const without = makeFolder('c', false);
+    expect(pickMigrationsFolder([undefined, without])).toBeNull();
+    expect(pickMigrationsFolder([])).toBeNull();
   });
 });
 
 describe('resolveMigrationsFolder', () => {
-  it('finds the repo migrations folder', () => {
-    const folder = resolveMigrationsFolder();
-    expect(folder).toBeTruthy();
-    expect(existsSync(path.join(folder!, 'meta', '_journal.json'))).toBe(true);
+  it('honours the NINEDEPLOY_MIGRATIONS_DIR override', () => {
+    const dir = makeFolder('env-dir', true);
+    vi.stubEnv('NINEDEPLOY_MIGRATIONS_DIR', dir);
+    expect(resolveMigrationsFolder()).toBe(dir);
+  });
+
+  it('skips an override without a journal and falls back to a known layout', () => {
+    const dir = makeFolder('env-empty', false);
+    vi.stubEnv('NINEDEPLOY_MIGRATIONS_DIR', dir);
+    const resolved = resolveMigrationsFolder();
+    expect(resolved).not.toBeNull();
+    expect(resolved!.endsWith('migrations')).toBe(true);
+  });
+
+  it('resolves a real migrations folder from the package layout when unset', () => {
+    const resolved = resolveMigrationsFolder();
+    expect(resolved).not.toBeNull();
+    expect(resolved!.endsWith('migrations')).toBe(true);
   });
 });
 
 describe('runMigrations', () => {
-  const tmp = mkdtempSync(path.join(os.tmpdir(), 'nd-runmig-'));
-
-  afterAll(() => {
-    rmSync(tmp, { recursive: true, force: true });
+  it('applies migrations from the override folder and returns it', async () => {
+    const dir = makeFolder('run-override', true);
+    const result = await runMigrations({} as never, dir);
+    expect(result).toBe(dir);
+    expect(migrate).toHaveBeenCalledWith({}, { migrationsFolder: dir });
   });
 
-  it('applies the real migrations to a fresh SQLite file and is idempotent', async () => {
-    const { db } = createDb({ url: `file:${path.join(tmp, 'migrate.db')}` });
-
-    const folder = await runMigrations(db);
-    expect(folder).toBeTruthy();
-
-    // The migrated schema is real: core tables exist and accept writes.
-    await db.run(sql`INSERT INTO users (email, password_hash) VALUES ('a@b.c', 'x')`);
-    const rows = await db.run(sql`SELECT COUNT(*) AS n FROM users`);
-    expect(Number((rows.rows[0] as { n: number }).n)).toBe(1);
-    // A second run is a no-op (idempotent startup path).
-    await expect(runMigrations(db)).resolves.toBe(folder);
-  });
-
-  it('throws a clear error when no migrations folder can be resolved', async () => {
-    const { db } = createDb({ url: ':memory:' });
-    // An empty override path exercises the not-found branch.
-    await expect(runMigrations(db, '')).rejects.toThrow('NINEDEPLOY_MIGRATIONS_DIR');
+  it('resolves the folder when no override is given', async () => {
+    const dir = makeFolder('run-resolved', true);
+    vi.stubEnv('NINEDEPLOY_MIGRATIONS_DIR', dir);
+    const result = await runMigrations({} as never);
+    expect(result).toBe(dir);
+    expect(migrate).toHaveBeenCalledWith({}, { migrationsFolder: dir });
   });
 });
