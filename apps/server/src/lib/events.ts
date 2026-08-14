@@ -12,9 +12,19 @@ export interface AppEvent {
  * here, and the /v1/events WebSocket subscribes to push live updates to the UI.
  */
 class EventBus extends EventEmitter {
-  private seq = 0;
+  // Timestamp-based so ids stay strictly increasing ACROSS restarts — clients
+  // deduping by id would otherwise drop (or misorder) post-restart events when
+  // the counter reset to 1.
+  private seq = Date.now();
   private recent: AppEvent[] = [];
   private readonly MAX_RECENT = 100;
+
+  constructor() {
+    super();
+    // Many concurrent dashboard/event-drawer sockets are normal; the default
+    // ceiling of 10 would flood the logs with MaxListenersExceededWarning.
+    this.setMaxListeners(0); // 0 = unlimited
+  }
 
   publish(action: string, entity?: string | null): void {
     const event: AppEvent = { id: ++this.seq, action, entity: entity ?? null, ts: new Date().toISOString() };

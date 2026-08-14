@@ -2,10 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { eventBus } from '../../src/lib/events.js';
 
 describe('eventBus', () => {
-  it('publishes events to subscribers with incrementing ids', () => {
+  it('publishes events to subscribers with strictly increasing ids', () => {
     const seen: Array<{ id: number; action: string }> = [];
     const unsub = eventBus.subscribe((e) => seen.push(e));
-    const before = eventBus.backlog().length;
 
     eventBus.publish('service.created', 'web');
     eventBus.publish('deploy.started');
@@ -13,8 +12,9 @@ describe('eventBus', () => {
     expect(seen).toHaveLength(2);
     expect(seen[0]).toMatchObject({ action: 'service.created', entity: 'web' });
     expect(seen[1]).toMatchObject({ action: 'deploy.started', entity: null });
-    expect(seen[0]!.id).toBe(before + 1);
-    expect(seen[1]!.id).toBe(before + 2);
+    // Timestamp-based ids: strictly increasing (stable across restarts).
+    expect(seen[1]!.id).toBeGreaterThan(seen[0]!.id);
+    expect(seen[0]!.id).toBeGreaterThan(Date.now() - 60_000);
     unsub();
   });
 

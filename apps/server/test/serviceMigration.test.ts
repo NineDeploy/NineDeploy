@@ -87,6 +87,24 @@ describe('service migration routes', () => {
       expect(res.json().error.message).toContain('Invalid bundle');
     });
 
+    it('rejects a bundle with an unknown service type', async () => {
+      const app = await buildApp(createFakeDb());
+      const res = await app.inject({
+        method: 'POST', url: '/services/import', headers: asUser(),
+        payload: { ...bundle, service: { ...bundle.service, type: 'k8s' } },
+      });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error.message).toContain('service.type');
+    });
+
+    it('imports a bundle whose optional arrays are missing (defaults to empty)', async () => {
+      const { envVars: _e, domains: _d, webhooks: _w, attachments: _a, buildConfig: _b, ...bare } = bundle;
+      const app = await buildApp(createFakeDb({ insert: { services: () => [svcRow({ id: 9 })] } }));
+      const res = await app.inject({ method: 'POST', url: '/services/import', headers: asUser(), payload: bare });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().ok).toBe(true);
+    });
+
     it('imports a full bundle and recreates every entity', async () => {
       const inserted: string[] = [];
       const app = await buildApp(

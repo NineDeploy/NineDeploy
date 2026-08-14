@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import {
   buildConfigs, databaseAttachments, databases, domains, envVars, services, webhooks,
 } from '@ninedeploy/db';
@@ -102,8 +102,22 @@ export const serviceMigrationRoutes: FastifyPluginAsync = async (app) => {
 
   // ── Import: recreate a service from a JSON bundle ────────────────────
   app.post('/import', async (req) => {
-    const bundle = req.body as ServiceBundle;
-    if (!bundle?.service?.name) throw badRequest('Invalid bundle: missing service data');
+    const raw = req.body as ServiceBundle;
+    if (!raw?.service?.name) throw badRequest('Invalid bundle: missing service data');
+    // Validate/normalize the shape: unknown enum values rejected, missing
+    // optional arrays defaulted (a malformed bundle must 400, not crash a
+    // handler with a TypeError on .map of undefined).
+    if (raw.service.type !== 'docker' && raw.service.type !== 'pm2') {
+      throw badRequest('Invalid bundle: service.type must be "docker" or "pm2"');
+    }
+    const bundle: ServiceBundle = {
+      ...raw,
+      envVars: Array.isArray(raw.envVars) ? raw.envVars : [],
+      domains: Array.isArray(raw.domains) ? raw.domains : [],
+      webhooks: Array.isArray(raw.webhooks) ? raw.webhooks : [],
+      attachments: Array.isArray(raw.attachments) ? raw.attachments : [],
+      buildConfig: raw.buildConfig ?? null,
+    };
 
     // Unique slug to avoid conflicts
     const slug = `${slugify(bundle.service.name)}-${Date.now().toString(36).slice(-4)}`;
@@ -111,6 +125,7 @@ export const serviceMigrationRoutes: FastifyPluginAsync = async (app) => {
     const [svc] = await app.db.insert(services).values({
       name: bundle.service.name,
       slug,
+      // Narrowed by the runtime validation above.
       type: bundle.service.type as 'docker' | 'pm2',
       repoUrl: bundle.service.repoUrl,
       branch: bundle.service.branch,
@@ -172,10 +187,16 @@ export const serviceMigrationRoutes: FastifyPluginAsync = async (app) => {
       });
     }
 
-    // Attachments (best-effort: try to find matching database by name+engine)
-    // Attachments (best-effort: try to find matching database by name+engine)
+    // Attachments (best-effort: match the database by name AND engine — a
+    // same-named database of a different engine must not be attached, or the
+    // service would receive wrong-protocol credentials).
     for (const a of bundle.attachments) {
-      const match = await app.db.query.databases.findFirst({ where: eq(databases.name, a.databaseName) });
+      const match = await app.db.query.databases.findFirst({
+        where: and(
+          eq(databases.name, a.databaseName),
+          eq(databases.engine, a.databaseEngine as 'postgres' | 'mysql' | 'redis' | 'mongo'),
+        ),
+      });
       if (match) {
         await app.db.insert(databaseAttachments).values({
           serviceId: svc.id,
