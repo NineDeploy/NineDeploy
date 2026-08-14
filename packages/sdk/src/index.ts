@@ -133,6 +133,10 @@ export interface NineDeployClient {
   activity: {
     list: () => Promise<Array<{ id: number; userId: number | null; action: string; entity: string | null; ts: string }>>;
   };
+  settings: {
+    get: () => Promise<{ allowRegistration: boolean }>;
+    setAllowRegistration: (enabled: boolean) => Promise<{ ok: boolean; allowRegistration: boolean }>;
+  };
   users: {
     list: () => Promise<PublicUser[]>;
     setRole: (id: number, role: 'admin' | 'member') => Promise<PublicUser>;
@@ -342,6 +346,11 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
         get<Array<{ id: number; userId: number | null; action: string; entity: string | null; ts: string }>>(
           '/v1/activity',
         ),
+    },
+    settings: {
+      get: () => get<{ allowRegistration: boolean }>('/v1/settings'),
+      setAllowRegistration: (enabled) =>
+        send<{ ok: boolean; allowRegistration: boolean }>('PUT', '/v1/settings/allow-registration', { enabled }),
     },
     users: {
       list: () => get<PublicUser[]>('/v1/users'),

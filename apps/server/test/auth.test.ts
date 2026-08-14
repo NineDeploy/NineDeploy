@@ -85,21 +85,21 @@ describe('auth routes', () => {
     await app.register(authRoutes);
     const res = await app.inject({ method: 'GET', url: '/status' });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ initialized: false });
+    expect(res.json()).toEqual({ initialized: false, allowRegistration: true });
   });
 
   it('reports initialized when users exist', async () => {
     const app = await buildTestApp({ db: createFakeDb({ counts: { users: [{ n: 3 }] } }) });
     await app.register(authRoutes);
     const res = await app.inject({ method: 'GET', url: '/status' });
-    expect(res.json()).toEqual({ initialized: true });
+    expect(res.json()).toEqual({ initialized: true, allowRegistration: true });
   });
 
   it('treats a missing count row as zero users', async () => {
     const app = await buildTestApp({ db: createFakeDb({ counts: {} }) });
     await app.register(authRoutes);
     const res = await app.inject({ method: 'GET', url: '/status' });
-    expect(res.json()).toEqual({ initialized: false });
+    expect(res.json()).toEqual({ initialized: false, allowRegistration: true });
   });
 
   it('registers a user', async () => {
@@ -114,6 +114,45 @@ describe('auth routes', () => {
     expect(res.statusCode).toBe(200);
     expect(res.json().user).toMatchObject({ id: 2, email: 'new@example.com', role: 'member' });
     expect(res.json().tokens.expiresIn).toBe(900);
+  });
+
+  it('blocks registration when open registration is disabled and users exist', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        counts: { users: [{ n: 2 }] },
+        findFirst: { settings: { key: 'allow_registration', value: false } },
+      }),
+    });
+    await app.register(authRoutes);
+    const res = await app.inject({ method: 'POST', url: '/register', payload: validRegister });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error.message).toContain('Registration is disabled');
+  });
+
+  it('still allows bootstrap registration when disabled but no user exists', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        counts: { users: [{ n: 0 }] },
+        findFirst: { settings: { key: 'allow_registration', value: false } },
+        insert: { users: [userRow({ id: 1, email: 'new@example.com', role: 'admin' })] },
+      }),
+    });
+    await app.register(authRoutes);
+    const res = await app.inject({ method: 'POST', url: '/register', payload: validRegister });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().user.role).toBe('admin');
+  });
+
+  it('exposes allowRegistration on the public status endpoint', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        counts: { users: [{ n: 1 }] },
+        findFirst: { settings: { key: 'allow_registration', value: false } },
+      }),
+    });
+    await app.register(authRoutes);
+    const res = await app.inject({ method: 'GET', url: '/status' });
+    expect(res.json()).toEqual({ initialized: true, allowRegistration: false });
   });
 
   it('rejects an invalid register payload', async () => {

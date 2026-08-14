@@ -5,8 +5,9 @@ import type { PublicUser, Register, TokenPair } from '@ninedeploy/schemas';
 import { login, passwordChange, refresh, register } from '@ninedeploy/schemas';
 import { config } from '../config.js';
 import { hashPassword, randomToken, sha256, verifyPassword } from '../lib/crypto.js';
-import { badRequest, conflict, unauthorized } from '../lib/errors.js';
+import { badRequest, conflict, forbidden, unauthorized } from '../lib/errors.js';
 import { signAccessToken, signRefreshToken, ttlSeconds, verifyJwt } from '../lib/jwt.js';
+import { getSetting } from '../lib/settings.js';
 
 const toUser = (u: User): PublicUser => ({ id: u.id, email: u.email, name: u.name, role: u.role });
 
@@ -59,12 +60,24 @@ export async function registerAccount(db: DB, input: Register) {
 const AUTH_LIMIT = { max: 20, timeWindow: '1 minute' };
 
 export const authRoutes: FastifyPluginAsync = async (app) => {
-  // Public: whether the instance has any users yet (drives first-run setup UI).
-  app.get('/status', async () => ({ initialized: (await userCount(app.db)) > 0 }));
+  // Public: whether the instance has any users yet (drives first-run setup UI)
+  // and whether open registration is currently allowed (drives the register form).
+  app.get('/status', async () => ({
+    initialized: (await userCount(app.db)) > 0,
+    allowRegistration: await getSetting(app.db, 'allow_registration', true),
+  }));
 
-  app.post('/register', { config: { rateLimit: AUTH_LIMIT } }, async (req) =>
-    registerAccount(app.db, register.parse(req.body)),
-  );
+  app.post('/register', { config: { rateLimit: AUTH_LIMIT } }, async (req) => {
+    // Open registration can be disabled by an admin (anyone who finds the
+    // panel URL could otherwise self-provision a member account). Bootstrap
+    // stays possible: when no user exists yet the first registration becomes
+    // the admin regardless of the flag (same rule as /setup).
+    const noUsers = (await userCount(app.db)) === 0;
+    if (!noUsers && !(await getSetting(app.db, 'allow_registration', true))) {
+      throw forbidden('Registration is disabled on this instance');
+    }
+    return registerAccount(app.db, register.parse(req.body));
+  });
 
   app.post('/login', { config: { rateLimit: AUTH_LIMIT } }, async (req) => {
     const input = login.parse(req.body);

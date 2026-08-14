@@ -270,6 +270,60 @@ describe('Settings', () => {
     expect(screen.queryByTestId('notif-wizard')).not.toBeInTheDocument();
   });
 
+  it('renders and toggles the open-registration switch', async () => {
+    const user = userEvent.setup();
+    // Initial load says allowed; the post-toggle refetch says disabled.
+    mockOf(api.settings.get).mockResolvedValueOnce({ allowRegistration: true } as never)
+      .mockResolvedValueOnce({ allowRegistration: false } as never);
+    mockOf(api.settings.setAllowRegistration).mockResolvedValue({ ok: true, allowRegistration: false } as never);
+    renderWithProviders(<Settings />);
+
+    const sw = await screen.findByRole('switch');
+    expect(sw).toHaveAttribute('aria-checked', 'true');
+    await user.click(sw);
+
+    await waitFor(() => expect(api.settings.setAllowRegistration).toHaveBeenCalledWith(false));
+    await waitFor(() => expect(sw).toHaveAttribute('aria-checked', 'false'));
+  });
+
+  it('shows the default (allowed) switch while settings load and reports toggle failures', async () => {
+    const user = userEvent.setup();
+    let resolveGet!: (v: unknown) => void;
+    mockOf(api.settings.get).mockReturnValue(new Promise((r) => { resolveGet = r; }) as never);
+    mockOf(api.settings.setAllowRegistration).mockRejectedValue(new Error('500'));
+    renderWithProviders(<Settings />);
+
+    const sw = await screen.findByRole('switch');
+    expect(sw).toHaveAttribute('aria-checked', 'true'); // optimistic default
+    resolveGet({ allowRegistration: true });
+    await user.click(sw);
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Could not update the setting', 'error'));
+  });
+
+  it('disables the switch while the toggle is in flight', async () => {
+    const user = userEvent.setup();
+    mockOf(api.settings.get).mockResolvedValue({ allowRegistration: true } as never);
+    let resolveToggle!: (v: unknown) => void;
+    mockOf(api.settings.setAllowRegistration).mockReturnValue(
+      new Promise((r) => { resolveToggle = r; }) as never,
+    );
+    renderWithProviders(<Settings />);
+
+    const sw = await screen.findByRole('switch');
+    await user.click(sw);
+    await waitFor(() => expect(sw).toBeDisabled());
+    resolveToggle({ ok: true, allowRegistration: false });
+    await waitFor(() => expect(sw).toBeEnabled());
+  });
+
+  it('renders the switch disabled while the settings query is loading', async () => {
+    mockOf(api.settings.get).mockReturnValue(new Promise(() => {}) as never); // never resolves
+    renderWithProviders(<Settings />);
+    const sw = await screen.findByRole('switch');
+    expect(sw).toBeDisabled();
+    expect(sw).toHaveAttribute('aria-checked', 'true'); // optimistic default
+  });
+
   it('changes the password and persists the fresh token pair', async () => {
     const user = userEvent.setup();
     mockOf(api.auth.changePassword).mockResolvedValue({

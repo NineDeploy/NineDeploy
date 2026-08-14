@@ -16,6 +16,7 @@ import { notificationRoutes } from './notifications.js';
 import { metricRoutes, statsRoutes } from './stats.js';
 import { servicesRoutes } from './services.js';
 import { serviceMigrationRoutes } from './serviceMigration.js';
+import { settingsRoutes } from './settings.js';
 import { sourcesRoutes } from './sources.js';
 import { systemRoutes } from './resources.js';
 import { templateRoutes } from './templates.js';
@@ -49,6 +50,7 @@ export const apiRoutes: FastifyPluginAsync = async (app) => {
   await app.register(dashboardRoutes, { prefix: '/dashboard' });
   await app.register(systemRoutes, { prefix: '/system' });
   await app.register(sourcesRoutes, { prefix: '/sources' });
+  await app.register(settingsRoutes, { prefix: '/settings' });
   await app.register(topologyRoutes, { prefix: '/topology' });
   await app.register(tunnelRoutes, { prefix: '/tunnels' });
   await app.register(templateRoutes, { prefix: '/templates' });

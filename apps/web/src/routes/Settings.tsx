@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Cpu, Database, Download, HardDrive, Info, KeyRound, Network, Package, Send, Server, Trash2, Upload } from 'lucide-react';
+import { Cpu, Database, Download, HardDrive, Info, KeyRound, Network, Package, Send, Server, ShieldCheck, Trash2, Upload } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { api, getToken, setSessionTokens } from '../lib/api.js';
 import { useTheme, ACCENTS } from '../lib/theme.js';
@@ -39,6 +39,16 @@ export function Settings() {
     },
     onError: () => toast('Password change failed', 'error'),
   });
+  // ── Security: open-registration toggle ───────────────────────────────────
+  const instanceSettings = useQuery({ queryKey: ['instance-settings'], queryFn: () => api.settings.get() });
+  // Hoisted so the loading fallback is computed once.
+  const allowRegistration = instanceSettings.data?.allowRegistration ?? true;
+  const setAllowRegistration = useMutation({
+    mutationFn: (enabled: boolean) => api.settings.setAllowRegistration(enabled),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['instance-settings'] }),
+    onError: () => toast('Could not update the setting', 'error'),
+  });
+
   const submitPassword = () => {
     if (pwNext !== pwConfirm) {
       toast('New passwords do not match', 'error');
@@ -144,6 +154,39 @@ export function Settings() {
               </Button>
             </div>
           </div>
+        </CardBody>
+      </Card>
+
+      {/* Security */}
+      <Card className="mb-5">
+        <CardBody>
+          <h2 className="mb-1 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
+            <ShieldCheck size={14} /> Security
+          </h2>
+          <p className="mb-4 text-xs text-slate-500">
+            When disabled, only existing users can sign in — new accounts cannot self-register.
+          </p>
+          <label className="flex max-w-md items-center justify-between gap-4 rounded-lg border border-slate-800 bg-slate-900/40 px-4 py-3">
+            <span className="text-sm text-slate-300">Allow open registration</span>
+            <button
+              role="switch"
+              aria-checked={allowRegistration}
+              disabled={instanceSettings.isLoading || setAllowRegistration.isPending}
+              onClick={() => setAllowRegistration.mutate(!allowRegistration)}
+              className={cn(
+                'relative h-6 w-11 rounded-full transition',
+                allowRegistration ? 'bg-emerald-500/80' : 'bg-slate-700',
+              )}
+              title="Toggle whether /v1/auth/register accepts new accounts"
+            >
+              <span
+                className={cn(
+                  'absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all',
+                  allowRegistration ? 'left-[22px]' : 'left-0.5',
+                )}
+              />
+            </button>
+          </label>
         </CardBody>
       </Card>
 

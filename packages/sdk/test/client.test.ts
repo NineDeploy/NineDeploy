@@ -390,6 +390,21 @@ describe('createClient', () => {
     });
   });
 
+  describe('settings', () => {
+    it('reads and toggles the registration flag', async () => {
+      const { fetchMock, calls } = makeFetch(() => ok({}));
+      const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
+
+      await client.settings.get();
+      expect(last(calls)).toMatchObject({ url: '/v1/settings', init: { method: 'GET' } });
+
+      await client.settings.setAllowRegistration(false);
+      expect(last(calls).url).toBe('/v1/settings/allow-registration');
+      expect(last(calls).init.method).toBe('PUT');
+      expect(JSON.parse(last(calls).init.body ?? '{}')).toEqual({ enabled: false });
+    });
+  });
+
   describe('about', () => {
     it('gets about info', async () => {
       const { fetchMock, calls } = makeFetch(() => ok({}));

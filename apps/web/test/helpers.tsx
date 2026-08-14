@@ -58,6 +58,7 @@ export function createFakeApiModule() {
     tunnels: { list: vi.fn(), create: vi.fn(), remove: vi.fn() },
     activity: { list: vi.fn() },
     users: { list: vi.fn(), setRole: vi.fn(), remove: vi.fn(), resetPassword: vi.fn() },
+    settings: { get: vi.fn(), setAllowRegistration: vi.fn() },
     about: { get: vi.fn() },
     notifications: {
       listChannels: vi.fn(),
