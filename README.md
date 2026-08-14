@@ -116,6 +116,7 @@ Open `http://localhost:5173` and create the first admin account. Requires Node �
 | `NINEDEPLOY_WILDCARD_DOMAIN` | *(empty)* | Auto-assign `{slug}.domain` URLs |
 | `NINEDEPLOY_ACME_EMAIL` | *(empty)* | Let's Encrypt registration email fallback — the Settings → Security ACME email overrides it; enables automatic HTTPS (the domain SSL toggle then issues real certificates via Traefik ACME) |
 | `NINEDEPLOY_DEPLOY_CONCURRENCY` | `1` | Parallel deploy slots in the worker (1-8). The same service is never deployed concurrently — busy services' queued deploys wait |
+| `NINEDEPLOY_ACME_CA_SERVER` | *(empty)* | ACME directory override — point at Let's Encrypt **staging** while testing wildcard/HTTPS setup to dodge production rate limits |
 | `NINEDEPLOY_DNS_PROVIDER` | *(empty)* | DNS-01 challenge provider for wildcard certificates (cloudflare, digitalocean, hetzner, linode, gandi, duckdns) — the Settings → Security DNS config wins |
 | `NINEDEPLOY_DNS_TOKEN` | *(empty)* | DNS provider API token (env fallback; stored encrypted when set via Settings) |
 | `NINEDEPLOY_TEMPLATES_SOURCE` | *(empty)* | Template registry source override (https URL or absolute path to a JSON bundle) — the Settings → Hub setting wins; bundled `registry.json` is the fallback. Remote sources are cached (6 h TTL) with offline fallback |

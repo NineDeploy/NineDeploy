@@ -17,6 +17,10 @@ const schema = z.object({
   NINEDEPLOY_MASTER_KEY: z.string().optional(),
   // Let's Encrypt registration email — enables automatic HTTPS (Traefik ACME).
   NINEDEPLOY_ACME_EMAIL: z.string().optional(),
+  // ACME directory URL override. Point at Let's Encrypt's STAGING endpoint
+  // while testing to avoid the production rate limits:
+  // https://acme-staging-v02.api.letsencrypt.org/directory
+  NINEDEPLOY_ACME_CA_SERVER: z.string().optional(),
   // Template registry source override: an https URL or an absolute path to a
   // JSON registry bundle. Falls back to the bundled registry when unset.
   NINEDEPLOY_TEMPLATES_SOURCE: z.string().optional(),

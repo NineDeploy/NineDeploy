@@ -122,30 +122,26 @@ pnpm db:migrate
 
 if [ "$(uname -s)" = "Linux" ] && command -v systemctl &>/dev/null; then
   info "Setting up systemd service…"
+  # Render the CHECKED-IN hardened unit (systemd/ninedeploy.service) with this
+  # install's paths so the installer and the repo unit never drift apart.
+  # Placeholders: @NODE@, @INSTALL_DIR@, @DATA_DIR@.
+  UNIT_TEMPLATE="$INSTALL_DIR/systemd/ninedeploy.service"
+  if [ ! -f "$UNIT_TEMPLATE" ]; then
+    fail "systemd/ninedeploy.service not found in the repo — re-run ./install.sh"
+  fi
+  DATA_DIR="${NINEDEPLOY_DATA_DIR:-$INSTALL_DIR/.data}"
+  mkdir -p "$DATA_DIR"
   SERVICE_FILE="/etc/systemd/system/ninedeploy.service"
-  sudo tee "$SERVICE_FILE" > /dev/null <<EOF
-[Unit]
-Description=NineDeploy — Self-hosted PaaS
-After=network.target docker.service
-Requires=docker.service
-
-[Service]
-Type=simple
-WorkingDirectory=${INSTALL_DIR}
-EnvironmentFile=${INSTALL_DIR}/.env
-ExecStart=$(which node) ${INSTALL_DIR}/apps/server/dist/server.js
-Restart=always
-RestartSec=5
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=multi-user.target
-EOF
+  sed -e "s|@NODE@|$(which node)|g" \
+      -e "s|@INSTALL_DIR@|${INSTALL_DIR}|g" \
+      -e "s|@DATA_DIR@|${DATA_DIR}|g" \
+      -e "s|@USER@|$(id -un)|g" \
+      -e "s|@GROUP@|$(id -gn)|g" \
+      "$UNIT_TEMPLATE" | sudo tee "$SERVICE_FILE" > /dev/null
   sudo systemctl daemon-reload
   sudo systemctl enable ninedeploy
   sudo systemctl restart ninedeploy
-  ok "NineDeploy service started (systemd)"
+  ok "NineDeploy service started (systemd, hardened unit)"
 else
   warn "systemd not available — starting in foreground…"
   info "For production, set up a process manager (systemd/pm2/launchd)."

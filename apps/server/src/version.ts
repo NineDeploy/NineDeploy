@@ -32,6 +32,8 @@ export const CHANGELOG: ChangelogEntry[] = [
       'Data-driven template registry: JSON bundle + swappable source (URL/path) with caching and offline fallback',
       'Wildcard SSL via ACME DNS-01 (Cloudflare, DigitalOcean, Hetzner, Linode, Gandi, DuckDNS) with encrypted API tokens',
       'Parallel deploy slots (NINEDEPLOY_DEPLOY_CONCURRENCY, 1-8) with per-service serialization',
+      'Notification channel editing (pause/resume, rename, event filter) in Settings',
+      'ACME staging directory support (NINEDEPLOY_ACME_CA_SERVER) and a hardened, installer-rendered systemd unit',
       'Integration test coverage: MySQL/Redis/MongoDB backup round-trips, end-to-end deploy + rollback',
     ],
   },

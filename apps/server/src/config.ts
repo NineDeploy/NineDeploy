@@ -40,6 +40,7 @@ export const config = {
   // When set, Traefik's ACME resolver issues real Let's Encrypt certificates
   // for domains with the SSL toggle enabled (null disables automatic HTTPS).
   acmeEmail: env.NINEDEPLOY_ACME_EMAIL ?? null,
+  acmeCaServer: env.NINEDEPLOY_ACME_CA_SERVER ?? null,
   templatesSource: env.NINEDEPLOY_TEMPLATES_SOURCE ?? null,
   deployConcurrency: env.NINEDEPLOY_DEPLOY_CONCURRENCY,
   dnsProvider: env.NINEDEPLOY_DNS_PROVIDER ?? null,

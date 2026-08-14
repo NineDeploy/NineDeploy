@@ -253,6 +253,84 @@ describe('Settings', () => {
     await waitFor(() => expect(api.notifications.removeChannel).toHaveBeenCalledWith(1));
   });
 
+  it('pauses and resumes a channel via the active toggle', async () => {
+    mockOf(api.notifications.updateChannel).mockResolvedValue({ id: 1, active: false } as never);
+    renderWithProviders(<Settings />);
+    const pause = (await screen.findAllByTitle('Pause (deactivate)'))[0]!;
+    fireEvent.click(pause);
+    await waitFor(() => expect(api.notifications.updateChannel).toHaveBeenCalledWith(1, { active: false }));
+  });
+
+  it('shows a paused badge and offers activation', async () => {
+    mockOf(api.notifications.listChannels).mockResolvedValueOnce([
+      { id: 9, name: 'quiet', type: 'slack', eventFilter: null, active: false, createdAt: 'x' },
+    ] as never);
+    mockOf(api.notifications.updateChannel).mockResolvedValue({ id: 9, active: true } as never);
+    renderWithProviders(<Settings />);
+    expect(await screen.findByText('paused')).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle('Activate'));
+    await waitFor(() => expect(api.notifications.updateChannel).toHaveBeenCalledWith(9, { active: true }));
+  });
+
+  it('edits a channel name and event filter inline', async () => {
+    mockOf(api.notifications.updateChannel).mockResolvedValue({ id: 1 } as never);
+    renderWithProviders(<Settings />);
+    fireEvent.click((await screen.findAllByTitle('Edit'))[0]!);
+    const name = screen.getByLabelText('Channel name') as HTMLInputElement;
+    const filter = screen.getByLabelText('Event filter') as HTMLInputElement;
+    await userEvent.clear(name);
+    await userEvent.type(name, 'ops-renamed');
+    await userEvent.clear(filter);
+    await userEvent.type(filter, 'deploy.,alert.');
+    fireEvent.submit(name.closest('form')!);
+    await waitFor(() =>
+      expect(api.notifications.updateChannel).toHaveBeenCalledWith(1, { name: 'ops-renamed', eventFilter: 'deploy.,alert.' }),
+    );
+  });
+
+  it('opens the editor on a channel without a filter (null coalescing)', async () => {
+    renderWithProviders(<Settings />);
+    fireEvent.click((await screen.findAllByTitle('Edit'))[1]!); // discord-alerts: eventFilter null
+    const filter = screen.getByLabelText('Event filter') as HTMLInputElement;
+    expect(filter.value).toBe('');
+    expect(screen.getByLabelText('Channel name')).toBeInTheDocument();
+  });
+
+  it('falls back to the current name when the edit field is emptied', async () => {
+    mockOf(api.notifications.updateChannel).mockResolvedValue({ id: 1 } as never);
+    renderWithProviders(<Settings />);
+    fireEvent.click((await screen.findAllByTitle('Edit'))[0]!);
+    const name = screen.getByLabelText('Channel name') as HTMLInputElement;
+    await userEvent.clear(name);
+    fireEvent.submit(name.closest('form')!);
+    await waitFor(() =>
+      expect(api.notifications.updateChannel).toHaveBeenCalledWith(1, { name: 'telegram-main', eventFilter: 'deploy.*' }),
+    );
+  });
+
+  it('shows the saving state while a channel edit is in flight', async () => {
+    mockOf(api.notifications.updateChannel).mockReturnValue(new Promise(() => {}) as never);
+    renderWithProviders(<Settings />);
+    fireEvent.click((await screen.findAllByTitle('Edit'))[0]!);
+    fireEvent.submit((screen.getByLabelText('Channel name') as HTMLInputElement).closest('form')!);
+    expect(await screen.findByText('…')).toBeInTheDocument();
+  });
+
+  it('cancels the inline channel editor', async () => {
+    renderWithProviders(<Settings />);
+    fireEvent.click((await screen.findAllByTitle('Edit'))[0]!);
+    fireEvent.click(screen.getByText('Cancel'));
+    expect(screen.queryByLabelText('Event filter')).not.toBeInTheDocument();
+  });
+
+  it('reports channel edit failures', async () => {
+    mockOf(api.notifications.updateChannel).mockRejectedValue(new Error('500'));
+    renderWithProviders(<Settings />);
+    fireEvent.click((await screen.findAllByTitle('Edit'))[0]!);
+    fireEvent.submit((screen.getByLabelText('Channel name') as HTMLInputElement).closest('form')!);
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Could not update the channel', 'error'));
+  });
+
   it('reports a failed test notification', async () => {
     mockOf(api.notifications.testChannel).mockRejectedValue(new Error('nope'));
     renderWithProviders(<Settings />);

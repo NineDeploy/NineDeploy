@@ -527,6 +527,15 @@ describe('DNS-01 challenge (wildcard SSL)', () => {
     expect(yml).not.toContain('httpChallenge:');
   });
 
+  it('emits caServer when a staging directory is configured', () => {
+    h.config.acmeCaServer = 'https://acme-staging-v02.api.letsencrypt.org/directory';
+    const yml = renderStaticConfig('ops@example.com', null);
+    expect(yml).toContain('caServer: https://acme-staging-v02.api.letsencrypt.org/directory');
+    h.config.acmeCaServer = null;
+    // Without the override the production directory is used implicitly.
+    expect(renderStaticConfig('ops@example.com', null)).not.toContain('caServer:');
+  });
+
   it('keeps httpChallenge without a DNS provider', () => {
     const yml = renderStaticConfig('ops@example.com', null);
     expect(yml).toContain('httpChallenge:');

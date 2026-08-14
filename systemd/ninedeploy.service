@@ -1,5 +1,9 @@
-# NineDeploy systemd service — copy to /etc/systemd/system/ and adjust paths.
+# NineDeploy systemd service template — rendered by install.sh with this
+# install's paths and written to /etc/systemd/system/ninedeploy.service.
+# Placeholders (filled by install.sh): @NODE@ @INSTALL_DIR@ @DATA_DIR@
+# @USER@ @GROUP@
 #
+# Manual use (adjust the placeholders yourself):
 #   sudo cp systemd/ninedeploy.service /etc/systemd/system/
 #   sudo systemctl daemon-reload
 #   sudo systemctl enable --now ninedeploy
@@ -12,18 +16,18 @@ Requires=docker.service
 
 [Service]
 Type=simple
-User=ninedeploy
-Group=ninedeploy
-WorkingDirectory=/opt/ninedeploy
-EnvironmentFile=/opt/ninedeploy/.env
-ExecStart=/usr/bin/node /opt/ninedeploy/apps/server/dist/server.js
+User=@USER@
+Group=@GROUP@
+WorkingDirectory=@INSTALL_DIR@
+EnvironmentFile=@INSTALL_DIR@/.env
+ExecStart=@NODE@ @INSTALL_DIR@/apps/server/dist/server.js
 Restart=always
 RestartSec=5
 
 # Hardening
 NoNewPrivileges=true
 ProtectSystem=strict
-ReadWritePaths=/opt/ninedeploy/.data
+ReadWritePaths=@DATA_DIR@
 PrivateTmp=true
 
 # Logs

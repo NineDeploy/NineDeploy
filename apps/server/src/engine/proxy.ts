@@ -112,12 +112,15 @@ export function renderStaticConfig(acmeEmail: string | null, dns: DnsConfig | nu
     : `      httpChallenge:
         entryPoint: web
 `;
+  // Optional ACME directory override (e.g. Let's Encrypt STAGING while
+  // testing — production rate limits are unforgiving).
+  const caServer = config.acmeCaServer ? `      caServer: ${config.acmeCaServer}\n` : '';
   const acme = acmeEmail
     ? `certificatesResolvers:
   letsencrypt:
     acme:
       email: ${acmeEmail}
-      storage: /etc/traefik/acme.json
+${caServer}      storage: /etc/traefik/acme.json
 ${challenge}`
     : '';
   return `# Managed by NineDeploy — do not edit by hand.
