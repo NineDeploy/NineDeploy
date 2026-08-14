@@ -24,13 +24,23 @@ function writeEnvFile(env: Record<string, string>): string | null {
   return file;
 }
 
-/** Whether a container exists and is currently in the `running` state. */
-async function isContainerRunning(name: string): Promise<boolean> {
+/**
+ * Resolve a container's IP address on the shared Docker network, or null when
+ * the container is not running. The host can route to bridge-network IPs
+ * directly, which lets us healthcheck a container WITHOUT publishing any host
+ * port — so blue-green never fights over `127.0.0.1:<port>` and rollback probes
+ * always resolve the current address fresh from the runtime id.
+ */
+async function containerIp(name: string): Promise<string | null> {
   try {
-    const out = await capture('docker', ['inspect', name, '--format', '{{.State.Status}}']);
-    return out.trim() === 'running';
+    const out = await capture('docker', [
+      'inspect', name,
+      '--format', '{{.State.Status}}|{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}',
+    ]);
+    const [status, ip] = out.trim().split('|');
+    return status === 'running' && ip ? ip : null;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -39,6 +49,7 @@ export const dockerBuilder: Builder = {
   async buildAndRun(ctx, previous) {
     const { service, buildConfig, workDir, deploymentId, commitSha, env, imageDigest, log } = ctx;
     const name = `${service.slug}-${deploymentId}`;
+    void previous;
 
     // Determine the image to run: a pre-built image (template/one-click) or build from source.
     let target: string;
@@ -65,19 +76,12 @@ export const dockerBuilder: Builder = {
     // leaving the old one running — a zero-downtime rollback.
 
     const args = ['run', '-d', '--name', name, '--restart', 'unless-stopped', '--network', NETWORK];
-    // Bind to loopback only — the container must NOT be reachable on public
-    // interfaces. Public traffic enters exclusively through Traefik, which
-    // reaches the container by name over the shared network. The loopback
-    // binding exists only so the healthcheck can probe it from the host.
-    // BLUE-GREEN: when a previous container is still serving, it already holds
-    // 127.0.0.1:<port>, so the new container binds an EPHEMERAL host port
-    // (Docker assigns one) to avoid a "port already allocated" conflict; we
-    // capture it below and healthcheck against it.
-    let hostPort = service.port ?? null;
-    if (service.port) {
-      if (previous) args.push('-p', `127.0.0.1::${service.port}`);
-      else args.push('-p', `127.0.0.1:${service.port}:${service.port}`);
-    }
+    // NOTE: no `-p` host port is published at all. Public traffic enters
+    // exclusively through Traefik, which reaches the container by name over the
+    // shared network; healthchecks probe the container's network IP directly
+    // (see isHealthy). This keeps blue-green conflict-free — two versions can
+    // run side by side without fighting over a host port — and removes the
+    // loopback exposure entirely.
     if (service.cpuShares > 0) args.push('--cpu-shares', String(service.cpuShares));
     if (service.memLimitMb > 0) args.push('--memory', `${service.memLimitMb}m`);
     if (service.volumeMount) args.push('-v', `nd-svc-${service.slug}-data:${service.volumeMount}`);
@@ -107,39 +111,27 @@ export const dockerBuilder: Builder = {
       /* non-fatal — digest is best-effort */
     }
 
-    // For a blue-green deploy, capture the ephemeral host port Docker assigned
-    // so the healthcheck can reach the new container.
-    if (previous && service.port) {
-      try {
-        const portOut = await capture('docker', ['port', name, `${service.port}/tcp`]);
-        const m = /:(\d+)\s*$/.exec(portOut.trim());
-        if (m) hostPort = Number(m[1]);
-      } catch {
-        /* fall back to service.port for the healthcheck */
-      }
-    }
-
-    return { runtimeId: name, port: service.port ?? null, hostPort, healthPath: service.healthPath ?? '/', imageDigest: digest };
+    return { runtimeId: name, port: service.port ?? null, healthPath: service.healthPath ?? '/', imageDigest: digest };
   },
 
   async isHealthy(runtime, timeoutMs = 30_000) {
     const healthPath = runtime.healthPath || '/';
-    // Probe the host port the container actually bound (ephemeral during
-    // blue-green), falling back to the service port.
-    const probePort = runtime.hostPort ?? runtime.port;
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
-      // First requirement in every iteration: the container must still be alive.
-      // A process that exits seconds after `docker run -d` must not pass.
-      if (!(await isContainerRunning(runtime.runtimeId))) {
+      // Resolve the container's network address fresh on every attempt: null
+      // when it is not running (a process that exits right after `docker run -d`
+      // must not pass), and always the CURRENT address — which is exactly what
+      // makes blue-green and rollback probes correct without persisting ports.
+      const ip = await containerIp(runtime.runtimeId);
+      if (!ip) {
         await sleep(1000);
         continue;
       }
-      if (probePort) {
+      if (runtime.port) {
         // Probe the HTTP endpoint with a short per-attempt timeout so a server
         // that accepts TCP but never responds can't stall the whole deadline.
         try {
-          const res = await fetch(`http://127.0.0.1:${probePort}${healthPath}`, {
+          const res = await fetch(`http://${ip}:${runtime.port}${healthPath}`, {
             signal: AbortSignal.timeout(3000),
           });
           if (res.status < 500) return true;

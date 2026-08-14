@@ -61,14 +61,16 @@ describe('dockerBuilder.buildAndRun', () => {
     expect(runArgs).toEqual(
       [
         'run', '-d', '--name', 'web-3', '--restart', 'unless-stopped', '--network', 'ninedeploy',
-        '-p', '127.0.0.1:3000:3000',
         '--cpu-shares', '512', '--memory', '256m',
         '-v', 'nd-svc-web-data:/data',
         '--env-file', expect.any(String),
         'nginx:1.25',
       ],
     );
-    expect(runtime).toEqual({ runtimeId: 'web-3', port: 3000, hostPort: 3000, healthPath: '/health', imageDigest: expect.any(String) });
+    // No host port is published — Traefik routes over the network and the
+    // healthcheck probes the container's network IP.
+    expect(runArgs).not.toContain('-p');
+    expect(runtime).toEqual({ runtimeId: 'web-3', port: 3000, healthPath: '/health', imageDigest: expect.any(String) });
   });
 
   it('logs a pull warning when the rejection is not an Error instance', async () => {
@@ -150,7 +152,7 @@ describe('dockerBuilder.buildAndRun', () => {
 
     const runtime = await dockerBuilder.buildAndRun(ctx as never);
 
-    expect(runtime).toEqual({ runtimeId: 'y-3', port: null, hostPort: null, healthPath: '/', imageDigest: expect.any(String) });
+    expect(runtime).toEqual({ runtimeId: 'y-3', port: null, healthPath: '/', imageDigest: expect.any(String) });
   });
 
   it('does NOT stop the previous container (blue-green: old keeps serving until healthy)', async () => {
@@ -163,20 +165,18 @@ describe('dockerBuilder.buildAndRun', () => {
     expect(stops).toHaveLength(0);
   });
 
-  it('binds an ephemeral host port during blue-green and captures it for the healthcheck', async () => {
-    // `docker port` output: the ephemeral host port Docker assigned.
-    h.capture.mockResolvedValue('0.0.0.0:32768\n');
+  it('publishes no host port during blue-green (containers are probed on the network)', async () => {
     const ctx = makeCtx(); // port 3000
 
-    const runtime = await dockerBuilder.buildAndRun(
+    await dockerBuilder.buildAndRun(
       ctx as never,
-      { runtimeId: 'old-1', port: 3000, healthPath: '/' }, // previous still holds 127.0.0.1:3000
+      { runtimeId: 'old-1', port: 3000, healthPath: '/' }, // previous still serving
     );
 
     const runArgs = h.run.mock.calls.find((c) => (c[1] as unknown[])[0] === 'run')![1] as unknown[];
-    // Ephemeral host port (no host-side port) so it doesn't conflict with the previous container.
-    expect(runArgs).toContain('127.0.0.1::3000');
-    expect(runtime.hostPort).toBe(32768);
+    // Two versions can run side by side only because NEITHER claims a host port.
+    expect(runArgs).not.toContain('-p');
+    expect(String(runArgs)).not.toContain('127.0.0.1');
   });
 
   it('deletes the env-file even when docker run fails', async () => {
@@ -228,7 +228,8 @@ describe('dockerBuilder.isHealthy', () => {
   const fetchMock = vi.fn();
   beforeEach(() => {
     h.capture.mockReset();
-    h.capture.mockResolvedValue('running');
+    // Default: container is running with a network IP.
+    h.capture.mockResolvedValue('running|172.17.0.2');
     vi.stubGlobal('fetch', fetchMock);
     fetchMock.mockReset();
   });
@@ -240,12 +241,23 @@ describe('dockerBuilder.isHealthy', () => {
     await expect(
       dockerBuilder.isHealthy({ runtimeId: 'r', port: null, healthPath: '/' }, 1000),
     ).resolves.toBe(true);
-    expect(h.capture).toHaveBeenCalledWith('docker', ['inspect', 'r', '--format', '{{.State.Status}}']);
+    expect(h.capture).toHaveBeenCalledWith('docker', [
+      'inspect', 'r',
+      '--format', '{{.State.Status}}|{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}',
+    ]);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('returns false when the container is not running (regardless of port)', async () => {
-    h.capture.mockResolvedValue('exited');
+    h.capture.mockResolvedValue('exited|172.17.0.2');
+    await expect(
+      dockerBuilder.isHealthy({ runtimeId: 'r', port: 3000, healthPath: '/' }, 20),
+    ).resolves.toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('returns false when the container has no network IP (not on the network yet)', async () => {
+    h.capture.mockResolvedValue('running|');
     await expect(
       dockerBuilder.isHealthy({ runtimeId: 'r', port: 3000, healthPath: '/' }, 20),
     ).resolves.toBe(false);
@@ -267,7 +279,7 @@ describe('dockerBuilder.isHealthy', () => {
       dockerBuilder.isHealthy({ runtimeId: 'r', port: 3000, healthPath: '/health' }, 1000),
     ).resolves.toBe(true);
 
-    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:3000/health', expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    expect(fetchMock).toHaveBeenCalledWith('http://172.17.0.2:3000/health', expect.objectContaining({ signal: expect.any(AbortSignal) }));
   });
 
   it('uses "/" as the default health path', async () => {
@@ -275,7 +287,7 @@ describe('dockerBuilder.isHealthy', () => {
 
     await dockerBuilder.isHealthy({ runtimeId: 'r', port: 3000, healthPath: '' }, 1000);
 
-    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:3000/', expect.any(Object));
+    expect(fetchMock).toHaveBeenCalledWith('http://172.17.0.2:3000/', expect.any(Object));
   });
 
   it('returns false when the service never becomes healthy', async () => {
@@ -297,8 +309,8 @@ describe('dockerBuilder.isHealthy', () => {
   });
 
   it('treats a container that vanishes mid-probe as unhealthy', async () => {
-    // First inspect says running (so we proceed to fetch), then it disappears.
-    h.capture.mockResolvedValueOnce('running').mockResolvedValueOnce('');
+    // First inspect resolves an IP (so we proceed to fetch), then it disappears.
+    h.capture.mockResolvedValueOnce('running|172.17.0.2').mockResolvedValueOnce('');
     fetchMock.mockRejectedValue(new Error('refused'));
 
     await expect(

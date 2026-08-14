@@ -488,7 +488,7 @@ describe('runDeployment', () => {
   it('keeps the previous container serving when the routing flip fails (no silent outage)', async () => {
     const { db } = makeDb();
     baseSetup(db, { runtimeId: 'old-c' }); // a previous container is serving
-    h.builder.buildAndRun.mockResolvedValue({ runtimeId: 'c-2', port: 3000, hostPort: 3000, healthPath: '/' });
+    h.builder.buildAndRun.mockResolvedValue({ runtimeId: 'c-2', port: 3000, healthPath: '/' });
     h.writeDynamicConfig.mockRejectedValue(new Error('disk full'));
     const lines = collectLogs(1);
 

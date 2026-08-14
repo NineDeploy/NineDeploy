@@ -87,6 +87,12 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     const userId = Number(payload.sub);
     const user = await app.db.query.users.findFirst({ where: eq(users.id, userId) });
     if (!user) throw unauthorized();
+    // Reject refresh tokens minted before the user's tokenVersion was bumped
+    // (logout / role change / password change) — otherwise a revoked session
+    // could simply mint fresh tokens here.
+    if (payload.ver !== undefined && payload.ver !== user.tokenVersion) {
+      throw unauthorized('Invalid refresh token');
+    }
     return { user: toUser(user), tokens: await issueTokens(user) };
   });
 

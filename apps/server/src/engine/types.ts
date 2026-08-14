@@ -24,13 +24,6 @@ export interface DeployRuntime {
   /** Docker container name or PM2 process name. */
   runtimeId: string;
   port: number | null;
-  /**
-   * The host port to probe for healthchecks. Equals `port` normally, but during
-   * a Docker blue-green deploy the new container binds an EPHEMERAL host port
-   * (the previous container still holds the service port), so the healthcheck
-   * must target this one. Falls back to `port` when unset.
-   */
-  hostPort?: number | null;
   healthPath: string;
   /** Resolved image digest the runtime is actually running (for exact rollback). */
   imageDigest?: string;

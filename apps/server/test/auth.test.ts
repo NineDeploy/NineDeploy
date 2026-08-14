@@ -177,6 +177,21 @@ describe('auth routes', () => {
     expect(res.json().tokens.accessToken).toBe('access-token');
   });
 
+  it('rejects a refresh token whose ver no longer matches the user tokenVersion (revoked session)', async () => {
+    // Token minted at ver 0, but the user has since been bumped to ver 1 (logout/role change).
+    jwtMocks.verifyJwt.mockResolvedValueOnce({ type: 'refresh', sub: '1', ver: 0 });
+    const app = await buildTestApp({
+      db: createFakeDb({ findFirst: { users: userRow({ id: 1, tokenVersion: 1 }) } }),
+    });
+    await app.register(authRoutes);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/refresh',
+      payload: { refreshToken: 'stale-refresh' },
+    });
+    expect(res.statusCode).toBe(401);
+  });
+
   it('rejects an invalid refresh token', async () => {
     jwtMocks.verifyJwt.mockRejectedValueOnce(new Error('expired'));
     const app = await buildTestApp({ db: createFakeDb() });

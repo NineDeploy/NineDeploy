@@ -87,14 +87,18 @@ export async function ensureTraefik(log: (line: string) => void): Promise<void> 
     await run('docker', ['rm', '-f', TRAEFIK_CONTAINER], {}, () => {}).catch(() => undefined);
 
     log('starting traefik container …');
+    // Mount the whole config DIRECTORY, not the individual files. A single-file
+    // bind mount pins the inode at container start, so our atomic config update
+    // (temp file + rename → new inode) would never be seen by the container on
+    // Linux — Traefik would silently keep reading the original file forever.
+    // With a directory mount, the rename is visible and the file watcher fires.
     await run(
       'docker',
       [
         'run', '-d', '--name', TRAEFIK_CONTAINER, '--restart', 'unless-stopped',
         '--network', NETWORK,
         '-p', '80:80', '-p', '443:443',
-        '-v', `${staticPath()}:/etc/traefik/traefik.yml:ro`,
-        '-v', `${dynamicPath()}:/etc/traefik/dynamic.yml:ro`,
+        '-v', `${dir()}:/etc/traefik:ro`,
         TRAEFIK_IMAGE,
       ],
       {},

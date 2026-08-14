@@ -254,8 +254,9 @@ describe('ensureTraefik', () => {
         'run', '-d', '--name', 'ninedeploy-traefik', '--restart', 'unless-stopped',
         '--network', NETWORK,
         '-p', '80:80', '-p', '443:443',
-        '-v', `${path.join(traefikDir, 'traefik.yml')}:/etc/traefik/traefik.yml:ro`,
-        '-v', `${path.join(traefikDir, 'dynamic.yml')}:/etc/traefik/dynamic.yml:ro`,
+        // The whole config dir is mounted (single-file mounts pin the inode and
+        // would never see atomic rename-based updates).
+        '-v', `${traefikDir}:/etc/traefik:ro`,
         'traefik:v3.3',
       ],
       {},
