@@ -298,6 +298,7 @@ export const domainEntry = z.object({
   serviceName: z.string().nullable(),
   container: z.string().nullable(),
   port: z.number().int().nullable(),
+  certExpiresAt: z.string().datetime().nullable(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });

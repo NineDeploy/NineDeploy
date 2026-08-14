@@ -48,6 +48,18 @@ export function Settings() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['instance-settings'] }),
     onError: () => toast('Could not update the setting', 'error'),
   });
+  // ── Security: ACME (Let's Encrypt) email ────────────────────────────────
+  const acmeEmail = instanceSettings.data?.acmeEmail ?? null;
+  const [acmeInput, setAcmeInput] = useState<string | null>(null);
+  const setAcmeEmail = useMutation({
+    mutationFn: (email: string) => api.settings.setAcmeEmail(email),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['instance-settings'] });
+      setAcmeInput(null);
+      toast('ACME email saved — applies on next restart', 'success');
+    },
+    onError: () => toast('Could not save the ACME email', 'error'),
+  });
 
   const submitPassword = () => {
     if (pwNext !== pwConfirm) {
@@ -187,6 +199,29 @@ export function Settings() {
               />
             </button>
           </label>
+
+          <p className="mb-2 mt-6 text-sm text-slate-300">
+            Let's Encrypt (ACME) account email — used for certificate issuance and expiry notices.
+            {acmeEmail ? ' Configured.' : ' Not configured — SSL domains use a self-signed fallback cert.'}
+          </p>
+          <div className="flex max-w-md items-center gap-2">
+            <input
+              type="email"
+              value={acmeInput ?? acmeEmail ?? ''}
+              onChange={(e) => setAcmeInput(e.target.value)}
+              placeholder="admin@example.com"
+              className="h-9 w-full rounded-lg border border-slate-800 bg-slate-900/40 px-3 font-mono text-xs text-slate-200 outline-none focus:border-indigo-500/60"
+              aria-label="ACME account email"
+            />
+            <Button
+              size="sm"
+              onClick={() => setAcmeEmail.mutate((acmeInput ?? acmeEmail ?? '').trim())}
+              disabled={setAcmeEmail.isPending}
+            >
+              {setAcmeEmail.isPending ? 'Saving…' : 'Save'}
+            </Button>
+          </div>
+          <p className="mt-1.5 text-xs text-slate-500">Applies when the server next restarts (Traefik is recreated then).</p>
         </CardBody>
       </Card>
 

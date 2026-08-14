@@ -104,7 +104,7 @@ ninedeploy/
 └── ARCHITECTURE.md                This file
 ```
 
-## Database schema (18 tables)
+## Database schema (20 tables)
 
 ```
 users              id, email, password_hash, name, role(admin|member),
@@ -131,9 +131,14 @@ metrics            id, service_id, kind(cpu|memory), value, ts   [(service,kind,
 audit_log          id, user_id, action, entity, meta(json), ts   [(entity,ts) index]
 settings           key, value(json)   (allow_registration, …)
 tunnels            id, name, slug, token_encrypted, status, container_name
-notification_channels  id, name, type(telegram|webhook|discord), target_encrypted,
-                       event_filter, active
-notification_log       id, channel_id, event, entity, status(sent|failed), error, ts
+notification_channels  id, name, type(telegram|webhook|discord|slack|ntfy|email),
+                       target_encrypted, event_filter, active
+notification_log       id, channel_id, event, entity, status(sent|failed), attempts,
+                       error, ts
+alert_rules            id, service_id (null = host-wide), name, metric(cpu|memory|cert-expiry),
+                       operator(>|<), threshold, duration_windows, enabled
+alert_state            rule_id (unique), status(ok|breaching|firing), breach_since,
+                       fired_at, last_notified_at, last_value
 ```
 
 ## Server modules
@@ -158,11 +163,12 @@ notification_log       id, channel_id, event, entity, status(sent|failed), error
 | tunnels | /tunnels | CRUD (cloudflared) — admin-only |
 | volumes | /volumes | inventory; delete — admin-only, audited |
 | system | /system | resources, prune, export, import (tar-slip guarded, rollback) — admin-only |
-| settings | /settings | instance flags: allow-registration toggle — admin-only, audited |
+| settings | /settings | instance flags: allow-registration toggle, ACME email — admin-only, audited |
 | users | /users | list, role change, password reset, delete — admin-only |
 | notifications | /notifications | channels CRUD, test, log — admin-only |
 | about | /about | version, changelog, tech stack, stats |
 | activity | /activity | audit log feed |
+| alerts | /alerts | alert rule CRUD + state; members read, admins manage |
 | serviceMigration | /services/:id/export + import | per-service bundle — admin-only |
 | health | /health | liveness + DB ping |
 | events | /v1/events (WS) | real-time event stream |
@@ -176,7 +182,7 @@ notification_log       id, channel_id, event, entity, status(sent|failed), error
 | rateLimit | Global + per-route IP rate limiting (auth/setup/webhook tighter) |
 | worker | Polls queued deployments, claims atomically (rowsAffected-verified), runs the pipeline one at a time, sweeps stale `building` rows on boot |
 | traefik | Ensures network + Traefik container (config **directory** bind mount) + writes dynamic config atomically |
-| collector | Samples container stats every 30s → metrics table; prunes metrics older than 24h |
+| collector | Samples container stats every 30s → metrics table; prunes metrics older than 24h; feeds the alert evaluator (cpu %, memory MiB, host, cert-expiry days) |
 | backupScheduler | Daily database backups (`scheduled` scope), keeps last 7 per DB — never prunes manual backups |
 | housekeeping | Hourly retention: deploy logs (30d), audit log (90d), notification log (30d), dangling Docker images |
 | rawBody | Captures raw body for HMAC + binary uploads |
@@ -207,6 +213,23 @@ Zero-downtime for Docker, brief-gap-with-rollback for PM2. The worker processes 
     build can never block the worker. Audit + EventBus + notification dispatch
     throughout; logs streamed via WebSocket.
 ```
+
+## Alerting
+
+Threshold rules (`alert_rules`) evaluated by the collector on every 30s sample:
+
+```
+ok → breaching (first breach, breach_since = now)
+   → firing  (breach sustained ≥ duration_windows × 30s → ONE notification)
+   → ok      (clears → recovery notification, only if it had fired)
+```
+
+- Metrics: `cpu` (% per container or host), `memory` (MiB), `cert-expiry` (days
+  remaining across all issued Let's Encrypt certificates)
+- Notifications ride the existing channels via `audit()` → `notifyEvent`
+  (`alert.fired` / `alert.recovered` actions, filterable per channel)
+- Anti-spam: 30-minute cooldown before re-notifying a firing alert; state reset
+  on rule edits
 
 ## Security model
 

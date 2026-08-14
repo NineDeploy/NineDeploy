@@ -1,0 +1,1 @@
+ALTER TABLE `notification_log` ADD `attempts` integer DEFAULT 1 NOT NULL;

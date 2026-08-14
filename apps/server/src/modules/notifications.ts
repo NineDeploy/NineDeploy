@@ -3,6 +3,7 @@ import { notificationChannels, notificationLog } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { notificationChannelCreate, notificationChannelPatch } from '@ninedeploy/schemas';
 import { decrypt, encrypt } from '../lib/crypto.js';
+import { dispatchChannel } from '../lib/notifier.js';
 import { badRequest, notFound, parseId } from '../lib/errors.js';
 
 function serialize(ch: typeof notificationChannels.$inferSelect) {
@@ -76,20 +77,7 @@ export const notificationRoutes: FastifyPluginAsync = async (app) => {
     const message = '🧪 NineDeploy test notification — your channel is working!';
 
     try {
-      if (ch.type === 'telegram') {
-        const [botToken, chatId] = target.split(':');
-        const res = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ chat_id: chatId, text: message }),
-        });
-        if (!res.ok) throw new Error(`Telegram ${res.status}`);
-      } else if (ch.type === 'webhook') {
-        const res = await fetch(target, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message }) });
-        if (!res.ok) throw new Error(`Webhook ${res.status}`);
-      } else if (ch.type === 'discord') {
-        const res = await fetch(target, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content: message }) });
-        if (!res.ok) throw new Error(`Discord ${res.status}`);
-      }
+      await dispatchChannel(ch.type, target, { id: 0, action: 'notification.test', entity: ch.name, ts: new Date().toISOString() }, message);
       return { ok: true };
     } catch (err) {
       throw badRequest(`Test failed: ${err instanceof Error ? err.message : err}`);
@@ -105,6 +93,7 @@ export const notificationRoutes: FastifyPluginAsync = async (app) => {
       event: l.event,
       entity: l.entity,
       status: l.status,
+      attempts: l.attempts,
       error: l.error,
       ts: l.ts.toISOString(),
     }));

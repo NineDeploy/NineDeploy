@@ -232,7 +232,7 @@ describe('NotificationWizard', () => {
     await user.click(screen.getByRole('button', { name: /continue/i }));
     await user.click(screen.getByRole('button', { name: /continue/i }));
     await user.click(screen.getByRole('button', { name: /send test/i }));
-    await waitFor(() => expect(screen.getByText('Check your webhook for a test message.')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('Check your Webhook for a test message.')).toBeInTheDocument());
     await user.click(screen.getByRole('button', { name: /create channel/i }));
     await waitFor(() => expect(onClose).toHaveBeenCalled());
   });
@@ -312,5 +312,68 @@ describe('NotificationWizard', () => {
     apiMock.api.notifications.createChannel.mockReturnValueOnce(create2Promise);
     await user.click(screen.getByRole('button', { name: /create channel/i }));
     expect(screen.getByText('Creating…')).toBeInTheDocument();
+  });
+
+  it('shows the slack connect form and creates a slack channel', async () => {
+    const user = userEvent.setup();
+    renderWizard();
+    await user.click(screen.getByText('Slack'));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    expect(screen.getByText('Create a Slack Incoming Webhook')).toBeInTheDocument();
+    await user.type(screen.getByPlaceholderText('https://hooks.slack.com/services/…'), 'https://hooks.slack.com/services/T/B/x');
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /send test/i }));
+    await waitFor(() =>
+      expect(apiMock.api.notifications.createChannel).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'slack', target: 'https://hooks.slack.com/services/T/B/x' }),
+      ),
+    );
+    await waitFor(() => expect(screen.getByText('Check your Slack for a test message.')).toBeInTheDocument());
+  });
+
+  it('shows the ntfy connect form and creates an ntfy channel', async () => {
+    const user = userEvent.setup();
+    renderWizard();
+    await user.click(screen.getByText('ntfy'));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    expect(screen.getByText('ntfy topic')).toBeInTheDocument();
+    await user.type(screen.getByPlaceholderText('https://ntfy.sh/my-ninedeploy-alerts'), 'https://ntfy.sh/alerts');
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /send test/i }));
+    await waitFor(() =>
+      expect(apiMock.api.notifications.createChannel).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'ntfy', target: 'https://ntfy.sh/alerts' }),
+      ),
+    );
+    await waitFor(() => expect(screen.getByText('Check your ntfy for a test message.')).toBeInTheDocument());
+  });
+
+  it('composes an email target as JSON from the SMTP fields', async () => {
+    const user = userEvent.setup();
+    renderWizard();
+    await user.click(screen.getByText('Email (SMTP)'));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    expect(screen.getByText('SMTP settings')).toBeInTheDocument();
+    await user.type(screen.getByPlaceholderText('smtp.example.com'), 'smtp.example.com');
+    await user.type(screen.getByPlaceholderText('587'), '587');
+    await user.type(screen.getByPlaceholderText('ninedeploy@example.com'), 'alerts@example.com');
+    await user.type(screen.getByPlaceholderText('you@example.com'), 'ops@example.com');
+    const emailInputs = document.querySelectorAll('input');
+    await user.type(emailInputs[emailInputs.length - 3] as HTMLInputElement, 'smtp-user');
+    await user.type(document.querySelector('input[type="password"]') as HTMLInputElement, 'smtp-secret');
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /send test/i }));
+    await waitFor(() =>
+      expect(apiMock.api.notifications.createChannel).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'email',
+          target: JSON.stringify({ host: 'smtp.example.com', port: '587', from: 'alerts@example.com', to: 'ops@example.com', user: 'smtp-user', pass: 'smtp-secret' }),
+        }),
+      ),
+    );
+    await waitFor(() => expect(screen.getByText('Check your inbox for a test message.')).toBeInTheDocument());
   });
 });

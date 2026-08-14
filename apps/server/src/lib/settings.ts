@@ -18,3 +18,17 @@ export async function setSetting(db: DB, key: string, value: boolean): Promise<v
     .values({ key, value, updatedAt: new Date() })
     .onConflictDoUpdate({ target: settings.key, set: { value, updatedAt: new Date() } });
 }
+
+/** Read a settings-table string value with a fallback. */
+export async function getSettingString(db: DB, key: string, fallback: string | null): Promise<string | null> {
+  const row = await db.query.settings.findFirst({ where: eq(settings.key, key) });
+  return typeof row?.value === 'string' ? row.value : fallback;
+}
+
+/** Upsert a string setting (primary-key upsert on `key`). */
+export async function setSettingString(db: DB, key: string, value: string): Promise<void> {
+  await db
+    .insert(settings)
+    .values({ key, value, updatedAt: new Date() })
+    .onConflictDoUpdate({ target: settings.key, set: { value, updatedAt: new Date() } });
+}

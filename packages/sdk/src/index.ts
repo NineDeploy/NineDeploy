@@ -1,4 +1,6 @@
 import type {
+  AlertRule,
+  CreateAlertRuleInput,
   ApiToken,
   Attachment,
   Backup,
@@ -133,9 +135,16 @@ export interface NineDeployClient {
   activity: {
     list: () => Promise<Array<{ id: number; userId: number | null; action: string; entity: string | null; ts: string }>>;
   };
+  alerts: {
+    list: () => Promise<AlertRule[]>;
+    create: (input: CreateAlertRuleInput) => Promise<AlertRule>;
+    update: (id: number, input: Partial<CreateAlertRuleInput>) => Promise<AlertRule>;
+    remove: (id: number) => Promise<void>;
+  };
   settings: {
-    get: () => Promise<{ allowRegistration: boolean }>;
+    get: () => Promise<{ allowRegistration: boolean; acmeEmail: string | null }>;
     setAllowRegistration: (enabled: boolean) => Promise<{ ok: boolean; allowRegistration: boolean }>;
+    setAcmeEmail: (email: string) => Promise<{ ok: boolean; acmeEmail: string | null; applied: string }>;
   };
   users: {
     list: () => Promise<PublicUser[]>;
@@ -267,6 +276,15 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
       if (parsed === undefined) throw new NineDeployError(res.status, 'http_error', `Request failed (${res.status})`);
       throw NineDeployError.fromBody(res.status, parsed);
     }
+    // An ok response with an empty/unparseable body (204s, HTML pages from a
+    // misconfigured proxy) must never resolve to `undefined` — query functions
+    // built on this client would crash TanStack Query ("Query data cannot be
+    // undefined"). Empty 2xx bodies resolve to {}; non-JSON bodies surface as
+    // a typed error so callers see the real problem instead of a crash.
+    if (parsed === undefined) {
+      if (text === '') return {} as T;
+      throw new NineDeployError(res.status, 'invalid_response', `Expected JSON but received a non-JSON body (status ${res.status})`);
+    }
     return parsed as T;
   }
 
@@ -341,16 +359,23 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
         await request(`/v1/tunnels/${id}`, { method: 'DELETE' });
       },
     },
-    activity: {
-      list: () =>
-        get<Array<{ id: number; userId: number | null; action: string; entity: string | null; ts: string }>>(
-          '/v1/activity',
-        ),
+  activity: {
+    list: () => get('/v1/activity'),
+  },
+  alerts: {
+    list: () => get('/v1/alerts'),
+    create: (input) => send('POST', '/v1/alerts', input),
+    update: (id, input) => send('PATCH', `/v1/alerts/${id}`, input),
+    remove: async (id) => {
+      await request(`/v1/alerts/${id}`, { method: 'DELETE' });
     },
+  },
     settings: {
-      get: () => get<{ allowRegistration: boolean }>('/v1/settings'),
+      get: () => get<{ allowRegistration: boolean; acmeEmail: string | null }>('/v1/settings'),
       setAllowRegistration: (enabled) =>
         send<{ ok: boolean; allowRegistration: boolean }>('PUT', '/v1/settings/allow-registration', { enabled }),
+      setAcmeEmail: (email) =>
+        send<{ ok: boolean; acmeEmail: string | null; applied: string }>('PUT', '/v1/settings/acme-email', { email }),
     },
     users: {
       list: () => get<PublicUser[]>('/v1/users'),

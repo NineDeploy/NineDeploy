@@ -14,6 +14,13 @@ import {
   systemDashboard, systemInfo, tplDeploy, tplList,
   tokenCreate, tokenList,
 } from './commands/misc.js';
+import {
+  activityList, alertsCreate, alertsList, alertsRemove,
+  backupsCreate, backupsList, backupsRestore,
+  deploysWatch, domainsAdd, domainsList, domainsRemove,
+  envList, envRemove, envSet, systemExport, systemImport,
+  usersList, volumesList, volumesRemove,
+} from './commands/manage.js';
 
 const program = new Command();
 
@@ -126,6 +133,72 @@ const system = program.command('system').description('System information & tools
 system.command('info').description('Show version, stats, and tech stack').action(() => systemInfo(getClient()));
 
 system.command('dashboard').description('Live dashboard with service health').action(() => systemDashboard(getClient()));
+
+// ── Env vars ──────────────────────────────────────────────────────────────
+const envCmd = program.command('env').description('Manage service environment variables');
+
+envCmd.command('list <serviceId>').description('List a service\'s env vars').action((id: string) => envList(getClient(), id));
+
+envCmd.command('set <serviceId> <key> <value>')
+  .description('Create or update an env var (secret by default)')
+  .option('--public', 'Store as a plain (non-secret) value')
+  .action((id: string, key: string, value: string, opts: { public?: boolean }) => envSet(getClient(), id, key, value, opts));
+
+envCmd.command('rm <serviceId> <key>').description('Remove an env var by key').action((id: string, key: string) => envRemove(getClient(), id, key));
+
+// ── Domains ────────────────────────────────────────────────────────────────
+const domainsCmd = program.command('domains').description('Manage domains & routing');
+
+domainsCmd.command('list').description('List all domains').action(() => domainsList(getClient()));
+
+domainsCmd.command('add <serviceId> <host>')
+  .description('Route a hostname to a service')
+  .option('-p, --path <path>', 'Path prefix', '/')
+  .option('--no-ssl', 'Serve over plain HTTP (no TLS)')
+  .action((id: string, host: string, opts: { path?: string; ssl?: boolean }) => domainsAdd(getClient(), id, host, opts));
+
+domainsCmd.command('rm <serviceId> <domainId>').description('Remove a domain').action((svcId: string, domId: string) => domainsRemove(getClient(), svcId, domId));
+
+// ── Volumes ────────────────────────────────────────────────────────────────
+const volumesCmd = program.command('volumes').description('Manage Docker volumes');
+
+volumesCmd.command('list').description('List all volumes').action(() => volumesList(getClient()));
+
+volumesCmd.command('rm <name>').description('Delete a volume (with confirmation)').action((name: string) => volumesRemove(getClient(), name));
+
+// ── Backups ────────────────────────────────────────────────────────────────
+const backupsCmd = program.command('backups').description('Manage database backups');
+
+backupsCmd.command('list [databaseId]').description('List backups (all, or one database\'s)').action((id?: string) => backupsList(getClient(), id));
+
+backupsCmd.command('create <databaseId>').description('Back a database up now').action((id: string) => backupsCreate(getClient(), id));
+
+backupsCmd.command('restore <databaseId> <backupId>').description('Restore a backup (destructive)').action((id: string, bId: string) => backupsRestore(getClient(), id, bId));
+
+// ── Alerts ─────────────────────────────────────────────────────────────────
+const alertsCmd = program.command('alerts').description('Manage alert rules');
+
+alertsCmd.command('list').description('List alert rules').action(() => alertsList(getClient()));
+
+alertsCmd.command('create <name> <metric> <operator> <threshold>')
+  .description('Create an alert rule (metric: cpu|memory|cert-expiry, operator: > or <)')
+  .option('-w, --windows <n>', 'Consecutive 30s samples before firing', '1')
+  .option('-s, --service <id>', 'Scope to a service (default: host-wide)')
+  .action((name: string, metric: string, op: string, threshold: string, opts: { windows?: string; service?: string }) => alertsCreate(getClient(), name, metric, op, threshold, opts));
+
+alertsCmd.command('rm <id>').description('Delete an alert rule').action((id: string) => alertsRemove(getClient(), id));
+
+// ── Users & activity ───────────────────────────────────────────────────────
+program.command('users').description('List users (admin)').action(() => usersList(getClient()));
+
+program.command('activity').description('Show recent activity').action(() => activityList(getClient()));
+
+// ── System export/import + deploy log streaming ────────────────────────────
+system.command('export [file]').description('Export the full system state as JSON').action((file?: string) => systemExport(file));
+
+system.command('import <file>').description('Import a system bundle (destructive)').action((file: string) => systemImport(file));
+
+deploys.command('watch <serviceId> <deployId>').description('Stream a deployment\'s build logs live').action((svcId: string, depId: string) => deploysWatch(svcId, depId));
 
 // ── Banner on bare `ninedeploy` ───────────────────────────────────────────
 if (process.argv.length <= 2) {

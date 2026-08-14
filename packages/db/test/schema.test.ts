@@ -52,6 +52,9 @@ describe('schema', () => {
       'dbStatus',
       'tunnelStatus',
       'channelType',
+      'alertMetric',
+      'alertOperator',
+      'alertStateStatus',
     ] as const) {
       expect(schema[name], `missing enum ${name}`).toBeDefined();
     }
@@ -71,6 +74,9 @@ describe('schema', () => {
       'metricsRelations',
       'databasesRelations',
       'databaseAttachmentsRelations',
+      'notificationLogRelations',
+      'alertRulesRelations',
+      'alertStateRelations',
     ] as const) {
       expect(schema[name], `missing relation ${name}`).toBeDefined();
     }
@@ -97,6 +103,8 @@ describe('schema', () => {
       'tunnels',
       'notificationChannels',
       'notificationLog',
+      'alertRules',
+      'alertState',
     ] as const;
     for (const name of tables) {
       const table = (schema as unknown as Record<string, unknown>)[name];

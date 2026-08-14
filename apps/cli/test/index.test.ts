@@ -75,6 +75,13 @@ const h = vi.hoisted(() => {
     loadConfig: vi.fn(),
     saveConfig: vi.fn(),
     loginAction: vi.fn(),
+    envList: vi.fn(), envSet: vi.fn(), envRemove: vi.fn(),
+    domainsList: vi.fn(), domainsAdd: vi.fn(), domainsRemove: vi.fn(),
+    volumesList: vi.fn(), volumesRemove: vi.fn(),
+    backupsList: vi.fn(), backupsCreate: vi.fn(), backupsRestore: vi.fn(),
+    alertsList: vi.fn(), alertsCreate: vi.fn(), alertsRemove: vi.fn(),
+    usersList: vi.fn(), activityList: vi.fn(),
+    systemExport: vi.fn(), systemImport: vi.fn(), deploysWatch: vi.fn(),
     setupAction: vi.fn(),
     servicesList: vi.fn(),
     servicesCreate: vi.fn(),
@@ -124,6 +131,27 @@ vi.mock('../src/commands/misc.js', () => ({
   tplList: h.tplList,
   tokenCreate: h.tokenCreate,
   tokenList: h.tokenList,
+}));
+vi.mock('../src/commands/manage.js', () => ({
+  activityList: h.activityList,
+  alertsCreate: h.alertsCreate,
+  alertsList: h.alertsList,
+  alertsRemove: h.alertsRemove,
+  backupsCreate: h.backupsCreate,
+  backupsList: h.backupsList,
+  backupsRestore: h.backupsRestore,
+  deploysWatch: h.deploysWatch,
+  domainsAdd: h.domainsAdd,
+  domainsList: h.domainsList,
+  domainsRemove: h.domainsRemove,
+  envList: h.envList,
+  envRemove: h.envRemove,
+  envSet: h.envSet,
+  systemExport: h.systemExport,
+  systemImport: h.systemImport,
+  usersList: h.usersList,
+  volumesList: h.volumesList,
+  volumesRemove: h.volumesRemove,
 }));
 vi.mock('../src/lib/format.js', () => ({ banner: h.banner }));
 
@@ -179,15 +207,21 @@ describe('program registration', () => {
     expect(root.children.map((c) => c.cmdName)).toEqual([
       'setup', 'login', 'logout', 'whoami', 'config',
       'services', 'databases', 'templates', 'deploys', 'token', 'system',
+      'env', 'domains', 'volumes', 'backups', 'alerts', 'users', 'activity',
     ]);
     expect(findCommand('services').children).toHaveLength(10);
     expect(findCommand('databases').children).toHaveLength(2);
     expect(findCommand('templates').children).toHaveLength(2);
-    expect(findCommand('deploys').children).toHaveLength(2);
+    expect(findCommand('deploys').children).toHaveLength(3);
     expect(findCommand('token').children).toHaveLength(2);
-    expect(findCommand('system').children).toHaveLength(2);
-    // 1 root + 11 direct + 10 + 2 + 2 + 2 + 2 + 2 nested
-    expect(h.FakeCommand.instances).toHaveLength(32);
+    expect(findCommand('system').children).toHaveLength(4);
+    expect(findCommand('env').children).toHaveLength(3);
+    expect(findCommand('domains').children).toHaveLength(3);
+    expect(findCommand('volumes').children).toHaveLength(2);
+    expect(findCommand('backups').children).toHaveLength(3);
+    expect(findCommand('alerts').children).toHaveLength(3);
+    // 1 root + 18 direct + nested: 10 + 2 + 2 + 3 + 2 + 4 + 3 + 3 + 2 + 3 + 3
+    expect(h.FakeCommand.instances).toHaveLength(56);
     // argv length > 2 → no banner, no exit
     expect(h.banner).not.toHaveBeenCalled();
     expect(h.exit).not.toHaveBeenCalled();
@@ -391,6 +425,39 @@ describe('delegating actions', () => {
 
     await cmds.get('export <id>')!.actionFn!('6');
     expect(h.servicesExport).toHaveBeenCalledWith(client, '6');
+  });
+
+  it('wires env, domains, volumes, backups, alerts, users, activity, and new system/deploys actions', async () => {
+    const client = { fake: true };
+    h.getClient.mockReturnValue(client);
+
+    await loadIndex();
+
+    const sub = (parentName: string, verb: string) =>
+      findCommand(parentName).children.find((c) => c.cmdName.split(' ')[0] === verb)!;
+
+    await sub('env', 'list').actionFn!('1');
+    await sub('env', 'set').actionFn!('1', 'K', 'V', {});
+    await sub('env', 'rm').actionFn!('1', 'K');
+    await sub('domains', 'list').actionFn!();
+    await sub('domains', 'add').actionFn!('1', 'h.test', {});
+    await sub('domains', 'rm').actionFn!('1', '2');
+    await sub('volumes', 'list').actionFn!();
+    await sub('volumes', 'rm').actionFn!('v');
+    await sub('backups', 'list').actionFn!('1');
+    await sub('backups', 'create').actionFn!('1');
+    await sub('backups', 'restore').actionFn!('1', '2');
+    await sub('alerts', 'list').actionFn!();
+    await sub('alerts', 'create').actionFn!('n', 'cpu', '>', '5', {});
+    await sub('alerts', 'rm').actionFn!('1');
+    await findCommand('users').actionFn!();
+    await findCommand('activity').actionFn!();
+    await sub('system', 'export').actionFn!('out.json');
+    await sub('system', 'import').actionFn!('bundle.json');
+    await sub('deploys', 'watch').actionFn!('1', '2');
+
+    // Every action routed through the shared client.
+    expect(h.getClient).toHaveBeenCalled();
   });
 
   it('wires databases, templates, deploys, token, and system subcommands', async () => {

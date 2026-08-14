@@ -57,8 +57,9 @@ export function createFakeApiModule() {
     system: { resources: vi.fn(), pruneImages: vi.fn(), exportUrl: vi.fn() },
     tunnels: { list: vi.fn(), create: vi.fn(), remove: vi.fn() },
     activity: { list: vi.fn() },
+    alerts: { list: vi.fn(), create: vi.fn(), update: vi.fn(), remove: vi.fn() },
     users: { list: vi.fn(), setRole: vi.fn(), remove: vi.fn(), resetPassword: vi.fn() },
-    settings: { get: vi.fn(), setAllowRegistration: vi.fn() },
+    settings: { get: vi.fn(), setAllowRegistration: vi.fn(), setAcmeEmail: vi.fn() },
     about: { get: vi.fn() },
     notifications: {
       listChannels: vi.fn(),

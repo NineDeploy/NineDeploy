@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { domains, services } from '@ninedeploy/db';
-import { ensureNetwork, ensureTraefik, NETWORK, writeDynamicConfig } from '../src/engine/proxy.js';
+import { ensureNetwork, ensureTraefik, getAcmeEmail, NETWORK, parseCertExpiry, readCertificates, writeDynamicConfig } from '../src/engine/proxy.js';
 
 const h = vi.hoisted(() => {
   const capture = vi.fn(async () => '');
@@ -31,6 +31,99 @@ beforeEach(() => {
 
 afterAll(() => {
   rmSync(base, { recursive: true, force: true });
+});
+
+/** Minimal self-signed-style PEM for parser tests: the DER contains two ASCII UTCTimes. */
+function pemWithDates(notBefore: string, notAfter: string): string {
+  // 0x17 = UTCTime tag; length 13; the timestamp as ASCII bytes.
+  const body = Buffer.concat([
+    Buffer.from([0x17, 13]), Buffer.from(notBefore, 'latin1'),
+    Buffer.from([0x17, 13]), Buffer.from(notAfter, 'latin1'),
+    Buffer.from([0xff, 0xfe, 0x5a]), // trailing non-timestamp bytes ending in 'Z'
+  ]);
+  return `-----BEGIN CERTIFICATE-----\n${body.toString('base64')}\n-----END CERTIFICATE-----\n`;
+}
+
+describe('certificate tracking', () => {
+  beforeEach(() => {
+    mkdirSync(traefikDir, { recursive: true });
+  });
+
+  it('parses the notAfter UTCTime out of a PEM certificate', () => {
+    expect(parseCertExpiry(pemWithDates('260101000000Z', '270101000000Z'))).toEqual(new Date('2027-01-01T00:00:00Z'));
+    // Equal timestamps exercise the not-newer branch.
+    expect(parseCertExpiry(pemWithDates('270101000000Z', '270101000000Z'))).toEqual(new Date('2027-01-01T00:00:00Z'));
+  });
+
+  it('maps years 50-99 into the 1900s per RFC 5280', () => {
+    expect(parseCertExpiry(pemWithDates('500101000000Z', '510101000000Z'))).toEqual(new Date('1951-01-01T00:00:00Z'));
+  });
+
+  it('returns null when nothing is configured anywhere', async () => {
+    h.config.acmeEmail = null;
+    const dbWithout = { query: { settings: { findFirst: async () => undefined } } };
+    await expect(getAcmeEmail(dbWithout as never)).resolves.toBe(null);
+  });
+
+  it('keeps the newest of multiple parsed timestamps', () => {
+    // notAfter in the past relative to notBefore — max() must still pick notBefore.
+    expect(parseCertExpiry(pemWithDates('270101000000Z', '260101000000Z'))).toEqual(new Date('2027-01-01T00:00:00Z'));
+  });
+
+  it('returns null for a non-certificate or empty PEM', () => {
+    expect(parseCertExpiry('not a pem')).toBeNull();
+    expect(parseCertExpiry('-----BEGIN CERTIFICATE-----\n\n-----END CERTIFICATE-----')).toBeNull();
+  });
+
+  it('reads issued certificates from acme.json', () => {
+    const pem = pemWithDates('260101000000Z', '270101000000Z');
+    writeFileSync(
+      path.join(traefikDir, 'acme.json'),
+      JSON.stringify({ letsencrypt: { Certificates: [{ domain: { main: 'app.example.com' }, certificate: pem }] } }),
+    );
+    const certs = readCertificates();
+    expect(certs).toEqual([{ domain: 'app.example.com', expiresAt: new Date('2027-01-01T00:00:00Z') }]);
+  });
+
+  it('skips acme.json entries without a domain or certificate', () => {
+    writeFileSync(
+      path.join(traefikDir, 'acme.json'),
+      JSON.stringify({
+        letsencrypt: {
+          Certificates: [
+            { domain: { main: 'ok.example.com' }, certificate: pemWithDates('260101000000Z', '270101000000Z') },
+            { domain: undefined, certificate: 'x' },
+            { domain: { main: 'no-cert.example.com' } },
+          ],
+        },
+        emptyResolver: {},
+        otherResolver: { Certificates: [] },
+      }),
+    );
+    const certs = readCertificates();
+    expect(certs).toHaveLength(1);
+    expect(certs[0]).toMatchObject({ domain: 'ok.example.com' });
+  });
+
+  it('returns [] when acme.json is missing or corrupt', () => {
+    rmSync(path.join(traefikDir, 'acme.json'), { force: true });
+    expect(readCertificates()).toEqual([]);
+    writeFileSync(path.join(traefikDir, 'acme.json'), '{not json');
+    expect(readCertificates()).toEqual([]);
+    writeFileSync(path.join(traefikDir, 'acme.json'), '{}');
+    expect(readCertificates()).toEqual([]);
+  });
+
+  it('prefers the DB ACME email over the env fallback and never throws', async () => {
+    h.config.acmeEmail = 'env@example.com';
+    const dbWithEmail = { query: { settings: { findFirst: async () => ({ value: 'db@example.com' }) } } };
+    await expect(getAcmeEmail(dbWithEmail as never)).resolves.toBe('db@example.com');
+    const dbWithout = { query: { settings: { findFirst: async () => undefined } } };
+    await expect(getAcmeEmail(dbWithout as never)).resolves.toBe('env@example.com');
+    const brokenDb = { query: { settings: { findFirst: async () => { throw new Error('no table'); } } } };
+    await expect(getAcmeEmail(brokenDb as never)).resolves.toBe('env@example.com');
+    h.config.acmeEmail = null;
+  });
 });
 
 const makeDb = (domainRows: unknown[], serviceRows: unknown[]) => ({

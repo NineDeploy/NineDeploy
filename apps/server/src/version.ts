@@ -1,4 +1,4 @@
-export const VERSION = '1.0.0';
+export const VERSION = '1.1.0';
 
 export interface ChangelogEntry {
   version: string;
@@ -8,6 +8,20 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '1.1.0',
+    date: '2026-08-14',
+    title: 'Alerting, notification channels, CLI parity',
+    changes: [
+      'Metric-driven alert rules (CPU/memory/cert-expiry) with duration windows, cooldown, and recovery notifications',
+      'New notification channels: Slack, ntfy, and email (SMTP with encrypted credentials)',
+      'Retry with exponential backoff for failed notification deliveries',
+      'TLS certificate expiry tracking on the Domains page with warning badges',
+      'ACME email configurable from Settings (env fallback preserved)',
+      'CLI parity: env, domains, volumes, backups, alerts, users, activity, system export/import, streaming logs',
+      'Integration test coverage: MySQL/Redis/MongoDB backup round-trips, end-to-end deploy + rollback',
+    ],
+  },
   {
     version: '1.0.0',
     date: '2026-08-13',

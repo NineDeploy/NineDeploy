@@ -4,6 +4,11 @@ import { Link } from 'react-router';
 import { api } from '../lib/api.js';
 import { Card, EmptyState, Skeleton, StatusBadge, cn } from '../components/ui.js';
 
+/** Whole days between now and an ISO expiry timestamp. */
+function daysUntil(iso: string): number {
+  return Math.ceil((new Date(iso).getTime() - Date.now()) / 86_400_000);
+}
+
 export function Domains() {
   const qc = useQueryClient();
   const list = useQuery({ queryKey: ['domains-all'], queryFn: () => api.domains.all() });
@@ -69,6 +74,19 @@ export function Domains() {
                       <span className={cn('inline-block h-3.5 w-3.5 transform rounded-full bg-white transition', d.ssl ? 'translate-x-5' : 'translate-x-1')} />
                     </button>
                     {d.ssl && <Lock size={11} className="ml-1.5 inline text-emerald-400" />}
+                    {d.certExpiresAt && (
+                      <span
+                        className={cn(
+                          'ml-2 rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset',
+                          daysUntil(d.certExpiresAt) < 14
+                            ? 'bg-amber-500/15 text-amber-300 ring-amber-500/20'
+                            : 'bg-emerald-500/10 text-emerald-300 ring-emerald-500/20',
+                        )}
+                        title="Certificate expiry (Let's Encrypt)"
+                      >
+                        cert {daysUntil(d.certExpiresAt)}d
+                      </span>
+                    )}
                   </td>
                   <td className="px-5 py-3"><StatusBadge status={d.ssl ? 'active' : d.status} /></td>
                 </tr>

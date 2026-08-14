@@ -21,7 +21,7 @@ function formatMessage(action: string, entity?: string | null): string {
   const subject = parts[0]!;
   const emoji: Record<string, string> = {
     service: '🖥️', database: '🗄️', domain: '🌐', deploy: '🚀', backup: '💾',
-    tunnel: '☁️', user: '👤', template: '✨', source: '🔑',
+    tunnel: '☁️', user: '👤', template: '✨', source: '🔑', alert: '🔔',
   };
   const icon = emoji[subject] ?? '•';
   // The entity (service/user names) is user-controlled — escape it so the
@@ -31,6 +31,25 @@ function formatMessage(action: string, entity?: string | null): string {
 
 /** A slow notification target must not stall its channel's dispatch. */
 const FETCH_TIMEOUT_MS = 10_000;
+
+/** Backoff delays between delivery retries (attempt 1 → wait 500ms → attempt 2 → wait 2s → attempt 3). */
+export const RETRY_DELAYS_MS = [500, 2000];
+
+/** Run an async send with up to RETRY_DELAYS_MS.length retries; returns the attempt count. */
+export async function withRetry(fn: () => Promise<void>, delays: number[] = RETRY_DELAYS_MS): Promise<number> {
+  let attempt = 1;
+  for (;;) {
+    try {
+      await fn();
+      return attempt;
+    } catch (err) {
+      const delay = delays[attempt - 1];
+      if (delay === undefined) throw err;
+      attempt++;
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+}
 
 /** Send to a Telegram bot chat. */
 async function sendTelegram(botToken: string, chatId: string, message: string): Promise<void> {
@@ -66,11 +85,95 @@ async function sendDiscord(webhookUrl: string, message: string): Promise<void> {
   if (!res.ok) throw new Error(`Discord ${res.status}`);
 }
 
+/** Send to a Slack incoming webhook. */
+async function sendSlack(webhookUrl: string, message: string): Promise<void> {
+  const res = await fetch(webhookUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text: message }),
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  });
+  if (!res.ok) throw new Error(`Slack ${res.status}`);
+}
+
+/** Publish to an ntfy topic (target = topic URL, e.g. https://ntfy.sh/my-topic). */
+async function sendNtfy(topicUrl: string, message: string): Promise<void> {
+  const res = await fetch(topicUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain' },
+    body: message,
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  });
+  if (!res.ok) throw new Error(`ntfy ${res.status}`);
+}
+
+export interface EmailTarget {
+  host: string;
+  port: number;
+  from: string;
+  to: string;
+  user?: string;
+  pass?: string;
+  secure?: boolean;
+}
+
+/** Parse (and validate the shape of) an email channel target. */
+export function parseEmailTarget(target: string): EmailTarget {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(target);
+  } catch {
+    throw new Error('Invalid email target (expected JSON with host, port, from, to)');
+  }
+  const t = parsed as Partial<EmailTarget>;
+  if (!t.host || !t.port || !t.from || !t.to) {
+    throw new Error('Invalid email target (expected JSON with host, port, from, to)');
+  }
+  return t as EmailTarget;
+}
+
+/** Send an email through SMTP (target = JSON config, credentials encrypted at rest). */
+async function sendEmail(target: string, subject: string, message: string): Promise<void> {
+  const cfg = parseEmailTarget(target);
+  const nodemailer = await import('nodemailer');
+  const transport = nodemailer.createTransport({
+    host: cfg.host,
+    port: cfg.port,
+    secure: cfg.secure ?? cfg.port === 465,
+    auth: cfg.user ? { user: cfg.user, pass: cfg.pass ?? '' } : undefined,
+  });
+  try {
+    await transport.sendMail({ from: cfg.from, to: cfg.to, subject, text: message });
+  } finally {
+    transport.close();
+  }
+}
+
+/** Dispatch a message to one channel by type. */
+export async function dispatchChannel(type: string, target: string, event: AppEvent, message: string): Promise<void> {
+  if (type === 'telegram') {
+    const [botToken, chatId] = target.split(':');
+    if (!botToken || !chatId) throw new Error('Invalid Telegram target (expected botToken:chatId)');
+    await sendTelegram(botToken, chatId, message);
+  } else if (type === 'webhook') {
+    await sendWebhook(target, { event: event.action, entity: event.entity, ts: event.ts, message });
+  } else if (type === 'discord') {
+    await sendDiscord(target, message);
+  } else if (type === 'slack') {
+    await sendSlack(target, message);
+  } else if (type === 'ntfy') {
+    await sendNtfy(target, message);
+  } else if (type === 'email') {
+    await sendEmail(target, `NineDeploy: ${event.action}`, message);
+  }
+}
+
 /**
  * Process an event through all active notification channels.
  * Telegram target format: `botToken:chatId`
- * Webhook target format: URL
- * Discord target format: webhook URL
+ * Webhook/Discord/Slack target format: URL
+ * ntfy target format: topic URL
+ * Email target format: JSON {host, port, from, to, user?, pass?}
  */
 export async function notifyEvent(db: DB, event: AppEvent): Promise<void> {
   let channels;
@@ -88,22 +191,15 @@ export async function notifyEvent(db: DB, event: AppEvent): Promise<void> {
     const target = decrypt(ch.targetEncrypted);
 
     try {
-      if (ch.type === 'telegram') {
-        const [botToken, chatId] = target.split(':');
-        if (!botToken || !chatId) throw new Error('Invalid Telegram target (expected botToken:chatId)');
-        await sendTelegram(botToken, chatId, message);
-      } else if (ch.type === 'webhook') {
-        await sendWebhook(target, { event: event.action, entity: event.entity, ts: event.ts, message });
-      } else if (ch.type === 'discord') {
-        await sendDiscord(target, message);
-      }
-      await db.insert(notificationLog).values({ channelId: ch.id, event: event.action, entity: event.entity, status: 'sent' });
+      const attempts = await withRetry(() => dispatchChannel(ch.type, target, event, message));
+      await db.insert(notificationLog).values({ channelId: ch.id, event: event.action, entity: event.entity, status: 'sent', attempts });
     } catch (err) {
       await db.insert(notificationLog).values({
         channelId: ch.id,
         event: event.action,
         entity: event.entity,
         status: 'failed',
+        attempts: RETRY_DELAYS_MS.length + 1,
         error: err instanceof Error ? err.message : String(err),
       });
     }

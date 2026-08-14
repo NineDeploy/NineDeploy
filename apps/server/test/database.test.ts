@@ -404,7 +404,11 @@ describe('backupDatabase', () => {
     writeFileSync(file, 'MONGO-BYTES');
     const log = vi.fn();
     await backupDatabase(dbRow({ engine: 'mongo' }), file, log);
-    expect(h.run).toHaveBeenCalledWith('docker', ['exec', 'c', 'sh', '-c', 'mongodump --archive --gzip > /tmp/ninedeploy-dump'], {}, log);
+    expect(h.run).toHaveBeenCalledWith('docker', [
+      'exec', 'c', 'mongodump',
+      '-u', 'nine', '-p', 'pw:enc', '--authenticationDatabase', 'admin',
+      '--archive=/tmp/ninedeploy-dump', '--gzip',
+    ], {}, log);
     expect(h.run).toHaveBeenCalledWith('docker', ['cp', 'c:/tmp/ninedeploy-dump', file], {}, log);
     expect(h.run).toHaveBeenCalledWith('docker', ['exec', 'c', 'rm', '-f', '/tmp/ninedeploy-dump'], {}, expect.any(Function));
     expect(readFileSync(file, 'utf8')).toBe(`v0:${Buffer.from('MONGO-BYTES').toString('base64')}`);
@@ -483,7 +487,11 @@ describe('restoreDatabase', () => {
     const file = encFile('MONGO');
     await restoreDatabase(dbRow({ engine: 'mongo' }), file, log);
     expect(h.run).toHaveBeenCalledWith('docker', ['cp', `${file}.dec`, 'c:/tmp/ninedeploy-restore'], {}, log);
-    expect(h.run).toHaveBeenCalledWith('docker', ['exec', 'c', 'mongorestore', '--archive=/tmp/ninedeploy-restore', '--gzip', '--drop'], {}, log);
+    expect(h.run).toHaveBeenCalledWith('docker', [
+      'exec', 'c', 'mongorestore',
+      '-u', 'nine', '-p', 'pw:enc', '--authenticationDatabase', 'admin',
+      '--archive=/tmp/ninedeploy-restore', '--gzip', '--drop',
+    ], {}, log);
   });
 
   it('removes the staged restore file and decrypted sibling afterwards', async () => {

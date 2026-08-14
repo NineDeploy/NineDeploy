@@ -36,7 +36,7 @@ describe.skipIf(!ENABLED)('database backup/restore (real PostgreSQL container)',
       // authenticates with this password and fails to become healthy otherwise.
       .withPassword('integ-test-pw!9')
       .start();
-    db = { engine: 'postgres', containerName: container.getName(), passwordEncrypted: '' };
+    db = { engine: 'postgres', containerName: container.getName().replace(/^\//, ''), passwordEncrypted: '' };
     dumpFile = path.join(os.tmpdir(), `nd-integ-${process.pid}-${Date.now()}.sql`);
   }, 180_000);
 

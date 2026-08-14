@@ -4,6 +4,7 @@ import { createFirstAdmin } from './auth.js';
 import { authRoutes } from './auth.js';
 import { aboutRoutes } from './about.js';
 import { activityRoutes } from './activity.js';
+import { alertRoutes } from './alerts.js';
 import { dashboardRoutes } from './dashboard.js';
 import { attachmentRoutes, databasesRoutes } from './databases.js';
 import { backupRoutes, databaseBackupRoutes } from './backups.js';
@@ -39,6 +40,7 @@ export const apiRoutes: FastifyPluginAsync = async (app) => {
   await app.register(authRoutes, { prefix: '/auth' });
   await app.register(userRoutes, { prefix: '/users' });
   await app.register(activityRoutes, { prefix: '/activity' });
+  await app.register(alertRoutes, { prefix: '/alerts' });
   await app.register(aboutRoutes, { prefix: '/about' });
   await app.register(notificationRoutes, { prefix: '/notifications' });
   await app.register(databasesRoutes, { prefix: '/databases' });

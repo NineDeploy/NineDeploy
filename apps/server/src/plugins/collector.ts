@@ -2,6 +2,8 @@ import { lt } from 'drizzle-orm';
 import { metrics, services } from '@ninedeploy/db';
 import fp from 'fastify-plugin';
 import { collectContainerStats, collectHostStats, type ContainerStat, type HostStat } from '../lib/stats.js';
+import { evaluateAlerts, type MetricSnapshot } from '../lib/alerting.js';
+import { readCertificates } from '../engine/proxy.js';
 
 const INTERVAL_MS = 30_000;
 const RETENTION_MS = 24 * 60 * 60 * 1000;
@@ -40,6 +42,31 @@ export default fp(
           rows.push({ serviceId: s.id, kind: 'memory', value: st.memBytes, ts: now });
         }
         if (rows.length) await fastify.db.insert(metrics).values(rows);
+
+        // Feed the alert evaluator in rule units (cpu %, memory MiB; null = host).
+        const snapshots: MetricSnapshot[] = rows.map((r) => ({
+          serviceId: r.serviceId,
+          kind: r.kind,
+          value: r.kind === 'memory' ? Math.round(r.value / (1024 * 1024)) : r.value,
+        }));
+        if (cache.host) {
+          const h = cache.host;
+          const memUsedPct = h.memTotalBytes > 0 ? Math.round((h.memUsedBytes / h.memTotalBytes) * 100) : 0;
+          snapshots.push({ serviceId: null, kind: 'cpu', value: memUsedPct || Math.round(h.load1 * 10) });
+          snapshots.push({ serviceId: null, kind: 'memory', value: Math.round(h.memUsedBytes / (1024 * 1024)) });
+        }
+
+        // Cert-expiry alerting: the least days remaining across all issued certs.
+        const certExpiries = readCertificates()
+          .map((c) => c.expiresAt)
+          .filter((d): d is Date => d !== null);
+        if (certExpiries.length) {
+          const minDays = Math.floor((Math.min(...certExpiries.map((d) => d.getTime())) - now.getTime()) / 86_400_000);
+          snapshots.push({ serviceId: null, kind: 'cert-expiry', value: minDays });
+        }
+
+        await evaluateAlerts(fastify.db, snapshots);
+
         await fastify.db.delete(metrics).where(lt(metrics.ts, new Date(Date.now() - RETENTION_MS)));
       } catch (err) {
         fastify.log.error({ err }, 'metrics collection failed');

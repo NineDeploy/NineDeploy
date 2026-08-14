@@ -90,10 +90,10 @@ describe('createClient', () => {
     expect(last(calls).init.headers?.['Content-Type']).toBeUndefined();
   });
 
-  it('parses an empty response body as undefined', async () => {
+  it('parses an empty response body as an empty object (undefined would crash query functions)', async () => {
     const { fetchMock } = makeFetch(() => ok(undefined));
     const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
-    await expect(client.health()).resolves.toBeUndefined();
+    await expect(client.health()).resolves.toEqual({});
   });
 
   it('parses a JSON response body', async () => {
@@ -411,6 +411,54 @@ describe('createClient', () => {
       const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
       await client.about.get();
       expect(last(calls)).toMatchObject({ url: '/v1/about', init: { method: 'GET' } });
+    });
+  });
+
+  describe('settings (acme email)', () => {
+    it('saves the ACME email', async () => {
+      const { fetchMock, calls } = makeFetch(() => ok({}));
+      const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
+      await client.settings.setAcmeEmail('ops@example.com');
+      expect(last(calls)).toMatchObject({ url: '/v1/settings/acme-email', init: { method: 'PUT' } });
+      expect(JSON.parse(last(calls).init.body ?? '{}')).toEqual({ email: 'ops@example.com' });
+      void fetchMock;
+    });
+  });
+
+    describe('non-JSON ok responses', () => {
+    it('resolves an empty 2xx body to an empty object (never undefined)', async () => {
+      const { fetchMock } = makeFetch(() => ok());
+      const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
+      await expect(client.auth.status()).resolves.toEqual({});
+    });
+
+    it('surfaces an HTML 200 from a misrouted proxy as a typed error', async () => {
+      const { fetchMock } = makeFetch(() => ok('<html>index</html>'));
+      const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
+      await expect(client.auth.status()).rejects.toMatchObject({ code: 'invalid_response' });
+    });
+  });
+
+  describe('alerts', () => {
+    it('exercises all alert rule methods', async () => {
+      const { fetchMock, calls } = makeFetch(() => ok({}));
+      const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
+
+      await client.alerts.list();
+      expect(last(calls)).toMatchObject({ url: '/v1/alerts', init: { method: 'GET' } });
+
+      await client.alerts.create({ name: 'high-cpu', metric: 'cpu', threshold: 80 });
+      expect(last(calls).url).toBe('/v1/alerts');
+      expect(last(calls).init.method).toBe('POST');
+      expect(JSON.parse(last(calls).init.body ?? '{}')).toEqual({ name: 'high-cpu', metric: 'cpu', threshold: 80 });
+
+      await client.alerts.update(3, { enabled: false });
+      expect(last(calls).url).toBe('/v1/alerts/3');
+      expect(last(calls).init.method).toBe('PATCH');
+      expect(JSON.parse(last(calls).init.body ?? '{}')).toEqual({ enabled: false });
+
+      await client.alerts.remove(3);
+      expect(last(calls)).toMatchObject({ url: '/v1/alerts/3', init: { method: 'DELETE' } });
     });
   });
 

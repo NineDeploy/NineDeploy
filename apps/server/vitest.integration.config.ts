@@ -1,7 +1,8 @@
 import { defineConfig } from 'vitest/config';
 
 /**
- * Config for the testcontainers integration suite (real Docker + PostgreSQL).
+ * Config for the testcontainers integration suite (real Docker: PostgreSQL,
+ * MySQL, Redis, MongoDB backup/restore + an end-to-end deploy pipeline run).
  * Kept separate from the default config because that one deliberately EXCLUDES
  * test/integration — this one includes ONLY it, with no coverage gates.
  */

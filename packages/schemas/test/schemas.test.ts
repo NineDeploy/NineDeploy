@@ -593,7 +593,7 @@ describe('service', () => {
     it('accepts a row', () => {
       const data = ok(domainEntry, {
         id: 1, hostname: 'a.example.com', path: '/', ssl: false, status: 'active',
-        serviceId: 1, serviceName: null, container: null, port: null,
+        serviceId: 1, serviceName: null, container: null, port: null, certExpiresAt: null,
         createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
       });
       expect(data?.hostname).toBe('a.example.com');

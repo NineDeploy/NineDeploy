@@ -2,7 +2,7 @@ import { eq } from 'drizzle-orm';
 import { audit } from "../lib/audit.js";
 import { domains, services } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
-import { writeDynamicConfig } from '../engine/proxy.js';
+import { readCertificates, writeDynamicConfig } from '../engine/proxy.js';
 import { notFound } from '../lib/errors.js';
 
 /** Centralized domain index: which domain → which service/container, plus SSL. Mounted under /domains. */
@@ -13,6 +13,8 @@ export const domainIndexRoutes: FastifyPluginAsync = async (app) => {
     const rows = await app.db.query.domains.findMany();
     const svcs = await app.db.select().from(services);
     const byId = new Map(svcs.map((s) => [s.id, s]));
+    // Certificate expiry comes from Traefik's ACME storage (empty without ACME).
+    const certs = new Map(readCertificates().map((c) => [c.domain, c.expiresAt]));
     return rows.map((d) => {
       const s = byId.get(d.serviceId);
       return {
@@ -25,6 +27,7 @@ export const domainIndexRoutes: FastifyPluginAsync = async (app) => {
         serviceName: s?.name ?? null,
         container: s?.runtimeId ?? null,
         port: s?.port ?? null,
+        certExpiresAt: certs.get(d.hostname)?.toISOString() ?? null,
         createdAt: d.createdAt.toISOString(),
         updatedAt: d.updatedAt.toISOString(),
       };

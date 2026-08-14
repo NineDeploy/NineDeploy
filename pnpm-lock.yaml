@@ -44,10 +44,16 @@ importers:
       commander:
         specifier: ^15.0.0
         version: 15.0.0
+      ws:
+        specifier: ^8.21.3
+        version: 8.21.3
     devDependencies:
       '@types/node':
         specifier: ^26.2.0
         version: 26.2.0
+      '@types/ws':
+        specifier: ^8.18.1
+        version: 8.18.1
       tsx:
         specifier: ^4.23.12
         version: 4.23.12
@@ -90,6 +96,9 @@ importers:
       jose:
         specifier: ^6.2.8
         version: 6.2.8
+      nodemailer:
+        specifier: ^9.0.5
+        version: 9.0.5
       pm2:
         specifier: ^7.0.3
         version: 7.0.3(supports-color@7.2.0)
@@ -106,6 +115,12 @@ importers:
       '@types/node':
         specifier: ^26.2.0
         version: 26.2.0
+      '@types/nodemailer':
+        specifier: ^8.0.1
+        version: 8.0.1
+      testcontainers:
+        specifier: ^12.1.0
+        version: 12.1.0(supports-color@7.2.0)
       tsx:
         specifier: ^4.23.12
         version: 4.23.12
@@ -1338,6 +1353,9 @@ packages:
 
   '@types/node@26.2.0':
     resolution: {integrity: sha512-5IviulTZeRNp2vAJ514cc/HUlY5nZ9fCbq9DMyC52BrhFZACo3nI0R7qBxhQmo/d27NFe96ur/b7Wwxklda+kg==}
+
+  '@types/nodemailer@8.0.1':
+    resolution: {integrity: sha512-PxpaInm8V1JQDd4j0ds5HfvWQk8JupS1C0Picb96QJsrrRDjBH+DlK7L4ZdNSqNULhiZRQHc40nLVShaGxXAMw==}
 
   '@types/react-dom@19.2.4':
     resolution: {integrity: sha512-Bsc+QHgp+P/F02XDzNCY9jnZNCUuLki36KT7VKrTXXLdHf+vHMNZnW1rVu5DNW/rCK+fya3DATySbLM4yhtKUw==}
@@ -2591,6 +2609,10 @@ packages:
   netmask@2.1.1:
     resolution: {integrity: sha512-eonl3sLUha+S1GzTPxychyhnUzKyeQkZ7jLjKrBagJgPla13F+uQ71HgpFefyHgqrjEbCPkDArxYsjY8/+gLKA==}
     engines: {node: '>= 0.4.0'}
+
+  nodemailer@9.0.5:
+    resolution: {integrity: sha512-wvjiKvjczmsN7U/8006JOdXubgBk2XFAbioDMbT+sM7cPs0QrhJTa6KBRX7P5REGGkDcLUz/EarWidb8G8C1jQ==}
+    engines: {node: '>=6.0.0'}
 
   normalize-path@3.0.0:
     resolution: {integrity: sha512-6eZs5Ls3WtCisHWp9S2GUy8dqkpGi4BVSz3GaqiE6ezub0512ESztXUwUB6C6IKbQkY2Pnb/mD4WYojCRwcwLA==}
@@ -4087,6 +4109,10 @@ snapshots:
     dependencies:
       undici-types: 8.3.0
 
+  '@types/nodemailer@8.0.1':
+    dependencies:
+      '@types/node': 26.2.0
+
   '@types/react-dom@19.2.4(@types/react@19.2.18)':
     dependencies:
       '@types/react': 19.2.18
@@ -5212,6 +5238,8 @@ snapshots:
   nanoid@3.3.18: {}
 
   netmask@2.1.1: {}
+
+  nodemailer@9.0.5: {}
 
   normalize-path@3.0.0: {}
 

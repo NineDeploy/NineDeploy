@@ -1,8 +1,9 @@
-import { existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { domains, services, type DB } from '@ninedeploy/db';
 import { config } from '../config.js';
 import { capture, run, sleep } from '../lib/exec.js';
+import { getSettingString } from '../lib/settings.js';
 
 const TRAEFIK_CONTAINER = 'ninedeploy-traefik';
 const TRAEFIK_IMAGE = 'traefik:v3.3';
@@ -84,6 +85,78 @@ const dynamicPath = () => path.join(dir(), 'dynamic.yml');
 // dir so renewals survive container recreates.
 const acmePath = () => path.join(dir(), 'acme.json');
 
+/**
+ * Resolve the ACME account email: the DB setting (Settings → Security) wins,
+ * with the `NINEDEPLOY_ACME_EMAIL` env var as the backward-compatible default.
+ * Never throws — a missing settings table must not break config generation.
+ */
+export async function getAcmeEmail(db: DB): Promise<string | null> {
+  try {
+    return (await getSettingString(db, 'acme_email', null)) ?? config.acmeEmail ?? null;
+  } catch {
+    return config.acmeEmail ?? null;
+  }
+}
+
+export interface CertificateInfo {
+  domain: string;
+  expiresAt: Date | null;
+}
+
+/**
+ * Extract the newest ASN.1 UTCTime from a PEM certificate. A cert's Validity
+ * block contains exactly two UTCTimes (notBefore, notAfter) as plain ASCII
+ * `YYMMDDHHMMSSZ` runs inside the DER bytes; the max is always notAfter.
+ */
+export function parseCertExpiry(pem: string): Date | null {
+  const body = pem.replace(/-----(BEGIN|END) CERTIFICATE-----/g, '').replace(/\s+/g, '');
+  // Buffer.from(base64) never throws — invalid chars are skipped; an all-junk
+  // input just decodes to zero bytes, handled below.
+  const der = Buffer.from(body, 'base64');
+  if (der.length === 0) return null;
+  let best: Date | null = null;
+  for (let i = 0; i + 13 <= der.length; i++) {
+    if (der[i + 12] !== 0x5a /* 'Z' */) continue;
+    const run = der.subarray(i, i + 13).toString('latin1');
+    if (!/^\d{12}Z$/.test(run)) continue;
+    const nums = [run.slice(0, 2), run.slice(2, 4), run.slice(4, 6), run.slice(6, 8), run.slice(8, 10), run.slice(10, 12)].map(Number) as [number, number, number, number, number, number];
+    const [yy, mm, dd, hh, mi, ss] = nums;
+    // RFC 5280: years 00-49 → 20xx, 50-99 → 19xx.
+    const year = yy + (yy < 50 ? 2000 : 1900);
+    // Any 12 digits yield a finite Date (out-of-range fields roll over), so
+    // no NaN guard is needed here.
+    const date = new Date(Date.UTC(year, mm - 1, dd, hh, mi, ss));
+    if (!best || date > best) best = date;
+  }
+  return best;
+}
+
+/**
+ * Read the issued certificates out of Traefik's acme.json storage.
+ * Shape: { <resolver>: { Certificates: [{ domain: { main }, certificate: PEM }] } }.
+ * Returns [] when ACME is unused or the file is absent/corrupt.
+ */
+export function readCertificates(): CertificateInfo[] {
+  try {
+    if (!existsSync(acmePath())) return [];
+    const raw = JSON.parse(readFileSync(acmePath(), 'utf-8')) as Record<
+      string,
+      { Certificates?: Array<{ domain?: { main?: string }; certificate?: string }> }
+    >;
+    const out: CertificateInfo[] = [];
+    for (const resolver of Object.values(raw)) {
+      for (const cert of resolver.Certificates ?? []) {
+        const domain = cert.domain?.main;
+        if (!domain || !cert.certificate) continue;
+        out.push({ domain, expiresAt: parseCertExpiry(cert.certificate) });
+      }
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
 /** Whether `container` is attached to `network`. */
 async function onNetwork(container: string, network: string): Promise<boolean> {
   try {
@@ -95,8 +168,7 @@ async function onNetwork(container: string, network: string): Promise<boolean> {
 }
 
 /** Ensure the Traefik reverse-proxy container is running on the shared network (idempotent). */
-export async function ensureTraefik(log: (line: string) => void): Promise<void> {
-  const acmeEmail = config.acmeEmail ?? null;
+export async function ensureTraefik(log: (line: string) => void, acmeEmail: string | null = config.acmeEmail ?? null): Promise<void> {
   mkdirSync(dir(), { recursive: true });
   writeFileSync(staticPath(), renderStaticConfig(acmeEmail));
   if (!existsSync(dynamicPath())) writeFileSync(dynamicPath(), 'http:\n  routers:\n  services:\n');
@@ -160,6 +232,7 @@ export async function writeDynamicConfig(db: DB): Promise<void> {
   const servicesById = new Map(
     (await db.select().from(services)).map((s) => [s.id, s]),
   );
+  const acmeEmail = await getAcmeEmail(db);
 
   const routers: string[] = [];
   const svcBlocks: string[] = [];
@@ -177,7 +250,7 @@ export async function writeDynamicConfig(db: DB): Promise<void> {
     // TLS routers reference the ACME resolver when automatic HTTPS is enabled;
     // otherwise keep the old behavior (Traefik's default self-signed cert).
     const tlsBlock = d.ssl
-      ? config.acmeEmail
+      ? acmeEmail
         ? '\n      tls:\n        certResolver: letsencrypt'
         : '\n      tls: {}'
       : '';

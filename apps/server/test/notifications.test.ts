@@ -61,7 +61,7 @@ describe('notification routes', () => {
       method: 'POST',
       url: '/channels',
       headers: asUser(),
-      payload: { name: 'x', type: 'slack', target: 't' },
+      payload: { name: 'x', type: 'pigeon', target: 't' },
     });
     expect(res.statusCode).toBe(400);
   });
@@ -180,7 +180,7 @@ describe('notification routes', () => {
   });
 
   it('fails a telegram channel test when the API errors', async () => {
-    const fetchMock = vi.fn(async () => ({ ok: false, status: 403 })) as unknown as typeof fetch;
+    const fetchMock = vi.fn(async () => ({ ok: false, status: 403, text: async () => 'forbidden' })) as unknown as typeof fetch;
     vi.stubGlobal('fetch', fetchMock);
     const app = await buildTestApp({
       db: createFakeDb({
@@ -190,7 +190,7 @@ describe('notification routes', () => {
     await app.register(notificationRoutes);
     const res = await app.inject({ method: 'POST', url: '/channels/5/test', headers: asUser() });
     expect(res.statusCode).toBe(400);
-    expect(res.json().error.message).toContain('Telegram 403');
+    expect(res.json().error.message).toContain('Telegram API 403');
   });
 
   it('tests a webhook channel', async () => {
@@ -266,7 +266,7 @@ describe('notification routes', () => {
     vi.stubGlobal('fetch', fetchMock);
     const app = await buildTestApp({
       db: createFakeDb({
-        findFirst: { notificationChannels: channelRow({ id: 5, type: 'slack', targetEncrypted: encrypt('x') }) },
+        findFirst: { notificationChannels: channelRow({ id: 5, type: 'pigeon', targetEncrypted: encrypt('x') }) },
       }),
     });
     await app.register(notificationRoutes);
@@ -311,6 +311,7 @@ describe('notification routes', () => {
         event: 'deploy.completed',
         entity: null,
         status: 'sent',
+        attempts: 2,
         error: null,
         ts: '2026-01-01T00:00:00.000Z',
       },

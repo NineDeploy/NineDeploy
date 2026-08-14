@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { settings } from '@ninedeploy/db';
-import { getSetting, setSetting } from '../../src/lib/settings.js';
+import { getSetting, getSettingString, setSetting, setSettingString } from '../../src/lib/settings.js';
 
 function makeDb(row?: { key: string; value: unknown }) {
   const findFirst = vi.fn(async () => row);
@@ -41,6 +41,32 @@ describe('setSetting', () => {
     const valuesCall = (h.insert.mock.results[0]!.value as { values: ReturnType<typeof vi.fn> }).values;
     expect(valuesCall).toHaveBeenCalledWith(
       expect.objectContaining({ key: 'allow_registration', value: false }),
+    );
+  });
+});
+
+describe('getSettingString', () => {
+  it('returns the stored string', async () => {
+    const { db } = makeDb({ key: 'acme_email', value: 'ops@example.com' });
+    await expect(getSettingString(db, 'acme_email', null)).resolves.toBe('ops@example.com');
+  });
+
+  it('falls back when no row exists or the value is not a string', async () => {
+    const { db } = makeDb(undefined);
+    await expect(getSettingString(db, 'acme_email', 'fallback')).resolves.toBe('fallback');
+    const num = makeDb({ key: 'k', value: 42 });
+    await expect(getSettingString(num.db, 'k', 'fallback')).resolves.toBe('fallback');
+  });
+});
+
+describe('setSettingString', () => {
+  it('upserts the string value keyed by the settings primary key', async () => {
+    const h = makeDb();
+    await setSettingString(h.db, 'acme_email', 'ops@example.com');
+    expect(h.insert).toHaveBeenCalledWith(settings);
+    const valuesCall = (h.insert.mock.results[0]!.value as { values: ReturnType<typeof vi.fn> }).values;
+    expect(valuesCall).toHaveBeenCalledWith(
+      expect.objectContaining({ key: 'acme_email', value: 'ops@example.com' }),
     );
   });
 });

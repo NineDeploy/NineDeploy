@@ -10,7 +10,7 @@ vi.mock('../src/lib/api.js', async () => {
 });
 
 const domains = [
-  { id: 1, hostname: 'app.example.com', path: '/', serviceId: 5, serviceName: 'app', port: 3000, container: 'nd-app', ssl: true, status: 'running' },
+  { id: 1, hostname: 'app.example.com', path: '/', serviceId: 5, serviceName: 'app', port: 3000, container: 'nd-app', ssl: true, status: 'running', certExpiresAt: new Date(Date.now() + 30 * 86_400_000).toISOString() },
   { id: 2, hostname: 'blog.example.com', path: '/blog', serviceId: null, serviceName: null, port: null, container: null, ssl: false, status: 'idle' },
   { id: 3, hostname: 'api.example.com', path: '/', serviceId: 9, serviceName: 'api', port: null, container: 'nd-api', ssl: false, status: 'deploying' },
 ];
@@ -18,6 +18,16 @@ const domains = [
 describe('Domains', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it('shows certificate expiry badges with a warning under 14 days', async () => {
+    mockOf(api.domains.all).mockResolvedValueOnce([
+      { ...domains[0]!, certExpiresAt: new Date(Date.now() + 5 * 86_400_000).toISOString() },
+      { ...domains[1]!, ssl: true, certExpiresAt: new Date(Date.now() + 90 * 86_400_000).toISOString() },
+    ] as never);
+    renderWithProviders(<Domains />);
+    expect(await screen.findByText(/cert 5d/)).toBeInTheDocument();
+    expect(screen.getByText(/cert 90d/)).toBeInTheDocument();
   });
 
   it('shows skeleton while loading', () => {

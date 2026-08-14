@@ -5,6 +5,8 @@ import { asUser, buildTestApp, createFakeDb } from './helpers.js';
 const settingsMock = vi.hoisted(() => ({
   getSetting: vi.fn(async () => true),
   setSetting: vi.fn(async () => undefined),
+  getSettingString: vi.fn(async () => null),
+  setSettingString: vi.fn(async () => undefined),
 }));
 vi.mock('../src/lib/settings.js', () => settingsMock);
 
@@ -14,7 +16,7 @@ describe('settings routes (admin-only)', () => {
     await app.register(settingsRoutes);
     const res = await app.inject({ method: 'GET', url: '/', headers: asUser() });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ allowRegistration: true });
+    expect(res.json()).toEqual({ allowRegistration: true, acmeEmail: null });
     await app.close();
   });
 
@@ -61,6 +63,59 @@ describe('settings routes (admin-only)', () => {
     });
     expect(res.statusCode).toBe(400);
     expect(res.json().error.code).toBe('validation_error');
+    await app.close();
+  });
+
+  it('exposes the DB-configured ACME email over the env fallback', async () => {
+    settingsMock.getSettingString.mockResolvedValueOnce('ops@example.com');
+    const app = await buildTestApp({ db: createFakeDb() });
+    await app.register(settingsRoutes);
+    const res = await app.inject({ method: 'GET', url: '/', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().acmeEmail).toBe('ops@example.com');
+    await app.close();
+  });
+
+  it('saves the ACME email and audits it', async () => {
+    const db = createFakeDb();
+    const app = await buildTestApp({ db });
+    await app.register(settingsRoutes);
+    const res = await app.inject({
+      method: 'PUT',
+      url: '/acme-email',
+      headers: asUser(),
+      payload: { email: 'acme@example.com' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: true, acmeEmail: 'acme@example.com', applied: 'restart' });
+    expect(settingsMock.setSettingString).toHaveBeenCalledWith(db, 'acme_email', 'acme@example.com');
+    await app.close();
+  });
+
+  it('clears the ACME email with an empty string', async () => {
+    const app = await buildTestApp({ db: createFakeDb() });
+    await app.register(settingsRoutes);
+    const res = await app.inject({
+      method: 'PUT',
+      url: '/acme-email',
+      headers: asUser(),
+      payload: { email: '' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: true, acmeEmail: null, applied: 'restart' });
+    await app.close();
+  });
+
+  it('rejects an invalid ACME email with 400', async () => {
+    const app = await buildTestApp({ db: createFakeDb() });
+    await app.register(settingsRoutes);
+    const res = await app.inject({
+      method: 'PUT',
+      url: '/acme-email',
+      headers: asUser(),
+      payload: { email: 'not-an-email' },
+    });
+    expect(res.statusCode).toBe(400);
     await app.close();
   });
 

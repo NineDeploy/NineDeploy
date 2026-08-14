@@ -349,8 +349,7 @@ export const tunnels = sqliteTable(
 );
 
 // ─── notification channels ────────────────────────────────────────────────
-export const channelType = ['telegram', 'webhook', 'discord'] as const;
-
+export const channelType = ['telegram', 'webhook', 'discord', 'slack', 'ntfy', 'email'] as const;
 export const notificationChannels = sqliteTable(
   'notification_channels',
   {
@@ -374,11 +373,52 @@ export const notificationLog = sqliteTable(
     event: text('event').notNull(),
     entity: text('entity'),
     status: text('status', { enum: ['sent', 'failed'] as const }).notNull().default('sent'),
+    // Delivery attempts (retry with exponential backoff) for this notification.
+    attempts: integer('attempts').notNull().default(1),
     error: text('error'),
     ts: ts('ts'),
   },
   (t) => ({ channelTsIdx: index('notification_log_channel_ts_idx').on(t.channelId, t.ts) }),
 );
+
+// ─── alerting ──────────────────────────────────────────────────────────────
+export const alertMetric = ['cpu', 'memory', 'cert-expiry'] as const;
+export const alertOperator = ['>', '<'] as const;
+export const alertStateStatus = ['ok', 'breaching', 'firing'] as const;
+
+export const alertRules = sqliteTable(
+  'alert_rules',
+  {
+    id: id(),
+    // Null = host-wide rule (evaluated against host metrics).
+    serviceId: integer('service_id').references(() => services.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    // cpu: percent (0-100); memory: MiB; cert-expiry: days remaining.
+    metric: text('metric', { enum: alertMetric }).notNull(),
+    operator: text('operator', { enum: alertOperator }).notNull().default('>'),
+    threshold: integer('threshold').notNull(),
+    // Number of consecutive 30s samples that must breach before firing.
+    durationWindows: integer('duration_windows').notNull().default(1),
+    enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+    createdAt: ts('created_at'),
+    updatedAt: tsUpdatable('updated_at'),
+  },
+  (t) => ({ nameIdx: uniqueIndex('alert_rules_name_idx').on(t.name) }),
+);
+
+// One row per rule tracking the breach lifecycle (detection → firing → recovery).
+export const alertState = sqliteTable('alert_state', {
+  ruleId: integer('rule_id')
+    .notNull()
+    .references(() => alertRules.id, { onDelete: 'cascade' })
+    .unique(),
+  status: text('status', { enum: alertStateStatus }).notNull().default('ok'),
+  breachSince: integer('breach_since', { mode: 'timestamp' }),
+  firedAt: integer('fired_at', { mode: 'timestamp' }),
+  lastNotifiedAt: integer('last_notified_at', { mode: 'timestamp' }),
+  lastValue: integer('last_value'),
+  updatedAt: tsUpdatable('updated_at'),
+});
 
 // ─── relations ────────────────────────────────────────────────────────────
 export const usersRelations = relations(users, ({ many }) => ({
@@ -436,6 +476,19 @@ export const databaseAttachmentsRelations = relations(databaseAttachments, ({ on
   database: one(databases, { fields: [databaseAttachments.databaseId], references: [databases.id] }),
 }));
 
+export const notificationLogRelations = relations(notificationLog, ({ one }) => ({
+  channel: one(notificationChannels, { fields: [notificationLog.channelId], references: [notificationChannels.id] }),
+}));
+
+export const alertRulesRelations = relations(alertRules, ({ one }) => ({
+  service: one(services, { fields: [alertRules.serviceId], references: [services.id] }),
+  state: one(alertState, { fields: [alertRules.id], references: [alertState.ruleId] }),
+}));
+
+export const alertStateRelations = relations(alertState, ({ one }) => ({
+  rule: one(alertRules, { fields: [alertState.ruleId], references: [alertRules.id] }),
+}));
+
 // ─── type exports ─────────────────────────────────────────────────────────
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
@@ -458,3 +511,5 @@ export type DatabaseAttachment = typeof databaseAttachments.$inferSelect;
 export type Tunnel = typeof tunnels.$inferSelect;
 export type NotificationChannel = typeof notificationChannels.$inferSelect;
 export type NotificationLog = typeof notificationLog.$inferSelect;
+export type AlertRule = typeof alertRules.$inferSelect;
+export type AlertState = typeof alertState.$inferSelect;

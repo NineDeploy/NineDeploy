@@ -10,6 +10,13 @@ vi.mock('../src/lib/api.js', async () => {
   return createFakeApiModule();
 });
 
+vi.mock('../src/lib/auth.js', async () => {
+  const { createAuthMock } = await import('./helpers.js');
+  const auth = createAuthMock();
+  auth.useAuth.mockReturnValue({ user: { id: 1, role: 'admin' } });
+  return auth;
+});
+
 const host = {
   cpuCores: 8,
   load1: 1.5,
@@ -49,7 +56,7 @@ describe('Monitoring', () => {
     const never = new Promise(() => {});
     mockOf(api.stats.snapshot).mockReturnValueOnce(never as never);
     const { unmount } = renderWithProviders(<Monitoring />);
-    expect(document.querySelectorAll('.animate-pulse').length).toBe(6);
+    expect(document.querySelectorAll('.animate-pulse').length).toBe(7); // +1 alert rules skeleton
     unmount();
 
     mockOf(api.stats.snapshot).mockResolvedValue({ host: null, containers: [] } as never);
@@ -134,5 +141,118 @@ describe('Monitoring', () => {
     await userEvent.type(memInput, '128');
     fireEvent.submit(memInput.closest('form')!);
     await waitFor(() => expect(api.limits.setDatabase).toHaveBeenCalledWith(2, { cpuShares: 0, memLimitMb: 128 }));
+  });
+
+  it('shows an empty state when no alert rules exist', async () => {
+    mockOf(api.stats.snapshot).mockResolvedValue(snapshot as never);
+    mockOf(api.alerts.list).mockResolvedValue([] as never);
+    renderWithProviders(<Monitoring />);
+    await screen.findByText(/No alert rules yet/);
+  });
+
+  it('lists alert rules with status and current values', async () => {
+    mockOf(api.stats.snapshot).mockResolvedValue(snapshot as never);
+    mockOf(api.alerts.list).mockResolvedValue([
+      { id: 1, serviceId: null, name: 'high-cpu', metric: 'cpu', operator: '>', threshold: 80, durationWindows: 2, enabled: true, status: 'firing', lastValue: 93, firedAt: null, createdAt: 'x' },
+      { id: 2, serviceId: null, name: 'low-mem', metric: 'memory', operator: '<', threshold: 100, durationWindows: 1, enabled: true, status: 'ok', lastValue: null, firedAt: null, createdAt: 'x' },
+    ] as never);
+    renderWithProviders(<Monitoring />);
+    await screen.findByText('high-cpu');
+    expect(screen.getByText('cpu > 80')).toBeInTheDocument();
+    expect(screen.getByText('93')).toBeInTheDocument();
+    expect(screen.getByText('low-mem')).toBeInTheDocument();
+    expect(screen.getByText('memory < 100')).toBeInTheDocument();
+  });
+
+  it('creates an alert rule from the admin form', async () => {
+    mockOf(api.stats.snapshot).mockResolvedValue(snapshot as never);
+    mockOf(api.alerts.list).mockResolvedValue([] as never);
+    mockOf(api.alerts.create).mockResolvedValue({ id: 1 } as never);
+    renderWithProviders(<Monitoring />);
+    await screen.findByPlaceholderText('rule name');
+    await userEvent.type(screen.getByPlaceholderText('rule name'), 'disk-pressure');
+    await userEvent.clear(screen.getByPlaceholderText('threshold'));
+    await userEvent.type(screen.getByPlaceholderText('threshold'), '95');
+    fireEvent.submit(screen.getByPlaceholderText('rule name').closest('form')!);
+    await waitFor(() =>
+      expect(api.alerts.create).toHaveBeenCalledWith({ name: 'disk-pressure', metric: 'cpu', operator: '>', threshold: 95, serviceId: null, durationWindows: 2 }),
+    );
+  });
+
+  it('deletes an alert rule', async () => {
+    mockOf(api.stats.snapshot).mockResolvedValue(snapshot as never);
+    mockOf(api.alerts.list).mockResolvedValue([
+      { id: 7, serviceId: null, name: 'stale', metric: 'cpu', operator: '>', threshold: 50, durationWindows: 1, enabled: true, status: 'ok', lastValue: 10, firedAt: null, createdAt: 'x' },
+    ] as never);
+    mockOf(api.alerts.remove).mockResolvedValue(undefined as never);
+    renderWithProviders(<Monitoring />);
+    await screen.findByText('stale');
+    fireEvent.click(screen.getByText('Delete'));
+    await waitFor(() => expect(api.alerts.remove).toHaveBeenCalledWith(7));
+  });
+
+  it('creates an alert rule with a custom metric and operator', async () => {
+    mockOf(api.stats.snapshot).mockResolvedValue(snapshot as never);
+    mockOf(api.alerts.list).mockResolvedValue([] as never);
+    mockOf(api.alerts.create).mockResolvedValue({ id: 2 } as never);
+    renderWithProviders(<Monitoring />);
+    await screen.findByPlaceholderText('rule name');
+    await userEvent.type(screen.getByPlaceholderText('rule name'), 'cert-renew');
+    await userEvent.selectOptions(screen.getByDisplayValue('cpu %'), 'cert-expiry');
+    await userEvent.selectOptions(screen.getByDisplayValue('>'), '<');
+    await userEvent.clear(screen.getByPlaceholderText('threshold'));
+    await userEvent.type(screen.getByPlaceholderText('threshold'), '14');
+    fireEvent.submit(screen.getByPlaceholderText('rule name').closest('form')!);
+    await waitFor(() =>
+      expect(api.alerts.create).toHaveBeenCalledWith({ name: 'cert-renew', metric: 'cert-expiry', operator: '<', threshold: 14, serviceId: null, durationWindows: 2 }),
+    );
+  });
+
+  it('covers breaching status, missing current values, and load errors', async () => {
+    mockOf(api.stats.snapshot).mockResolvedValue(snapshot as never);
+    mockOf(api.alerts.list).mockResolvedValue([
+      { id: 3, serviceId: null, name: 'warming', metric: 'memory', operator: '>', threshold: 512, durationWindows: 3, enabled: true, status: 'breaching', lastValue: null, firedAt: null, createdAt: 'x' },
+    ] as never);
+    renderWithProviders(<Monitoring />);
+    await screen.findByText('warming');
+    expect(screen.getAllByText('—').length).toBeGreaterThan(0);
+  });
+
+  it('renders the empty state when the rules query fails', async () => {
+    mockOf(api.stats.snapshot).mockResolvedValue(snapshot as never);
+    mockOf(api.alerts.list).mockRejectedValue(new Error('boom') as never);
+    renderWithProviders(<Monitoring />);
+    await screen.findByText(/No alert rules yet/);
+  });
+
+  it('does not submit when the name is empty', async () => {
+    mockOf(api.stats.snapshot).mockResolvedValue(snapshot as never);
+    mockOf(api.alerts.list).mockResolvedValue([] as never);
+    renderWithProviders(<Monitoring />);
+    await screen.findByPlaceholderText('rule name');
+    fireEvent.submit(screen.getByPlaceholderText('rule name').closest('form')!);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(api.alerts.create).not.toHaveBeenCalled();
+  });
+
+  it('shows the pending state while a rule is being created', async () => {
+    mockOf(api.stats.snapshot).mockResolvedValue(snapshot as never);
+    mockOf(api.alerts.list).mockResolvedValue([] as never);
+    mockOf(api.alerts.create).mockReturnValue(new Promise(() => {}) as never);
+    renderWithProviders(<Monitoring />);
+    await screen.findByPlaceholderText('rule name');
+    await userEvent.type(screen.getByPlaceholderText('rule name'), 'slow');
+    fireEvent.submit(screen.getByPlaceholderText('rule name').closest('form')!);
+    expect(await screen.findByText('…')).toBeInTheDocument();
+  });
+
+  it('hides the create form from members', async () => {
+    const { useAuth } = await import('../src/lib/auth.js');
+    mockOf(useAuth).mockReturnValue({ user: { id: 2, role: 'member' } });
+    mockOf(api.stats.snapshot).mockResolvedValue(snapshot as never);
+    mockOf(api.alerts.list).mockResolvedValue([] as never);
+    renderWithProviders(<Monitoring />);
+    await screen.findByText(/No alert rules yet/);
+    expect(screen.queryByPlaceholderText('rule name')).not.toBeInTheDocument();
   });
 });

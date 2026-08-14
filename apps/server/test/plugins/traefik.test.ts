@@ -9,6 +9,7 @@ const proxyMock = vi.hoisted(() => ({
     log('traefik ready');
   }),
   writeDynamicConfig: vi.fn(async () => undefined),
+  getAcmeEmail: vi.fn(async () => null),
 }));
 
 vi.mock('../../src/engine/proxy.js', () => proxyMock);
@@ -39,6 +40,28 @@ describe('traefik plugin', () => {
     expect(proxyMock.writeDynamicConfig).toHaveBeenCalledWith(db);
     // the plugin logs each infra step through fastify.log.info({component:'infra'}, line)
     expect(infoSpy).toHaveBeenCalledWith({ component: 'infra' }, expect.any(String));
+    await app.close();
+  });
+
+  it('passes the resolved ACME email to ensureTraefik', async () => {
+    proxyMock.getAcmeEmail.mockResolvedValueOnce('ops@example.com');
+    proxyMock.ensureTraefik.mockClear();
+
+    const app = await buildApp({ select: vi.fn() });
+    await app.ready();
+
+    expect(proxyMock.ensureTraefik).toHaveBeenCalledWith(expect.any(Function), 'ops@example.com');
+    await app.close();
+  });
+
+  it('falls back to no ACME email when the settings read fails', async () => {
+    proxyMock.getAcmeEmail.mockRejectedValueOnce(new Error('no table'));
+    proxyMock.ensureTraefik.mockClear();
+
+    const app = await buildApp({ select: vi.fn() });
+    await app.ready();
+
+    expect(proxyMock.ensureTraefik).toHaveBeenCalledWith(expect.any(Function), null);
     await app.close();
   });
 

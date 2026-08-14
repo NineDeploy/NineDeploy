@@ -87,14 +87,15 @@ Open `http://localhost:5173` and create the first admin account. Requires Node �
 ## Management
 
 - **Dashboard** — live health probes, stats grid, recent activity
-- **Domain management** — routing map + SSL toggle; wildcard auto-assign (`{slug}.your-domain`)
-- **Monitoring** — live CPU/memory per container + host overview
+- **Domain management** — routing map + SSL toggle; wildcard auto-assign (`{slug}.your-domain`); **certificate expiry badges** (warning under 14 days) from Traefik's ACME storage
+- **Monitoring** — live CPU/memory per container + host overview + **alert rules**
+- **Alerting** — threshold rules on `cpu` (%), `memory` (MiB), and `cert-expiry` (days); sustained-breach duration windows (30 s samples), one-shot firing with cooldown, recovery notifications — delivered through the notification channels
 - **Template Hub** — 49+ one-click apps (n8n, Grafana, Jellyfin, Nextcloud, …)
 - **Topology** — interactive graph of services ↔ databases ↔ domains
-- **Notifications** — Telegram / Discord / webhooks with event filters, timeouts, and HTML-safe messages
-- **Multi-user** — roles, audit log, activity feed, registration toggle
+- **Notifications** — Telegram / Discord / Slack / ntfy / email (SMTP, encrypted credentials) / generic webhooks, with event filters, timeouts, HTML-safe messages, and retry with exponential backoff (3 attempts)
+- **Multi-user** — roles, audit log, activity feed, registration toggle, ACME email setting
 - **Migration** — full system export/import (with rollback) and per-service bundles (admin-only; bundles contain plaintext secrets)
-- **CLI** — `setup · login · logout · whoami · services · token`
+- **CLI** — `setup · login · logout · whoami · config · token · services · deploys (list/rollback/watch) · databases · templates · env · domains · volumes · backups · alerts · users · activity · system (info/dashboard/export/import)`
 - **UX** — command palette (⌘K), dark/light + 6 accents, toasts
 
 ## Configuration
@@ -112,7 +113,7 @@ Open `http://localhost:5173` and create the first admin account. Requires Node �
 | `NINEDEPLOY_MASTER_KEYS` | *(empty)* | Key ring for rotation: `0:<old-hex>,1:<new-hex>` — highest version encrypts, lower versions keep old secrets readable |
 | `NINEDEPLOY_MIGRATIONS_DIR` | auto | Override the SQL migrations folder (auto-resolved otherwise) |
 | `NINEDEPLOY_WILDCARD_DOMAIN` | *(empty)* | Auto-assign `{slug}.domain` URLs |
-| `NINEDEPLOY_ACME_EMAIL` | *(empty)* | Let's Encrypt registration email — enables automatic HTTPS (the domain SSL toggle then issues real certificates via Traefik ACME) |
+| `NINEDEPLOY_ACME_EMAIL` | *(empty)* | Let's Encrypt registration email fallback — the Settings → Security ACME email overrides it; enables automatic HTTPS (the domain SSL toggle then issues real certificates via Traefik ACME) |
 
 ## API
 
@@ -151,7 +152,7 @@ pnpm db:studio   # open Drizzle Studio
 pnpm clean       # remove dist and node_modules
 ```
 
-CI runs typecheck, lint, build, the full test suite, and a Docker image build on every PR; releases publish the image to GHCR on tags. Integration tests (real PostgreSQL via testcontainers) live under `apps/server/test/integration/` and run with `RUN_INTEGRATION=1`.
+CI runs typecheck, lint, build, the full test suite, and a Docker image build on every PR; releases publish the image to GHCR on tags. Integration tests (real PostgreSQL/MySQL/Redis/MongoDB via testcontainers + an end-to-end deploy pipeline run) live under `apps/server/test/integration/` and run with `RUN_INTEGRATION=1` (the deploy e2e additionally requires a host-routable Docker bridge — Linux/CI).
 
 See [ARCHITECTURE.md](./ARCHITECTURE.md) for the system diagram, deploy pipeline, and design decisions.
 

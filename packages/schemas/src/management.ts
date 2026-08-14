@@ -23,7 +23,7 @@ export const sourcePatch = z.object({
 });
 export type SourcePatch = z.infer<typeof sourcePatch>;
 
-export const notificationType = z.enum(['telegram', 'webhook', 'discord']);
+export const notificationType = z.enum(['telegram', 'webhook', 'discord', 'slack', 'ntfy', 'email']);
 
 export const notificationChannelCreate = z.object({
   name: z.string().min(1).max(100),
@@ -40,3 +40,47 @@ export const notificationChannelPatch = z.object({
   active: z.boolean().optional(),
 });
 export type NotificationChannelPatch = z.infer<typeof notificationChannelPatch>;
+
+export const alertMetricEnum = z.enum(['cpu', 'memory', 'cert-expiry']);
+export const alertOperatorEnum = z.enum(['>', '<']);
+
+export const alertRuleCreate = z.object({
+  name: z.string().min(1).max(100),
+  serviceId: z.number().int().positive().nullable().optional(),
+  metric: alertMetricEnum,
+  operator: alertOperatorEnum.default('>'),
+  threshold: z.number().int(),
+  durationWindows: z.number().int().min(1).max(120).default(1),
+  enabled: z.boolean().default(true),
+});
+export type AlertRuleCreate = z.infer<typeof alertRuleCreate>;
+
+export const alertRulePatch = z.object({
+  name: z.string().min(1).max(100).optional(),
+  serviceId: z.number().int().positive().nullable().optional(),
+  metric: alertMetricEnum.optional(),
+  operator: alertOperatorEnum.optional(),
+  threshold: z.number().int().optional(),
+  durationWindows: z.number().int().min(1).max(120).optional(),
+  enabled: z.boolean().optional(),
+});
+export type AlertRulePatch = z.infer<typeof alertRulePatch>;
+
+/** Serialized alert rule as returned by GET/PATCH /v1/alerts. */
+export interface AlertRule {
+  id: number;
+  serviceId: number | null;
+  name: string;
+  metric: 'cpu' | 'memory' | 'cert-expiry';
+  operator: '>' | '<';
+  threshold: number;
+  durationWindows: number;
+  enabled: boolean;
+  status: 'ok' | 'breaching' | 'firing';
+  lastValue: number | null;
+  firedAt: string | null;
+  createdAt: string;
+}
+
+/** Input for creating an alert rule — defaults optional (zod applies them server-side). */
+export type CreateAlertRuleInput = z.input<typeof alertRuleCreate>;

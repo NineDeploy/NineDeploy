@@ -229,9 +229,16 @@ export async function backupDatabase(d: Database, file: string, log: (line: stri
     await run('docker', ['exec', cn, 'redis-cli', 'SAVE'], {}, log);
     await run('docker', ['cp', `${cn}:/data/dump.rdb`, file], {}, log);
   } else if (d.engine === 'mongo') {
-    // mongodump emits a binary archive on stdout; redirect it to a static temp
-    // path inside the container (no interpolation), then copy the file out.
-    await run('docker', ['exec', cn, 'sh', '-c', `mongodump --archive --gzip > ${DUMP_TMP}`], {}, log);
+    // mongodump can write its binary archive straight to a file via
+    // --archive=<path> — no shell, no stdout plumbing. Auth is mandatory (the
+    // container is initialized with a root user), so credentials travel via
+    // argv exactly like the mysqldump path.
+    const pass = decrypt(d.passwordEncrypted);
+    await run('docker', [
+      'exec', cn, 'mongodump',
+      '-u', cfg.username()!, '-p', pass, '--authenticationDatabase', 'admin',
+      `--archive=${DUMP_TMP}`, '--gzip',
+    ], {}, log);
     await run('docker', ['cp', `${cn}:${DUMP_TMP}`, file], {}, log);
     await run('docker', ['exec', cn, 'rm', '-f', DUMP_TMP], {}, swallow);
   } else {
@@ -268,8 +275,10 @@ export async function restoreDatabase(d: Database, file: string, log: (line: str
       const pass = decrypt(d.passwordEncrypted);
       await run('docker', ['exec', cn, 'mysql', '-uroot', `--password=${pass}`, '-e', `source ${RESTORE_TMP}`], {}, log);
     } else {
-      // mongo (the engine union was pre-validated above)
-      await run('docker', ['exec', cn, 'mongorestore', `--archive=${RESTORE_TMP}`, '--gzip', '--drop'], {}, log);
+      // mongo (the engine union was pre-validated above); same auth rules as
+      // the backup path.
+      const pass = decrypt(d.passwordEncrypted);
+      await run('docker', ['exec', cn, 'mongorestore', '-u', cfg.username()!, '-p', pass, '--authenticationDatabase', 'admin', `--archive=${RESTORE_TMP}`, '--gzip', '--drop'], {}, log);
     }
   } finally {
     staged.cleanup();

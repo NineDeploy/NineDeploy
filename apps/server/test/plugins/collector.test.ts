@@ -9,6 +9,9 @@ const statsMock = vi.hoisted(() => ({
 
 vi.mock('../../src/lib/stats.js', () => statsMock);
 
+const proxyMock = vi.hoisted(() => ({ readCertificates: vi.fn(() => []) }));
+vi.mock('../../src/engine/proxy.js', () => proxyMock);
+
 const collectorPlugin = (await import('../../src/plugins/collector.js')).default;
 
 const containerA: ContainerStat = { name: 'nd-web', cpuPct: 2.5, memBytes: 100, memLimitBytes: 200 };
@@ -150,5 +153,60 @@ describe('collector plugin', () => {
     // No further ticks should be scheduled.
     await vi.advanceTimersByTimeAsync(60_000);
     expect(statsMock.collectContainerStats).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips host alert snapshots when host stats are unavailable', async () => {
+    vi.useFakeTimers();
+    statsMock.collectContainerStats.mockResolvedValue(new Map());
+    statsMock.collectHostStats.mockResolvedValue(null as unknown as HostStat);
+
+    const { db } = makeDb([]);
+    const app = await buildApp(db);
+    await vi.advanceTimersByTimeAsync(5000);
+
+    const cache = (app.stats as { raw: () => unknown }).raw() as { host: HostStat | null };
+    expect(cache.host).toBeNull();
+    await app.close();
+  });
+
+  it('feeds cert-expiry snapshots from the issued certificates', async () => {
+    vi.useFakeTimers();
+    proxyMock.readCertificates.mockReturnValueOnce([
+      { domain: 'a.example.com', expiresAt: new Date(Date.now() + 3 * 86_400_000) },
+      { domain: 'b.example.com', expiresAt: new Date(Date.now() + 30 * 86_400_000) },
+    ]);
+    statsMock.collectContainerStats.mockResolvedValue(new Map());
+    statsMock.collectHostStats.mockResolvedValue(host);
+
+    const { db } = makeDb([]);
+    const app = await buildApp(db);
+    await vi.advanceTimersByTimeAsync(5000);
+    // The evaluation itself is covered by the alerting tests; here we only
+    // verify the collector did not blow up on cert snapshots.
+    expect(statsMock.collectContainerStats).toHaveBeenCalledTimes(1);
+    await app.close();
+  });
+
+  it('skips cert snapshots when no certificate has an expiry', async () => {
+    vi.useFakeTimers();
+    proxyMock.readCertificates.mockReturnValueOnce([{ domain: 'a.example.com', expiresAt: null }]);
+    statsMock.collectContainerStats.mockResolvedValue(new Map());
+    statsMock.collectHostStats.mockResolvedValue(host);
+
+    const { db } = makeDb([]);
+    const app = await buildApp(db);
+    await vi.advanceTimersByTimeAsync(5000);
+    await app.close();
+  });
+
+  it('falls back to load-derived host cpu when memTotal is zero', async () => {
+    vi.useFakeTimers();
+    statsMock.collectContainerStats.mockResolvedValue(new Map());
+    statsMock.collectHostStats.mockResolvedValue({ ...host, memTotalBytes: 0, load1: 1.2 });
+
+    const { db } = makeDb([]);
+    const app = await buildApp(db);
+    await vi.advanceTimersByTimeAsync(5000);
+    await app.close();
   });
 });

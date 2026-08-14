@@ -441,6 +441,7 @@ export const notifLogRow = (over: Record<string, unknown> = {}) => ({
   event: 'deploy.completed',
   entity: null,
   status: 'sent',
+  attempts: 2,
   error: null,
   ts: NOW,
   ...over,

@@ -1,8 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { type FormEvent, type ReactNode, useEffect, useState } from 'react';
-import { Activity, Cpu, Database, Gauge, HardDrive, MemoryStick, Server } from 'lucide-react';
+import { Activity, BellRing, Cpu, Database, Gauge, HardDrive, MemoryStick, Server } from 'lucide-react';
 import { api } from '../lib/api.js';
-import { Button, Card, Input, Skeleton, StatusBadge, cn } from '../components/ui.js';
+import { useAuth } from '../lib/auth.js';
+import { Button, Card, Input, Select, Skeleton, StatusBadge, cn } from '../components/ui.js';
 import { Sparkline } from '../components/Sparkline.js';
 
 const fmtBytes = (b: number | null | undefined) => {
@@ -13,6 +14,7 @@ const fmtBytes = (b: number | null | undefined) => {
 };
 
 export function Monitoring() {
+  const { user: me } = useAuth();
   const stats = useQuery({ queryKey: ['stats'], queryFn: () => api.stats.snapshot(), refetchInterval: 4000 });
   const host = stats.data?.host;
   const containers = stats.data?.containers ?? [];
@@ -55,7 +57,115 @@ export function Monitoring() {
           ))}
         </div>
       )}
+
+      <AlertRulesCard isAdmin={me?.role === 'admin'} />
     </div>
+  );
+}
+
+function AlertRulesCard({ isAdmin }: { isAdmin: boolean }) {
+  const qc = useQueryClient();
+  const rules = useQuery({ queryKey: ['alerts'], queryFn: () => api.alerts.list() });
+  const [name, setName] = useState('');
+  const [metric, setMetric] = useState<'cpu' | 'memory' | 'cert-expiry'>('cpu');
+  const [operator, setOperator] = useState<'>' | '<'>('>');
+  const [threshold, setThreshold] = useState('80');
+
+  const create = useMutation({
+    mutationFn: () =>
+      api.alerts.create({
+        name: name.trim(),
+        metric,
+        operator,
+        threshold: Number(threshold),
+        serviceId: null,
+        durationWindows: 2,
+      }),
+    onSuccess: () => {
+      setName('');
+      void qc.invalidateQueries({ queryKey: ['alerts'] });
+    },
+  });
+
+  const remove = useMutation({
+    mutationFn: (id: number) => api.alerts.remove(id),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['alerts'] }),
+  });
+
+  const rulesList = rules.data ?? [];
+
+  const onSubmit = (e: FormEvent) => {
+    e.preventDefault();
+    if (name.trim() && threshold) create.mutate();
+  };
+
+  return (
+    <>
+      <h2 className="mb-3 mt-8 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
+        <BellRing size={14} /> Alert Rules
+      </h2>
+      <Card className="p-4">
+        {rules.isLoading ? (
+          <Skeleton className="h-16 w-full" />
+        ) : rulesList.length === 0 ? (
+          <p className="py-4 text-center text-sm text-slate-500">
+            No alert rules yet — add one to get notified when a metric crosses a threshold.
+          </p>
+        ) : (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs uppercase tracking-wide text-slate-500">
+                <th className="pb-2">Rule</th>
+                <th className="pb-2">Condition</th>
+                <th className="pb-2">Current</th>
+                <th className="pb-2">Status</th>
+                <th className="pb-2" />
+              </tr>
+            </thead>
+            <tbody>
+              {rulesList.map((r) => (
+                <tr key={r.id} className="border-t border-white/5">
+                  <td className="py-2 font-medium">{r.name}</td>
+                  <td className="py-2 font-mono text-xs text-slate-400">
+                    {r.metric} {r.operator} {r.threshold}
+                  </td>
+                  <td className="py-2 tabular-nums text-slate-300">{r.lastValue ?? '—'}</td>
+                  <td className="py-2">
+                    <StatusBadge status={r.status === 'firing' ? 'error' : r.status === 'breaching' ? 'deploying' : 'running'} />
+                  </td>
+                  <td className="py-2 text-right">
+                    {isAdmin && (
+                      <Button size="sm" variant="ghost" className="h-7 px-2 text-[11px]" onClick={() => remove.mutate(r.id)}>
+                        Delete
+                      </Button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+
+        {isAdmin && (
+          <form onSubmit={onSubmit} className="mt-4 flex flex-wrap items-center gap-2 border-t border-white/5 pt-3">
+            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="rule name" className="h-8 w-40 text-xs" />
+            <Select value={metric} onChange={(e) => setMetric(e.target.value as typeof metric)} className="h-8 w-32 text-xs">
+              <option value="cpu">cpu %</option>
+              <option value="memory">memory MiB</option>
+              <option value="cert-expiry">cert-expiry days</option>
+            </Select>
+            <Select value={operator} onChange={(e) => setOperator(e.target.value as typeof operator)} className="h-8 w-16 text-xs">
+              <option value=">">&gt;</option>
+              <option value="<">&lt;</option>
+            </Select>
+            <Input value={threshold} onChange={(e) => setThreshold(e.target.value)} placeholder="threshold" className="h-8 w-20 font-mono text-xs" />
+            <Button type="submit" size="sm" variant="ghost" className="ml-auto h-8 px-3 text-xs" disabled={create.isPending}>
+              {create.isPending ? '…' : 'Add rule'}
+            </Button>
+          </form>
+        )}
+      </Card>
+    </>
   );
 }
 

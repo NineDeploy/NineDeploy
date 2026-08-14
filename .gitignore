@@ -47,3 +47,4 @@ backups
 .zcode/
 # test coverage artifacts
 coverage
+.mimosa/

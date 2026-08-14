@@ -1,6 +1,6 @@
 {
   "name": "@ninedeploy/server",
-  "version": "0.0.0",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "main": "./dist/server.js",
@@ -24,6 +24,7 @@
     "fastify": "^5.11.3",
     "fastify-plugin": "^6.0.0",
     "jose": "^6.2.8",
+    "nodemailer": "^9.0.5",
     "pm2": "^7.0.3",
     "simple-git": "^3.36.0",
     "zod": "^4.4.3"
@@ -31,6 +32,8 @@
   "devDependencies": {
     "@testcontainers/postgresql": "^12.1.0",
     "@types/node": "^26.2.0",
+    "@types/nodemailer": "^8.0.1",
+    "testcontainers": "^12.1.0",
     "tsx": "^4.23.12",
     "typescript": "^7.0.2"
   }

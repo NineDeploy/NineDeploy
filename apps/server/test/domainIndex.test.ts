@@ -2,7 +2,10 @@ import { describe, expect, it, vi } from 'vitest';
 import { domainIndexRoutes } from '../src/modules/domainIndex.js';
 import { asUser, buildTestApp, createFakeDb, domainRow, svcRow } from './helpers.js';
 
-const proxyMocks = vi.hoisted(() => ({ writeDynamicConfig: vi.fn(async () => undefined) }));
+const proxyMocks = vi.hoisted(() => ({
+  writeDynamicConfig: vi.fn(async () => undefined),
+  readCertificates: vi.fn(() => []),
+}));
 vi.mock('../src/engine/proxy.js', () => proxyMocks);
 
 describe('domain index routes', () => {
@@ -31,6 +34,24 @@ describe('domain index routes', () => {
       port: 3000,
     });
     expect(rows[1]).toMatchObject({ id: 2, serviceId: 99, serviceName: null, container: null, port: null });
+    // No acme.json → no cert info.
+    expect(rows[0]).toMatchObject({ certExpiresAt: null });
+  });
+
+  it('attaches certificate expiry to matching hostnames', async () => {
+    proxyMocks.readCertificates.mockReturnValueOnce([
+      { domain: 'a.example.com', expiresAt: new Date('2026-09-01T00:00:00Z') },
+    ]);
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findMany: { domains: [domainRow({ id: 1, serviceId: 1, hostname: 'a.example.com' })] },
+        select: { services: [] },
+      }),
+    });
+    await app.register(domainIndexRoutes);
+    const res = await app.inject({ method: 'GET', url: '/', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()[0]).toMatchObject({ certExpiresAt: '2026-09-01T00:00:00.000Z' });
   });
 
   it('enables ssl on a domain and regenerates the proxy config', async () => {

@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { type FormEvent, useState } from 'react';
 import {
-  ArrowLeft, ArrowRight, Bell, Check, ExternalLink, MessageCircle,
+  ArrowLeft, ArrowRight, Bell, Check, ExternalLink, Mail, MessageCircle,
   Plug, Send, Webhook, X, Zap,
 } from 'lucide-react';
 import { api } from '../lib/api.js';
@@ -13,6 +13,9 @@ const TYPES = [
   { id: 'telegram', label: 'Telegram', emoji: '✈️', color: 'from-sky-500 to-blue-600', icon: MessageCircle },
   { id: 'discord', label: 'Discord', emoji: '🎮', color: 'from-indigo-500 to-purple-600', icon: Plug },
   { id: 'webhook', label: 'Webhook', emoji: '🔗', color: 'from-amber-500 to-orange-600', icon: Webhook },
+  { id: 'slack', label: 'Slack', emoji: '💬', color: 'from-emerald-500 to-teal-600', icon: MessageCircle },
+  { id: 'ntfy', label: 'ntfy', emoji: '📡', color: 'from-rose-500 to-pink-600', icon: Zap },
+  { id: 'email', label: 'Email (SMTP)', emoji: '✉️', color: 'from-cyan-500 to-sky-600', icon: Mail },
 ] as const;
 
 const EVENT_GROUPS = [
@@ -134,7 +137,14 @@ export function NotificationWizard({ onClose }: { onClose: () => void }) {
                       </div>
                       <div className="flex-1">
                         <div className="font-semibold text-slate-100">{t.label}</div>
-                        <div className="text-xs text-slate-500">{t.id === 'telegram' ? 'Get messages via Telegram bot' : t.id === 'discord' ? 'Send to a Discord channel' : 'POST to any URL'}</div>
+                        <div className="text-xs text-slate-500">
+                          {t.id === 'telegram' ? 'Get messages via Telegram bot'
+                            : t.id === 'discord' ? 'Send to a Discord channel'
+                            : t.id === 'webhook' ? 'POST to any URL'
+                            : t.id === 'slack' ? 'Send to a Slack channel'
+                            : t.id === 'ntfy' ? 'Push notifications via ntfy'
+                            : 'Send via your SMTP server'}
+                        </div>
                       </div>
                       {active && <Check size={18} className="text-indigo-400" />}
                     </button>
@@ -186,6 +196,34 @@ export function NotificationWizard({ onClose }: { onClose: () => void }) {
                   </div>
                 </>
               )}
+              {type === 'slack' && (
+                <>
+                  <div className="rounded-xl bg-emerald-500/[0.06] p-4 ring-1 ring-inset ring-emerald-500/20">
+                    <p className="mb-2 text-sm font-medium text-emerald-200">Create a Slack Incoming Webhook</p>
+                    <ol className="mt-1.5 list-inside list-decimal space-y-0.5 text-xs text-slate-400">
+                      <li>api.slack.com/messaging/webhooks → <strong className="text-slate-300">Create your webhook</strong></li>
+                      <li>Pick a channel and copy the <strong className="text-slate-300">webhook URL</strong></li>
+                    </ol>
+                  </div>
+                  <div>
+                    <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-slate-400">Slack Webhook URL</span>
+                    <Input value={target} onChange={(e) => setTarget(e.target.value)} placeholder="https://hooks.slack.com/services/…" className="font-mono text-xs" autoFocus />
+                  </div>
+                </>
+              )}
+              {type === 'ntfy' && (
+                <>
+                  <div className="rounded-xl bg-rose-500/[0.06] p-4 ring-1 ring-inset ring-rose-500/20">
+                    <p className="mb-2 text-sm font-medium text-rose-200">ntfy topic</p>
+                    <p className="text-xs text-slate-400">Subscribe to a topic in the ntfy app, then use its URL here (self-hosted servers work too).</p>
+                  </div>
+                  <div>
+                    <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-slate-400">Topic URL</span>
+                    <Input value={target} onChange={(e) => setTarget(e.target.value)} placeholder="https://ntfy.sh/my-ninedeploy-alerts" className="font-mono text-xs" autoFocus />
+                  </div>
+                </>
+              )}
+              {type === 'email' && <EmailFields value={target} onChange={setTarget} />}
               {type === 'webhook' && (
                 <>
                   <div className="rounded-xl bg-amber-500/[0.06] p-4 ring-1 ring-inset ring-amber-500/20">
@@ -244,7 +282,9 @@ export function NotificationWizard({ onClose }: { onClose: () => void }) {
                 {tested === 'ok' ? 'Test message sent!' : tested === 'fail' ? 'Test failed — check your settings' : 'Ready to test?'}
               </p>
               <p className="mt-1 text-xs text-slate-500">
-                {tested === 'ok' ? 'Check your ' + (type === 'telegram' ? 'Telegram' : type === 'discord' ? 'Discord' : 'webhook') + ' for a test message.' : 'We\'ll send a test notification to verify your setup.'}
+                {tested === 'ok'
+                  ? `Check your ${type === 'email' ? 'inbox' : selectedType!.label} for a test message.`
+                  : 'We\'ll send a test notification to verify your setup.'}
               </p>
 
               {/* Summary */}
@@ -275,6 +315,51 @@ export function NotificationWizard({ onClose }: { onClose: () => void }) {
               <>Continue <ArrowRight size={14} /></>
             )}
           </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Email channel target editor — composes the JSON config the server decrypts. */
+function EmailFields({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  let cfg: Record<string, string> = {};
+  try {
+    cfg = JSON.parse(value) as Record<string, string>;
+  } catch {
+    /* empty target */
+  }
+  const set = (key: string, v: string) => onChange(JSON.stringify({ ...cfg, [key]: v }));
+  return (
+    <div className="space-y-3">
+      <div className="rounded-xl bg-cyan-500/[0.06] p-4 ring-1 ring-inset ring-cyan-500/20">
+        <p className="mb-2 text-sm font-medium text-cyan-200">SMTP settings</p>
+        <p className="text-xs text-slate-400">Credentials are encrypted at rest and only used for delivery.</p>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <span className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-400">SMTP host</span>
+          <Input value={cfg['host'] ?? ''} onChange={(e) => set('host', e.target.value)} placeholder="smtp.example.com" className="font-mono text-xs" autoFocus />
+        </div>
+        <div>
+          <span className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-400">Port</span>
+          <Input value={cfg['port'] ?? ''} onChange={(e) => set('port', e.target.value)} placeholder="587" className="font-mono text-xs" />
+        </div>
+        <div>
+          <span className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-400">From</span>
+          <Input value={cfg['from'] ?? ''} onChange={(e) => set('from', e.target.value)} placeholder="ninedeploy@example.com" className="font-mono text-xs" />
+        </div>
+        <div>
+          <span className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-400">To</span>
+          <Input value={cfg['to'] ?? ''} onChange={(e) => set('to', e.target.value)} placeholder="you@example.com" className="font-mono text-xs" />
+        </div>
+        <div>
+          <span className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-400">User (optional)</span>
+          <Input value={cfg['user'] ?? ''} onChange={(e) => set('user', e.target.value)} className="font-mono text-xs" />
+        </div>
+        <div>
+          <span className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-400">Password (optional)</span>
+          <Input type="password" value={cfg['pass'] ?? ''} onChange={(e) => set('pass', e.target.value)} className="font-mono text-xs" />
         </div>
       </div>
     </div>

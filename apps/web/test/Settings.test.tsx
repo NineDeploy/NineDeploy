@@ -270,6 +270,44 @@ describe('Settings', () => {
     expect(screen.queryByTestId('notif-wizard')).not.toBeInTheDocument();
   });
 
+  it('shows and saves the ACME email', async () => {
+    const user = userEvent.setup();
+    mockOf(api.settings.get).mockResolvedValue({ allowRegistration: true, acmeEmail: 'ops@example.com' } as never);
+    mockOf(api.settings.setAcmeEmail).mockResolvedValue({ ok: true, acmeEmail: 'new@example.com', applied: 'restart' } as never);
+    renderWithProviders(<Settings />);
+
+    const input = await screen.findByLabelText('ACME account email') as HTMLInputElement;
+    await waitFor(() => expect(input.value).toBe('ops@example.com'));
+    expect(screen.getByText(/Not configured|Configured/)).toHaveTextContent('Configured.');
+    await user.clear(input);
+    await user.type(input, 'new@example.com');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(api.settings.setAcmeEmail).toHaveBeenCalledWith('new@example.com'));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('ACME email saved — applies on next restart', 'success'));
+  });
+
+  it('shows the saving state while the ACME email is in flight', async () => {
+    mockOf(api.settings.get).mockResolvedValue({ allowRegistration: true, acmeEmail: null } as never);
+    mockOf(api.settings.setAcmeEmail).mockReturnValue(new Promise(() => {}) as never);
+    renderWithProviders(<Settings />);
+
+    await screen.findByLabelText('ACME account email');
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect(await screen.findByText('Saving…')).toBeInTheDocument();
+  });
+
+  it('reports ACME save failures and renders the unconfigured hint', async () => {
+    mockOf(api.settings.get).mockResolvedValue({ allowRegistration: true, acmeEmail: null } as never);
+    mockOf(api.settings.setAcmeEmail).mockRejectedValue(new Error('500'));
+    renderWithProviders(<Settings />);
+
+    const input = await screen.findByLabelText('ACME account email') as HTMLInputElement;
+    expect(input.value).toBe('');
+    expect(screen.getByText(/Not configured/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Could not save the ACME email', 'error'));
+  });
+
   it('renders and toggles the open-registration switch', async () => {
     const user = userEvent.setup();
     // Initial load says allowed; the post-toggle refetch says disabled.
