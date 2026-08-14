@@ -18,7 +18,7 @@
 # host PID space); Docker-based services and templates work normally.
 
 # ── Stage 1: build the monorepo ──────────────────────────────────────────
-FROM node:20-slim AS build
+FROM node:22-slim AS build
 WORKDIR /app
 
 # Install pnpm via corepack (no network fetch of package managers).
@@ -39,7 +39,7 @@ COPY . .
 RUN pnpm build
 
 # ── Stage 2: runtime ─────────────────────────────────────────────────────
-FROM node:20-slim AS runtime
+FROM node:22-slim AS runtime
 WORKDIR /app
 
 # docker CLI: the deploy engine shells out to `docker` (via the mounted socket).
@@ -66,6 +66,9 @@ RUN pnpm install --frozen-lockfile --prod --filter @ninedeploy/server...
 # a separate static bundle deployed alongside, not served by the API).
 COPY --from=build /app/apps/server/dist apps/server/dist
 COPY --from=build /app/packages/db/dist packages/db/dist
+# SQL migrations: the server self-migrates at startup via the runtime migrator
+# (drizzle-kit is a devDependency and absent here).
+COPY --from=build /app/packages/db/src/migrations packages/db/src/migrations
 COPY --from=build /app/packages/schemas/dist packages/schemas/dist
 COPY --from=build /app/packages/sdk/dist packages/sdk/dist
 

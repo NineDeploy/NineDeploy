@@ -16,7 +16,8 @@ services:
       context: .
       dockerfile: Dockerfile
       target: build
-    command: sh -c "pnpm db:migrate && pnpm --filter @ninedeploy/server dev"
+    # The server self-migrates on startup — no manual migration step needed.
+    command: sh -c "pnpm --filter @ninedeploy/server dev"
     ports:
       - "3000:3000"
     environment:
@@ -31,7 +32,7 @@ services:
       - ./packages:/app/packages:ro
 
   web:
-    image: node:20-slim
+    image: node:22-slim
     working_dir: /app
     command: sh -c "corepack enable && pnpm install --frozen-lockfile && pnpm --filter @ninedeploy/web dev --host 0.0.0.0"
     ports:

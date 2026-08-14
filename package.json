@@ -6,7 +6,7 @@
   "license": "MIT",
   "packageManager": "pnpm@11.21.0",
   "engines": {
-    "node": ">=20.19.0"
+    "node": ">=22.13.0" # pnpm 11 requires node:sqlite
   },
   "scripts": {
     "build": "turbo run build",
