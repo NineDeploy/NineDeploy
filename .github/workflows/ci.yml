@@ -43,9 +43,9 @@ jobs:
       - name: Build
         run: pnpm build
 
-      - name: Apply migrations (verify schema)
-        run: pnpm db:migrate
-
+      # Note: no separate migration step — the server self-migrates at startup
+      # and the db package tests apply the real migrations to a fresh SQLite
+      # file (see packages/db/test/migrate.test.ts).
       - name: Test
         run: pnpm test
 
