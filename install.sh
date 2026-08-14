@@ -37,21 +37,22 @@ echo ""
 
 # ── 1. Prerequisites ───────────────────────────────────────────────────────
 
-# Node.js ≥ 20
+# Node.js ≥ 22.13 (pnpm 11 requires node:sqlite)
 if command -v node &>/dev/null; then
-  NODE_VER=$(node -v | sed 's/v//' | cut -d. -f1)
-  if [ "$NODE_VER" -ge 20 ]; then
+  NODE_MAJOR=$(node -v | sed 's/v//' | cut -d. -f1)
+  NODE_MINOR=$(node -v | sed 's/v//' | cut -d. -f2)
+  if [ "$NODE_MAJOR" -gt 22 ] || { [ "$NODE_MAJOR" -eq 22 ] && [ "$NODE_MINOR" -ge 13 ]; }; then
     ok "Node.js $(node -v)"
   else
-    fail "Node.js $(node -v) — need ≥ 20. Upgrade: https://nodejs.org/"
+    fail "Node.js $(node -v) — need ≥ 22.13 (pnpm 11 requires node:sqlite). Upgrade: https://nodejs.org/"
   fi
 else
   warn "Node.js not found. Installing via NodeSource…"
   if command -v apt-get &>/dev/null; then
-    curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+    curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
     sudo apt-get install -y nodejs
   elif command -v brew &>/dev/null; then
-    brew install node@20
+    brew install node@22
   else
     fail "Node.js not found and no supported package manager. Install manually: https://nodejs.org/"
   fi
