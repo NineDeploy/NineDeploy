@@ -212,6 +212,7 @@ Zero-downtime for Docker, brief-gap-with-rollback for PM2. The worker processes 
 
 - **Containers**: no host ports published at all — healthchecks probe container network IPs; Traefik routes by name over the shared network
 - **Traefik**: the only publicly exposed service (:80/:443); dynamic config written atomically (temp+rename) with a directory bind mount (single-file mounts pin the inode and never see renames); Host/Path operands sanitized against rule/YAML injection
+- **Backups encrypted at rest** — dumps are sealed with the master key the moment they hit disk (a stolen data dir must not leak the otherwise-encrypted DB credentials); restore and download decrypt transparently, legacy plaintext backups restore as-is
 - **Secrets**: AES-256-GCM in **versioned envelopes** (`v<ver>:iv:tag:ct`). Master key rotatable via the `NINEDEPLOY_MASTER_KEYS` ring + `rotateSecrets` re-encryption job; legacy envelopes stay readable (resolved to key version 0)
 - **Auth**: JWT access (15 m) + refresh (7 d); API tokens sha256-hashed. Tokens carry a `ver` claim matched against the user's `tokenVersion` — logout, role change, and password change/reset all bump it, revoking every outstanding session (access *and* refresh) statelessly
 - **Passwords**: Argon2id; self-service change (requires current password) + admin reset

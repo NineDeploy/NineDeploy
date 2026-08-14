@@ -1,7 +1,11 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { existsSync as existsSyncMock, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import {
   backupDatabase,
   connectionString,
+  readBackupBytes,
   databaseSize,
   defaultPort,
   ENGINES,
@@ -13,16 +17,19 @@ import {
 } from '../src/engine/database.js';
 
 const h = vi.hoisted(() => {
-  const decrypt = vi.fn((v: string) => `pw:${v}`);
+  // decrypt handles BOTH envelope round-trips (v0:… = real envelope shape)
+  // and DB passwords (pw:… fallback).
+  const decrypt = vi.fn((v: string) => (v.startsWith('v0:') ? v.slice(3) : `pw:${v}`));
+  const encrypt = vi.fn((v: string) => `v0:${v}`);
   const run = vi.fn(async (_cmd: string, _args: unknown[], _opts: unknown, sink?: (line: string) => void) => {
     sink?.('');
   });
   const capture = vi.fn(async () => '[]');
   const config: { paths: { dataDir: string } } = { paths: { dataDir: '/tmp/nd-db-test' } };
-  return { decrypt, run, capture, config };
+  return { decrypt, encrypt, run, capture, config };
 });
 
-vi.mock('../src/lib/crypto.js', () => ({ decrypt: h.decrypt }));
+vi.mock('../src/lib/crypto.js', () => ({ decrypt: h.decrypt, encrypt: h.encrypt }));
 vi.mock('../src/lib/exec.js', () => ({ run: h.run, capture: h.capture, sleep: vi.fn() }));
 vi.mock('../src/config.js', () => ({ config: h.config }));
 
@@ -355,36 +362,52 @@ describe('databaseSize', () => {
 });
 
 describe('backupDatabase', () => {
-  it('backs up postgres via arg-array capture (no host shell)', async () => {
+  const tmp = mkdtempSync(path.join(os.tmpdir(), 'nd-backup-'));
+  afterAll(() => rmSync(tmp, { recursive: true, force: true }));
+
+  it('backs up postgres via arg-array capture and encrypts the file at rest', async () => {
+    const file = path.join(tmp, 'pg.sql');
+    writeFileSync(file, '');
     h.capture.mockResolvedValueOnce('PG_DUMP');
-    await backupDatabase(dbRow({ engine: 'postgres' }), '/tmp/nd-test-out.sql', vi.fn());
+    await backupDatabase(dbRow({ engine: 'postgres' }), file, vi.fn());
     expect(h.capture).toHaveBeenCalledWith('docker', ['exec', 'c', 'pg_dump', '-U', 'nine', '-d', 'app']);
     expect(h.run).not.toHaveBeenCalled();
+    // The dump never rests in plaintext: the file holds the master-key envelope.
+    expect(readFileSync(file, 'utf8')).toBe(`v0:${Buffer.from('PG_DUMP').toString('base64')}`);
   });
 
-  it('backs up mysql with the decrypted password as a --password arg (not shell-interpolated)', async () => {
+  it('backs up mysql with the decrypted password and encrypts the file at rest', async () => {
+    const file = path.join(tmp, 'mysql.sql');
+    writeFileSync(file, '');
     h.capture.mockResolvedValueOnce('MYSQL_DUMP');
-    await backupDatabase(dbRow({ engine: 'mysql' }), '/tmp/nd-test-mysql.sql', vi.fn());
+    await backupDatabase(dbRow({ engine: 'mysql' }), file, vi.fn());
     expect(h.capture).toHaveBeenCalledWith('docker', [
       'exec', 'c', 'mysqldump', '-uroot', '--password=pw:enc', '--all-databases',
     ]);
     expect(h.decrypt).toHaveBeenCalledWith('enc');
     expect(h.run).not.toHaveBeenCalled();
+    expect(readFileSync(file, 'utf8')).toBe(`v0:${Buffer.from('MYSQL_DUMP').toString('base64')}`);
   });
 
-  it('backs up redis via docker exec SAVE + docker cp (no host shell)', async () => {
+  it('backs up redis via docker exec SAVE + docker cp, then encrypts', async () => {
+    const file = path.join(tmp, 'redis.rdb');
+    writeFileSync(file, 'RDB-BYTES'); // the (mocked) docker cp lands here
     const log = vi.fn();
-    await backupDatabase(dbRow({ engine: 'redis' }), '/f', log);
+    await backupDatabase(dbRow({ engine: 'redis' }), file, log);
     expect(h.run).toHaveBeenCalledWith('docker', ['exec', 'c', 'redis-cli', 'SAVE'], {}, log);
-    expect(h.run).toHaveBeenCalledWith('docker', ['cp', 'c:/data/dump.rdb', '/f'], {}, log);
+    expect(h.run).toHaveBeenCalledWith('docker', ['cp', 'c:/data/dump.rdb', file], {}, log);
+    expect(readFileSync(file, 'utf8')).toBe(`v0:${Buffer.from('RDB-BYTES').toString('base64')}`);
   });
 
-  it('backs up mongo via a static container temp file + docker cp', async () => {
+  it('backs up mongo via a static container temp file + docker cp, then encrypts', async () => {
+    const file = path.join(tmp, 'mongo.archive');
+    writeFileSync(file, 'MONGO-BYTES');
     const log = vi.fn();
-    await backupDatabase(dbRow({ engine: 'mongo' }), '/f', log);
+    await backupDatabase(dbRow({ engine: 'mongo' }), file, log);
     expect(h.run).toHaveBeenCalledWith('docker', ['exec', 'c', 'sh', '-c', 'mongodump --archive --gzip > /tmp/ninedeploy-dump'], {}, log);
-    expect(h.run).toHaveBeenCalledWith('docker', ['cp', 'c:/tmp/ninedeploy-dump', '/f'], {}, log);
+    expect(h.run).toHaveBeenCalledWith('docker', ['cp', 'c:/tmp/ninedeploy-dump', file], {}, log);
     expect(h.run).toHaveBeenCalledWith('docker', ['exec', 'c', 'rm', '-f', '/tmp/ninedeploy-dump'], {}, expect.any(Function));
+    expect(readFileSync(file, 'utf8')).toBe(`v0:${Buffer.from('MONGO-BYTES').toString('base64')}`);
   });
 
   it('throws for databases that are not runnable', async () => {
@@ -399,18 +422,56 @@ describe('backupDatabase', () => {
   });
 });
 
+describe('readBackupBytes', () => {
+  const tmp = mkdtempSync(path.join(os.tmpdir(), 'nd-read-'));
+  afterAll(() => rmSync(tmp, { recursive: true, force: true }));
+
+  it('decrypts an envelope backup to the original bytes', () => {
+    const f = path.join(tmp, 'enc.dump');
+    writeFileSync(f, `v0:${Buffer.from('hello').toString('base64')}`);
+    expect(readBackupBytes(f).toString()).toBe('hello');
+  });
+
+  it('returns a legacy plaintext backup as-is', () => {
+    const f = path.join(tmp, 'legacy.dump');
+    const b64 = Buffer.from('legacy').toString('base64');
+    writeFileSync(f, b64);
+    expect(readBackupBytes(f).toString()).toBe('legacy');
+  });
+});
+
 describe('restoreDatabase', () => {
-  it('restores postgres via docker cp + psql -f (no host shell)', async () => {
+  const tmp = mkdtempSync(path.join(os.tmpdir(), 'nd-restore-'));
+  afterAll(() => rmSync(tmp, { recursive: true, force: true }));
+
+  const encFile = (plain: string) => {
+    const f = path.join(tmp, `enc-${plain.length}.dump`);
+    writeFileSync(f, `v0:${Buffer.from(plain).toString('base64')}>`);
+    return f;
+  };
+
+  it('restores postgres from an ENCRYPTED backup (decrypts to a temp sibling)', async () => {
     const log = vi.fn();
-    await restoreDatabase(dbRow({ engine: 'postgres' }), '/f', log);
-    expect(h.run).toHaveBeenCalledWith('docker', ['cp', '/f', 'c:/tmp/ninedeploy-restore'], {}, log);
+    const file = encFile('-- plain sql --');
+    await restoreDatabase(dbRow({ engine: 'postgres' }), file, log);
+    // docker cp receives the DECRYPTED sibling, not the envelope file.
+    expect(h.run).toHaveBeenCalledWith('docker', ['cp', `${file}.dec`, 'c:/tmp/ninedeploy-restore'], {}, log);
     expect(h.run).toHaveBeenCalledWith('docker', ['exec', 'c', 'psql', '-U', 'nine', '-d', 'app', '-f', '/tmp/ninedeploy-restore'], {}, log);
+  });
+
+  it('restores from a LEGACY plaintext backup as-is (no envelope)', async () => {
+    const log = vi.fn();
+    const file = path.join(tmp, 'legacy.dump');
+    writeFileSync(file, '-- legacy plain --');
+    await restoreDatabase(dbRow({ engine: 'postgres' }), file, log);
+    expect(h.run).toHaveBeenCalledWith('docker', ['cp', file, 'c:/tmp/ninedeploy-restore'], {}, log);
   });
 
   it('restores mysql with the decrypted password via source (no shell interpolation)', async () => {
     const log = vi.fn();
-    await restoreDatabase(dbRow({ engine: 'mysql' }), '/f', log);
-    expect(h.run).toHaveBeenCalledWith('docker', ['cp', '/f', 'c:/tmp/ninedeploy-restore'], {}, log);
+    const file = encFile('USE app;');
+    await restoreDatabase(dbRow({ engine: 'mysql' }), file, log);
+    expect(h.run).toHaveBeenCalledWith('docker', ['cp', `${file}.dec`, 'c:/tmp/ninedeploy-restore'], {}, log);
     expect(h.run).toHaveBeenCalledWith('docker', [
       'exec', 'c', 'mysql', '-uroot', '--password=pw:enc', '-e', 'source /tmp/ninedeploy-restore',
     ], {}, log);
@@ -419,21 +480,25 @@ describe('restoreDatabase', () => {
 
   it('restores mongo via docker cp + mongorestore --archive=path', async () => {
     const log = vi.fn();
-    await restoreDatabase(dbRow({ engine: 'mongo' }), '/f', log);
-    expect(h.run).toHaveBeenCalledWith('docker', ['cp', '/f', 'c:/tmp/ninedeploy-restore'], {}, log);
+    const file = encFile('MONGO');
+    await restoreDatabase(dbRow({ engine: 'mongo' }), file, log);
+    expect(h.run).toHaveBeenCalledWith('docker', ['cp', `${file}.dec`, 'c:/tmp/ninedeploy-restore'], {}, log);
     expect(h.run).toHaveBeenCalledWith('docker', ['exec', 'c', 'mongorestore', '--archive=/tmp/ninedeploy-restore', '--gzip', '--drop'], {}, log);
   });
 
-  it('removes the staged restore file afterwards (cleanup)', async () => {
-    await restoreDatabase(dbRow({ engine: 'postgres' }), '/f', vi.fn());
+  it('removes the staged restore file and decrypted sibling afterwards', async () => {
+    const file = encFile('x');
+    await restoreDatabase(dbRow({ engine: 'postgres' }), file, vi.fn());
     expect(h.run).toHaveBeenCalledWith('docker', ['exec', 'c', 'rm', '-f', '/tmp/ninedeploy-restore'], {}, expect.any(Function));
+    expect(existsSyncMock(`${file}.dec`)).toBe(false);
   });
 
   it('swallows a failing cleanup after a successful restore', async () => {
     h.run.mockImplementation(async (_cmd: string, args: unknown[]) => {
       if (Array.isArray(args) && args.includes('rm')) throw new Error('cleanup failed');
     });
-    await expect(restoreDatabase(dbRow({ engine: 'postgres' }), '/f', vi.fn())).resolves.toBeUndefined();
+    const file = encFile('y');
+    await expect(restoreDatabase(dbRow({ engine: 'postgres' }), file, vi.fn())).resolves.toBeUndefined();
     expect(h.run).toHaveBeenCalledWith('docker', ['exec', 'c', 'rm', '-f', '/tmp/ninedeploy-restore'], {}, expect.any(Function));
   });
 

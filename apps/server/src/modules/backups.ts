@@ -1,11 +1,11 @@
-import { createReadStream, existsSync, statSync, unlinkSync } from 'node:fs';
+import { existsSync, statSync, unlinkSync } from 'node:fs';
 import { audit } from "../lib/audit.js";
 import path from 'node:path';
 import { desc, eq } from 'drizzle-orm';
 import { backups, databases } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { config } from '../config.js';
-import { backupDatabase, databaseSize, restoreDatabase } from '../engine/database.js';
+import { backupDatabase, databaseSize, readBackupBytes, restoreDatabase } from '../engine/database.js';
 import { badRequest, notFound } from '../lib/errors.js';
 
 const num = (v: string) => Number(v);
@@ -107,9 +107,10 @@ export const backupRoutes: FastifyPluginAsync = async (app) => {
     const bid = num((req.params as { bid: string }).bid);
     const b = await app.db.query.backups.findFirst({ where: eq(backups.id, bid) });
     if (!b || !existsSync(b.path)) throw notFound('Backup not found');
+    // Backups are encrypted at rest — hand the user the PLAINTEXT dump.
     reply
       .type('application/octet-stream')
       .header('content-disposition', `attachment; filename="${path.basename(b.path)}"`)
-      .send(createReadStream(b.path));
+      .send(readBackupBytes(b.path));
   });
 };

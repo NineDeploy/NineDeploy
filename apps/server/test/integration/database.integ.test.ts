@@ -51,7 +51,10 @@ describe.skipIf(!ENABLED)('database backup/restore (real PostgreSQL container)',
 
     await backupDatabase(db as never, dumpFile, () => undefined);
     expect(existsSync(dumpFile)).toBe(true);
-    expect(readFileSync(dumpFile, 'utf8')).toContain('roundtrip');
+    // The dump is ENCRYPTED at rest: a versioned envelope, not plaintext.
+    const atRest = readFileSync(dumpFile, 'utf8');
+    expect(/^v\d+:/.test(atRest)).toBe(true);
+    expect(atRest).not.toContain('roundtrip');
 
     // Wipe the source data, then restore from the dump.
     await execSql('DROP TABLE integ;');

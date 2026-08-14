@@ -59,3 +59,35 @@ jobs:
       # Verifies the release workflow's Dockerfile compiles; no push happens here.
       - name: Build the image
         run: docker build -t ninedeploy:ci .
+
+  integration:
+    name: Integration tests (real Docker + PostgreSQL)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.21.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22 # pnpm 11 requires Node >= 22.13 (node:sqlite)
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build packages
+        run: pnpm build
+
+      # Runs the testcontainers suite (real PostgreSQL container): exercises
+      # the REAL backup/restore path end-to-end — arg-array docker exec,
+      # docker cp, and the at-rest backup encryption round-trip.
+      - name: Run integration tests
+        run: pnpm --filter @ninedeploy/server exec vitest run test/integration --no-coverage
+        env:
+          RUN_INTEGRATION: '1'

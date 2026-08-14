@@ -23,6 +23,9 @@ const h = vi.hoisted(() => {
 });
 
 vi.mock('../src/config.js', () => ({ config: h.config }));
+// The finalize grace period sleeps 2s in real life — stub it for tests.
+const sleepMock = vi.hoisted(() => ({ sleep: vi.fn(async () => undefined) }));
+vi.mock('../src/lib/exec.js', () => sleepMock);
 vi.mock('../src/lib/crypto.js', () => ({ decrypt: h.decrypt }));
 vi.mock('../src/lib/git.js', () => ({ checkoutCommit: h.checkoutCommit }));
 vi.mock('../src/engine/database.js', () => ({ connectionString: h.connectionString }));
@@ -333,8 +336,10 @@ describe('runDeployment', () => {
     await runDeployment(db as never, 1);
 
     expect(lines).toContain('✓ Deployment successful');
-    // Routing flipped to the new container first, then the old was stopped.
+    // Routing flipped to the new container first, a grace period let Traefik
+    // reload, and only then was the old container stopped.
     expect(h.writeDynamicConfig).toHaveBeenCalledWith(db);
+    expect(sleepMock.sleep).toHaveBeenCalledWith(2000);
     expect(h.builder.stop).toHaveBeenCalledWith('old-c');
   });
 

@@ -9,6 +9,7 @@ import { dockerBuilder } from './builders/docker.js';
 import { logBus } from './logs.js';
 import { pm2Builder } from './builders/pm2.js';
 import { writeDynamicConfig } from './proxy.js';
+import { sleep } from '../lib/exec.js';
 import type { BuildContext, Builder, DeployRuntime } from './types.js';
 
 const builders: Record<string, Builder> = { docker: dockerBuilder, pm2: pm2Builder };
@@ -191,6 +192,10 @@ export async function runDeployment(db: DB, deploymentId: number): Promise<void>
     // the new one — otherwise we'd stop the still-serving version and cause an
     // outage. If the config write failed, leave the previous container live.
     if (routingFlipped) {
+      // Give Traefik's file watcher a moment to apply the new config before
+      // retiring the old container — otherwise its reload latency could 502
+      // requests still routed to the previous version.
+      await sleep(2000);
       await builder.stop(previous.runtimeId).catch((err) => log(`finalize warning (previous stop): ${msg(err)}`));
     } else {
       log('↩ finalize skipped: routing did not flip, the previous container stays live');

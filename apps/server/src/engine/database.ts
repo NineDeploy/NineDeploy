@@ -1,6 +1,6 @@
-import { writeFileSync } from 'node:fs';
+import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import type { Database } from '@ninedeploy/db';
-import { decrypt } from '../lib/crypto.js';
+import { decrypt, encrypt } from '../lib/crypto.js';
 import { capture, run } from '../lib/exec.js';
 import { NETWORK } from './proxy.js';
 
@@ -8,6 +8,41 @@ const swallow = () => {};
 /** Static temp paths used inside managed containers for backup/restore staging. */
 const DUMP_TMP = '/tmp/ninedeploy-dump';
 const RESTORE_TMP = '/tmp/ninedeploy-restore';
+
+/** Matches a versioned secret envelope ("v<ver>:…"). Backups written since the
+ *  encryption change carry this prefix; anything else is a legacy plaintext dump. */
+const ENVELOPE_RE = /^v\d+:/;
+
+/**
+ * Encrypt a backup file in place (master-key envelope over base64-encoded dump
+ * content — binary-safe). Plain dumps on disk would leak every DB credential
+ * they contain to anyone who steals the data directory, defeating the at-rest
+ * encryption of the credentials themselves.
+ */
+function encryptFileInPlace(file: string): void {
+  const plain = readFileSync(file).toString('base64');
+  writeFileSync(file, encrypt(plain), { mode: 0o600 });
+}
+
+/** Read a backup file and return its PLAINTEXT bytes (envelope-aware). */
+export function readBackupBytes(file: string): Buffer {
+  const raw = readFileSync(file, 'utf8');
+  const payload = ENVELOPE_RE.test(raw) ? decrypt(raw) : raw; // legacy = plaintext
+  return Buffer.from(payload, 'base64');
+}
+
+/**
+ * Prepare a backup file for restore: encrypted backups are decrypted to a
+ * sibling temp file; legacy plaintext files are used as-is. Returns the path to
+ * feed to `docker cp` and a cleanup function.
+ */
+function stageForRestore(file: string): { path: string; cleanup: () => void } {
+  const head = readFileSync(file, 'utf8').slice(0, 32);
+  if (!ENVELOPE_RE.test(head)) return { path: file, cleanup: () => undefined };
+  const dec = `${file}.dec`;
+  writeFileSync(dec, readBackupBytes(file), { mode: 0o600 });
+  return { path: dec, cleanup: () => { try { unlinkSync(dec); } catch { /* gone */ } } };
+}
 
 interface EngineConfig {
   image: (version?: string) => string;
@@ -202,32 +237,42 @@ export async function backupDatabase(d: Database, file: string, log: (line: stri
   } else {
     throw new Error(`backup not supported for ${d.engine}`);
   }
+  // Everything on disk is encrypted with the master key: a stolen data dir
+  // must not leak the (otherwise encrypted-at-rest) DB credentials via dumps.
+  encryptFileInPlace(file);
 }
 
 /**
  * Restore a managed database from `file` (host path). The dump is copied into
  * the container at a static temp path, restored via a file-reading flag, then
- * removed — no host shell, no stdin plumbing, no interpolation.
+ * removed — no host shell, no stdin plumbing, no interpolation. Encrypted
+ * backups are transparently decrypted to a temp sibling first; legacy
+ * plaintext backups (pre-encryption) restore as-is.
  */
 export async function restoreDatabase(d: Database, file: string, log: (line: string) => void): Promise<void> {
   const cfg = ENGINES[d.engine];
   if (!cfg || !d.containerName) throw new Error('database not runnable');
   const cn = d.containerName;
-  if (d.engine === 'redis') throw new Error('restore not supported for redis');
+  // Validate the engine BEFORE touching the filesystem so an unsupported engine
+  // fails with the right error even for a nonexistent path.
+  if (d.engine !== 'postgres' && d.engine !== 'mysql' && d.engine !== 'mongo') {
+    throw new Error(`restore not supported for ${d.engine}`);
+  }
 
-  await run('docker', ['cp', file, `${cn}:${RESTORE_TMP}`], {}, log);
+  const staged = stageForRestore(file);
+  await run('docker', ['cp', staged.path, `${cn}:${RESTORE_TMP}`], {}, log);
   try {
     if (d.engine === 'postgres') {
       await run('docker', ['exec', cn, 'psql', '-U', cfg.username()!, '-d', cfg.dbName()!, '-f', RESTORE_TMP], {}, log);
     } else if (d.engine === 'mysql') {
       const pass = decrypt(d.passwordEncrypted);
       await run('docker', ['exec', cn, 'mysql', '-uroot', `--password=${pass}`, '-e', `source ${RESTORE_TMP}`], {}, log);
-    } else if (d.engine === 'mongo') {
-      await run('docker', ['exec', cn, 'mongorestore', `--archive=${RESTORE_TMP}`, '--gzip', '--drop'], {}, log);
     } else {
-      throw new Error(`restore not supported for ${d.engine}`);
+      // mongo (the engine union was pre-validated above)
+      await run('docker', ['exec', cn, 'mongorestore', `--archive=${RESTORE_TMP}`, '--gzip', '--drop'], {}, log);
     }
   } finally {
+    staged.cleanup();
     await run('docker', ['exec', cn, 'rm', '-f', RESTORE_TMP], {}, swallow).catch(() => undefined);
   }
 }

@@ -81,7 +81,7 @@ Open `http://localhost:5173` and create the first admin account. Requires Node �
 
 - **PostgreSQL · MySQL · Redis · MongoDB** — one-click with persistent storage; idempotent start (no name conflicts)
 - **Auto-generated credentials** — encrypted at rest; `DATABASE_URL`-style connection strings auto-injected into attached services
-- **Backups** — `pg_dump`/`mysqldump`/`mongodump`/RDB snapshot + restore + download; daily auto-backup keeps the last 7 **scheduled** backups and never touches manual ones
+- **Backups** — `pg_dump`/`mysqldump`/`mongodump`/RDB snapshot + restore + download — **encrypted at rest** with the master key (legacy plaintext backups still restore); daily auto-backup keeps the last 7 **scheduled** backups and never touches manual ones
 - **Bounded retention** — metrics (24 h), deploy logs (30 d), audit log (90 d), notification log (30 d), dangling Docker images — pruned automatically
 
 ## Management
