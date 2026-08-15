@@ -62,7 +62,11 @@ fi
 if ! command -v pnpm &>/dev/null; then
   warn "pnpm not found. Enabling via corepack…"
   corepack enable
-  corepack prepare pnpm@latest --activate
+  # Pin the pnpm version to the repo's declared packageManager (never
+  # "latest") — the lockfile is generated with that major, and running
+  # `--frozen-lockfile` against a newer major can fail or rewrite the lock.
+  PNPM_VERSION=$(node -p "require('./package.json').packageManager?.replace('pnpm@','') ?? '11.21.0'")
+  corepack prepare "pnpm@${PNPM_VERSION}" --activate
 fi
 ok "pnpm $(pnpm -v)"
 
