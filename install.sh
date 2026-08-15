@@ -65,7 +65,15 @@ if ! command -v pnpm &>/dev/null; then
   # Pin the pnpm version to the repo's declared packageManager (never
   # "latest") — the lockfile is generated with that major, and running
   # `--frozen-lockfile` against a newer major can fail or rewrite the lock.
-  PNPM_VERSION=$(node -p "require('./package.json').packageManager?.replace('pnpm@','') ?? '11.21.0'")
+  # Resolve against $INSTALL_DIR (the install target), NOT the caller's cwd:
+  # `curl | bash` runs from $HOME/tmp before any clone, so ./package.json
+  # does not exist there yet. Fall back to the repo's current pin when the
+  # clone is absent; keep this constant in sync with package.json.
+  if [ -f "$INSTALL_DIR/package.json" ]; then
+    PNPM_VERSION=$(node -p "require('${INSTALL_DIR}/package.json').packageManager.replace(/^pnpm@/, '').split('+')[0]" 2>/dev/null || echo "11.21.0")
+  else
+    PNPM_VERSION="11.21.0"
+  fi
   corepack prepare "pnpm@${PNPM_VERSION}" --activate
 fi
 ok "pnpm $(pnpm -v)"
