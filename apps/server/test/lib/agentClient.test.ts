@@ -111,7 +111,7 @@ describe('agentPing', () => {
 
 describe('agent typed-operation table (unit)', () => {
   it('rejects hostile operands before spawning', async () => {
-    const spawnMock2 = vi.hoisted(() => vi.fn(async () => 0));
+    const spawnMock2 = vi.fn(async () => 0);
     vi.doMock('../../src/lib/spawnValidated.js', () => ({ spawnValidated: spawnMock2 }));
     const { runOp } = await import('../../src/agent.js');
     await expect(runOp('docker.pull', { image: 'nginx; touch /pwn' }, () => {})).rejects.toThrow('Invalid image');
@@ -120,7 +120,7 @@ describe('agent typed-operation table (unit)', () => {
   });
 
   it('returns -1 for unknown operations without spawning', async () => {
-    const spawnMock3 = vi.hoisted(() => vi.fn(async () => 0));
+    const spawnMock3 = vi.fn(async () => 0);
     vi.doMock('../../src/lib/spawnValidated.js', () => ({ spawnValidated: spawnMock3 }));
     const { runOp } = await import('../../src/agent.js');
     const code = await runOp('bash.exec', {}, () => {});

@@ -48,7 +48,7 @@ describe('job scheduler plugin', () => {
   });
 
   it('skips invalid cron expressions without breaking the plugin', async () => {
-    CronMock.Cron.mockImplementationOnce(() => {
+    CronMock.Cron.mockImplementationOnce(function () {
       throw new Error('invalid pattern');
     });
     const app = Fastify({ logger: false });
