@@ -73,6 +73,15 @@ export const ENGINES: Record<string, EngineConfig> = {
     dbName: () => undefined,
     connectionString: (h, prt, u, p) => `mysql://${u}:${p}@${h}:${prt}/`,
   },
+  mariadb: {
+    image: (v) => `mariadb:${v || '11'}`,
+    port: 3306,
+    volumePath: '/var/lib/mysql',
+    env: (p) => ({ MARIADB_ROOT_PASSWORD: p }),
+    username: () => 'root',
+    dbName: () => undefined,
+    connectionString: (h, prt, u, p) => `mariadb://${u}:${p}@${h}:${prt}/`,
+  },
   redis: {
     image: (v) => `redis:${v || '7'}`,
     port: 6379,
@@ -189,10 +198,11 @@ export async function databaseSize(d: Database): Promise<number> {
       const m = /used_memory:(\d+)/.exec(out);
       return m ? Number(m[1]) : 0;
     }
-    if (d.engine === 'mysql') {
+    if (d.engine === 'mysql' || d.engine === 'mariadb') {
       const pass = decrypt(d.passwordEncrypted);
+      const client = d.engine === 'mysql' ? 'mysql' : 'mariadb';
       const out = await capture('docker', [
-        'exec', d.containerName, 'mysql', '-uroot', `--password=${pass}`, '-N',
+        'exec', d.containerName, client, '-uroot', `--password=${pass}`, '-N',
         '-e', 'SELECT IFNULL(SUM(data_length+index_length),0) FROM information_schema.tables',
       ]);
       return Number(out.trim()) || 0;
@@ -221,9 +231,10 @@ export async function backupDatabase(d: Database, file: string, log: (line: stri
   if (d.engine === 'postgres') {
     const dump = await capture('docker', ['exec', cn, 'pg_dump', '-U', cfg.username()!, '-d', cfg.dbName()!]);
     writeFileSync(file, dump);
-  } else if (d.engine === 'mysql') {
+  } else if (d.engine === 'mysql' || d.engine === 'mariadb') {
     const pass = decrypt(d.passwordEncrypted);
-    const dump = await capture('docker', ['exec', cn, 'mysqldump', '-uroot', `--password=${pass}`, '--all-databases']);
+    const dumper = d.engine === 'mysql' ? 'mysqldump' : 'mariadb-dump';
+    const dump = await capture('docker', ['exec', cn, dumper, '-uroot', `--password=${pass}`, '--all-databases']);
     writeFileSync(file, dump);
   } else if (d.engine === 'redis') {
     await run('docker', ['exec', cn, 'redis-cli', 'SAVE'], {}, log);
@@ -262,7 +273,7 @@ export async function restoreDatabase(d: Database, file: string, log: (line: str
   const cn = d.containerName;
   // Validate the engine BEFORE touching the filesystem so an unsupported engine
   // fails with the right error even for a nonexistent path.
-  if (d.engine !== 'postgres' && d.engine !== 'mysql' && d.engine !== 'mongo') {
+  if (d.engine !== 'postgres' && d.engine !== 'mysql' && d.engine !== 'mariadb' && d.engine !== 'mongo') {
     throw new Error(`restore not supported for ${d.engine}`);
   }
 
@@ -271,9 +282,10 @@ export async function restoreDatabase(d: Database, file: string, log: (line: str
   try {
     if (d.engine === 'postgres') {
       await run('docker', ['exec', cn, 'psql', '-U', cfg.username()!, '-d', cfg.dbName()!, '-f', RESTORE_TMP], {}, log);
-    } else if (d.engine === 'mysql') {
+    } else if (d.engine === 'mysql' || d.engine === 'mariadb') {
       const pass = decrypt(d.passwordEncrypted);
-      await run('docker', ['exec', cn, 'mysql', '-uroot', `--password=${pass}`, '-e', `source ${RESTORE_TMP}`], {}, log);
+      const client = d.engine === 'mysql' ? 'mysql' : 'mariadb';
+      await run('docker', ['exec', cn, client, '-uroot', `--password=${pass}`, '-e', `source ${RESTORE_TMP}`], {}, log);
     } else {
       // mongo (the engine union was pre-validated above); same auth rules as
       // the backup path.

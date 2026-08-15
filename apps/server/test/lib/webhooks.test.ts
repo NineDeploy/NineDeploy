@@ -97,6 +97,7 @@ describe('parsePush', () => {
       message: 'hello',
       author: 'ada',
       repoUrl: 'https://github.com/ada/repo.git',
+      changedFiles: [],
     });
   });
 
@@ -129,6 +130,7 @@ describe('parsePush', () => {
       message: 'first',
       author: 'Bob',
       repoUrl: 'https://gitlab.com/bob/repo.git',
+      changedFiles: [],
     });
   });
 
@@ -158,5 +160,48 @@ describe('parsePush', () => {
       message: '',
       author: '',
     });
+  });
+
+  it('collects added/modified/removed files from a GitHub payload', () => {
+    const body = {
+      ref: 'refs/heads/main',
+      head_commit: { id: 'abc', message: 'm', added: ['x.ts'], modified: ['y.ts'] },
+      commits: [
+        { id: 'c1', added: ['a.ts'], modified: [], removed: [] },
+        { id: 'c2', added: [], modified: ['b/c.ts'], removed: ['gone.ts'] },
+      ],
+    };
+    const result = parsePush(body, 'github');
+    expect(result?.changedFiles).toEqual(['a.ts', 'b/c.ts', 'gone.ts', 'x.ts', 'y.ts']);
+  });
+
+  it('collects changed files from a GitLab payload', () => {
+    const body = {
+      ref: 'refs/heads/main',
+      commits: [{ id: 'c1', message: 'm', added: ['one.ts'], modified: ['two.ts'], removed: ['three.ts'] }],
+    };
+    expect(parsePush(body, 'gitlab')?.changedFiles).toEqual(['one.ts', 'two.ts', 'three.ts']);
+  });
+
+  it('falls back to the head commit alone when the commits array is absent', () => {
+    const body = {
+      ref: 'refs/heads/main',
+      head_commit: { id: 'abc', message: 'm', modified: ['only.ts'] },
+    };
+    expect(parsePush(body, 'github')?.changedFiles).toEqual(['only.ts']);
+  });
+
+  it('returns an empty changed-files list when nothing reports paths', () => {
+    const body = { ref: 'refs/heads/main', head_commit: { id: 'abc', message: 'm' } };
+    expect(parsePush(body, 'github')?.changedFiles).toEqual([]);
+  });
+
+  it('skips non-array and non-string entries in file lists', () => {
+    const body = {
+      ref: 'refs/heads/main',
+      head_commit: { id: 'abc', message: 'm', added: 'not-an-array', modified: [42, 'ok.ts'], removed: null },
+      commits: [{ id: 'c1', added: [{ evil: true }], modified: 'nope' }],
+    };
+    expect(parsePush(body, 'github')?.changedFiles).toEqual(['ok.ts']);
   });
 });

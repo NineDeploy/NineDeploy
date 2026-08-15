@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CirclePause, CirclePlay, Cpu, Database, Download, HardDrive, Info, KeyRound, Network, Package, Pencil, Send, Server, ShieldCheck, Trash2, Upload } from 'lucide-react';
+import { CirclePause, CirclePlay, Cpu, Database, Download, HardDrive, Info, KeyRound, Network, Package, Pencil, Send, Server, ShieldCheck, Smartphone, Trash2, Upload } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { api, getToken, setSessionTokens } from '../lib/api.js';
 import { useTheme, ACCENTS } from '../lib/theme.js';
@@ -211,6 +211,9 @@ export function Settings() {
           </div>
         </CardBody>
       </Card>
+
+      {/* Two-factor authentication */}
+      <TwoFactorCard />
 
       {/* Security */}
       <Card className="mb-5">
@@ -584,8 +587,163 @@ export function Settings() {
   );
 }
 
-function InfoRow({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
+// ── Two-factor (TOTP) ─────────────────────────────────────────────────────
+function TwoFactorCard() {
+  const { toast } = useToast();
+  const [setup, setSetup] = useState<{ secret: string; otpauthUri: string } | null>(null);
+  const [code, setCode] = useState('');
+  const [disablePassword, setDisablePassword] = useState('');
+  const [disableCode, setDisableCode] = useState('');
+  const [showDisable, setShowDisable] = useState(false);
+
+  const doSetup = useMutation({
+    mutationFn: () => api.auth.twoFactor.setup(),
+    onSuccess: (res) => {
+      setSetup(res);
+      setCode('');
+    },
+    onError: () => toast('Could not start 2FA setup', 'error'),
+  });
+  const enable = useMutation({
+    mutationFn: () => api.auth.twoFactor.enable(code),
+    onSuccess: () => {
+      setSetup(null);
+      setCode('');
+      toast('Two-factor authentication enabled', 'success');
+    },
+    onError: () => toast('Invalid or expired code', 'error'),
+  });
+  const disable = useMutation({
+    mutationFn: () => api.auth.twoFactor.disable({ password: disablePassword, code: disableCode }),
+    onSuccess: () => {
+      setShowDisable(false);
+      setDisablePassword('');
+      setDisableCode('');
+      setSetup(null);
+      toast('Two-factor authentication disabled — you were signed out everywhere', 'info');
+      setTimeout(() => window.location.assign('/login'), 1500);
+    },
+    onError: () => toast('Could not disable 2FA — check your password and code', 'error'),
+  });
+
+  const copy = async (value: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      toast('Copied', 'success');
+    } catch {
+      toast('Copy failed', 'error');
+    }
+  };
+
   return (
+    <Card className="mb-5">
+      <CardBody>
+        <h2 className="mb-1 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
+          <Smartphone size={14} /> Two-factor authentication
+        </h2>
+        <p className="mb-4 text-xs text-slate-500">
+          Require a time-based one-time code (TOTP) from an authenticator app in addition to your password.
+        </p>
+
+        {!setup && !showDisable && (
+          <div className="flex gap-2">
+            <Button size="sm" onClick={() => doSetup.mutate()} disabled={doSetup.isPending}>
+              {doSetup.isPending ? 'Generating…' : 'Set up 2FA'}
+            </Button>
+            <Button size="sm" variant="secondary" onClick={() => setShowDisable(true)}>
+              Disable 2FA
+            </Button>
+          </div>
+        )}
+
+        {setup && (
+          <div className="max-w-md space-y-3 rounded-lg border border-amber-500/30 bg-amber-500/[0.06] p-4">
+            <p className="text-xs font-medium text-amber-200">
+              Add this secret to your authenticator app (Google Authenticator, 1Password, Aegis…), then confirm with a code.
+            </p>
+            <div className="flex items-center gap-2">
+              <code className="min-w-0 flex-1 break-all rounded bg-black/40 px-2 py-1.5 font-mono text-[11px] text-amber-100">
+                {setup.secret}
+              </code>
+              <button onClick={() => copy(setup.secret)} className="shrink-0 text-xs font-medium text-amber-200 hover:text-amber-100">
+                Copy
+              </button>
+            </div>
+            <div className="flex items-center gap-2">
+              <code className="min-w-0 flex-1 truncate rounded bg-black/40 px-2 py-1.5 font-mono text-[10px] text-amber-100/80" title={setup.otpauthUri}>
+                {setup.otpauthUri}
+              </code>
+              <button onClick={() => copy(setup.otpauthUri)} className="shrink-0 text-xs font-medium text-amber-200 hover:text-amber-100">
+                Copy URI
+              </button>
+            </div>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (code.length === 6) enable.mutate();
+              }}
+              className="flex items-end gap-2"
+            >
+              <label className="flex-1">
+                <span className="mb-1 block text-xs text-amber-200/70">Confirm with a 6-digit code</span>
+                <input
+                  value={code}
+                  onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  inputMode="numeric"
+                  placeholder="123456"
+                  className="w-36 rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-2 font-mono text-sm outline-none focus:border-indigo-500"
+                />
+              </label>
+              <Button type="submit" size="sm" disabled={code.length !== 6 || enable.isPending}>
+                {enable.isPending ? 'Verifying…' : 'Enable'}
+              </Button>
+              <button type="button" onClick={() => setSetup(null)} className="text-xs text-amber-200/70 hover:underline">
+                Cancel
+              </button>
+            </form>
+          </div>
+        )}
+
+        {showDisable && (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (disablePassword && disableCode.length === 6) disable.mutate();
+            }}
+            className="grid max-w-md gap-3 rounded-lg border border-rose-500/30 bg-rose-500/[0.05] p-4"
+          >
+            <p className="text-xs text-rose-200">Confirm with your password and a current 2FA code.</p>
+            <input
+              type="password"
+              value={disablePassword}
+              onChange={(e) => setDisablePassword(e.target.value)}
+              placeholder="Password"
+              autoComplete="current-password"
+              className="rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-2 text-sm outline-none focus:border-indigo-500"
+            />
+            <input
+              value={disableCode}
+              onChange={(e) => setDisableCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+              placeholder="6-digit code"
+              inputMode="numeric"
+              className="w-36 rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-2 font-mono text-sm outline-none focus:border-indigo-500"
+            />
+            <div className="flex gap-2">
+              <Button type="submit" size="sm" variant="danger" disabled={!disablePassword || disableCode.length !== 6 || disable.isPending}>
+                {disable.isPending ? 'Disabling…' : 'Disable 2FA'}
+              </Button>
+              <button type="button" onClick={() => setShowDisable(false)} className="text-xs text-slate-400 hover:underline">
+                Cancel
+              </button>
+            </div>
+          </form>
+        )}
+      </CardBody>
+    </Card>
+  );
+}
+
+function InfoRow({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {  return (
     <div className="flex items-center justify-between rounded-lg bg-white/[0.02] px-3 py-2">
       <span className="flex items-center gap-2 text-xs text-slate-500">
         <span className="text-slate-400">{icon}</span> {label}

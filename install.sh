@@ -25,7 +25,6 @@ fail()  { echo -e "${RED}✗${NC}  $*"; exit 1; }
 
 INSTALL_DIR="${NINEDEPLOY_INSTALL_DIR:-$HOME/ninedeploy}"
 REPO_URL="https://github.com/ninedeploy/ninedeploy.git"
-BRANCH="main"
 NEEDS_CLONE=false
 
 echo ""
@@ -79,15 +78,82 @@ if ! docker info &>/dev/null 2>&1; then
 fi
 ok "Docker $(docker --version | awk '{print $3}' | tr -d ',')"
 
-# ── 2. Get the code ────────────────────────────────────────────────────────
+# ── 2. Resolve the version to install ──────────────────────────────────────
+#
+# Channel:
+#   release (default) — latest vX.Y.Z git tag (stable)
+#   main              — track the main branch (edge; previous behaviour)
+# A specific tag can be pinned with --version vX.Y.Z / NINEDEPLOY_VERSION.
+
+CHANNEL="${NINEDEPLOY_CHANNEL:-release}"
+PINNED_VERSION="${NINEDEPLOY_VERSION:-}"
+
+for arg in "$@"; do
+  case "$arg" in
+    --version=*) PINNED_VERSION="${arg#--version=}" ;;
+    --version)   : ;; # value comes as the next arg when passed separately
+    --channel=*) CHANNEL="${arg#--channel=}" ;;
+    --channel)   : ;;
+    v[0-9]*)     [ -z "$PINNED_VERSION" ] && PINNED_VERSION="$arg" ;;
+  esac
+done
+
+# Highest vX.Y.Z tag from the remote (no clone needed).
+latest_tag() {
+  git ls-remote --tags --refs "$REPO_URL" 2>/dev/null \
+    | awk -F/ '{print $NF}' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+    | sort -V | tail -1
+}
+
+REF=""
+if [ -n "$PINNED_VERSION" ]; then
+  REF="$PINNED_VERSION"
+  info "Installing pinned version $REF"
+elif [ "$CHANNEL" = "main" ]; then
+  REF="main"
+  info "Edge channel: tracking the main branch"
+else
+  REF=$(latest_tag)
+  if [ -z "$REF" ]; then
+    warn "No release tags found — falling back to the main branch"
+    REF="main"
+  else
+    info "Release channel: installing $REF (latest tag)"
+  fi
+fi
+
+# ── 3. Get the code ────────────────────────────────────────────────────────
 
 if [ -f "$INSTALL_DIR/package.json" ]; then
   info "Existing installation found at $INSTALL_DIR — updating…"
   cd "$INSTALL_DIR"
-  git pull origin "$BRANCH" || warn "git pull failed, continuing with existing code"
+
+  HAS_SYSTEMD=false
+  if [ "$(uname -s)" = "Linux" ] && command -v systemctl &>/dev/null && systemctl is-active --quiet ninedeploy 2>/dev/null; then
+    HAS_SYSTEMD=true
+    info "Stopping the service for a consistent backup…"
+    sudo systemctl stop ninedeploy
+  fi
+
+  # Safety net before an upgrade: snapshot DB + master key inside the data dir.
+  if [ -d .data ]; then
+    mkdir -p .data/upgrade-backups
+    BACKUP_FILE=".data/upgrade-backups/pre-update-$(date +%Y%m%d-%H%M%S).tar.gz"
+    if tar -czf "$BACKUP_FILE" .data/ninedeploy.db .data/master.key 2>/dev/null; then
+      ok "Pre-update backup saved to $BACKUP_FILE"
+    else
+      warn "Backup of .data failed — continuing (git history remains)"
+    fi
+  fi
+
+  git fetch --tags origin
+  git checkout --force "$REF" || { [ "$HAS_SYSTEMD" = true ] && sudo systemctl start ninedeploy; fail "could not check out $REF"; }
+  if [ "$REF" = "main" ]; then
+    git pull origin main || warn "git pull failed, continuing with the checked-out $REF"
+  fi
 else
   info "Cloning NineDeploy to $INSTALL_DIR …"
-  git clone --depth 1 -b "$BRANCH" "$REPO_URL" "$INSTALL_DIR"
+  git clone --depth 1 ${REF:+-b "$REF"} "$REPO_URL" "$INSTALL_DIR"
   cd "$INSTALL_DIR"
 fi
 
@@ -141,7 +207,25 @@ if [ "$(uname -s)" = "Linux" ] && command -v systemctl &>/dev/null; then
   sudo systemctl daemon-reload
   sudo systemctl enable ninedeploy
   sudo systemctl restart ninedeploy
-  ok "NineDeploy service started (systemd, hardened unit)"
+
+  # Readiness gate: give the API 60s to answer /health before declaring
+  # success — a failed migration or boot crash surfaces here, not later.
+  HEALTH_PORT="${NINEDEPLOY_PORT:-3000}"
+  info "Waiting for the API to come up (up to 60s)…"
+  if command -v curl &>/dev/null; then
+    for _ in $(seq 1 60); do
+      if curl -fsS -m 2 "http://127.0.0.1:${HEALTH_PORT}/health" >/dev/null 2>&1; then
+        ok "NineDeploy service is healthy (systemd, hardened unit)"
+        break
+      fi
+      sleep 1
+      if [ "$_" = "60" ]; then
+        fail "Service did not become healthy in 60s. Inspect: journalctl -u ninedeploy -n 50 (a pre-update backup is in ${DATA_DIR}/upgrade-backups)"
+      fi
+    done
+  else
+    ok "NineDeploy service started (systemd, hardened unit)"
+  fi
 else
   warn "systemd not available — starting in foreground…"
   info "For production, set up a process manager (systemd/pm2/launchd)."

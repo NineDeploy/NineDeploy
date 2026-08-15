@@ -45,7 +45,8 @@
           "secret": true
         }
       ],
-      "website": "https://grafana.com"
+      "website": "https://grafana.com",
+      "requires": "A strong admin password is generated automatically at deploy time"
     },
     {
       "id": "vaultwarden",
@@ -99,7 +100,8 @@
       "image": "libretranslate/libretranslate:latest",
       "port": 5000,
       "volumeMount": "/home/libretranslate",
-      "website": "https://libretranslate.com"
+      "website": "https://libretranslate.com",
+      "requires": "First boot downloads language models and can take several minutes; it also needs 4+ GB RAM"
     },
     {
       "id": "memos",
@@ -288,7 +290,9 @@
       "image": "linuxserver/bookstack",
       "port": 80,
       "volumeMount": "/config",
-      "website": "https://www.bookstackapp.com"
+      "website": "https://www.bookstackapp.com",
+      "requires": "Auto-provisioned MySQL is attached as DATABASE_URL; BookStack may also need DB_HOST/DB_USER/DB_PASS set from the database connection string",
+      "dbEngine": "mysql"
     },
     {
       "id": "excalidraw",
@@ -380,7 +384,7 @@
       "description": "A self-hosted, lightweight software forge. A community-driven, drop-in replacement for Gitea.",
       "category": "DevTools",
       "emoji": "🔥",
-      "image": "codeberg.org/forgejo/forgejo",
+      "image": "codeberg.org/forgejo/forgejo:11",
       "port": 3000,
       "volumeMount": "/data",
       "website": "https://forgejo.org"
@@ -403,7 +407,8 @@
         }
       ],
       "website": "https://coder.com",
-      "featured": true
+      "featured": true,
+      "requires": "A strong access PASSWORD is generated automatically at deploy time"
     },
     {
       "id": "dozzle",
@@ -414,7 +419,8 @@
       "emoji": "📜",
       "image": "amir20/dozzle",
       "port": 8080,
-      "website": "https://dozzle.dev"
+      "website": "https://dozzle.dev",
+      "dockerSocket": true
     },
     {
       "id": "dockge",
@@ -462,7 +468,8 @@
       "image": "jc21/nginx-proxy-manager",
       "port": 81,
       "volumeMount": "/data",
-      "website": "https://nginxproxymanager.com"
+      "website": "https://nginxproxymanager.com",
+      "requires": "Needs /etc/letsencrypt persistence and generally duplicates NineDeploy's built-in Traefik — prefer the built-in domain routing"
     },
     {
       "id": "adguard-home",
@@ -472,7 +479,7 @@
       "category": "Security",
       "emoji": "🛡️",
       "image": "adguard/adguardhome",
-      "port": 80,
+      "port": 3000,
       "volumeMount": "/opt/adguardhome/conf",
       "website": "https://adguard.com/en/adguard-home/overview.html"
     },
@@ -493,7 +500,8 @@
           "secret": true
         }
       ],
-      "website": "https://pi-hole.net"
+      "website": "https://pi-hole.net",
+      "requires": "A strong WEBPASSWORD is generated automatically at deploy time"
     },
     {
       "id": "umami",
@@ -504,7 +512,9 @@
       "emoji": "📊",
       "image": "ghcr.io/umami-software/umami",
       "port": 3000,
-      "website": "https://umami.is"
+      "website": "https://umami.is",
+      "requires": "Umami needs a PostgreSQL database — one is provisioned and attached automatically",
+      "dbEngine": "postgres"
     },
     {
       "id": "metabase",
@@ -535,7 +545,8 @@
           "secret": true
         }
       ],
-      "website": "https://www.meilisearch.com"
+      "website": "https://www.meilisearch.com",
+      "requires": "A strong MEILI_MASTER_KEY is generated automatically at deploy time"
     },
     {
       "id": "minio",
@@ -545,7 +556,7 @@
       "category": "Database",
       "emoji": "📦",
       "image": "minio/minio",
-      "port": 9001,
+      "port": 9000,
       "volumeMount": "/data",
       "env": [
         {
@@ -559,7 +570,14 @@
         }
       ],
       "website": "https://min.io",
-      "featured": true
+      "featured": true,
+      "requires": "Strong MINIO_ROOT credentials are generated automatically at deploy time",
+      "cmd": [
+        "server",
+        "/data",
+        "--console-address",
+        ":9001"
+      ]
     },
     {
       "id": "pocketbase",
@@ -574,18 +592,6 @@
       "website": "https://pocketbase.io"
     },
     {
-      "id": "strapi",
-      "name": "Strapi",
-      "tagline": "Headless CMS for content APIs",
-      "description": "The leading open-source headless CMS — build, manage and distribute content anywhere.",
-      "category": "Web",
-      "emoji": "📰",
-      "image": "strapi/strapi",
-      "port": 1337,
-      "volumeMount": "/srv/app/public/uploads",
-      "website": "https://strapi.io"
-    },
-    {
       "id": "ghost",
       "name": "Ghost",
       "tagline": "Independent publishing platform",
@@ -595,7 +601,9 @@
       "image": "ghost:5",
       "port": 2368,
       "volumeMount": "/var/lib/ghost/content",
-      "website": "https://ghost.org"
+      "website": "https://ghost.org",
+      "requires": "Ghost needs a MySQL database — one is provisioned and attached automatically",
+      "dbEngine": "mysql"
     },
     {
       "id": "wordpress",
@@ -607,7 +615,9 @@
       "image": "wordpress",
       "port": 80,
       "volumeMount": "/var/www/html",
-      "website": "https://wordpress.org"
+      "website": "https://wordpress.org",
+      "requires": "WordPress needs a MySQL database — one is provisioned and attached automatically",
+      "dbEngine": "mysql"
     },
     {
       "id": "ollama",
@@ -632,7 +642,8 @@
       "image": "ghcr.io/open-webui/open-webui:main",
       "port": 8080,
       "volumeMount": "/app/backend/data",
-      "website": "https://github.com/open-webui/open-webui"
+      "website": "https://github.com/open-webui/open-webui",
+      "requires": "Large image (~4 GB) — first pull can take several minutes"
     },
     {
       "id": "mattermost",
@@ -644,7 +655,8 @@
       "image": "mattermost/mattermost-team-edition",
       "port": 8065,
       "volumeMount": "/mattermost/data",
-      "website": "https://mattermost.com"
+      "website": "https://mattermost.com",
+      "requires": "No linux/arm64 image — Intel/AMD hosts only"
     },
     {
       "id": "prometheus",

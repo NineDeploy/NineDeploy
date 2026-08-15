@@ -1,0 +1,131 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { runOp } from '../src/agent.js';
+
+const spawnMock = vi.hoisted(() => vi.fn(async () => 0));
+vi.mock('../src/lib/spawnValidated.js', () => ({ spawnValidated: spawnMock }));
+
+/** Capture the argv a runOp call spawned with. */
+async function argvOf(op: string, params: Record<string, unknown>): Promise<string[]> {
+  const code = await runOp(op, params, () => {});
+  expect(code).toBe(0);
+  return (spawnMock.mock.calls.at(-1) as unknown[])[1] as string[];
+}
+
+describe('agent typed-op argv templates', () => {
+  beforeEach(() => {
+    spawnMock.mockReset();
+    spawnMock.mockResolvedValue(0);
+  });
+
+  it('docker.pull', async () => {
+    expect(await argvOf('docker.pull', { image: 'nginx:1' })).toEqual(['pull', 'nginx:1']);
+  });
+
+  it('docker.build', async () => {
+    expect(await argvOf('docker.build', { tag: 'app:1', dockerfile: 'Dockerfile', context: '.' })).toEqual(
+      ['build', '-t', 'app:1', '-f', 'Dockerfile', '.'],
+    );
+  });
+
+  it('docker.run builds the fixed flag block', async () => {
+    const argv = await argvOf('docker.run', { name: 'web-3', image: 'nginx' });
+    expect(argv.slice(0, 8)).toEqual(['run', '-d', '--name', 'web-3', '--restart', 'unless-stopped', '--network', 'ninedeploy']);
+    expect(argv[argv.length - 1]).toBe('nginx');
+  });
+
+  it('docker.run appends resource limits and volume when given', async () => {
+    const argv = await argvOf('docker.run', {
+      name: 'w', image: 'i', cpuShares: '512', memLimitMb: '256', volume: 'nd-svc-w-data', mount: '/data',
+    });
+    expect(argv).toContain('--cpu-shares');
+    expect(argv).toContain('512');
+    expect(argv).toContain('--memory');
+    expect(argv).toContain('256m');
+    expect(argv).toContain('nd-svc-w-data:/data');
+  });
+
+  it('docker.run clamps non-numeric limits', async () => {
+    const argv = await argvOf('docker.run', { name: 'w', image: 'i', cpuShares: 'abc', memLimitMb: 'xyz' });
+    expect(argv).toContain('0');
+    expect(argv).toContain('0m');
+  });
+
+  it('docker.runEnv appends the env-file flag', async () => {
+    const argv = await argvOf('docker.runEnv', { name: 'w', image: 'i', envFile: '.agent-env/w.env' });
+    expect(argv).toContain('--env-file');
+    expect(argv).toContain('.agent-env/w.env');
+  });
+
+  it('docker.stop / rm / logs / inspect', async () => {
+    expect(await argvOf('docker.stop', { name: 'c1' })).toEqual(['stop', '-t', '5', 'c1']);
+    expect(await argvOf('docker.rm', { name: 'c1' })).toEqual(['rm', '-f', 'c1']);
+    expect(await argvOf('docker.logs', { name: 'c1' })).toEqual(['logs', '--tail', '300', '--timestamps', 'c1']);
+    expect((await argvOf('docker.inspect', { name: 'c1', format: 'state' }))[3]).toContain('{{.State.Status}}');
+    expect((await argvOf('docker.inspect', { name: 'c1' }))[3]).toBe('{{.Image}}');
+  });
+
+  it('docker.login/logout with and without a registry server', async () => {
+    expect(await argvOf('docker.login', { username: 'u' })).toEqual(['login', '--username', 'u', '--password-stdin']);
+    expect(await argvOf('docker.login', { username: 'u', server: 'ghcr.io' })).toEqual(
+      ['login', '--username', 'u', '--password-stdin', 'ghcr.io'],
+    );
+    expect(await argvOf('docker.logout', {})).toEqual(['logout']);
+    expect(await argvOf('docker.logout', { server: 'ghcr.io' })).toEqual(['logout', 'ghcr.io']);
+  });
+
+  it('docker compose up/down', async () => {
+    expect(await argvOf('docker.composeUp', { project: 'p', file: 'docker-compose.yml' })).toEqual(
+      ['compose', '-p', 'p', '-f', 'docker-compose.yml', 'up', '-d', '--build', '--remove-orphans'],
+    );
+    expect(await argvOf('docker.composeDown', { project: 'p' })).toEqual(['compose', '-p', 'p', 'down', '--remove-orphans']);
+  });
+
+  it('git ops', async () => {
+    expect(await argvOf('git.clone', { url: 'https://x/y.git', dir: 'repo' })).toEqual(
+      ['clone', 'https://x/y.git', 'repo'],
+    );
+    expect(await argvOf('git.clone', { url: 'https://x/y.git', depth: '50' })).toEqual(
+      ['clone', '--depth', '50', 'https://x/y.git', '.'],
+    );
+    expect(await argvOf('git.fetch', {})).toEqual(['fetch', '--all']);
+    expect(await argvOf('git.checkout', { ref: 'main' })).toEqual(['checkout', 'main']);
+    expect(await argvOf('git.checkout', {})).toEqual(['checkout', 'HEAD']);
+    expect(await argvOf('git.rev-parse', {})).toEqual(['rev-parse', 'HEAD']);
+    expect(await argvOf('git.reset', { sha: 'abcdef1234' })).toEqual(['reset', '--hard', 'abcdef1234']);
+    expect(await argvOf('git.reset', {})).toEqual(['reset', '--hard', 'HEAD']);
+  });
+
+  it('docker.runEnv without limits or volume', async () => {
+    const argv = await argvOf('docker.runEnv', { name: 'w', image: 'i', envFile: 'e.env' });
+    expect(argv).not.toContain('--cpu-shares');
+    expect(argv).not.toContain('--memory');
+    expect(argv).not.toContain('-v');
+  });
+
+  it('docker.runEnv with limits, volume and mount default', async () => {
+    const argv = await argvOf('docker.runEnv', {
+      name: 'w', image: 'i', envFile: 'e.env', cpuShares: '128', memLimitMb: '64',
+      volume: 'nd-svc-w-data',
+    });
+    expect(argv).toContain('128');
+    expect(argv).toContain('64m');
+    expect(argv).toContain('nd-svc-w-data:/');
+  });
+
+  it('docker.runEnv clamps non-numeric limits', async () => {
+    const argv = await argvOf('docker.runEnv', { name: 'w', image: 'i', envFile: 'e.env', cpuShares: 'oops', memLimitMb: 'nah' });
+    expect(argv).toContain('0');
+    expect(argv).toContain('0m');
+  });
+
+  it('docker.run volume without an explicit mount defaults to /', async () => {
+    const argv = await argvOf('docker.run', { name: 'w', image: 'i', volume: 'nd-svc-w-data' });
+    expect(argv).toContain('nd-svc-w-data:/');
+  });
+
+  it('clamps an invalid clone depth to 1', async () => {
+    expect(await argvOf('git.clone', { url: 'https://x/y.git', depth: '9999' })).toEqual(
+      ['clone', '--depth', '1', 'https://x/y.git', '.'],
+    );
+  });
+});

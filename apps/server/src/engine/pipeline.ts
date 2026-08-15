@@ -6,16 +6,31 @@ import { decrypt } from '../lib/crypto.js';
 import { checkoutCommit, type CloneCreds } from '../lib/git.js';
 import { connectionString } from './database.js';
 import { dockerBuilder } from './builders/docker.js';
+import { composeBuilder } from './builders/compose.js';
 import { logBus } from './logs.js';
 import { pm2Builder } from './builders/pm2.js';
 import { writeDynamicConfig } from './proxy.js';
 import { sleep } from '../lib/exec.js';
+import { agentOp } from '../lib/agentClient.js';
 import type { BuildContext, Builder, DeployRuntime } from './types.js';
 
-const builders: Record<string, Builder> = { docker: dockerBuilder, pm2: pm2Builder };
+const builders: Record<string, Builder> = { docker: dockerBuilder, pm2: pm2Builder, compose: composeBuilder };
 
 /** Render any thrown value as a single-line message (handles non-Error rejections). */
 const msg = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
+/** Thrown at pipeline checkpoints when the deployment was cancelled mid-flight. */
+class DeploymentCancelled extends Error {
+  constructor() {
+    super('Deployment cancelled');
+  }
+}
+
+/** Re-read the deployment row — a cancel route may have flipped it mid-flight. */
+async function isCancelled(db: DB, deploymentId: number): Promise<boolean> {
+  const row = await db.query.deployments.findFirst({ where: eq(deployments.id, deploymentId) });
+  return row?.status === 'cancelled';
+}
 
 /** Collect runtime env vars: stored env vars + connection strings from attached databases. */
 async function loadRuntimeEnv(db: DB, serviceId: number): Promise<Record<string, string>> {
@@ -29,6 +44,31 @@ async function loadRuntimeEnv(db: DB, serviceId: number): Promise<Record<string,
     if (d && d.status === 'running') env[a.envAlias] = connectionString(d);
   }
   return env;
+}
+
+/**
+ * Resolve private-registry credentials for a service: when the service's
+ * source is a registry-type source with a token, image pulls authenticate
+ * with (registryUsername, token). The registry host defaults to the image's
+ * own namespace (e.g. ghcr.io/...) or the Docker Hub default.
+ */
+async function loadRegistryAuth(
+  db: DB,
+  service: typeof services.$inferSelect,
+): Promise<{ username: string; password: string; server?: string } | undefined> {
+  if (!service.sourceId || !service.image) return undefined;
+  const src = await db.query.sources.findFirst({ where: eq(sources.id, service.sourceId) });
+  if (!src || src.type !== 'registry') return undefined;
+  const username = src.registryUsername ?? '';
+  const password = src.tokenEncrypted ? decrypt(src.tokenEncrypted) : '';
+  if (!username || !password) return undefined;
+  // The first path segment of namespaced images (ghcr.io/org/app) is the
+  // registry host; bare names (nginx:latest) use the Docker Hub default.
+  const parts = service.image.split('/');
+  const first = parts.length > 1 ? parts[0]! : '';
+  const isHost = first.includes('.') || first.includes(':');
+  const server = first !== '' && isHost ? first : undefined;
+  return { username, password, server };
 }
 
 /**
@@ -83,6 +123,9 @@ export async function runDeployment(db: DB, deploymentId: number): Promise<void>
   // success path (which persists it onto the service row) can read it.
   let sha = '';
   try {
+    // Cancel checkpoint: the route may have flipped the row between claim and here.
+    if (await isCancelled(db, deploymentId)) throw new DeploymentCancelled();
+
     // Image-based deploys skip git entirely; repo-based deploys resolve creds + checkout.
     if (service.image) {
       log(`Image deploy from ${service.image}`);
@@ -102,6 +145,9 @@ export async function runDeployment(db: DB, deploymentId: number): Promise<void>
       await db.update(deployments).set({ commitSha: sha }).where(eq(deployments.id, deploymentId));
     }
 
+    // Cancel checkpoint: checkout can take minutes on big repos.
+    if (await isCancelled(db, deploymentId)) throw new DeploymentCancelled();
+
     const ctx: BuildContext = {
       deploymentId,
       service,
@@ -111,17 +157,32 @@ export async function runDeployment(db: DB, deploymentId: number): Promise<void>
       // For image rollback, pin the exact image by its stored digest.
       imageDigest: dep.imageDigest ?? undefined,
       env: await loadRuntimeEnv(db, service.id),
+      // Registry-type sources provide private-image credentials.
+      registryAuth: await loadRegistryAuth(db, service),
+      // Remote deploys: route builder operations through the typed agent.
+      serverId: service.serverId ?? undefined,
+      agentCall: service.serverId
+        ? (op, params, sink) => agentOp(db, service.serverId!, op, params, sink)
+        : undefined,
       log,
     };
     runtime = await builder.buildAndRun(ctx, previous);
 
-    log('Running healthcheck …');
-    const healthy = await builder.isHealthy(runtime);
-    if (!healthy) throw new Error('Healthcheck failed — service did not become ready in time');
-  } catch (err) {
-    log(`✗ Deployment failed: ${msg(err)}`);
+    // Cancel checkpoint: the build finished, but the healthcheck (up to 5 min)
+    // is the most likely place for a user-initiated cancel to land.
+    if (await isCancelled(db, deploymentId)) throw new DeploymentCancelled();
 
-    // Clean up the failed NEW runtime (if one was created).
+    log('Running healthcheck …');
+    const healthy = await builder.isHealthy(runtime, 300_000, 10_000, log);
+    if (!healthy) throw new Error('Healthcheck failed — service did not become ready in time');
+
+    // Cancel checkpoint: last one before the success writes.
+    if (await isCancelled(db, deploymentId)) throw new DeploymentCancelled();
+  } catch (err) {
+    const cancelled = err instanceof DeploymentCancelled;
+    log(cancelled ? '⏹ Deployment cancelled' : `✗ Deployment failed: ${msg(err)}`);
+
+    // Clean up the failed/cancelled NEW runtime (if one was created).
     if (runtime) await builder.stop(runtime.runtimeId).catch(() => undefined);
 
     // Rollback: if the PREVIOUS runtime is still alive, the service keeps
@@ -131,7 +192,7 @@ export async function runDeployment(db: DB, deploymentId: number): Promise<void>
     let restored = false;
     if (previous) {
       try {
-        restored = await builder.isHealthy(previous, 3000);
+        restored = await builder.isHealthy(previous, 3000, 0, log);
       } catch {
         restored = false;
       }
@@ -142,7 +203,11 @@ export async function runDeployment(db: DB, deploymentId: number): Promise<void>
       // The service keeps serving the old version (status: running); the
       // deployment itself still failed and is recorded as such.
       await db.update(services).set({ status: 'running' }).where(eq(services.id, service.id));
-      await db.update(deployments).set({ status: 'failed', finishedAt: new Date() }).where(eq(deployments.id, deploymentId));
+      await db.update(deployments).set({ status: cancelled ? 'cancelled' : 'failed', finishedAt: new Date() }).where(eq(deployments.id, deploymentId));
+    } else if (cancelled) {
+      // No previous runtime to fall back on — the service simply never came up.
+      await db.update(services).set({ status: 'idle' }).where(eq(services.id, service.id));
+      await db.update(deployments).set({ status: 'cancelled', finishedAt: new Date() }).where(eq(deployments.id, deploymentId));
     } else {
       await safeFail(db, deploymentId, service.id, null);
     }
@@ -158,7 +223,21 @@ export async function runDeployment(db: DB, deploymentId: number): Promise<void>
     .update(services)
     .set({ status: 'running', runtimeId: newRuntimeId, port: runtime!.port ?? null, commitSha: sha })
     .where(eq(services.id, service.id));
-  await db.update(deployments).set({ status: 'running', finishedAt: new Date(), imageDigest: runtime!.imageDigest ?? null }).where(eq(deployments.id, deploymentId));
+  // Conditional on still being `building`: a cancel that landed between the
+  // last checkpoint and this write must not be overwritten with `running`.
+  const finalized = await db
+    .update(deployments)
+    .set({ status: 'running', finishedAt: new Date(), imageDigest: runtime!.imageDigest ?? null })
+    .where(and(eq(deployments.id, deploymentId), eq(deployments.status, 'building')))
+    .returning({ id: deployments.id });
+  if (finalized.length === 0) {
+    log('⏹ Cancelled just before finalizing — retiring the new container, the previous stays live');
+    await builder.stop(newRuntimeId).catch(() => undefined);
+    if (previous) {
+      await db.update(services).set({ status: 'running', runtimeId: previous.runtimeId }).where(eq(services.id, service.id));
+    }
+    return;
+  }
 
   // Auto-provision wildcard domain if configured and not already present.
   // Isolated: a failure here must not affect the already-running container.

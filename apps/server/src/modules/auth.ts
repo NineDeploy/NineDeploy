@@ -2,11 +2,16 @@ import { and, count, eq, sql } from 'drizzle-orm';
 import type { FastifyPluginAsync } from 'fastify';
 import { apiTokens, type DB, users, type User } from '@ninedeploy/db';
 import type { PublicUser, Register, TokenPair } from '@ninedeploy/schemas';
-import { login, passwordChange, refresh, register } from '@ninedeploy/schemas';
+import { forgotPassword, login, passwordChange, passwordResetWithToken, refresh, register, twoFactorCode, twoFactorDisable } from '@ninedeploy/schemas';
 import { config } from '../config.js';
-import { hashPassword, randomToken, sha256, verifyPassword } from '../lib/crypto.js';
+import { decrypt, encrypt, hashPassword, randomToken, sha256, verifyPassword } from '../lib/crypto.js';
 import { badRequest, conflict, forbidden, unauthorized } from '../lib/errors.js';
 import { signAccessToken, signRefreshToken, ttlSeconds, verifyJwt } from '../lib/jwt.js';
+import { isLocked, recordFailure, recordSuccess } from '../lib/loginLockout.js';
+import { consumeResetToken, issueResetToken } from '../lib/passwordReset.js';
+import { sendSystemEmail } from '../lib/notifier.js';
+import { generateSecret, otpauthUri, verifyTotp } from '../lib/totp.js';
+import { audit } from '../lib/audit.js';
 import { getSetting } from '../lib/settings.js';
 
 const toUser = (u: User): PublicUser => ({ id: u.id, email: u.email, name: u.name, role: u.role });
@@ -22,42 +27,54 @@ async function issueTokens(user: User): Promise<TokenPair> {
 }
 
 /** Count existing users (used to decide first-user-is-admin). */
-async function userCount(db: DB): Promise<number> {
+async function userCount(db: Pick<DB, 'select'>): Promise<number> {
   const [row] = await db.select({ n: count() }).from(users);
   return row?.n ?? 0;
 }
 
-/** Create the very first user (admin). Throws if any user already exists. */
+/**
+ * Create the very first user (admin). Count + insert run inside a single
+ * transaction so two concurrent bootstrap requests cannot both become the
+ * first admin — the loser sees the committed row and gets a 409.
+ */
 export async function createFirstAdmin(db: DB, input: Register) {
-  if ((await userCount(db)) > 0) throw conflict('Instance is already initialized');
-  const passwordHash = await hashPassword(input.password);
-  const [user] = await db
-    .insert(users)
-    .values({ email: input.email, passwordHash, name: input.name ?? null, role: 'admin' })
-    .returning();
-  if (!user) throw badRequest('Could not create user');
-  return { user: toUser(user), tokens: await issueTokens(user) };
+  return db.transaction(async (tx) => {
+    if ((await userCount(tx)) > 0) throw conflict('Instance is already initialized');
+    const passwordHash = await hashPassword(input.password);
+    const [user] = await tx
+      .insert(users)
+      .values({ email: input.email, passwordHash, name: input.name ?? null, role: 'admin' })
+      .returning();
+    if (!user) throw badRequest('Could not create user');
+    return { user: toUser(user), tokens: await issueTokens(user) };
+  });
 }
 
 /** Register a user. The first user becomes admin; everyone else is a member. */
 export async function registerAccount(db: DB, input: Register) {
-  const isFirst = (await userCount(db)) === 0;
-  const passwordHash = await hashPassword(input.password);
-  let user: User | undefined;
-  try {
-    [user] = await db
-      .insert(users)
-      .values({ email: input.email, passwordHash, name: input.name ?? null, role: isFirst ? 'admin' : 'member' })
-      .returning();
-  } catch {
-    throw badRequest('Email is already registered', 'email_taken');
-  }
-  if (!user) throw badRequest('Could not create user');
-  return { user: toUser(user), tokens: await issueTokens(user) };
+  // Same transactional guard as the bootstrap: the count-then-insert race
+  // between two simultaneous first registrations must not mint two admins.
+  return db.transaction(async (tx) => {
+    const isFirst = (await userCount(tx)) === 0;
+    const passwordHash = await hashPassword(input.password);
+    let user: User | undefined;
+    try {
+      [user] = await tx
+        .insert(users)
+        .values({ email: input.email, passwordHash, name: input.name ?? null, role: isFirst ? 'admin' : 'member' })
+        .returning();
+    } catch {
+      throw badRequest('Email is already registered', 'email_taken');
+    }
+    if (!user) throw badRequest('Could not create user');
+    return { user: toUser(user), tokens: await issueTokens(user) };
+  });
 }
 
 /** Tighter rate limit for credential-bearing endpoints (brute-force / credential-stuffing defense). */
 const AUTH_LIMIT = { max: 20, timeWindow: '1 minute' };
+/** Reset requests are cheap to spam (each mints a token + maybe an email). */
+const FORGOT_LIMIT = { max: 5, timeWindow: '1 minute' };
 
 export const authRoutes: FastifyPluginAsync = async (app) => {
   // Public: whether the instance has any users yet (drives first-run setup UI)
@@ -81,11 +98,102 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
 
   app.post('/login', { config: { rateLimit: AUTH_LIMIT } }, async (req) => {
     const input = login.parse(req.body);
+    // Per-account lockout (complements the per-IP rate limit): the response is
+    // deliberately identical to a wrong password so the lock state isn't a probe.
+    if (isLocked(input.email)) throw unauthorized('Invalid email or password');
     const user = await app.db.query.users.findFirst({ where: eq(users.email, input.email) });
     if (!user || !(await verifyPassword(user.passwordHash, input.password))) {
+      const locked = recordFailure(input.email);
+      if (locked) void audit(app.db, null, 'auth.lockout', input.email);
       throw unauthorized('Invalid email or password');
     }
+    // 2FA: a missing code gets a distinct (but non-enumerating) error; a wrong
+    // code counts as a failed login for lockout purposes.
+    if (user.totpEnabled && user.totpSecretEncrypted) {
+      if (!input.totpCode) throw unauthorized('Two-factor code required', 'totp_required');
+      if (!verifyTotp(decrypt(user.totpSecretEncrypted), input.totpCode)) {
+        const locked = recordFailure(input.email);
+        if (locked) void audit(app.db, null, 'auth.lockout', input.email);
+        throw unauthorized('Invalid two-factor code', 'totp_invalid');
+      }
+    }
+    recordSuccess(input.email);
     return { user: toUser(user), tokens: await issueTokens(user) };
+  });
+
+  // ── Two-factor (TOTP) setup / enable / disable ───────────────────────────
+  // Setup generates (or regenerates) a pending secret + otpauth URI; enable
+  // verifies a code from the user's authenticator and flips the flag; disable
+  // requires the password AND a valid code, then bumps tokenVersion.
+  app.post('/2fa/setup', { onRequest: [app.authenticate], config: { rateLimit: AUTH_LIMIT } }, async (req) => {
+    const secret = generateSecret();
+    const user = await app.db.query.users.findFirst({ where: eq(users.id, req.user!.id) });
+    if (!user) throw unauthorized();
+    await app.db
+      .update(users)
+      .set({ totpSecretEncrypted: encrypt(secret), totpEnabled: false })
+      .where(eq(users.id, user.id));
+    void audit(app.db, user.id, 'auth.2fa_setup', user.email);
+    return { secret, otpauthUri: otpauthUri(secret, user.email) };
+  });
+
+  app.post('/2fa/enable', { onRequest: [app.authenticate], config: { rateLimit: AUTH_LIMIT } }, async (req) => {
+    const input = twoFactorCode.parse(req.body);
+    const user = await app.db.query.users.findFirst({ where: eq(users.id, req.user!.id) });
+    if (!user?.totpSecretEncrypted) throw badRequest('Start 2FA setup first');
+    if (!verifyTotp(decrypt(user.totpSecretEncrypted), input.code)) throw badRequest('Invalid two-factor code');
+    await app.db.update(users).set({ totpEnabled: true }).where(eq(users.id, user.id));
+    void audit(app.db, user.id, 'auth.2fa_enabled', user.email);
+    return { ok: true, totpEnabled: true };
+  });
+
+  app.post('/2fa/disable', { onRequest: [app.authenticate], config: { rateLimit: AUTH_LIMIT } }, async (req) => {
+    const input = twoFactorDisable.parse(req.body);
+    const user = await app.db.query.users.findFirst({ where: eq(users.id, req.user!.id) });
+    if (!user) throw unauthorized();
+    if (!(await verifyPassword(user.passwordHash, input.password))) throw unauthorized('Invalid password');
+    if (user.totpEnabled && user.totpSecretEncrypted) {
+      if (!verifyTotp(decrypt(user.totpSecretEncrypted), input.code)) {
+        throw badRequest('Invalid two-factor code');
+      }
+    }
+    // Bump tokenVersion: every outstanding session is re-issued without 2FA claims pending.
+    await app.db
+      .update(users)
+      .set({ totpEnabled: false, totpSecretEncrypted: null, tokenVersion: sql`${users.tokenVersion} + 1` })
+      .where(eq(users.id, user.id));
+    void audit(app.db, user.id, 'auth.2fa_disabled', user.email);
+    return { ok: true, totpEnabled: false };
+  });
+
+  // Forgot password: always answers the same way (no user enumeration). When
+  // the account exists, a single-use 30-minute reset token is minted and — if
+  // an email notification channel is configured — the reset link is emailed.
+  // Without SMTP the token is still consumable via an admin-issued link.
+  app.post('/forgot-password', { config: { rateLimit: FORGOT_LIMIT } }, async (req) => {
+    const input = forgotPassword.parse(req.body);
+    const user = await app.db.query.users.findFirst({ where: eq(users.email, input.email) });
+    if (user) {
+      const { token } = await issueResetToken(app.db, user, req.ip);
+      const link = `${config.publicUrl}/reset-password?token=${encodeURIComponent(token)}`;
+      // Best-effort delivery — failures never change the response.
+      await sendSystemEmail(
+        app.db,
+        'NineDeploy password reset',
+        `A password reset was requested for ${input.email}.\n\nOpen this link within 30 minutes to set a new password:\n${link}\n\nIf you did not request this, you can ignore this email.`,
+      ).catch(() => false);
+      void audit(app.db, user.id, 'auth.forgot_password', user.email);
+    }
+    return { ok: true };
+  });
+
+  // Complete a reset: consume the single-use token, set the new password, and
+  // revoke every outstanding session (tokenVersion bump).
+  app.post('/reset-password', { config: { rateLimit: AUTH_LIMIT } }, async (req) => {
+    const input = passwordResetWithToken.parse(req.body);
+    const user = await consumeResetToken(app.db, input.token, input.newPassword);
+    void audit(app.db, user.id, 'auth.reset_password', user.email);
+    return { ok: true };
   });
 
   app.post('/refresh', { config: { rateLimit: AUTH_LIMIT } }, async (req) => {

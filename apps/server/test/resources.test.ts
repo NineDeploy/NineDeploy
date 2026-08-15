@@ -12,6 +12,15 @@ const execMocks = vi.hoisted(() => ({
 }));
 vi.mock('../src/lib/exec.js', () => execMocks);
 
+const updateCheckMock = vi.hoisted(() => ({
+  checkForUpdate: vi.fn(async () => ({
+    current: '0.1.0', latest: '0.2.0', updateAvailable: true,
+    notesUrl: 'https://github.com/ninedeploy/ninedeploy/releases/tag/v0.2.0',
+    checkedAt: '2026-08-15T00:00:00Z',
+  })),
+}));
+vi.mock('../src/lib/updateCheck.js', () => updateCheckMock);
+
 // Mutable config so each test gets its own isolated data dir under os.tmpdir().
 const configMock = vi.hoisted(() => ({
   wildcardDomain: '',
@@ -232,6 +241,17 @@ describe('system resources routes', () => {
     const app = await appWith();
     const res = await app.inject({ method: 'POST', url: '/prune-images', headers: asUser() });
     expect(res.statusCode).toBe(200);
+  });
+
+  it('reports the update-check result (force flag forwarded)', async () => {
+    const app = await appWith();
+    const res = await app.inject({ method: 'GET', url: '/update-check', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ current: '0.1.0', latest: '0.2.0', updateAvailable: true });
+    expect(updateCheckMock.checkForUpdate).toHaveBeenCalledWith(false);
+    const forced = await app.inject({ method: 'GET', url: '/update-check?force=1', headers: asUser() });
+    expect(forced.statusCode).toBe(200);
+    expect(updateCheckMock.checkForUpdate).toHaveBeenCalledWith(true);
   });
 
   it('exports system state as a tar.gz', async () => {

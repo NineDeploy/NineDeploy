@@ -77,6 +77,7 @@ describe('schema', () => {
       'notificationLogRelations',
       'alertRulesRelations',
       'alertStateRelations',
+      'passwordResetTokensRelations',
     ] as const) {
       expect(schema[name], `missing relation ${name}`).toBeDefined();
     }
@@ -105,6 +106,9 @@ describe('schema', () => {
       'notificationLog',
       'alertRules',
       'alertState',
+      'passwordResetTokens',
+      'jobRuns',
+      'scheduledJobs',
     ] as const;
     for (const name of tables) {
       const table = (schema as unknown as Record<string, unknown>)[name];

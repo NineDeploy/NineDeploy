@@ -106,6 +106,39 @@ export function Field({ label, children }: { label: string; children: ReactNode 
   );
 }
 
+// ── Tabs ───────────────────────────────────────────────────────────────────
+export function Tabs({
+  tabs,
+  active,
+  onChange,
+  className,
+}: {
+  tabs: Array<{ id: string; label: string; count?: number }>;
+  active: string;
+  onChange: (id: string) => void;
+  className?: string;
+}) {
+  return (
+    <div className={cn('flex flex-wrap items-center gap-1 rounded-xl bg-white/[0.03] p-1 ring-1 ring-inset ring-white/[0.06]', className)}>
+      {tabs.map((t) => (
+        <button
+          key={t.id}
+          onClick={() => onChange(t.id)}
+          className={cn(
+            'rounded-lg px-3 py-1.5 text-xs font-medium transition',
+            t.id === active ? 'bg-white/[0.1] text-slate-100 shadow-sm' : 'text-slate-400 hover:text-slate-200',
+          )}
+          role="tab"
+          aria-selected={t.id === active}
+        >
+          {t.label}
+          {t.count != null && <span className="ml-1.5 text-[10px] text-slate-500">{t.count}</span>}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 // ── Badge ─────────────────────────────────────────────────────────────────
 const STATUS_TONES: Record<string, string> = {
   running: 'bg-emerald-500/15 text-emerald-300 ring-emerald-500/20',

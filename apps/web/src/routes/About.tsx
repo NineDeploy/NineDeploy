@@ -5,6 +5,7 @@ import { Card, CardBody, Skeleton } from '../components/ui.js';
 
 export function About() {
   const about = useQuery({ queryKey: ['about'], queryFn: () => api.about.get(), staleTime: 60000 });
+  const update = useQuery({ queryKey: ['update-check'], queryFn: () => api.system.updateCheck(), staleTime: 60000 });
 
   if (about.isLoading) {
     return (
@@ -38,10 +39,25 @@ export function About() {
           <div className="mt-4 flex flex-wrap gap-3">
             <Badge icon={<Package size={12} />} label={`v${data.version}`} tone="indigo" />
             <Badge icon={<Shield size={12} />} label={data.license} tone="emerald" />
-            <Badge icon={<GitBranch size={12} />} label={`${data.stats.services} services`} />
-            <Badge icon={<Terminal size={12} />} label={`${data.stats.deployments} deploys`} />
-            <Badge label={`${data.stats.databases} databases`} />
-            <Badge label={`${data.stats.users} users`} />
+            {update.data?.updateAvailable && update.data.latest && (
+              <a
+                href={update.data.notesUrl ?? update.data.latest}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/15 px-2.5 py-0.5 text-xs font-medium text-amber-300 transition hover:bg-amber-500/25"
+                title={`Upgrade to ${update.data.latest}`}
+              >
+                <Sparkles size={12} /> {update.data.latest} available
+              </a>
+            )}
+            {data.stats && (
+              <>
+                <Badge icon={<GitBranch size={12} />} label={`${data.stats.services} services`} />
+                <Badge icon={<Terminal size={12} />} label={`${data.stats.deployments} deploys`} />
+                <Badge label={`${data.stats.databases} databases`} />
+                <Badge label={`${data.stats.users} users`} />
+              </>
+            )}
           </div>
         </div>
       </Card>
@@ -104,15 +120,27 @@ export function About() {
       <Card>
         <CardBody>
           <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">Updates</h2>
-          <p className="text-sm text-slate-400">
-            You're running <span className="font-mono font-medium text-indigo-300">v{data.version}</span>. To update:
-          </p>
+          {update.isLoading ? (
+            <Skeleton className="h-5 w-40" />
+          ) : update.data ? (
+            <p className="mb-3 text-sm text-slate-400">
+              You're running <span className="font-mono font-medium text-indigo-300">v{update.data.current}</span>.{' '}
+              {update.data.updateAvailable == null
+                ? 'Update check unavailable (offline or disabled).'
+                : update.data.updateAvailable
+                  ? <>A new release is out: <span className="font-mono font-medium text-amber-300">{update.data.latest}</span>.</>
+                  : 'This is the latest release.'}
+            </p>
+          ) : (
+            <p className="mb-3 text-sm text-slate-400">
+              You're running <span className="font-mono font-medium text-indigo-300">v{data.version}</span>.
+            </p>
+          )}
+          <p className="text-xs text-slate-500">To upgrade, re-run the installer (defaults to the latest release tag):</p>
           <pre className="mt-2 overflow-auto rounded-lg bg-black/30 p-3 font-mono text-xs text-slate-300 ring-1 ring-inset ring-white/5">
-{`cd ninedeploy
-git pull origin main
-pnpm install && pnpm build
-pnpm db:migrate
-sudo systemctl restart ninedeploy`}
+{`curl -fsSL https://raw.githubusercontent.com/ninedeploy/ninedeploy/main/install.sh | bash
+# or, on an existing install:
+./install.sh --version v0.1.0   # pin   |   --channel main   # edge`}
           </pre>
         </CardBody>
       </Card>

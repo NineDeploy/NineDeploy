@@ -54,6 +54,9 @@ describe('About', () => {
 
   it('renders the full about page with badges, changelog, tech stack and links', async () => {
     mockOf(api.about.get).mockResolvedValue(aboutData as never);
+    mockOf(api.system.updateCheck).mockResolvedValue({
+      current: '0.0.1', latest: '0.0.1', updateAvailable: false, notesUrl: null, checkedAt: '2026-08-15T00:00:00Z',
+    } as never);
     renderWithProviders(<About />);
     await screen.findByRole('heading', { name: 'NineDeploy' });
     expect(screen.getAllByText('v0.0.1').length).toBeGreaterThan(0);
@@ -69,7 +72,74 @@ describe('About', () => {
     expect(screen.getByText('Node.js')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'GitHub' })).toHaveAttribute('href', aboutData.repo);
     expect(screen.getByRole('link', { name: 'Docs' })).toHaveAttribute('href', aboutData.docs);
-    expect(screen.getByText(/cd ninedeploy/)).toBeInTheDocument();
+    expect(screen.getByText(/install\.sh/)).toBeInTheDocument();
     expect(screen.getByText(/You're running/)).toBeInTheDocument();
+    expect(screen.getAllByText(/latest release/i).length).toBeGreaterThan(0);
+  });
+
+  it('shows the update badge when a newer release is available', async () => {
+    mockOf(api.about.get).mockResolvedValue(aboutData as never);
+    mockOf(api.system.updateCheck).mockResolvedValue({
+      current: '0.0.1', latest: '0.1.0', updateAvailable: true,
+      notesUrl: 'https://github.com/ninedeploy/ninedeploy/releases/tag/v0.1.0',
+      checkedAt: '2026-08-15T00:00:00Z',
+    } as never);
+    renderWithProviders(<About />);
+    await screen.findByRole('heading', { name: 'NineDeploy' });
+    // The update query resolves in a second paint — poll the DOM for the badge.
+    for (let i = 0; i < 40; i++) {
+      const el = document.querySelector<HTMLAnchorElement>('[title^="Upgrade to"]');
+      if (el) {
+        expect(el).toHaveAttribute('href', 'https://github.com/ninedeploy/ninedeploy/releases/tag/v0.1.0');
+        expect(screen.getByText(/A new release is out/)).toBeInTheDocument();
+        return;
+      }
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    throw new Error('update badge did not render');
+  });
+
+  it('degrades gracefully when the update check is unavailable', async () => {
+    mockOf(api.about.get).mockResolvedValue(aboutData as never);
+    mockOf(api.system.updateCheck).mockResolvedValue({
+      current: '0.0.1', latest: null, updateAvailable: null, notesUrl: null, checkedAt: '2026-08-15T00:00:00Z',
+    } as never);
+    renderWithProviders(<About />);
+    expect(await screen.findByText(/Update check unavailable/)).toBeInTheDocument();
+  });
+
+  it('shows the update skeleton while the check is in flight and hides the badge', async () => {
+    mockOf(api.about.get).mockResolvedValue(aboutData as never);
+    mockOf(api.system.updateCheck).mockReturnValue(new Promise(() => {}) as never);
+    renderWithProviders(<About />);
+    await screen.findByRole('heading', { name: 'NineDeploy' });
+    expect(document.querySelector('[title^="Upgrade to"]')).toBeNull();
+    expect(await screen.findByText(/To upgrade/i)).toBeInTheDocument();
+  });
+
+  it('falls back to the about version when the update check fails', async () => {
+    mockOf(api.about.get).mockResolvedValue(aboutData as never);
+    mockOf(api.system.updateCheck).mockRejectedValue(new Error('offline') as never);
+    renderWithProviders(<About />);
+    expect(await screen.findByText(/You're running/)).toBeInTheDocument();
+    expect(screen.queryByText(/Update check unavailable/)).not.toBeInTheDocument();
+  });
+
+  it('links the badge to the tag page when the feed gave no notes URL', async () => {
+    mockOf(api.about.get).mockResolvedValue(aboutData as never);
+    mockOf(api.system.updateCheck).mockResolvedValue({
+      current: '0.0.1', latest: '0.1.0', updateAvailable: true, notesUrl: null, checkedAt: '2026-08-15T00:00:00Z',
+    } as never);
+    renderWithProviders(<About />);
+    await screen.findByRole('heading', { name: 'NineDeploy' });
+    for (let i = 0; i < 40; i++) {
+      const el = document.querySelector<HTMLAnchorElement>('[title^="Upgrade to"]');
+      if (el) {
+        expect(el).toHaveAttribute('href', '0.1.0');
+        return;
+      }
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    throw new Error('update badge did not render');
   });
 });

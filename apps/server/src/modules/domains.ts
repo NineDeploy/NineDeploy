@@ -2,8 +2,8 @@ import { and, eq } from 'drizzle-orm';
 import { audit } from "../lib/audit.js";
 import { domains, services, type Domain } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
-import { createDomain } from '@ninedeploy/schemas';
-import { writeDynamicConfig } from '../engine/proxy.js';
+import { createDomain, domainPatch } from '@ninedeploy/schemas';
+import { parseHeaders, writeDynamicConfig } from '../engine/proxy.js';
 import { conflict, notFound } from '../lib/errors.js';
 
 const num = (v: string) => Number(v);
@@ -15,6 +15,8 @@ function serialize(d: Domain) {
     hostname: d.hostname,
     path: d.path,
     ssl: d.ssl,
+    redirectWww: d.redirectWww,
+    headers: d.headers ?? '[]',
     status: d.status,
     createdAt: d.createdAt.toISOString(),
     updatedAt: d.updatedAt.toISOString(),
@@ -44,6 +46,8 @@ export const domainsRoutes: FastifyPluginAsync = async (app) => {
         hostname: input.hostname,
         path: input.path,
         ssl: input.ssl,
+        redirectWww: input.redirectWww ?? false,
+        headers: input.headers ?? null,
         status: 'active',
       })
       .returning()
@@ -51,6 +55,30 @@ export const domainsRoutes: FastifyPluginAsync = async (app) => {
     if (!d) throw conflict('A domain with that host already exists');
     await writeDynamicConfig(app.db);
     void audit(app.db, req.user!.id, 'domain.add', input.hostname);
+    return serialize(d);
+  });
+
+  // Update routing extras: ssl, www→apex redirect and custom response headers.
+  app.patch('/:id/domains/:domainId', async (req) => {
+    const id = num((req.params as { id: string }).id);
+    const domainId = num((req.params as { domainId: string }).domainId);
+    const input = domainPatch.parse(req.body ?? {});
+    // Validate early so a malformed headers array never reaches Traefik.
+    const values: Partial<typeof domains.$inferInsert> = {};
+    if (input.ssl !== undefined) values.ssl = input.ssl;
+    if (input.redirectWww !== undefined) values.redirectWww = input.redirectWww;
+    if (input.headers !== undefined) {
+      const parsed = parseHeaders(input.headers);
+      values.headers = JSON.stringify(parsed);
+    }
+    const [d] = await app.db
+      .update(domains)
+      .set(values)
+      .where(and(eq(domains.id, domainId), eq(domains.serviceId, id)))
+      .returning();
+    if (!d) throw notFound('Domain not found');
+    await writeDynamicConfig(app.db);
+    void audit(app.db, req.user!.id, 'domain.update', d.hostname);
     return serialize(d);
   });
 

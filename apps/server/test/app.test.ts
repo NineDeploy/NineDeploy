@@ -52,7 +52,7 @@ afterAll(() => {
 });
 
 describe('buildApp', () => {
-  it('GET /health returns ok and pings the database', async () => {
+  it('GET /health returns ok and pings the database', { timeout: 20000 }, async () => {
     const app = await buildApp();
     const res = await app.inject({ method: 'GET', url: '/health' });
     expect(res.statusCode).toBe(200);

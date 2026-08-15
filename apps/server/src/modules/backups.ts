@@ -6,6 +6,7 @@ import { backups, databases } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { config } from '../config.js';
 import { backupDatabase, databaseSize, readBackupBytes, restoreDatabase } from '../engine/database.js';
+import { deleteRemoteBackup, fetchRemoteBackup, uploadBackup } from '../lib/backupRemote.js';
 import { badRequest, notFound } from '../lib/errors.js';
 
 const num = (v: string) => Number(v);
@@ -54,6 +55,8 @@ export const databaseBackupRoutes: FastifyPluginAsync = async (app) => {
       await backupDatabase(d, file, log);
       const sizeBytes = existsSync(file) ? statSync(file).size : 0;
       await app.db.update(backups).set({ status: 'completed', sizeBytes }).where(eq(backups.id, row!.id));
+      // Remote copy (best-effort — never fails the local backup).
+      await uploadBackup(app.db, row!.id, file, log);
     } catch (err) {
       await app.db.update(backups).set({ status: 'failed' }).where(eq(backups.id, row!.id));
       throw badRequest(`Backup failed: ${err instanceof Error ? err.message : err}`);
@@ -70,15 +73,23 @@ export const databaseBackupRoutes: FastifyPluginAsync = async (app) => {
     const b = await app.db.query.backups.findFirst({ where: eq(backups.id, bid) });
     // Ownership: without this check a backup of database A could be restored
     // into database B (cross-database data corruption).
-    if (!b || b.databaseId !== d.id || !existsSync(b.path)) throw notFound('Backup not found');
+    if (!b || b.databaseId !== d.id) throw notFound('Backup not found');
     const log = (line: string) => app.log.info({ component: 'backup' }, line);
+    // Remote-only backups are fetched to a local temp path first.
+    let restorePath = b.path;
+    if (!existsSync(b.path)) {
+      if (!b.remoteKey) throw notFound('Backup not found');
+      restorePath = path.join(config.paths.backupsDir, `${path.basename(b.path)}.remote`);
+      log(`Fetching remote object ${b.remoteKey}`);
+      await fetchRemoteBackup(app.db, b.remoteKey, restorePath);
+    }
     try {
-      log(`Restoring ${d.name} from ${path.basename(b.path)}`);
-      await restoreDatabase(d, b.path, log);
+      log(`Restoring ${d.name} from ${path.basename(restorePath)}`);
+      await restoreDatabase(d, restorePath, log);
     } catch (err) {
       throw badRequest(`Restore failed: ${err instanceof Error ? err.message : err}`);
     }
-    void audit(app.db, req.user!.id, 'backup.restore', path.basename(b.path));
+    void audit(app.db, req.user!.id, 'backup.restore', path.basename(restorePath));
     return { ok: true };
   });
 };
@@ -98,6 +109,7 @@ export const backupRoutes: FastifyPluginAsync = async (app) => {
     const bid = num((req.params as { bid: string }).bid);
     const b = await app.db.query.backups.findFirst({ where: eq(backups.id, bid) });
     if (b && existsSync(b.path)) unlinkSync(b.path);
+    if (b) await deleteRemoteBackup(app.db, b.remoteKey);
     await app.db.delete(backups).where(eq(backups.id, bid));
     void audit(app.db, req.user!.id, 'backup.delete', `#${bid}`);
     return { ok: true };

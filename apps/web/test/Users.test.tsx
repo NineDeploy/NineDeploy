@@ -158,4 +158,51 @@ describe('Users', () => {
 
     await waitFor(() => expect(screen.queryByPlaceholderText('new password (min 8)')).toBeInTheDocument());
   });
+
+  // ── one-time reset links ────────────────────────────────────────────────
+  it('generates and reveals a one-time reset link', async () => {
+    mockOf(api.users.list).mockResolvedValue(users as never);
+    mockOf(api.users.resetLink).mockResolvedValue({
+      url: 'http://localhost:3000/reset-password?token=abc',
+      expiresAt: '2026-08-15T12:30:00Z',
+    } as never);
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+
+    renderWithProviders(<Users />);
+    fireEvent.click((await screen.findAllByTitle(/one-time reset link/))[0]!);
+    await waitFor(() => expect(api.users.resetLink).toHaveBeenCalledWith(2));
+    expect(await screen.findByText(/Copy this one-time link now/)).toBeInTheDocument();
+    expect(screen.getByText(/reset-password\?token=abc/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('Copy'));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('http://localhost:3000/reset-password?token=abc'));
+
+    fireEvent.click(screen.getByText('Done'));
+    expect(screen.queryByText(/reset-password\?token=abc/)).not.toBeInTheDocument();
+  });
+
+  it('reports a failed link generation as a toast', async () => {
+    mockOf(api.users.list).mockResolvedValue(users as never);
+    mockOf(api.users.resetLink).mockRejectedValue(new Error('500') as never);
+    renderWithProviders(<Users />);
+    fireEvent.click((await screen.findAllByTitle(/one-time reset link/))[0]!);
+    await waitFor(() => expect(api.users.resetLink).toHaveBeenCalled());
+  });
+
+  it('reports a clipboard failure when copying the link', async () => {
+    mockOf(api.users.list).mockResolvedValue(users as never);
+    mockOf(api.users.resetLink).mockResolvedValue({
+      url: 'http://localhost:3000/reset-password?token=abc',
+      expiresAt: '2026-08-15T12:30:00Z',
+    } as never);
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: vi.fn().mockRejectedValue(new Error('denied')) },
+      configurable: true,
+    });
+    renderWithProviders(<Users />);
+    fireEvent.click((await screen.findAllByTitle(/one-time reset link/))[0]!);
+    fireEvent.click(await screen.findByText('Copy'));
+    await waitFor(() => expect(screen.getByText(/Copy failed/)).toBeInTheDocument());
+  });
 });

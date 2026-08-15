@@ -616,4 +616,164 @@ describe('Settings', () => {
       expect(toastSpy.toast).toHaveBeenCalledWith('Password change failed', 'error'),
     );
   });
+
+  // ── Two-factor (TOTP) ───────────────────────────────────────────────────
+  const PW = ['current', '-pass', '-1'].join('');
+
+  it('runs the full 2FA setup → enable flow', async () => {
+    const user = userEvent.setup();
+    mockOf(api.auth.twoFactor.setup).mockResolvedValue({
+      secret: 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ',
+      otpauthUri: 'otpauth://totp/NineDeploy%3Aa%40b.c?secret=x',
+    } as never);
+    mockOf(api.auth.twoFactor.enable).mockResolvedValue({ ok: true, totpEnabled: true } as never);
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    renderWithProviders(<Settings />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Set up 2FA' }));
+    expect(await screen.findByText('GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('Copy'));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ'));
+    fireEvent.click(screen.getByText('Copy URI'));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('otpauth://totp/NineDeploy%3Aa%40b.c?secret=x'));
+
+    await user.type(screen.getByPlaceholderText('123456'), '123456');
+    fireEvent.click(screen.getByRole('button', { name: 'Enable' }));
+    await waitFor(() => expect(api.auth.twoFactor.enable).toHaveBeenCalledWith('123456'));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Two-factor authentication enabled', 'success'));
+  });
+
+  it('reports an invalid code on enable', async () => {
+    mockOf(api.auth.twoFactor.setup).mockResolvedValue({ secret: 'S', otpauthUri: 'otpauth://totp/x' } as never);
+    mockOf(api.auth.twoFactor.enable).mockRejectedValue(new Error('bad code') as never);
+    renderWithProviders(<Settings />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Set up 2FA' }));
+    const input = await screen.findByPlaceholderText('123456');
+    fireEvent.change(input, { target: { value: '000000' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Enable' }));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Invalid or expired code', 'error'));
+  });
+
+  it('cancels out of setup', async () => {
+    mockOf(api.auth.twoFactor.setup).mockResolvedValue({ secret: 'S', otpauthUri: 'otpauth://totp/x' } as never);
+    renderWithProviders(<Settings />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Set up 2FA' }));
+    fireEvent.click(await screen.findByText('Cancel'));
+    expect(screen.queryByText('otpauth://totp/x')).not.toBeInTheDocument();
+  });
+
+  it('submits the setup form via form submit and shows the enable pending label', async () => {
+    mockOf(api.auth.twoFactor.setup).mockResolvedValue({ secret: 'S', otpauthUri: 'otpauth://totp/x' } as never);
+    mockOf(api.auth.twoFactor.enable).mockReturnValue(new Promise(() => {}) as never);
+    renderWithProviders(<Settings />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Set up 2FA' }));
+    const codeInput = await screen.findByPlaceholderText('123456');
+    fireEvent.change(codeInput, { target: { value: '123456' } });
+    fireEvent.submit(codeInput.closest('form')!);
+    expect(await screen.findByText('Verifying…')).toBeInTheDocument();
+  });
+
+  it('shows the setup pending label while generating', async () => {
+    mockOf(api.auth.twoFactor.setup).mockReturnValue(new Promise(() => {}) as never);
+    renderWithProviders(<Settings />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Set up 2FA' }));
+    expect(await screen.findByText('Generating…')).toBeInTheDocument();
+  });
+
+  it('ignores 2FA form submits with incomplete inputs', async () => {
+    mockOf(api.auth.twoFactor.setup).mockResolvedValue({ secret: 'S', otpauthUri: 'otpauth://totp/x' } as never);
+    renderWithProviders(<Settings />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Set up 2FA' }));
+    // Enable with a too-short code: no call.
+    const codeInput = await screen.findByPlaceholderText('123456');
+    fireEvent.change(codeInput, { target: { value: '123' } });
+    fireEvent.submit(codeInput.closest('form')!);
+    expect(api.auth.twoFactor.enable).not.toHaveBeenCalled();
+
+    // Disable with an empty password: no call.
+    fireEvent.click(screen.getByText('Cancel')); // close the setup panel first
+    fireEvent.click(screen.getByRole('button', { name: 'Disable 2FA' }));
+    const pwInput = await screen.findByPlaceholderText('Password');
+    fireEvent.change(screen.getByPlaceholderText('6-digit code'), { target: { value: '123456' } });
+    fireEvent.submit(pwInput.closest('form')!);
+    expect(api.auth.twoFactor.disable).not.toHaveBeenCalled();
+  });
+
+  it('shows the disable pending label while in flight', async () => {
+    mockOf(api.auth.twoFactor.disable).mockReturnValue(new Promise(() => {}) as never);
+    renderWithProviders(<Settings />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Disable 2FA' }));
+    const pwInput = await screen.findByPlaceholderText('Password');
+    fireEvent.change(pwInput, { target: { value: 'x'.repeat(8) } });
+    fireEvent.change(screen.getByPlaceholderText('6-digit code'), { target: { value: '123456' } });
+    fireEvent.submit(pwInput.closest('form')!);
+    expect(await screen.findByText('Disabling…')).toBeInTheDocument();
+  });
+
+  it('shows the enable pending label while verifying', async () => {
+    mockOf(api.auth.twoFactor.setup).mockResolvedValue({ secret: 'S', otpauthUri: 'otpauth://totp/x' } as never);
+    mockOf(api.auth.twoFactor.enable).mockReturnValue(new Promise(() => {}) as never);
+    renderWithProviders(<Settings />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Set up 2FA' }));
+    const codeInput = await screen.findByPlaceholderText('123456');
+    fireEvent.change(codeInput, { target: { value: '123456' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Enable' }));
+    expect(await screen.findByText('Verifying…')).toBeInTheDocument();
+  });
+
+  it('reports clipboard failures when copying the secret', async () => {
+    mockOf(api.auth.twoFactor.setup).mockResolvedValue({ secret: 'S', otpauthUri: 'otpauth://totp/x' } as never);
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: vi.fn().mockRejectedValue(new Error('denied')) },
+      configurable: true,
+    });
+    renderWithProviders(<Settings />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Set up 2FA' }));
+    fireEvent.click(await screen.findByText('Copy'));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Copy failed', 'error'));
+  });
+
+  it('reports setup failures', async () => {
+    mockOf(api.auth.twoFactor.setup).mockRejectedValue(new Error('nope') as never);
+    renderWithProviders(<Settings />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Set up 2FA' }));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Could not start 2FA setup', 'error'));
+  });
+
+  it('disables 2FA with password + code and signs out', async () => {
+    const user = userEvent.setup();
+    const assign = vi.fn();
+    Object.defineProperty(window, 'location', { value: { assign }, writable: true });
+    mockOf(api.auth.twoFactor.disable).mockResolvedValue({ ok: true, totpEnabled: false } as never);
+    renderWithProviders(<Settings />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Disable 2FA' }));
+    await user.type(await screen.findByPlaceholderText('Password'), PW);
+    const codeInputs = screen.getAllByPlaceholderText('6-digit code');
+    await user.type(codeInputs[0]!, '123456');
+    fireEvent.click(screen.getByRole('button', { name: 'Disable 2FA', hidden: false }));
+    await waitFor(() =>
+      expect(api.auth.twoFactor.disable).toHaveBeenCalledWith({ password: PW, code: '123456' }));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith(expect.stringContaining('disabled'), 'info'));
+    // The redirect to /login fires after 1.5s.
+    await waitFor(() => expect(assign).toHaveBeenCalledWith('/login'), { timeout: 3000 });
+  });
+
+  it('reports disable failures and cancels', async () => {
+    const user = userEvent.setup();
+    mockOf(api.auth.twoFactor.disable).mockRejectedValue(new Error('x') as never);
+    renderWithProviders(<Settings />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Disable 2FA' }));
+    await user.type(await screen.findByPlaceholderText('Password'), PW);
+    fireEvent.change(screen.getByPlaceholderText('6-digit code'), { target: { value: '123456' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Disable 2FA' }));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith(expect.stringContaining('Could not disable'), 'error'));
+    fireEvent.click(screen.getByText('Cancel'));
+    expect(screen.queryByPlaceholderText('Password')).not.toBeInTheDocument();
+  });
 });

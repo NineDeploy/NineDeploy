@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { screen } from '@testing-library/react';
+import { fireEvent, screen } from '@testing-library/react';
 import { Topology } from '../src/routes/Topology.js';
 import { api } from '../src/lib/api.js';
 import { renderWithProviders, mockOf } from './helpers.js';
@@ -50,7 +50,15 @@ describe('Topology', () => {
     vi.clearAllMocks();
   });
 
-  it('shows loading state while fetching the graph', () => {
+it('shows an error state with retry when the graph query fails', async () => {
+    mockOf(api.topology.get).mockRejectedValue(new Error('boom'));
+    renderWithProviders(<Topology />);
+    expect(await screen.findByText(/Couldn't load the topology/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(api.topology.get).toHaveBeenCalledTimes(2);
+  });
+
+    it('shows loading state while fetching the graph', () => {
     mockOf(api.topology.get).mockReturnValue(new Promise(() => {}));
     renderWithProviders(<Topology />);
     expect(screen.getByText('Loading graph…')).toBeInTheDocument();

@@ -115,4 +115,93 @@ describe('Backups', () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     expect(fetchMock.mock.calls[0]?.[1]?.headers).toEqual({ Authorization: 'Bearer ' });
   });
+
+  // ── off-site destinations ───────────────────────────────────────────────
+  it('renders destinations with active/paused badges and test/remove actions', async () => {
+    mockOf(api.backups.list).mockResolvedValue([] as never);
+    mockOf(api.backupDestinations.list).mockResolvedValue([
+      { id: 1, name: 'minio', endpoint: 'https://s3.example.com', region: 'eu', bucket: 'b', prefix: 'nd', active: true, createdAt: 'x' },
+      { id: 2, name: 'b2', endpoint: 'https://s3.b2.example.net', region: 'us', bucket: 'b2', prefix: 'nd', active: false, createdAt: 'x' },
+    ] as never);
+    const alertSpy = vi.fn();
+    vi.stubGlobal('alert', alertSpy);
+    renderWithProviders(<Backups />);
+
+    expect(await screen.findByText('minio')).toBeInTheDocument();
+    expect(screen.getByText('https://s3.b2.example.net/b2/nd')).toBeInTheDocument();
+    expect(screen.getByText('active')).toBeInTheDocument();
+    expect(screen.getByText('paused')).toBeInTheDocument();
+
+    fireEvent.click(screen.getAllByTitle('Test connection')[0]!);
+    await waitFor(() => expect(api.backupDestinations.test).toHaveBeenCalledWith(1));
+    fireEvent.click(screen.getAllByTitle('Remove destination')[1]!);
+    await waitFor(() => expect(api.backupDestinations.remove).toHaveBeenCalledWith(2));
+  });
+
+  it('creates a destination from the form', async () => {
+    mockOf(api.backups.list).mockResolvedValue([] as never);
+    mockOf(api.backupDestinations.list).mockResolvedValue([] as never);
+    mockOf(api.backupDestinations.create).mockResolvedValue({ id: 9 } as never);
+    renderWithProviders(<Backups />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Add destination' }));
+    // Inputs appear in form order: name, endpoint, region, bucket, prefix, accessKey + a password field for the secret.
+    const values = ['minio-offsite', 'https://s3.example.com', 'eu', 'b', 'nd', 'ak'];
+    const inputs = screen.getAllByRole('textbox');
+    for (let i = 0; i < values.length && i < inputs.length; i++) {
+      fireEvent.change(inputs[i]!, { target: { value: values[i] } });
+    }
+    const secretInput = document.querySelector<HTMLInputElement>('input[type="password"]');
+    expect(secretInput).toBeTruthy();
+    fireEvent.change(secretInput!, { target: { value: 'sk' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save destination' }));
+    await waitFor(() =>
+      expect(api.backupDestinations.create).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'minio-offsite', endpoint: 'https://s3.example.com', bucket: 'b' })));
+  });
+
+  it('keeps the save button disabled until required fields are filled', async () => {
+    mockOf(api.backups.list).mockResolvedValue([] as never);
+    mockOf(api.backupDestinations.list).mockResolvedValue([] as never);
+    renderWithProviders(<Backups />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Add destination' }));
+    expect(screen.getByRole('button', { name: 'Save destination' })).toBeDisabled();
+    // An incomplete submit does not call the API.
+    fireEvent.submit(screen.getAllByRole('textbox')[0]!.closest('form')!);
+    expect(api.backupDestinations.create).not.toHaveBeenCalled();
+  });
+
+  it('shows the saving state while a destination create is in flight', async () => {
+    mockOf(api.backups.list).mockResolvedValue([] as never);
+    mockOf(api.backupDestinations.list).mockResolvedValue([] as never);
+    mockOf(api.backupDestinations.create).mockReturnValue(new Promise(() => {}) as never);
+    renderWithProviders(<Backups />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Add destination' }));
+    const values = ['x', 'https://s3.example.com', 'eu', 'b', 'nd', 'ak'];
+    const inputs = screen.getAllByRole('textbox');
+    for (let i = 0; i < values.length; i++) fireEvent.change(inputs[i]!, { target: { value: values[i] } });
+    const secretInput = document.querySelector<HTMLInputElement>('input[type="password"]');
+    fireEvent.change(secretInput!, { target: { value: 'sk' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save destination' }));
+    expect(await screen.findByText('Saving…')).toBeInTheDocument();
+  });
+
+  it('toggles destination active state and surfaces test failures', async () => {
+    mockOf(api.backups.list).mockResolvedValue([] as never);
+    mockOf(api.backupDestinations.list).mockResolvedValue([
+      { id: 1, name: 'minio', endpoint: 'https://s3.example.com', region: 'eu', bucket: 'b', prefix: 'nd', active: true, createdAt: 'x' },
+    ] as never);
+    const alertSpy = vi.fn();
+    vi.stubGlobal('alert', alertSpy);
+    renderWithProviders(<Backups />);
+    fireEvent.click(await screen.findByText('active'));
+    await waitFor(() => expect(api.backupDestinations.update).toHaveBeenCalledWith(1, { active: false }));
+    // Test failures surface via alert (non-Error rejections use the generic message).
+    mockOf(api.backupDestinations.test).mockRejectedValueOnce(new Error('no route') as never);
+    fireEvent.click(screen.getByTitle('Test connection'));
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith('no route'));
+    mockOf(api.backupDestinations.test).mockRejectedValueOnce('boom' as never);
+    fireEvent.click(screen.getByTitle('Test connection'));
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith('Test failed'));
+  });
 });

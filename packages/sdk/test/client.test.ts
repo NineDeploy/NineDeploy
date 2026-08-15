@@ -188,6 +188,22 @@ describe('createClient', () => {
       expect(last(calls).url).toBe('/v1/auth/password');
       expect(JSON.parse(last(calls).init.body ?? '{}')).toEqual({ currentPassword: 'a', newPassword: 'b' });
 
+      await client.auth.forgotPassword('a@b.com');
+      expect(last(calls).url).toBe('/v1/auth/forgot-password');
+      expect(JSON.parse(last(calls).init.body ?? '{}')).toEqual({ email: 'a@b.com' });
+
+      await client.auth.resetPasswordWithToken({ token: 't'.repeat(24), newPassword: 'fresh-pass-1' });
+      expect(last(calls).url).toBe('/v1/auth/reset-password');
+      expect(JSON.parse(last(calls).init.body ?? '{}')).toEqual({ token: 't'.repeat(24), newPassword: 'fresh-pass-1' });
+
+      await client.auth.twoFactor.setup();
+      expect(last(calls).url).toBe('/v1/auth/2fa/setup');
+      await client.auth.twoFactor.enable('123456');
+      expect(last(calls).url).toBe('/v1/auth/2fa/enable');
+      expect(JSON.parse(last(calls).init.body ?? '{}')).toEqual({ code: '123456' });
+      await client.auth.twoFactor.disable({ password: 'p', code: '123456' });
+      expect(last(calls).url).toBe('/v1/auth/2fa/disable');
+
       await client.auth.me();
       expect(last(calls).url).toBe('/v1/auth/me');
 
@@ -278,6 +294,87 @@ describe('createClient', () => {
       await client.deploys.rollback(1, 2);
       expect(last(calls).url).toBe('/v1/services/1/deploys/2/rollback');
       expect(last(calls).init.method).toBe('POST');
+
+      await client.deploys.cancel(1, 2);
+      expect(last(calls).url).toBe('/v1/services/1/deploys/2/cancel');
+      expect(last(calls).init.method).toBe('POST');
+    });
+  });
+
+  describe('backupDestinations', () => {
+    it('exercises list, create, update, remove and test', async () => {
+      const { fetchMock, calls } = makeFetch(() => ok({}));
+      const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
+
+      await client.backupDestinations.list();
+      expect(last(calls)).toMatchObject({ url: '/v1/backup-destinations', init: { method: 'GET' } });
+
+      await client.backupDestinations.create({ name: 'n', endpoint: 'https://s', bucket: 'b', accessKeyId: 'ak', secretAccessKey: 'sk' });
+      expect(last(calls).url).toBe('/v1/backup-destinations');
+      expect(last(calls).init.method).toBe('POST');
+
+      await client.backupDestinations.update(1, { active: false });
+      expect(last(calls).url).toBe('/v1/backup-destinations/1');
+      expect(last(calls).init.method).toBe('PATCH');
+
+      await client.backupDestinations.remove(1);
+      expect(last(calls)).toMatchObject({ url: '/v1/backup-destinations/1', init: { method: 'DELETE' } });
+
+      await client.backupDestinations.test(1);
+      expect(last(calls).url).toBe('/v1/backup-destinations/1/test');
+      expect(last(calls).init.method).toBe('POST');
+    });
+  });
+
+  describe('jobs', () => {
+    it('exercises list, create, update, remove, run and runs', async () => {
+      const { fetchMock, calls } = makeFetch(() => ok({}));
+      const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
+
+      await client.jobs.list(1);
+      expect(last(calls)).toMatchObject({ url: '/v1/services/1/jobs', init: { method: 'GET' } });
+
+      await client.jobs.create(1, { name: 'n', cron: '* * * * *', kind: 'deploy' });
+      expect(last(calls).url).toBe('/v1/services/1/jobs');
+      expect(last(calls).init.method).toBe('POST');
+
+      await client.jobs.update(1, 2, { enabled: false });
+      expect(last(calls).url).toBe('/v1/services/1/jobs/2');
+      expect(last(calls).init.method).toBe('PATCH');
+
+      await client.jobs.remove(1, 2);
+      expect(last(calls)).toMatchObject({ url: '/v1/services/1/jobs/2', init: { method: 'DELETE' } });
+
+      await client.jobs.run(1, 2);
+      expect(last(calls).url).toBe('/v1/services/1/jobs/2/run');
+      expect(last(calls).init.method).toBe('POST');
+
+      await client.jobs.runs(1, 2);
+      expect(last(calls)).toMatchObject({ url: '/v1/services/1/jobs/2/runs', init: { method: 'GET' } });
+    });
+  });
+
+  describe('servers', () => {
+    it('exercises list, create, remove and test', async () => {
+      const { fetchMock, calls } = makeFetch(() => ok({}));
+      const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
+
+      await client.servers.list();
+      expect(last(calls)).toMatchObject({ url: '/v1/servers', init: { method: 'GET' } });
+
+      await client.servers.create({ name: 'edge', host: '10.0.0.5' });
+      expect(last(calls).url).toBe('/v1/servers');
+      expect(last(calls).init.method).toBe('POST');
+      expect(JSON.parse(last(calls).init.body ?? '{}')).toEqual({ name: 'edge', host: '10.0.0.5' });
+      await client.servers.create({ name: 'edge2', host: 'h', port: 4601 });
+      expect(JSON.parse(last(calls).init.body ?? '{}')).toEqual({ name: 'edge2', host: 'h', port: 4601 });
+
+      await client.servers.remove(1);
+      expect(last(calls)).toMatchObject({ url: '/v1/servers/1', init: { method: 'DELETE' } });
+
+      await client.servers.test(1);
+      expect(last(calls).url).toBe('/v1/servers/1/test');
+      expect(last(calls).init.method).toBe('POST');
     });
   });
 
@@ -296,6 +393,11 @@ describe('createClient', () => {
 
       await client.domains.remove(1, 2);
       expect(last(calls)).toMatchObject({ url: '/v1/services/1/domains/2', init: { method: 'DELETE' } });
+
+      await client.domains.update(1, 2, { redirectWww: true });
+      expect(last(calls).url).toBe('/v1/services/1/domains/2');
+      expect(last(calls).init.method).toBe('PATCH');
+      expect(JSON.parse(last(calls).init.body ?? '{}')).toEqual({ redirectWww: true });
 
       await client.domains.all();
       expect(last(calls)).toMatchObject({ url: '/v1/domains', init: { method: 'GET' } });
@@ -330,6 +432,11 @@ describe('createClient', () => {
 
       await client.system.pruneImages();
       expect(last(calls)).toMatchObject({ url: '/v1/system/prune-images', init: { method: 'POST' } });
+
+      await client.system.updateCheck();
+      expect(last(calls).url).toBe('/v1/system/update-check');
+      await client.system.updateCheck(true);
+      expect(last(calls).url).toBe('/v1/system/update-check?force=1');
     });
 
     it('exportUrl returns the export path without fetching', () => {
@@ -384,6 +491,10 @@ describe('createClient', () => {
       expect(last(calls).url).toBe('/v1/users/1/password');
       expect(last(calls).init.method).toBe('PATCH');
       expect(JSON.parse(last(calls).init.body ?? '{}')).toEqual({ newPassword: 'fresh-pass-123' });
+
+      await client.users.resetLink(1);
+      expect(last(calls).url).toBe('/v1/users/1/reset-link');
+      expect(last(calls).init.method).toBe('POST');
 
       await client.users.remove(1);
       expect(last(calls)).toMatchObject({ url: '/v1/users/1', init: { method: 'DELETE' } });

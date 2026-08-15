@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { KeyRound, Shield, Trash2, Users as UsersIcon } from 'lucide-react';
+import { KeyRound, Link2 as LinkIcon, Shield, Trash2, Users as UsersIcon } from 'lucide-react';
 import { useState } from 'react';
 import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.js';
@@ -41,6 +41,22 @@ export function Users() {
     resetPassword.mutate({ id: resetFor as number, newPassword: resetPw });
   };
 
+  // ── One-time reset link (works without an email channel) ────────────────
+  const [revealedLink, setRevealedLink] = useState<{ url: string; expiresAt: string } | null>(null);
+  const resetLink = useMutation({
+    mutationFn: (id: number) => api.users.resetLink(id),
+    onSuccess: (res) => setRevealedLink(res),
+    onError: () => toast('Could not generate the reset link', 'error'),
+  });
+  const copyLink = async (url: string) => {
+    try {
+      await navigator.clipboard.writeText(url);
+      toast('Reset link copied', 'success');
+    } catch {
+      toast('Copy failed — select the link manually', 'error');
+    }
+  };
+
   return (
     <div className="max-w-3xl">
       <div className="mb-6 flex items-center gap-2">
@@ -50,6 +66,28 @@ export function Users() {
           <p className="text-sm text-slate-400">Manage team members and roles.</p>
         </div>
       </div>
+
+      {revealedLink && (
+        <Card className="mb-4 border-amber-500/30">
+          <div className="p-4">
+            <p className="text-xs font-medium text-amber-200">
+              Copy this one-time link now — it is shown only once and expires{' '}
+              {new Date(revealedLink.expiresAt).toLocaleTimeString()} ({new Date(revealedLink.expiresAt).toLocaleDateString()}).
+            </p>
+            <div className="mt-2 flex items-center gap-2">
+              <code className="min-w-0 flex-1 truncate rounded bg-black/40 px-2 py-1.5 font-mono text-[11px] text-amber-100">
+                {revealedLink.url}
+              </code>
+              <button onClick={() => copyLink(revealedLink.url)} className="shrink-0 text-xs font-medium text-amber-200 hover:text-amber-100">
+                Copy
+              </button>
+              <button onClick={() => setRevealedLink(null)} className="shrink-0 text-xs text-amber-200/70 hover:underline">
+                Done
+              </button>
+            </div>
+          </div>
+        </Card>
+      )}
 
       {list.isLoading ? (
         <Card className="p-5"><Skeleton className="h-10 w-full" /></Card>
@@ -127,13 +165,23 @@ export function Users() {
                                 </button>
                               </span>
                             ) : (
-                              <button
-                                onClick={() => { setResetFor(u.id); setResetPw(''); }}
-                                className="text-slate-600 transition hover:text-amber-400"
-                                title="Reset password (signs the user out everywhere)"
-                              >
-                                <KeyRound size={14} />
-                              </button>
+                              <>
+                                <button
+                                  onClick={() => { setResetFor(u.id); setResetPw(''); }}
+                                  className="text-slate-600 transition hover:text-amber-400"
+                                  title="Reset password (signs the user out everywhere)"
+                                >
+                                  <KeyRound size={14} />
+                                </button>
+                                <button
+                                  onClick={() => resetLink.mutate(u.id)}
+                                  disabled={resetLink.isPending}
+                                  className="text-slate-600 transition hover:text-indigo-300"
+                                  title="Generate a one-time reset link (no email needed)"
+                                >
+                                  <LinkIcon size={14} />
+                                </button>
+                              </>
                             )}
                             <button
                               onClick={() => confirm(`Delete user ${u.email}?`) && remove.mutate(u.id)}

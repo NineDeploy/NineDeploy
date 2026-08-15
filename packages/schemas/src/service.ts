@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { envVarName, slug } from './common.js';
 
-export const serviceType = z.enum(['pm2', 'docker']);
+export const serviceType = z.enum(['pm2', 'docker', 'compose']);
 export const buildPack = z.enum(['auto', 'nixpacks', 'dockerfile']);
 
 export const createService = z.object({
@@ -31,7 +31,19 @@ export const createService = z.object({
 });
 export type CreateService = z.infer<typeof createService>;
 
-export const updateService = createService.partial();
+/** PATCH shape — every field optional, including individual build-config keys. */
+export const updateService = createService.partial().extend({
+  build: z
+    .object({
+      buildPack: buildPack.optional(),
+      baseDir: z.string().optional(),
+      installCmd: z.string().optional(),
+      buildCmd: z.string().optional(),
+      startCmd: z.string().optional(),
+      dockerfilePath: z.string().optional(),
+    })
+    .optional(),
+});
 export type UpdateService = z.infer<typeof updateService>;
 
 /** Input shapes (what a client sends) — defaults make `build` optional. */
@@ -55,6 +67,18 @@ export const service = z.object({
   healthPath: z.string(),
   autoUrl: z.string().nullable(),
   port: z.number().int().nullable(),
+  cpuShares: z.number().int(),
+  memLimitMb: z.number().int(),
+  build: z
+    .object({
+      buildPack: buildPack,
+      baseDir: z.string(),
+      installCmd: z.string().nullable(),
+      buildCmd: z.string().nullable(),
+      startCmd: z.string().nullable(),
+      dockerfilePath: z.string().nullable(),
+    })
+    .nullable(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });
@@ -63,9 +87,11 @@ export type Service = z.infer<typeof service>;
 // ── Sources (private repo credentials) ─────────────────────────────────────
 export const createSource = z.object({
   name: z.string().min(1).max(100),
-  type: z.enum(['github', 'gitlab', 'gitea', 'custom']),
+  type: z.enum(['github', 'gitlab', 'gitea', 'custom', 'registry']),
   token: z.string().optional(),
   deployKey: z.string().optional(),
+  // Registry-type sources: username for `docker login` (token = password).
+  registryUsername: z.string().max(255).optional(),
   defaultBranch: z.string().optional(),
 });
 export type CreateSourceInput = z.input<typeof createSource>;
@@ -104,8 +130,19 @@ export const createDomain = z.object({
   hostname: z.string().min(3).max(253),
   path: z.string().default('/'),
   ssl: z.boolean().default(false),
+  redirectWww: z.boolean().optional(),
+  /** JSON array [{name, value}] of custom response headers. */
+  headers: z.string().max(8000).optional(),
 });
 export type CreateDomainInput = z.input<typeof createDomain>;
+
+/** PATCHable routing extras for an existing domain. */
+export const domainPatch = z.object({
+  ssl: z.boolean().optional(),
+  redirectWww: z.boolean().optional(),
+  headers: z.string().max(8000).optional(),
+});
+export type DomainPatch = z.input<typeof domainPatch>;
 
 export const domain = z.object({
   id: z.number().int(),
@@ -113,6 +150,8 @@ export const domain = z.object({
   hostname: z.string(),
   path: z.string(),
   ssl: z.boolean(),
+  redirectWww: z.boolean(),
+  headers: z.string(),
   status: z.string(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
@@ -120,13 +159,18 @@ export const domain = z.object({
 export type Domain = z.infer<typeof domain>;
 
 // ── Webhooks (auto-deploy) ────────────────────────────────────────────────
-export const createWebhook = z.object({ branch: z.string().min(1).optional() });
+export const createWebhook = z.object({
+  branch: z.string().min(1).optional(),
+  /** Newline/comma-separated globs — deploy only when a changed file matches. */
+  watchPaths: z.string().max(4000).optional(),
+});
 export type CreateWebhookInput = z.input<typeof createWebhook>;
 
 export const webhook = z.object({
   id: z.number().int(),
   branch: z.string(),
   active: z.boolean(),
+  watchPaths: z.string(),
   url: z.string(),
   createdAt: z.string().datetime(),
 });
@@ -139,7 +183,7 @@ export type CreatedWebhook = z.infer<typeof createdWebhook>;
 // ── Managed databases ─────────────────────────────────────────────────────
 export const createDatabase = z.object({
   name: z.string().min(1).max(100),
-  engine: z.enum(['postgres', 'mysql', 'redis', 'mongo']),
+  engine: z.enum(['postgres', 'mysql', 'mariadb', 'redis', 'mongo']),
   version: z.string().optional(),
   projectId: z.number().int().optional(),
 });
@@ -285,6 +329,18 @@ export const template = z.object({
   website: z.string().optional(),
   docs: z.string().optional(),
   featured: z.boolean().optional(),
+  /** Human hint about extra setup this template needs (shown in the Hub). */
+  requires: z.string().optional(),
+  /** When set, the wizard can auto-provision + attach a managed database of
+   *  this engine (DATABASE_URL/REDIS_URL injected at deploy time). */
+  dbEngine: z.enum(['postgres', 'mysql', 'redis', 'mongo']).optional(),
+  /** Container command (argv) appended after the image — needed by images
+   *  whose default entrypoint prints help and exits (e.g. minio). */
+  cmd: z.array(z.string()).min(1).optional(),
+  /** Bind-mount the host Docker socket into the container (docker control —
+   *  only settable from the admin-controlled template registry, never via
+   *  the create-service API). */
+  dockerSocket: z.boolean().optional(),
 });
 export type Template = z.infer<typeof template>;
 
@@ -309,6 +365,8 @@ export const volumeEntry = z.object({
   name: z.string(),
   sizeBytes: z.number().int(),
   owner: z.object({ kind: z.string(), name: z.string(), engine: z.string().optional() }).nullable(),
+  /** True when the owner's container is running — deletion is refused (409). */
+  inUse: z.boolean(),
 });
 export type VolumeEntry = z.infer<typeof volumeEntry>;
 

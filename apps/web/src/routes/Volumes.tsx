@@ -1,8 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Database, HardDrive, Layers, Package, Server, Trash2 } from 'lucide-react';
+import { useState } from 'react';
+import { Database, HardDrive, Layers, Lock, Package, Server, Trash2 } from 'lucide-react';
 import { Link } from 'react-router';
 import { api } from '../lib/api.js';
-import { Button, Card, EmptyState, Skeleton, cn } from '../components/ui.js';
+import { useToast } from '../components/Toast.js';
+import { Button, Card, EmptyState, Input, Skeleton, cn } from '../components/ui.js';
 
 function fmt(bytes: number): string {
   if (!bytes) return '—';
@@ -14,10 +16,19 @@ function fmt(bytes: number): string {
 
 export function Volumes() {
   const qc = useQueryClient();
+  const { toast } = useToast();
   const list = useQuery({ queryKey: ['volumes'], queryFn: () => api.volumes.list() });
+  const [confirmName, setConfirmName] = useState('');
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const remove = useMutation({
     mutationFn: (name: string) => api.volumes.remove(name),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['volumes'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['volumes'] });
+      setPendingDelete(null);
+      setConfirmName('');
+      toast('Volume deleted', 'success');
+    },
+    onError: (err) => toast(err instanceof Error ? err.message : 'Delete failed', 'error'),
   });
   const total = (list.data ?? []).reduce((s, v) => s + v.sizeBytes, 0);
   const max = Math.max(1, ...(list.data ?? []).map((v) => v.sizeBytes));
@@ -68,17 +79,38 @@ export function Volumes() {
                   <div className={cn('h-full rounded-full transition-all', isRetained ? 'bg-amber-500/70' : 'bg-indigo-500/70')} style={{ width: `${Math.max(3, (v.sizeBytes / max) * 100)}%` }} />
                 </div>
                 <div className="mt-2 flex items-center justify-between">
-                  <span className={cn('rounded px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide', isRetained ? 'bg-amber-500/15 text-amber-300' : 'bg-emerald-500/10 text-emerald-300/80')}>
-                    {isRetained ? 'retained · reusable' : 'attached'}
+                  <span className={cn('rounded px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide', v.inUse ? 'bg-rose-500/10 text-rose-300' : isRetained ? 'bg-amber-500/15 text-amber-300' : 'bg-emerald-500/10 text-emerald-300/80')}>
+                    {v.inUse ? 'in use · locked' : isRetained ? 'retained · reusable' : 'attached · stopped'}
                   </span>
-                  <button
-                    onClick={() => confirm(`Permanently delete volume ${v.name}? This destroys its data.`) && remove.mutate(v.name)}
-                    className="text-slate-600 transition hover:text-rose-400"
-                    title="Delete volume (destructive)"
-                  >
-                    <Trash2 size={13} />
-                  </button>
+                  {!v.inUse && (
+                    <button
+                      onClick={() => { setPendingDelete(v.name); setConfirmName(''); }}
+                      className="text-slate-600 transition hover:text-rose-400"
+                      title="Delete volume (destructive)"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  )}
+                  {v.inUse && <span title={`Attached to a running ${v.owner?.kind ?? 'workload'} — stop it first`}><Lock size={13} className="text-slate-600" /></span>}
                 </div>
+                {pendingDelete === v.name && (
+                  <form
+                    onSubmit={(e) => { e.preventDefault(); if (confirmName === v.name) remove.mutate(v.name); }}
+                    className="mt-2 flex items-center gap-2"
+                  >
+                    <Input
+                      value={confirmName}
+                      onChange={(e) => setConfirmName(e.target.value)}
+                      placeholder={`Type ${v.name} to delete`}
+                      className="h-7 text-[11px]"
+                      aria-label="Confirm volume name"
+                    />
+                    <Button type="submit" size="sm" variant="danger" className="h-7 px-2 text-[11px]" disabled={confirmName !== v.name || remove.isPending}>
+                      {remove.isPending ? '…' : 'Delete'}
+                    </Button>
+                    <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-[11px]" onClick={() => setPendingDelete(null)}>Cancel</Button>
+                  </form>
+                )}
                 <div className="mt-1 truncate font-mono text-[10px] text-slate-600">{v.name}</div>
               </Card>
             );

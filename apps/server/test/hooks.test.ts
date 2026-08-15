@@ -156,6 +156,71 @@ describe('webhook receiver', () => {
     expect(res.json()).toEqual({ ok: 'skipped', reason: 'branch', branch: 'staging' });
   });
 
+  it('skips pushes that do not touch any watch path', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({ findFirst: { webhooks: hook({ watchPaths: 'services/api/**\npackages/**' }) } }),
+      rawBody: true,
+    });
+    await app.register(hookReceiveRoutes);
+    const body = JSON.stringify({
+      ref: 'refs/heads/main',
+      head_commit: { id: 'abc', message: 'docs only' },
+      commits: [{ id: 'abc', added: ['docs/readme.md'], modified: [], removed: [] }],
+    });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/1',
+      headers: { 'content-type': 'application/json', 'x-github-event': 'push', 'x-hub-signature-256': sig(body) },
+      payload: body,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: 'skipped', reason: 'watch_paths', patterns: 2 });
+  });
+
+  it('deploys when a changed file matches a watch path', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { webhooks: hook({ watchPaths: 'services/api/**' }) },
+        insert: { deployments: [depRow({ id: 9, trigger: 'webhook' })] },
+      }),
+      rawBody: true,
+    });
+    await app.register(hookReceiveRoutes);
+    const body = JSON.stringify({
+      ref: 'refs/heads/main',
+      head_commit: { id: 'abc', message: 'api change' },
+      commits: [{ id: 'abc', added: ['services/api/src/x.ts'], modified: [], removed: [] }],
+    });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/1',
+      headers: { 'content-type': 'application/json', 'x-github-event': 'push', 'x-hub-signature-256': sig(body) },
+      payload: body,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ ok: true, deploymentId: 9 });
+  });
+
+  it('deploys watch-path webhooks when the payload reports no files', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { webhooks: hook({ watchPaths: 'services/api/**' }) },
+        insert: { deployments: [depRow({ id: 10, trigger: 'webhook' })] },
+      }),
+      rawBody: true,
+    });
+    await app.register(hookReceiveRoutes);
+    const body = JSON.stringify({ ref: 'refs/heads/main', head_commit: { id: 'abc', message: 'm' } });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/1',
+      headers: { 'content-type': 'application/json', 'x-github-event': 'push', 'x-hub-signature-256': sig(body) },
+      payload: body,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ ok: true, deploymentId: 10 });
+  });
+
   it('ignores non-push events', async () => {
     const app = await buildTestApp({
       db: createFakeDb({ findFirst: { webhooks: hook() } }),
@@ -211,6 +276,7 @@ describe('webhook management routes', () => {
         id: 3,
         branch: 'main',
         active: true,
+        watchPaths: '',
         url: 'http://localhost:3000/v1/hooks/3',
         createdAt: '2026-01-01T00:00:00.000Z',
       },

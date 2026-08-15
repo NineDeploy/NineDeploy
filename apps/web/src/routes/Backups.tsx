@@ -1,7 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useState } from 'react';
 import { Download, HardDrive, RotateCcw, Trash2 } from 'lucide-react';
 import { api, getToken } from '../lib/api.js';
-import { Card, EmptyState, Skeleton, StatusBadge } from '../components/ui.js';
+import { Button, Card, EmptyState, Field, Input, Skeleton, StatusBadge, cn } from '../components/ui.js';
 
 function fmtBytes(b: number): string {
   if (!b) return '—';
@@ -90,6 +91,116 @@ export function Backups() {
           </table>
         </Card>
       )}
+
+      <DestinationsCard />
     </div>
+  );
+}
+
+// ── S3-compatible backup destinations (admin) ─────────────────────────────
+function DestinationsCard() {
+  const qc = useQueryClient();
+  const [form, setForm] = useState({ name: '', endpoint: '', region: '', bucket: '', prefix: '', accessKeyId: '', secretAccessKey: '' });
+  const [showForm, setShowForm] = useState(false);
+
+  const list = useQuery({ queryKey: ['backup-destinations'], queryFn: () => api.backupDestinations.list() });
+  const create = useMutation({
+    mutationFn: () => api.backupDestinations.create(form),
+    onSuccess: () => {
+      setShowForm(false);
+      setForm({ name: '', endpoint: '', region: '', bucket: '', prefix: '', accessKeyId: '', secretAccessKey: '' });
+      qc.invalidateQueries({ queryKey: ['backup-destinations'] });
+    },
+  });
+  const remove = useMutation({
+    mutationFn: (id: number) => api.backupDestinations.remove(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['backup-destinations'] }),
+  });
+  const test = useMutation({
+    mutationFn: (id: number) => api.backupDestinations.test(id),
+    onSuccess: () => window.alert('Destination reachable — credentials work.'),
+    onError: (err) => window.alert(err instanceof Error ? err.message : 'Test failed'),
+  });
+  const toggle = useMutation({
+    mutationFn: (d: { id: number; active: boolean }) => api.backupDestinations.update(d.id, { active: !d.active }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['backup-destinations'] }),
+  });
+
+  const set = (k: keyof typeof form) => (e: { target: { value: string } }) => setForm({ ...form, [k]: e.target.value });
+  const canCreate = form.name && form.endpoint && form.bucket && form.accessKeyId && form.secretAccessKey;
+
+  return (
+    <Card className="mt-5">
+      <div className="p-5">
+        <div className="mb-3 flex items-center justify-between">
+          <div className="text-sm font-medium text-slate-300">Off-site destinations (S3-compatible)</div>
+          <Button size="sm" variant="secondary" onClick={() => setShowForm((v) => !v)}>
+            {showForm ? 'Close' : 'Add destination'}
+          </Button>
+        </div>
+        <p className="mb-3 text-xs text-slate-500">
+          Completed backups are also uploaded (still encrypted) to the active destination. Restore works from the remote copy when the local file is gone.
+        </p>
+
+        {showForm && (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (canCreate) create.mutate();
+            }}
+            className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-2"
+          >
+            <Field label="Name"><Input value={form.name} onChange={set('name')} placeholder="minio-offsite" className="h-9" /></Field>
+            <Field label="Endpoint URL"><Input value={form.endpoint} onChange={set('endpoint')} placeholder="https://s3.example.com" className="h-9 font-mono text-xs" /></Field>
+            <Field label="Region"><Input value={form.region} onChange={set('region')} placeholder="us-east-1" className="h-9" /></Field>
+            <Field label="Bucket"><Input value={form.bucket} onChange={set('bucket')} placeholder="ninedeploy-backups" className="h-9 font-mono text-xs" /></Field>
+            <Field label="Prefix"><Input value={form.prefix} onChange={set('prefix')} placeholder="ninedeploy" className="h-9 font-mono text-xs" /></Field>
+            <Field label="Access key ID"><Input value={form.accessKeyId} onChange={set('accessKeyId')} className="h-9 font-mono text-xs" /></Field>
+            <Field label="Secret access key"><Input type="password" value={form.secretAccessKey} onChange={set('secretAccessKey')} className="h-9 font-mono text-xs" /></Field>
+            <div className="flex items-end">
+              <Button type="submit" size="sm" disabled={!canCreate || create.isPending}>
+                {create.isPending ? 'Saving…' : 'Save destination'}
+              </Button>
+            </div>
+          </form>
+        )}
+
+        <div className="space-y-1.5">
+          {list.isLoading ? (
+            <Skeleton className="h-8 w-full" />
+          ) : !list.data || list.data.length === 0 ? (
+            <p className="py-2 text-xs text-slate-600">No destinations — backups stay local only.</p>
+          ) : (
+            list.data.map((d) => (
+              <div key={d.id} className="group flex items-center justify-between rounded-lg bg-white/[0.02] px-3 py-2 ring-1 ring-inset ring-white/5">
+                <div className="min-w-0">
+                  <span className="text-sm text-slate-200">{d.name}</span>
+                  <span className="ml-2 truncate font-mono text-[11px] text-slate-500">
+                    {d.endpoint}/{d.bucket}/{d.prefix}
+                  </span>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <button
+                    onClick={() => toggle.mutate({ id: d.id, active: d.active })}
+                    className={cn(
+                      'rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset transition',
+                      d.active ? 'bg-emerald-500/15 text-emerald-300 ring-emerald-500/20' : 'bg-slate-500/15 text-slate-400 ring-slate-500/20',
+                    )}
+                  >
+                    {d.active ? 'active' : 'paused'}
+                  </button>
+                  <button onClick={() => test.mutate(d.id)} className="text-xs text-slate-500 hover:text-indigo-300" title="Test connection">
+                    test
+                  </button>
+                  <button onClick={() => remove.mutate(d.id)} className="text-slate-600 transition hover:text-rose-400" title="Remove destination">
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </Card>
   );
 }

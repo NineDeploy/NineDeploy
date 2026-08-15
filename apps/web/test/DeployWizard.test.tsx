@@ -12,6 +12,8 @@ const apiMock = vi.hoisted(() => ({
     services: { create: vi.fn() },
     env: { create: vi.fn() },
     deploys: { trigger: vi.fn() },
+    databases: { create: vi.fn(), get: vi.fn() },
+    attachments: { create: vi.fn() },
   },
 }));
 
@@ -73,6 +75,9 @@ describe('DeployWizard', () => {
     ]);
     apiMock.api.services.create.mockResolvedValue({ id: 42, name: 'app' });
     apiMock.api.env.create.mockResolvedValue({ id: 1, key: 'K', value: 'v', isSecret: false });
+    apiMock.api.databases.create.mockResolvedValue({ id: 7, name: 'db', engine: 'postgres', status: 'creating' });
+    apiMock.api.databases.get.mockResolvedValue({ id: 7, name: 'db', engine: 'postgres', status: 'running' });
+    apiMock.api.attachments.create.mockResolvedValue({ id: 9, databaseId: 7, envAlias: 'DATABASE_URL' });
     apiMock.api.deploys.trigger.mockResolvedValue({ deploymentId: 7 });
   });
 
@@ -219,8 +224,8 @@ describe('DeployWizard', () => {
     await user.click(screen.getByRole('button', { name: /continue/i }));
     // Step 2 (env): template row is prefilled
     expect(screen.getAllByDisplayValue('N8N_BASIC_AUTH_ACTIVE')).toHaveLength(1);
-    // Editing one row while another exists exercises the map's identity branch.
-    await user.click(screen.getAllByTitle('Toggle secret')[1]);
+    // Toggling one row while another exists exercises the map's identity branch.
+    await user.click(screen.getAllByTitle('Toggle secret')[0]);
     await user.click(screen.getByRole('button', { name: /continue/i }));
     await user.click(screen.getByRole('button', { name: /continue/i }));
     expect(screen.getByText('n8n')).toBeInTheDocument();
@@ -235,21 +240,86 @@ describe('DeployWizard', () => {
         }),
       ),
     );
-    await waitFor(() =>
-      expect(apiMock.api.env.create).toHaveBeenCalledWith(42, {
-        key: 'N8N_BASIC_AUTH_ACTIVE',
-        value: 'true',
-        isSecret: true,
-      }),
-    );
-    await waitFor(() =>
-      expect(apiMock.api.env.create).toHaveBeenCalledWith(42, {
-        key: 'N8N_EXTRA',
-        value: 'y',
-        isSecret: true,
-      }),
-    );
+    // Secret rows deploy with a freshly GENERATED value — never the registry
+    // default ('true'/'y' must not reach the container as-is).
+    await waitFor(() => {
+      // Row 0 was toggled to non-secret (generated value preserved); the
+      // untoggled secret-prefilled rows deploy as freshly generated secrets.
+      const rows = Object.fromEntries(apiMock.api.env.create.mock.calls.map((c) => [c[1].key, c[1]]));
+      expect(rows['N8N_EXTRA']!).toEqual({ key: 'N8N_EXTRA', value: 'y', isSecret: false });
+      expect(rows['N8N_BASIC_AUTH_ACTIVE']!.isSecret).toBe(false);
+      expect(rows['N8N_BASIC_AUTH_ACTIVE']!.value).not.toBe('true');
+      expect(rows['N8N_BASIC_AUTH_ACTIVE']!.value.length).toBeGreaterThanOrEqual(16);
+    });
     await waitFor(() => expect(onClose).toHaveBeenCalled());
+  });
+
+  it('auto-provisions and attaches a database for templates that need one', async () => {
+    const tpl = { ...TEMPLATE, dbEngine: 'postgres' as const, requires: 'Umami needs a PostgreSQL database — one is provisioned automatically' };
+    const { onClose } = renderWizard({ template: tpl });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    // Env step shows the requires hint and the auto-attach checkbox (default on).
+    expect(screen.getByText(tpl.requires)).toBeInTheDocument();
+    expect(screen.getByRole('checkbox')).toBeChecked();
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /deploy/i }));
+
+    await waitFor(() => expect(apiMock.api.databases.create).toHaveBeenCalledWith(expect.objectContaining({ engine: 'postgres' })));
+    await waitFor(() => expect(apiMock.api.attachments.create).toHaveBeenCalledWith(42, { databaseId: 7 }));
+    // The deploy triggers only AFTER the database is running + attached.
+    await waitFor(() => expect(apiMock.api.deploys.trigger).toHaveBeenCalledWith(42));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+  });
+
+  it('skips the database when the auto-attach checkbox is unchecked', async () => {
+    const tpl = { ...TEMPLATE, dbEngine: 'mysql' as const };
+    renderWizard({ template: tpl });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('checkbox'));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /deploy/i }));
+    await waitFor(() => expect(apiMock.api.deploys.trigger).toHaveBeenCalledWith(42));
+    expect(apiMock.api.databases.create).not.toHaveBeenCalled();
+  });
+
+  it('polls while the database is still creating before attaching', { timeout: 20_000 }, async () => {
+    const tpl = { ...TEMPLATE, dbEngine: 'postgres' as const };
+    apiMock.api.databases.get
+      .mockResolvedValueOnce({ id: 7, status: 'creating' })
+      .mockResolvedValueOnce({ id: 7, status: 'creating' })
+      .mockResolvedValueOnce({ id: 7, status: 'running' });
+    renderWizard({ template: tpl });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /deploy/i }));
+    await waitFor(() => expect(apiMock.api.databases.get).toHaveBeenCalledTimes(3), { timeout: 15_000 });
+    await waitFor(() => expect(apiMock.api.attachments.create).toHaveBeenCalledWith(42, { databaseId: 7 }));
+    await waitFor(() => expect(apiMock.api.deploys.trigger).toHaveBeenCalled());
+  });
+
+  it('fails with a helpful error when the provisioned database errors out', async () => {
+    const toastMod = await vi.importActual<typeof import('../src/components/Toast.js')>('../src/components/Toast.js');
+    void toastMod;
+    const tpl = { ...TEMPLATE, dbEngine: 'postgres' as const };
+    apiMock.api.databases.get.mockResolvedValue({ id: 7, status: 'error' });
+    renderWizard({ template: tpl });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /deploy/i }));
+    await waitFor(() => expect(screen.getByText(/Failed — try again/)).toBeInTheDocument());
+    expect(apiMock.api.deploys.trigger).not.toHaveBeenCalled();
   });
 
   it('toggles env row secret mode and removes rows', async () => {
@@ -313,6 +383,22 @@ describe('DeployWizard', () => {
     }
     await user.click(screen.getByRole('button', { name: /deploy/i }));
     await waitFor(() => expect(screen.getByText('Deploy failed')).toBeInTheDocument());
+  });
+
+  it('closes on Escape and locks body scroll while open', async () => {
+    const { onClose, unmount } = renderWizard();
+    await waitFor(() => expect(screen.getByPlaceholderText('my-app')).toBeInTheDocument());
+    expect(document.body.style.overflow).toBe('hidden');
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalled();
+    // Scroll lock is released when the dialog unmounts.
+    unmount();
+    expect(document.body.style.overflow).not.toBe('hidden');
+  });
+
+  it('auto-focuses the name input when opened', async () => {
+    renderWizard();
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByPlaceholderText('my-app')));
   });
 
   it('hides the back button on the first step and closes via X', async () => {

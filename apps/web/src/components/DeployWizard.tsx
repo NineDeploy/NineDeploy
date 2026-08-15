@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { type FormEvent, useState } from 'react';
+import { type FormEvent, useEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, Check, Plus, Rocket, X } from 'lucide-react';
 import { useNavigate } from 'react-router';
 import type { Template } from '@ninedeploy/sdk';
@@ -11,6 +11,13 @@ const STEPS = ['Source', 'Runtime', 'Environment', 'Resources', 'Review'];
 
 interface EnvRow { key: string; value: string; secret: boolean }
 
+/** Crypto-strong secret prefill for template env rows marked secret. */
+function generateSecret(bytes = 18): string {
+  const arr = new Uint8Array(bytes);
+  crypto.getRandomValues(arr);
+  return btoa(String.fromCharCode(...arr)).replace(/[+/=]/g, '').slice(0, 24);
+}
+
 export function DeployWizard({ template, onClose }: { template?: Template; onClose: () => void }) {
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -19,7 +26,24 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
 
   const [step, setStep] = useState(0);
   const [name, setName] = useState(template?.name ?? '');
-  const [type, setType] = useState<'docker' | 'pm2'>('docker');
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const nameInputRef = useRef<HTMLInputElement>(null);
+
+  // Modal hygiene: focus the first field on open so keyboard/screen-reader
+  // users land IN the dialog (not the page behind it), close on Escape, and
+  // lock background scrolling while the wizard is up.
+  useEffect(() => {
+    nameInputRef.current?.focus();
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [onClose]);
+  const [type, setType] = useState<'docker' | 'pm2' | 'compose'>('docker');
   const [mode, setMode] = useState<'repo' | 'image'>(template ? 'image' : 'repo');
   const [repoUrl, setRepoUrl] = useState('');
   const [branch, setBranch] = useState('main');
@@ -30,9 +54,15 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
   const [healthPath, setHealthPath] = useState('/');
   const [cpuShares, setCpuShares] = useState('');
   const [memLimitMb, setMemLimitMb] = useState('');
+  // Secret rows are prefilled with a FRESH strong value (never the registry
+  // default like "changeme"); the user can still edit it on the env step.
   const [envRows, setEnvRows] = useState<EnvRow[]>(
-    (template?.env ?? []).map((e) => ({ key: e.key, value: e.value, secret: e.secret ?? false })),
+    (template?.env ?? []).map((e) => ({ key: e.key, value: e.secret ? generateSecret() : e.value, secret: e.secret ?? false })),
   );
+  // Templates that need a database can auto-provision + attach one.
+  const dbEngine = template?.dbEngine ?? null;
+  const [autoDb, setAutoDb] = useState(true);
+  const [dbStatus, setDbStatus] = useState<string | null>(null);
 
   const deploy = useMutation({
     mutationFn: async () => {
@@ -52,6 +82,28 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
       for (const e of envRows) {
         if (e.key.trim()) await api.env.create(svc.id, { key: e.key, value: e.value, isSecret: e.secret });
       }
+
+      // Auto-provision + attach the database this template needs. The deploy
+      // pipeline injects DATABASE_URL/REDIS_URL into the container env from
+      // the attachment — but only once the database is actually running, so
+      // wait for it (bounded) BEFORE triggering the deploy.
+      if (dbEngine && autoDb) {
+        setDbStatus(`Creating ${dbEngine} database…`);
+        const db = await api.databases.create({ name: `${template!.name}-db`.toLowerCase().replace(/[^a-z0-9-]+/g, '-'), engine: dbEngine });
+        const deadline = Date.now() + 120_000;
+        for (;;) {
+          const cur = await api.databases.get(db.id);
+          if (cur.status === 'running') break;
+          if (cur.status === 'error' || Date.now() > deadline) {
+            throw new Error(`Database failed to start (${cur.status}) — attach one manually after deploy`);
+          }
+          setDbStatus(`Waiting for ${dbEngine} (${cur.status})…`);
+          await new Promise((r) => setTimeout(r, 2000));
+        }
+        await api.attachments.create(svc.id, { databaseId: db.id });
+        setDbStatus(null);
+      }
+
       await api.deploys.trigger(svc.id);
       return svc;
     },
@@ -81,7 +133,14 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm sm:items-center sm:p-6" onClick={onClose}>
-      <div className="nd-fade flex max-h-[92vh] w-full max-w-xl flex-col overflow-hidden rounded-t-2xl border border-white/10 bg-slate-950 shadow-2xl sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={template ? `Deploy ${template.name}` : 'New service'}
+        className="nd-fade flex max-h-[92vh] w-full max-w-xl flex-col overflow-hidden rounded-t-2xl border border-white/10 bg-slate-950 shadow-2xl sm:rounded-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Header + stepper */}
         <div className="border-b border-white/5 p-5">
           <div className="mb-3 flex items-center justify-between">
@@ -107,11 +166,12 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
           {/* Step 1: Source */}
           {step === 0 && (
             <div className="space-y-4">
-              <L label="Name"><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="my-app" /></L>
+              <L label="Name"><Input ref={nameInputRef} value={name} onChange={(e) => setName(e.target.value)} placeholder="my-app" /></L>
               <div className="grid grid-cols-2 gap-3">
                 <L label="Type">
-                  <Select value={type} onChange={(e) => setType(e.target.value as 'docker' | 'pm2')}>
+                  <Select value={type} onChange={(e) => setType(e.target.value as 'docker' | 'pm2' | 'compose')}>
                     <option value="docker">Docker</option>
+                    <option value="compose">Compose</option>
                     <option value="pm2">PM2</option>
                   </Select>
                 </L>
@@ -155,6 +215,17 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
           {/* Step 3: Environment */}
           {step === 2 && (
             <div className="space-y-2">
+              {template?.requires && (
+                <p className="rounded-lg bg-amber-500/[0.06] px-3 py-2 text-xs text-amber-200 ring-1 ring-inset ring-amber-500/20">
+                  {template.requires}
+                </p>
+              )}
+              {dbEngine && (
+                <label className="flex items-center gap-2 rounded-lg bg-emerald-500/[0.06] px-3 py-2 text-xs text-emerald-200 ring-1 ring-inset ring-emerald-500/20">
+                  <input type="checkbox" checked={autoDb} onChange={(e) => setAutoDb(e.target.checked)} className="accent-emerald-400" />
+                  Create and attach a managed <b>{dbEngine}</b> database (DATABASE_URL injected automatically)
+                </label>
+              )}
               {envRows.length === 0 && <p className="py-2 text-xs text-slate-600">No environment variables.</p>}
               {envRows.map((row, i) => (
                 <div key={i} className="flex items-center gap-2">
@@ -197,6 +268,7 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
         <div className="flex items-center justify-between border-t border-white/5 p-4">
           <Button type="button" variant="ghost" size="sm" onClick={back} className={cn(step === 0 && 'invisible')}><ArrowLeft size={14} /> Back</Button>
           <div className="flex items-center gap-3">
+            {dbStatus && <span className="text-xs text-emerald-300">{dbStatus}</span>}
             {deploy.isError && <span className="text-xs text-rose-400">Failed — try again</span>}
             <Button type="submit" onClick={onSubmit} disabled={!canNext || deploy.isPending}>
               {step === STEPS.length - 1 ? (deploy.isPending ? 'Deploying…' : <><Rocket size={15} /> Deploy</>) : <>Continue <ArrowRight size={14} /></>}

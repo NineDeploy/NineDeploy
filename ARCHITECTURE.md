@@ -70,19 +70,23 @@ ninedeploy/
 │   │   │   ├── lib/               crypto (key ring), jwt, exec (timeout+tree-kill,
 │   │   │   │                      env whitelist), git, settings, keyRotation,
 │   │   │   │                      audit, events, notifier, errors, webhooks
-│   │   │   ├── templates/         49-entry template registry
+│   │   │   ├── templates/         48-entry template registry
 │   │   │   └── version.ts         VERSION + changelog
 │   │   ├── test/                  unit/route tests (100% coverage)
 │   │   └── test/integration/      testcontainers (real PostgreSQL), RUN_INTEGRATION=1
 │   │
 │   ├── web/                       React 19 + Vite 8 + Tailwind v4
-│   │   ├── src/routes/            17 pages (Dashboard, Hub, Services, Databases,
-│   │   │                          Domains, Tunnels, Volumes, Topology, Backups,
-│   │   │                          Sources, Users, Monitoring, Settings, About,
-│   │   │                          Login)
+│   │   ├── src/routes/            17 pages (Dashboard, Hub, Services,
+│   │   │                          ServiceDetail (tabbed: Overview/Settings/
+│   │   │                          Network/Config/Activity), NewService,
+│   │   │                          Databases, Domains, Tunnels, Volumes,
+│   │   │                          Topology, Backups, Sources, Users,
+│   │   │                          Monitoring, Settings, About, Login)
 │   │   ├── src/components/        Layout, DeployWizard, DatabaseWizard,
 │   │   │                          NotificationWizard, CommandPalette,
-│   │   │                          ContainerTerminal, Toast, …
+│   │   │                          ContainerTerminal (xterm.js exec),
+│   │   │                          AttachmentsCard, EnvCard, Sparkline,
+│   │   │                          StorageGauge, Toast, …
 │   │   └── src/lib/               api (SDK + 401→refresh→retry), auth (context),
 │   │                              theme, useDeployLogs
 │   │
@@ -97,6 +101,7 @@ ninedeploy/
 │
 ├── .github/workflows/             ci.yml (typecheck/lint/build/test/image build),
 │                                  release.yml (tag → GHCR image)
+├── turbo.json                     Turborepo pipeline (build/test/lint caches)
 ├── Dockerfile                     multi-stage; docker CLI + git + tini; /data volume
 ├── docker-compose.yml             development environment
 ├── systemd/                       ninedeploy.service unit file
@@ -139,20 +144,31 @@ alert_rules            id, service_id (null = host-wide), name, metric(cpu|memor
                        operator(>|<), threshold, duration_windows, enabled
 alert_state            rule_id (unique), status(ok|breaching|firing), breach_since,
                        fired_at, last_notified_at, last_value
+password_reset_tokens  id, user_id, token_hash (sha256, unique), expires_at, used_at,
+                       requested_from — single-use 30-min reset links (raw token
+                       never stored; swept after 24 h by housekeeping)
+backup_destinations   id, name, endpoint, region, bucket, prefix, access_key_id,
+                       secret_key_encrypted, active — S3-compatible off-site targets
+scheduled_jobs        id, service_id, name, cron, kind(deploy|exec), command, enabled,
+                       last_run_at — croner-scheduled (5-min reload)
+job_runs              id, job_id, status(running|completed|failed), output, exit_code,
+                       started_at, finished_at — run history with captured output
+servers               id, name, host, port, status(offline|online|error),
+                       token_encrypted, last_seen_at — agent host registry
 ```
 
 ## Server modules
 
 | Module | Prefix | Routes |
 |---|---|---|
-| auth | /auth | register (toggle-gated), login, refresh, logout, password, me, status, tokens CRUD |
-| services | /services | CRUD, stop/start/restart, limits, logs |
+| auth | /auth | register (toggle-gated), login (per-account lockout + TOTP 2FA), forgot-password, reset-password, 2FA setup/enable/disable, refresh, logout, password, me, status, tokens CRUD |
+| services | /services | CRUD (docker/pm2/compose types), update (incl. build config), stop/start/restart, limits, logs |
 | deploys | /services/:id/deploys | trigger, list, rollback, WS logs, WS exec (admin-only, audited) |
 | domains | /services/:id/domains | add, list, remove |
 | domainIndex | /domains | list all, SSL toggle |
 | databases | /databases | CRUD, limits, wizard |
 | databaseBackup | /databases/:id | storage, backups, restore (ownership-checked) |
-| backups | /backups | list all, delete, download |
+| backups | /backups | list all, delete (incl. remote object), download; /backup-destinations: S3-compatible CRUD + connectivity test (admin) |
 | env | /services/:id/env | env var CRUD |
 | hooks | /hooks + /services | receive (HMAC + replay dedup), manage CRUD |
 | templates | /templates | list, detail, deploy — served from a schema-validated registry bundle (bundled JSON by default; DB/env source override with 6 h cached remote fetch + offline fallback) |
@@ -162,11 +178,13 @@ alert_state            rule_id (unique), status(ok|breaching|firing), breach_sin
 | sources | /sources | CRUD (PAT + deploy keys) — admin-only |
 | tunnels | /tunnels | CRUD (cloudflared) — admin-only |
 | volumes | /volumes | inventory; delete — admin-only, audited |
-| system | /system | resources, prune, export, import (tar-slip guarded, rollback) — admin-only |
+| system | /system | resources, prune, update-check (latest release vs running version, 6 h cache), export, import (tar-slip guarded, rollback) — admin-only |
+| jobs | /services/:id/jobs | cron-scheduled deploy/exec jobs, run-now, run history (croner; 5-min scheduler reload) |
+| servers | /servers | remote agent host registry, one-time token on register, connectivity test — admin-only |
 | settings | /settings | instance flags: allow-registration toggle, ACME email, template registry source, DNS-01 challenge (wildcard SSL) — admin-only, audited |
-| users | /users | list, role change, password reset, delete — admin-only |
+| users | /users | list, role change, password reset, one-time reset link, delete — admin-only |
 | notifications | /notifications | channels CRUD, test, log — admin-only |
-| about | /about | version, changelog, tech stack, stats |
+| about | /about | version, changelog, tech stack (public); instance counts only for authenticated requests |
 | activity | /activity | audit log feed |
 | alerts | /alerts | alert rule CRUD + state; members read, admins manage |
 | serviceMigration | /services/:id/export + import | per-service bundle — admin-only |
@@ -184,16 +202,17 @@ alert_state            rule_id (unique), status(ok|breaching|firing), breach_sin
 | traefik | Ensures network + Traefik container (config **directory** bind mount) + writes dynamic config atomically; ACME uses DNS-01 (wildcard certs) when a DNS provider+token are configured, else HTTP-01 |
 | collector | Samples container stats every 30s → metrics table; prunes metrics older than 24h; feeds the alert evaluator (cpu %, memory MiB, host, cert-expiry days) |
 | backupScheduler | Daily database backups (`scheduled` scope), keeps last 7 per DB — never prunes manual backups |
-| housekeeping | Hourly retention: deploy logs (30d), audit log (90d), notification log (30d), dangling Docker images |
+| housekeeping | Hourly retention: deploy logs (30d), audit log (90d), notification log (30d), expired reset tokens (24h), dangling Docker images |
 | rawBody | Captures raw body for HMAC + binary uploads |
 
 ## Deploy pipeline
 
-Zero-downtime for Docker, brief-gap-with-rollback for PM2. The worker processes one deployment at a time and recovers from crashes on startup.
+Zero-downtime for Docker, brief-gap-with-rollback for PM2. The worker runs up to N deployments in parallel (`NINEDEPLOY_DEPLOY_CONCURRENCY`, default 1, max 8) — one claim loop per slot, each claiming atomically and never touching a service that already has a `building` deployment — and recovers from crashes on startup.
 
 ```
 1. Trigger (manual / webhook / CLI) → deployment row (queued)
-2. Worker claims it atomically (queued→building, verified via rowsAffected) → status: building
+2. A worker slot claims it atomically (queued→building, verified via
+   rowsAffected; claims skip services that already have a building deployment) → status: building
 3. Crash recovery on boot: any deployment stranded in `building` is marked failed
 4. If image deploy: pull image (rollback pins an exact digest); else: git clone →
    resolve source creds → checkout commit (token/SSH key scrubbed afterwards)
@@ -213,6 +232,25 @@ Zero-downtime for Docker, brief-gap-with-rollback for PM2. The worker processes 
     build can never block the worker. Audit + EventBus + notification dispatch
     throughout; logs streamed via WebSocket.
 ```
+
+## Service Detail page (web)
+
+The service detail page is the operational hub for a single service, organized as tabs:
+
+- **Overview** — status header with deploy/restart/stop/start/exec actions, live CPU &
+  memory sparklines (`GET /services/:id/metrics`), runtime metadata (image digest, commit,
+  port, health path, resource limits), enriched deployment history (commit message, trigger,
+  duration) with rollback, WebSocket live deploy logs, runtime log tail, and the exec terminal
+- **Settings** — edit service fields (name, branch, repo, source, port, health path, volume
+  mount, image) via `PATCH /services/:id`, edit the build config (build pack, install/build/start
+  commands, Dockerfile path, base dir), and set CPU/memory limits (`PATCH /services/:id/limits`)
+- **Network** — domain management with per-domain SSL toggle (`PATCH /domains/:id`); the
+  auto-assigned wildcard domain is linked from the header
+- **Config** — env vars (write-only secrets), database attachments (connection-string
+  injection), and auto-deploy webhooks with one-time secret reveal
+- **Activity** — per-service filtered audit trail (`GET /activity`)
+- **Danger zone** — typed-name delete confirmation, with the service's data volume surfaced
+  from the volume inventory so operators know what persists after deletion
 
 ## Alerting
 
@@ -262,6 +300,8 @@ ok → breaching (first breach, breach_since = now)
 - **Image digest pinning** — each deployment records the exact image digest it ran, so rollback redeploys that precise image
 - **Fire-and-forget notifications** — audit() → DB write + EventBus + notifier, never blocks the request
 - **Bounded retention** — metrics 24h (collector), deploy logs 30d, audit 90d, notification log 30d, dangling images hourly; scheduled backups keep 7 (manual backups untouched)
+- **Upgrades** — the installer resolves the target version (latest release tag by default, `--version` pin, `--channel main` edge), snapshots `.data` before upgrading, rebuilds + migrates + restarts and gates on `/health`; `GET /v1/system/update-check` surfaces newer releases to the dashboard/CLI
+- **systemd watchdog** — `Type=notify` + `WatchdogSec=90`; the server pings over the sd_notify datagram socket every 30 s (dependency-free, no-op without `NOTIFY_SOCKET`) so a hung event loop is restarted automatically
 - **Forward-only, additive migrations** — drizzle-kit emits no down-SQL; every migration is additive, so a bad one leaves an unused object rather than data loss. To revert: drop the objects it created
 - **100% coverage, no ratchets** — every package's test suite enforces 100% statements/branches/functions/lines in CI; integration tests (testcontainers) are opt-in via `RUN_INTEGRATION=1`
 - **TypeScript strict** — noUncheckedIndexedAccess, verbatimModuleSyntax, isolatedModules; Node ≥ 22.13 (pnpm 11 requires `node:sqlite`)

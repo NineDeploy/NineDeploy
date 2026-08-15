@@ -4,6 +4,8 @@ import { Layout } from './components/Layout.js';
 import { FullScreenSpinner } from './components/ui.js';
 import { useAuth } from './lib/auth.js';
 import { Login } from './routes/Login.js';
+import { ForgotPassword } from './routes/ForgotPassword.js';
+import { ResetPassword } from './routes/ResetPassword.js';
 import { Monitoring } from './routes/Monitoring.js';
 import { NewService } from './routes/NewService.js';
 import { About } from './routes/About.js';
@@ -14,6 +16,7 @@ import { Domains } from './routes/Domains.js';
 import { Hub } from './routes/Hub.js';
 import { ServiceDetail } from './routes/ServiceDetail.js';
 import { ServicesList } from './routes/ServicesList.js';
+import { Servers } from './routes/Servers.js';
 import { Settings } from './routes/Settings.js';
 import { Sources } from './routes/Sources.js';
 import { Topology } from './routes/Topology.js';
@@ -35,6 +38,8 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/forgot-password" element={<ForgotPassword />} />
+      <Route path="/reset-password" element={<ResetPassword />} />
       <Route
         element={
           <RequireAuth>
@@ -43,7 +48,8 @@ export default function App() {
         }
       >
         <Route index element={<Dashboard />} />
-        <Route path="/old-services" element={<ServicesList />} />
+        <Route path="dashboard" element={<Dashboard />} />
+        <Route path="services" element={<ServicesList />} />
         <Route path="hub" element={<Hub />} />
         <Route path="databases" element={<Databases />} />
         <Route path="domains" element={<Domains />} />
@@ -53,6 +59,7 @@ export default function App() {
         <Route path="topology" element={<Topology />} />
         <Route path="backups" element={<Backups />} />
         <Route path="sources" element={<Sources />} />
+        <Route path="servers" element={<Servers />} />
         <Route path="settings" element={<Settings />} />
         <Route path="about" element={<About />} />
         <Route path="monitoring" element={<Monitoring />} />

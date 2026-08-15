@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { notificationLog } from '@ninedeploy/db';
-import { notifyEvent, parseEmailTarget, withRetry } from '../../src/lib/notifier.js';
+import { notifyEvent, parseEmailTarget, sendSystemEmail, withRetry } from '../../src/lib/notifier.js';
 import { encrypt } from '../../src/lib/crypto.js';
 
 const KEY_HEX = 'b'.repeat(64);
@@ -444,5 +444,81 @@ describe('parseEmailTarget', () => {
 
   it('rejects JSON missing required fields', () => {
     expect(() => parseEmailTarget('{"host":"h"}')).toThrow('Invalid email target');
+  });
+});
+
+describe('sendSystemEmail', () => {
+  beforeEach(() => {
+    // Earlier notifyEvent tests enable fake timers and (historically) don't
+    // always restore them; the retry backoff below needs real timers.
+    vi.useRealTimers();
+    vi.stubEnv('NINEDEPLOY_MASTER_KEY', KEY_HEX);
+    fetchMock.mockReset();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.doUnmock('nodemailer');
+  });
+
+  it('returns false when no active email channel exists', async () => {
+    const { db } = makeDb([{ id: 1, type: 'telegram', targetEncrypted: 'x', eventFilter: '', active: true }]);
+    await expect(sendSystemEmail(db as never, 'subject', 'text')).resolves.toBe(false);
+  });
+
+  it('returns false when the channels query fails (table missing)', async () => {
+    const { db } = makeDb([], async () => {
+      throw new Error('no such table');
+    });
+    await expect(sendSystemEmail(db as never, 'subject', 'text')).resolves.toBe(false);
+  });
+
+  it('sends through the first active email channel and logs the delivery', async () => {
+    const createTransport = vi.fn(() => ({
+      sendMail: vi.fn(async () => ({ messageId: '1' })),
+      close: vi.fn(),
+    }));
+    vi.doMock('nodemailer', () => ({ createTransport }));
+    const target = JSON.stringify({ host: 'smtp.example.com', port: 587, from: 'a@example.com', to: 'b@example.com' });
+    const { db, lastValues } = makeDb([
+      { id: 30, type: 'email', targetEncrypted: encrypt(target), eventFilter: '', active: true },
+    ]);
+    await expect(sendSystemEmail(db as never, 'NineDeploy password reset', 'body')).resolves.toBe(true);
+    expect(createTransport).toHaveBeenCalled();
+    expect(lastValues()).toHaveBeenCalledWith(expect.objectContaining({ status: 'sent', event: 'email.system' }));
+  });
+
+  it('logs a failed delivery and returns false (non-Error rejections stringified)', async () => {
+    vi.doMock('nodemailer', () => ({
+      createTransport: () => ({
+        sendMail: async () => {
+          throw 'smtp-down'; // non-Error rejection exercises the String() branch
+        },
+        close: vi.fn(),
+      }),
+    }));
+    const target = JSON.stringify({ host: 'smtp.example.com', port: 587, from: 'a@example.com', to: 'b@example.com' });
+    const { db, lastValues } = makeDb([
+      { id: 31, type: 'email', targetEncrypted: encrypt(target), eventFilter: '', active: true },
+    ]);
+    await expect(sendSystemEmail(db as never, 'subject', 'text')).resolves.toBe(false);
+    expect(lastValues()).toHaveBeenCalledWith(expect.objectContaining({ status: 'failed', error: 'smtp-down' }));
+  });
+
+  it('logs Error rejections with their message', async () => {
+    vi.doMock('nodemailer', () => ({
+      createTransport: () => ({
+        sendMail: async () => {
+          throw new Error('smtp refused');
+        },
+        close: vi.fn(),
+      }),
+    }));
+    const target = JSON.stringify({ host: 'smtp.example.com', port: 587, from: 'a@example.com', to: 'b@example.com' });
+    const { db, lastValues } = makeDb([
+      { id: 32, type: 'email', targetEncrypted: encrypt(target), eventFilter: '', active: true },
+    ]);
+    await expect(sendSystemEmail(db as never, 'subject', 'text')).resolves.toBe(false);
+    expect(lastValues()).toHaveBeenCalledWith(expect.objectContaining({ status: 'failed', error: 'smtp refused' }));
   });
 });

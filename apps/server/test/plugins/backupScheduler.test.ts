@@ -34,7 +34,7 @@ function makeDb(opts: {
   selectImpl?: () => Promise<unknown>;
 }) {
   const select = vi.fn(() => ({ from: vi.fn(opts.selectImpl ?? (async () => opts.dbs)) }));
-  const insert = vi.fn(() => ({ values: vi.fn(async () => undefined) }));
+  const insert = vi.fn(() => ({ values: vi.fn(() => ({ returning: vi.fn(async () => [{ id: 1 }]) })) }));
   const del = vi.fn(() => ({ where: vi.fn(async () => undefined) }));
   const findMany = vi.fn(async () => opts.backupRows ?? []);
   return {
@@ -156,8 +156,7 @@ describe('backup scheduler plugin', () => {
     expect(errorSpy).toHaveBeenCalledWith(
       { err: expect.objectContaining({ message: 'pg_dump failed' }) },
       `scheduled backup failed for A`,
-    );
-    await app.close();
+    );    await app.close();
   });
 
   it('logs when the whole tick fails', async () => {
@@ -227,5 +226,23 @@ describe('backup scheduler plugin', () => {
 
     await vi.advanceTimersByTimeAsync(DAY_MS);
     expect(engineMock.backupDatabase).not.toHaveBeenCalled();
+  });
+
+  it('skips the remote upload when the insert returns no row', async () => {
+    vi.useFakeTimers();
+    // insert().returning() resolves to [] — uploadBackup must not be called.
+    const select = vi.fn(() => ({ from: vi.fn(async () => [{ id: 1, slug: 'a', name: 'A', status: 'running' }]) }));
+    const insert = vi.fn(() => ({
+      values: vi.fn(() => ({ returning: vi.fn(async () => []) })),
+    }));
+    const del = vi.fn(() => ({ where: vi.fn(async () => undefined) }));
+    const db = { select, insert, delete: del, query: { backups: { findMany: vi.fn(async () => []) } } } as never;
+    const app = await buildApp(db);
+    engineMock.backupDatabase.mockImplementation(async () => undefined);
+
+    await vi.advanceTimersByTimeAsync(DAY_MS);
+    // The tick completed without throwing despite the empty returning.
+    expect(engineMock.backupDatabase).toHaveBeenCalledTimes(1);
+    await app.close();
   });
 });

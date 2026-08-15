@@ -4,8 +4,8 @@ import { Check, KeyRound, Plus, ShieldCheck, Trash2 } from 'lucide-react';
 import { api } from '../lib/api.js';
 import { Button, Card, EmptyState, Field, Input, Select, Skeleton, Textarea, cn } from '../components/ui.js';
 
-const TYPES = ['github', 'gitlab', 'gitea', 'custom'] as const;
-const LABEL: Record<string, string> = { github: 'GitHub', gitlab: 'GitLab', gitea: 'Gitea', custom: 'Custom' };
+const TYPES = ['github', 'gitlab', 'gitea', 'custom', 'registry'] as const;
+const LABEL: Record<string, string> = { github: 'GitHub', gitlab: 'GitLab', gitea: 'Gitea', custom: 'Custom', registry: 'Registry' };
 
 export function Sources() {
   const qc = useQueryClient();
@@ -14,15 +14,17 @@ export function Sources() {
   const [type, setType] = useState<(typeof TYPES)[number]>('github');
   const [token, setToken] = useState('');
   const [deployKey, setDeployKey] = useState('');
+  const [registryUsername, setRegistryUsername] = useState('');
 
   const list = useQuery({ queryKey: ['sources'], queryFn: () => api.sources.list() });
   const create = useMutation({
-    mutationFn: () => api.sources.create({ name, type, token: token || undefined, deployKey: deployKey || undefined }),
+    mutationFn: () => api.sources.create({ name, type, token: token || undefined, deployKey: deployKey || undefined, registryUsername: type === 'registry' && registryUsername.trim() ? registryUsername.trim() : undefined }),
     onSuccess: () => {
       setOpen(false);
       setName('');
       setToken('');
       setDeployKey('');
+      setRegistryUsername('');
       qc.invalidateQueries({ queryKey: ['sources'] });
     },
   });
@@ -63,9 +65,14 @@ export function Sources() {
                 </Select>
               </Field>
             </div>
-            <Field label="Access token (PAT) — for HTTPS">
-              <Input value={token} onChange={(e) => setToken(e.target.value)} placeholder="ghp_… / glpat-…" className="font-mono text-xs" />
+            <Field label={type === 'registry' ? 'Access token / registry password' : 'Access token (PAT) — for HTTPS'}>
+              <Input value={token} onChange={(e) => setToken(e.target.value)} placeholder={type === 'registry' ? 'dckr_pat_… / password' : 'ghp_… / glpat-…'} className="font-mono text-xs" />
             </Field>
+            {type === 'registry' && (
+              <Field label="Registry username">
+                <Input value={registryUsername} onChange={(e) => setRegistryUsername(e.target.value)} placeholder="dockerhub-user" className="font-mono text-xs" />
+              </Field>
+            )}
             <Field label="…or SSH deploy key (private key) — for git@ URLs">
               <Textarea
                 value={deployKey}

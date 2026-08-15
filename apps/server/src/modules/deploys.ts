@@ -1,11 +1,11 @@
 import { spawn } from 'node:child_process';
-import { desc, eq } from 'drizzle-orm';
+import { and, desc, eq, inArray } from 'drizzle-orm';
 import { deployments, services } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { audit } from '../lib/audit.js';
 import { logBus } from '../engine/logs.js';
 import { resolveUser } from '../lib/auth.js';
-import { notFound } from '../lib/errors.js';
+import { badRequest, notFound } from '../lib/errors.js';
 
 const num = (v: string) => Number(v);
 
@@ -65,6 +65,34 @@ export const deploysRoutes: FastifyPluginAsync = async (app) => {
       })
       .returning();
     return { deploymentId: dep!.id };
+  });
+
+  // Cancel a deployment. `queued` rows flip atomically (the worker never claims
+  // a cancelled row); `building` rows flip so the pipeline's checkpoints abort
+  // at the next step boundary and the previous runtime keeps serving.
+  app.post('/:id/deploys/:depId/cancel', { onRequest: [app.authenticate] }, async (req) => {
+    const id = num((req.params as { id: string }).id);
+    const depId = num((req.params as { depId: string }).depId);
+    const dep = await app.db.query.deployments.findFirst({ where: eq(deployments.id, depId) });
+    if (!dep || dep.serviceId !== id) throw notFound('Deployment not found');
+    if (!['queued', 'building', 'deploying'].includes(dep.status)) {
+      throw badRequest('Deployment is not in progress');
+    }
+    const flipped = await app.db
+      .update(deployments)
+      .set({ status: 'cancelled', finishedAt: new Date() })
+      .where(and(eq(deployments.id, depId), inArray(deployments.status, ['queued', 'building', 'deploying'])))
+      .returning({ id: deployments.id });
+    if (flipped.length === 0) throw badRequest('Deployment is not in progress');
+    if (dep.status === 'queued') {
+      // Never picked up — it is fully cancelled here.
+      logBus.publish(depId, '⏹ Cancelled before the worker picked it up');
+    } else {
+      // In-flight: the pipeline observes the flip at its next checkpoint.
+      logBus.publish(depId, '⏹ Cancellation requested — stopping at the next step');
+    }
+    void audit(app.db, req.user!.id, 'deploy.cancel', `#${depId}`);
+    return { ok: true, status: 'cancelled' };
   });
 
   // Live log stream over WebSocket. Auth via ?token= (ws can't set headers easily).

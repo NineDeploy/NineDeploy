@@ -11,7 +11,8 @@ import { useTheme } from '../lib/theme.js';
 import { cn } from './ui.js';
 import { CommandPalette } from './CommandPalette.js';
 
-interface NavItem { to: string; label: string; icon: LucideIcon; exact?: boolean }
+interface NavItem { to: string; label: string; icon: LucideIcon }
+
 interface NavGroup { id: string; label: string; icon: LucideIcon; items: NavItem[] }
 
 const GROUPS: NavGroup[] = [
@@ -19,7 +20,7 @@ const GROUPS: NavGroup[] = [
     id: 'deploy', label: 'Deploy', icon: Rocket, items: [
       { to: '/hub', label: 'Hub', icon: Sparkles },
       { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-      { to: '/', label: 'Services', icon: Server, exact: true },
+      { to: '/services', label: 'Services', icon: Server },
     ],
   },
   {
@@ -40,6 +41,7 @@ const GROUPS: NavGroup[] = [
     id: 'system', label: 'System', icon: SettingsIcon, items: [
       { to: '/monitoring', label: 'Monitoring', icon: Activity },
       { to: '/sources', label: 'Sources', icon: KeyRound },
+      { to: '/servers', label: 'Servers', icon: HardDrive },
       { to: '/users', label: 'Users', icon: Users },
       { to: '/settings', label: 'Settings', icon: SettingsIcon },
       { to: '/about', label: 'About', icon: Info },
@@ -48,7 +50,9 @@ const GROUPS: NavGroup[] = [
 ];
 
 function matchItem(item: NavItem, pathname: string): boolean {
-  return item.exact ? pathname === item.to : pathname.startsWith(item.to);
+  // '/services' must not light up on '/services/new' for a DIFFERENT item —
+  // prefix matching is fine because group items have distinct prefixes.
+  return pathname.startsWith(item.to);
 }
 
 function findGroup(pathname: string): string | null {

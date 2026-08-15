@@ -325,6 +325,7 @@ export async function writeDynamicConfig(db: DB): Promise<void> {
 
   const routers: string[] = [];
   const svcBlocks: string[] = [];
+  const middlewares: string[] = [];
   const seen = new Set<string>();
 
   for (const d of all) {
@@ -348,10 +349,35 @@ export async function writeDynamicConfig(db: DB): Promise<void> {
     const hostMatcher = host.startsWith('*.')
       ? `HostRegexp(\`^[a-zA-Z0-9-]+\\.${escapeRegexp(host.slice(2))}$\`)`
       : `Host(\`${host}\`)`;
+
+    // Per-domain middlewares: www→apex redirect + custom response headers.
+    const mwList: string[] = [];
+    const apexHost = host.startsWith('*.') ? host : host.replace(/^www\./, '');
+    if (d.redirectWww && !host.startsWith('*.')) {
+      const mw = `mw_${key}_www`;
+      mwList.push(mw);
+      middlewares.push(
+        `    ${mw}:\n` +
+          '      redirectRegex:\n' +
+          `        regex: "^https?://(?:www\\.)?${escapeRegexp(apexHost)}(.*)"\n` +
+          `        replacement: "https://${apexHost}$1"\n`,
+      );
+    }
+    const headerList = parseHeaders(d.headers);
+    if (headerList.length > 0) {
+      const mw = `mw_${key}_headers`;
+      mwList.push(mw);
+      const lines = headerList
+        .map((h) => `        ${yamlKey(h.name)}: "${yamlValue(h.value)}"`)
+        .join('\n');
+      middlewares.push(`    ${mw}:\n      headers:\n        customResponseHeaders:\n${lines}\n`);
+    }
+
     routers.push(
       `    ${key}:\n` +
         `      rule: "${hostMatcher}${cleanPath && cleanPath !== '/' ? ` && PathPrefix(\`${cleanPath}\`)` : ''}"\n` +
         `      service: svc_${key}\n` +
+        (mwList.length ? `      middlewares:\n${mwList.map((m) => `        - ${m}`).join('\n')}\n` : '') +
         `      entryPoints:\n        - ${entry}` +
         tlsBlock,
     );
@@ -386,11 +412,44 @@ export async function writeDynamicConfig(db: DB): Promise<void> {
     'http:\n' +
     '  routers:\n' +
     (routers.length ? routers.join('\n') + '\n' : '    {}\n') +
+    '  middlewares:\n' +
+    (middlewares.length ? middlewares.join('\n') + '\n' : '    {}\n') +
     '  services:\n' +
     (svcBlocks.length ? svcBlocks.join('\n') + '\n' : '    {}\n') +
     tlsCerts;
 
   writeAtomic(dynamicPath(), yaml);
+}
+
+/** Parse the domain `headers` JSON column into sanitized {name, value} pairs. */
+export function parseHeaders(raw: string | null | undefined): Array<{ name: string; value: string }> {
+  if (!raw) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  const out: Array<{ name: string; value: string }> = [];
+  for (const item of parsed) {
+    const h = item as Partial<{ name: unknown; value: unknown }>;
+    if (typeof h?.name !== 'string' || typeof h?.value !== 'string') continue;
+    const name = h.name.replace(/[^A-Za-z0-9-]/g, '');
+    if (!name) continue;
+    // Strip YAML-breaking characters from the value.
+    out.push({ name, value: h.value.replace(/["\\\n\r]/g, '') });
+  }
+  return out;
+}
+
+/** Header names become YAML keys — quote anything that could be misread. */
+function yamlKey(name: string): string {
+  return `"${name}"`;
+}
+
+function yamlValue(value: string): string {
+  return value;
 }
 
 /** Escape regex metacharacters in a (already sanitized) domain suffix. */

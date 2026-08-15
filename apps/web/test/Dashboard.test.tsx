@@ -41,7 +41,15 @@ describe('Dashboard', () => {
     vi.clearAllMocks();
   });
 
-  it('shows skeleton while loading', () => {
+it('shows an error card with retry when the dashboard query fails', async () => {
+    mockOf(api.dashboard.get).mockRejectedValue(new Error('boom'));
+    renderWithProviders(<Dashboard />);
+    expect(await screen.findByText(/Couldn't load the dashboard/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(api.dashboard.get).toHaveBeenCalledTimes(2);
+  });
+
+    it('shows skeleton while loading', () => {
     mockOf(api.dashboard.get).mockReturnValue(new Promise(() => {}));
     renderWithProviders(<Dashboard />);
     expect(document.querySelectorAll('.animate-pulse').length).toBe(6);

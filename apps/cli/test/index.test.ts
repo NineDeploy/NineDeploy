@@ -99,9 +99,11 @@ const h = vi.hoisted(() => {
     deploysRollback: vi.fn(),
     tokenCreate: vi.fn(),
     tokenList: vi.fn(),
-    systemInfo: vi.fn(),
-    systemDashboard: vi.fn(),
-    banner: vi.fn(),
+  systemInfo: vi.fn(),
+  systemDashboard: vi.fn(),
+  systemUpdateCheck: vi.fn(),
+  usersResetLink: vi.fn(),
+  banner: vi.fn(),
   };
 });
 
@@ -127,6 +129,7 @@ vi.mock('../src/commands/misc.js', () => ({
   deploysRollback: h.deploysRollback,
   systemDashboard: h.systemDashboard,
   systemInfo: h.systemInfo,
+  systemUpdateCheck: h.systemUpdateCheck,
   tplDeploy: h.tplDeploy,
   tplList: h.tplList,
   tokenCreate: h.tokenCreate,
@@ -150,6 +153,7 @@ vi.mock('../src/commands/manage.js', () => ({
   systemExport: h.systemExport,
   systemImport: h.systemImport,
   usersList: h.usersList,
+  usersResetLink: h.usersResetLink,
   volumesList: h.volumesList,
   volumesRemove: h.volumesRemove,
 }));
@@ -207,21 +211,22 @@ describe('program registration', () => {
     expect(root.children.map((c) => c.cmdName)).toEqual([
       'setup', 'login', 'logout', 'whoami', 'config',
       'services', 'databases', 'templates', 'deploys', 'token', 'system',
-      'env', 'domains', 'volumes', 'backups', 'alerts', 'users', 'activity',
+      'env', 'domains', 'volumes', 'backups', 'alerts', 'users',
+      'reset-link <idOrEmail>', 'activity',
     ]);
     expect(findCommand('services').children).toHaveLength(10);
     expect(findCommand('databases').children).toHaveLength(2);
     expect(findCommand('templates').children).toHaveLength(2);
     expect(findCommand('deploys').children).toHaveLength(3);
     expect(findCommand('token').children).toHaveLength(2);
-    expect(findCommand('system').children).toHaveLength(4);
+    expect(findCommand('system').children).toHaveLength(5);
     expect(findCommand('env').children).toHaveLength(3);
     expect(findCommand('domains').children).toHaveLength(3);
     expect(findCommand('volumes').children).toHaveLength(2);
     expect(findCommand('backups').children).toHaveLength(3);
     expect(findCommand('alerts').children).toHaveLength(3);
-    // 1 root + 18 direct + nested: 10 + 2 + 2 + 3 + 2 + 4 + 3 + 3 + 2 + 3 + 3
-    expect(h.FakeCommand.instances).toHaveLength(56);
+    // 1 root + 19 direct + nested: 10 + 2 + 2 + 3 + 2 + 5 + 3 + 3 + 2 + 3 + 3
+    expect(h.FakeCommand.instances).toHaveLength(58);
     // argv length > 2 → no banner, no exit
     expect(h.banner).not.toHaveBeenCalled();
     expect(h.exit).not.toHaveBeenCalled();
@@ -454,10 +459,28 @@ describe('delegating actions', () => {
     await findCommand('activity').actionFn!();
     await sub('system', 'export').actionFn!('out.json');
     await sub('system', 'import').actionFn!('bundle.json');
+    await sub('system', 'update-check').actionFn!({ force: true });
     await sub('deploys', 'watch').actionFn!('1', '2');
+    await findCommand('reset-link <idOrEmail>').actionFn!('admin@example.com');
 
     // Every action routed through the shared client.
     expect(h.getClient).toHaveBeenCalled();
+  });
+
+  it('wires the update-check force flag and the reset-link command', async () => {
+    const client = { fake: true };
+    h.getClient.mockReturnValue(client);
+
+    await loadIndex();
+
+    const update = findCommand('system').children.find((c) => c.cmdName === 'update-check')!;
+    await update.actionFn!({ force: true });
+    expect(h.systemUpdateCheck).toHaveBeenCalledWith(client, true);
+    await update.actionFn!({});
+    expect(h.systemUpdateCheck).toHaveBeenCalledWith(client, false);
+
+    await findCommand('reset-link <idOrEmail>').actionFn!('2');
+    expect(h.usersResetLink).toHaveBeenCalledWith(client, '2');
   });
 
   it('wires databases, templates, deploys, token, and system subcommands', async () => {

@@ -2,7 +2,11 @@ import { describe, expect, it, vi } from 'vitest';
 import { userRoutes } from '../src/modules/users.js';
 import { asUser, buildTestApp, createFakeDb, userRow } from './helpers.js';
 
-const cryptoMock = vi.hoisted(() => ({ hashPassword: vi.fn(async () => 'new-hash') }));
+const cryptoMock = vi.hoisted(() => ({
+  hashPassword: vi.fn(async () => 'new-hash'),
+  randomToken: vi.fn(() => 'r'.repeat(43)),
+  sha256: vi.fn(() => 'tok-hash'),
+}));
 vi.mock('../src/lib/crypto.js', () => cryptoMock);
 
 const admin = () => userRow({ id: 1, role: 'admin' });
@@ -219,5 +223,34 @@ describe('users routes', () => {
     });
     expect(res.statusCode).toBe(400);
     expect(res.json().error.code).toBe('validation_error');
+  });
+
+  // ── one-time reset links ────────────────────────────────────────────────
+  it('mints a one-time reset link for an existing user', async () => {
+    const app = await appWith({
+      findFirst: { users: userRow({ id: 2, email: 'b@example.com' }) },
+      delete: { password_reset_tokens: [{}] },
+      insert: { password_reset_tokens: [{}] },
+    });
+    const res = await app.inject({ method: 'POST', url: '/2/reset-link', headers: asUser(1) });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.url).toMatch(/\/reset-password\?token=/);
+    expect(body.expiresAt).toBeTruthy();
+  });
+
+  it('404s when minting a reset link for a missing user', async () => {
+    // First users.findFirst call = the admin preHandler; second = the target.
+    let calls = 0;
+    const app = await appWith({
+      findFirst: {
+        users: () => {
+          calls += 1;
+          return calls === 1 ? userRow({ id: 2, email: 'b@example.com' }) : undefined;
+        },
+      },
+    });
+    const res = await app.inject({ method: 'POST', url: '/99/reset-link', headers: asUser(1) });
+    expect(res.statusCode).toBe(404);
   });
 });

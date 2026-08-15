@@ -55,6 +55,36 @@ describe('sources routes', () => {
     expect(res.json()).toMatchObject({ id: 9, hasToken: false, hasDeployKey: false });
   });
 
+  it('creates a registry source with a username', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({ insert: { sources: [sourceRow({ id: 10, type: 'registry', tokenEncrypted: 'enc', registryUsername: 'ci-bot' })] } }),
+    });
+    await app.register(sourcesRoutes);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/',
+      headers: asUser(),
+      payload: { name: 'ghcr', type: 'registry', token: 'pat', registryUsername: 'ci-bot' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ id: 10, type: 'registry', registryUsername: 'ci-bot', hasToken: true });
+  });
+
+  it('patches the registry username (empty string clears it)', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({ update: { sources: [sourceRow({ id: 1, type: 'registry', registryUsername: null })] } }),
+    });
+    await app.register(sourcesRoutes);
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/1',
+      headers: asUser(),
+      payload: { registryUsername: '' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().registryUsername).toBeNull();
+  });
+
   it('patches name, branch, token and deploy key', async () => {
     const app = await buildTestApp({
       db: createFakeDb({ update: { sources: [sourceRow({ id: 1, name: 'renamed', defaultBranch: 'dev' })] } }),

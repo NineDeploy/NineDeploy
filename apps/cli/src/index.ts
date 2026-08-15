@@ -11,7 +11,7 @@ import {
 } from './commands/services.js';
 import {
   dbCreate, dbList, deploysList, deploysRollback,
-  systemDashboard, systemInfo, tplDeploy, tplList,
+  systemDashboard, systemInfo, systemUpdateCheck, tplDeploy, tplList,
   tokenCreate, tokenList,
 } from './commands/misc.js';
 import {
@@ -19,7 +19,7 @@ import {
   backupsCreate, backupsList, backupsRestore,
   deploysWatch, domainsAdd, domainsList, domainsRemove,
   envList, envRemove, envSet, systemExport, systemImport,
-  usersList, volumesList, volumesRemove,
+  usersList, usersResetLink, volumesList, volumesRemove,
 } from './commands/manage.js';
 
 const program = new Command();
@@ -133,6 +133,9 @@ const system = program.command('system').description('System information & tools
 system.command('info').description('Show version, stats, and tech stack').action(() => systemInfo(getClient()));
 
 system.command('dashboard').description('Live dashboard with service health').action(() => systemDashboard(getClient()));
+system.command('update-check').description('Compare the running version with the latest release')
+  .option('-f, --force', 'Bypass the 6h cache')
+  .action((opts: { force?: boolean }) => systemUpdateCheck(getClient(), opts.force === true));
 
 // ── Env vars ──────────────────────────────────────────────────────────────
 const envCmd = program.command('env').description('Manage service environment variables');
@@ -190,6 +193,8 @@ alertsCmd.command('rm <id>').description('Delete an alert rule').action((id: str
 
 // ── Users & activity ───────────────────────────────────────────────────────
 program.command('users').description('List users (admin)').action(() => usersList(getClient()));
+program.command('reset-link <idOrEmail>').description('Generate a one-time password reset link (admin)')
+  .action((who: string) => usersResetLink(getClient(), who));
 
 program.command('activity').description('Show recent activity').action(() => activityList(getClient()));
 

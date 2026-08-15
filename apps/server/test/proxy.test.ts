@@ -685,4 +685,98 @@ describe('DNS-01 challenge (wildcard SSL)', () => {
     h.config.acmeEmail = null;
     h.config.wildcardDomain = '';
   });
+
+  it('emits a www→apex redirect middleware and wires it to the router', async () => {
+    const db = makeDb(
+      [{ id: 1, serviceId: 1, hostname: 'www.example.com', path: '/', ssl: true, redirectWww: true }],
+      [{ id: 1, slug: 'web', port: 3000, runtimeId: 'web-1' }],
+    );
+
+    await writeDynamicConfig(db as never);
+
+    const yaml = readFileSync(path.join(traefikDir, 'dynamic.yml'), 'utf8');
+    expect(yaml).toContain('mw_web_1_www:');
+    expect(yaml).toContain('regex: "^https?://(?:www\\.)?example\\.com(.*)"');
+    expect(yaml).toContain('replacement: "https://example.com$1"');
+    expect(yaml).toContain('middlewares:\n        - mw_web_1_www');
+    // The empty middlewares section is never emitted when one exists.
+    expect(yaml).not.toContain('middlewares:    {}');
+  });
+
+  it('skips the www redirect for wildcard hostnames', async () => {
+    const db = makeDb(
+      [{ id: 1, serviceId: 1, hostname: '*.example.com', path: '/', ssl: true, redirectWww: true }],
+      [{ id: 1, slug: 'web', port: 3000, runtimeId: 'web-1' }],
+    );
+
+    await writeDynamicConfig(db as never);
+
+    const yaml = readFileSync(path.join(traefikDir, 'dynamic.yml'), 'utf8');
+    expect(yaml).not.toContain('mw_web_1_www');
+  });
+
+  it('emits sanitized custom response headers as a middleware', async () => {
+    const db = makeDb(
+      [
+        {
+          id: 1, serviceId: 1, hostname: 'app.example.com', path: '/', ssl: false,
+          headers: JSON.stringify([
+            { name: 'X-Frame-Options', value: 'DENY' },
+            { name: 'X-Evil-Name!"', value: 'va"lue\nbreak' },
+            { name: '', value: 'dropped' },
+            'not-an-object',
+          ]),
+        },
+      ],
+      [{ id: 1, slug: 'web', port: 3000, runtimeId: 'web-1' }],
+    );
+
+    await writeDynamicConfig(db as never);
+
+    const yaml = readFileSync(path.join(traefikDir, 'dynamic.yml'), 'utf8');
+    expect(yaml).toContain('mw_web_1_headers:');
+    expect(yaml).toContain('"X-Frame-Options": "DENY"');
+    // Unsafe chars are stripped from names and values; empty names dropped.
+    expect(yaml).toContain('"X-Evil-Name": "valuebreak"');
+    expect(yaml).not.toContain('dropped');
+    expect(yaml).toContain('middlewares:\n        - mw_web_1_headers');
+  });
+
+  it('ignores malformed headers JSON entirely', async () => {
+    const db = makeDb(
+      [{ id: 1, serviceId: 1, hostname: 'app.example.com', path: '/', ssl: false, headers: '{oops' }],
+      [{ id: 1, slug: 'web', port: 3000, runtimeId: 'web-1' }],
+    );
+
+    await writeDynamicConfig(db as never);
+
+    const yaml = readFileSync(path.join(traefikDir, 'dynamic.yml'), 'utf8');
+    expect(yaml).not.toContain('mw_web_1_headers');
+    expect(yaml).toContain('middlewares:\n    {}');
+  });
+
+  it('ignores a non-array headers JSON document', async () => {
+    const db = makeDb(
+      [{ id: 1, serviceId: 1, hostname: 'app.example.com', path: '/', ssl: false, headers: '{"name":"x"}' }],
+      [{ id: 1, slug: 'web', port: 3000, runtimeId: 'web-1' }],
+    );
+
+    await writeDynamicConfig(db as never);
+
+    const yaml = readFileSync(path.join(traefikDir, 'dynamic.yml'), 'utf8');
+    expect(yaml).not.toContain('mw_web_1_headers');
+  });
+
+  it('writes an empty middlewares section when no domain needs one', async () => {
+    const db = makeDb(
+      [{ id: 1, serviceId: 1, hostname: 'plain.example.com', path: '/', ssl: false }],
+      [{ id: 1, slug: 'web', port: 3000, runtimeId: 'web-1' }],
+    );
+
+    await writeDynamicConfig(db as never);
+
+    const yaml = readFileSync(path.join(traefikDir, 'dynamic.yml'), 'utf8');
+    expect(yaml).toContain('middlewares:\n    {}');
+    expect(yaml).not.toContain('middlewares:\n        -');
+  });
 });

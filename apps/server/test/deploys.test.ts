@@ -140,6 +140,73 @@ describe('deploys routes', () => {
     expect(res.statusCode).toBe(404);
   });
 
+  // ── cancel ────────────────────────────────────────────────────────────────
+  it('cancels a queued deployment', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { deployments: depRow({ id: 9, serviceId: 1, status: 'queued' }) },
+        update: { deployments: [{ id: 9 }] },
+      }),
+    });
+    await app.register(deploysRoutes, { prefix: '/services' });
+    const res = await app.inject({ method: 'POST', url: '/services/1/deploys/9/cancel', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: true, status: 'cancelled' });
+  });
+
+  it('cancels an in-flight (building) deployment', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { deployments: depRow({ id: 11, serviceId: 1, status: 'building' }) },
+        update: { deployments: [{ id: 11 }] },
+      }),
+    });
+    await app.register(deploysRoutes, { prefix: '/services' });
+    const res = await app.inject({ method: 'POST', url: '/services/1/deploys/11/cancel', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    // The pipeline is told via the log bus.
+    await waitFor(() => logBus.read(11) != null);
+    expect(logBus.read(11)).toContain('Cancellation requested');
+  });
+
+  it('rejects cancelling a finished deployment', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({ findFirst: { deployments: depRow({ id: 12, serviceId: 1, status: 'running' }) } }),
+    });
+    await app.register(deploysRoutes, { prefix: '/services' });
+    const res = await app.inject({ method: 'POST', url: '/services/1/deploys/12/cancel', headers: asUser() });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('returns 404 when cancelling a missing deployment', async () => {
+    const app = await buildTestApp({ db: createFakeDb() });
+    await app.register(deploysRoutes, { prefix: '/services' });
+    const res = await app.inject({ method: 'POST', url: '/services/1/deploys/99/cancel', headers: asUser() });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('returns 404 when the deployment belongs to another service', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({ findFirst: { deployments: depRow({ id: 9, serviceId: 2, status: 'queued' }) } }),
+    });
+    await app.register(deploysRoutes, { prefix: '/services' });
+    const res = await app.inject({ method: 'POST', url: '/services/1/deploys/9/cancel', headers: asUser() });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('reports a race when the status flips between read and write', async () => {
+    // The row read says building, but the conditional update matches nothing.
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { deployments: depRow({ id: 13, serviceId: 1, status: 'building' }) },
+        update: { deployments: [] },
+      }),
+    });
+    await app.register(deploysRoutes, { prefix: '/services' });
+    const res = await app.inject({ method: 'POST', url: '/services/1/deploys/13/cancel', headers: asUser() });
+    expect(res.statusCode).toBe(400);
+  });
+
   it('returns 404 when rolling back across services', async () => {
     const app = await buildTestApp({
       db: createFakeDb({ findFirst: { deployments: depRow({ id: 9, serviceId: 1 }) } }),

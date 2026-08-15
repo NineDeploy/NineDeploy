@@ -5,6 +5,8 @@ import type { FastifyPluginAsync } from 'fastify';
 import { passwordReset, rolePatch } from '@ninedeploy/schemas';
 import { badRequest, forbidden, notFound, parseId } from '../lib/errors.js';
 import { hashPassword } from '../lib/crypto.js';
+import { issueResetToken } from '../lib/passwordReset.js';
+import { config } from '../config.js';
 
 function serialize(u: typeof users.$inferSelect) {
   return { id: u.id, email: u.email, name: u.name, role: u.role };
@@ -77,5 +79,20 @@ export const userRoutes: FastifyPluginAsync = async (app) => {
     if (!updated) throw notFound('User not found');
     void audit(app.db, req.user!.id, 'user.password', `reset for #${id}`);
     return { ok: true };
+  });
+
+  // Admin-issued one-time reset link: mints a 30-minute single-use token and
+  // returns the raw link exactly once (webhook-secret pattern). For instances
+  // without an email channel the admin hands the link to the user directly.
+  app.post('/:id/reset-link', async (req) => {
+    const id = parseId((req.params as { id: string }).id);
+    const target = await app.db.query.users.findFirst({ where: eq(users.id, id) });
+    if (!target) throw notFound('User not found');
+    const { token, expiresAt } = await issueResetToken(app.db, target, `admin:${req.user!.id}`);
+    void audit(app.db, req.user!.id, 'user.reset_link', target.email);
+    return {
+      url: `${config.publicUrl}/reset-password?token=${encodeURIComponent(token)}`,
+      expiresAt: expiresAt.toISOString(),
+    };
   });
 };

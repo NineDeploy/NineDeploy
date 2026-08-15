@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { type FormEvent, type ReactNode, useEffect, useState } from 'react';
 import { Activity, BellRing, Cpu, Database, Gauge, HardDrive, MemoryStick, Server } from 'lucide-react';
+import { Link } from 'react-router';
 import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.js';
 import { Button, Card, Input, Select, Skeleton, StatusBadge, cn } from '../components/ui.js';
@@ -224,7 +225,7 @@ function BarCard({ icon, label, pct, text }: { icon: ReactNode; label: string; p
 
 function ContainerCard({ c }: { c: import('@ninedeploy/sdk').ContainerStat }) {
   const isService = c.kind === 'service';
-  return (
+  const card = (
     <Card interactive className="p-5">
       <div className="flex items-start justify-between">
         <div className="flex items-center gap-2.5">
@@ -257,6 +258,8 @@ function ContainerCard({ c }: { c: import('@ninedeploy/sdk').ContainerStat }) {
       <LimitsRow kind={c.kind} id={c.refId} />
     </Card>
   );
+  // Service cards link to their detail page; the interactive affordance is real.
+  return isService ? <Link to={`/services/${c.refId}`}>{card}</Link> : card;
 }
 
 function ServiceSpark({ id }: { id: number }) {

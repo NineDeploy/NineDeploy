@@ -84,6 +84,17 @@ describe('Hub', () => {
     expect(screen.queryByText('Publishing platform')).not.toBeInTheDocument();
   });
 
+  it('shows the requires hint for templates that need extra setup', async () => {
+    mockOf(api.templates.get).mockResolvedValue({
+      ...templateDetail,
+      requires: 'Umami needs a PostgreSQL database — one is provisioned automatically',
+      dbEngine: 'postgres',
+    } as never);
+    renderWithProviders(<Hub />);
+    fireEvent.click(await screen.findByText('n8n'));
+    expect(await screen.findByText(/provisioned automatically/)).toBeInTheDocument();
+  });
+
   it('shows a custom-registry badge when a source is configured', async () => {
     mockOf(api.settings.get).mockResolvedValue({ allowRegistration: true, acmeEmail: null, templatesSource: 'https://registry.example.com/r.json', dnsProvider: null, hasDnsToken: false, wildcardApex: null } as never);
     mockOf(api.templates.list).mockResolvedValue(templates as never);

@@ -351,12 +351,31 @@ describe('service', () => {
       healthPath: '/',
       autoUrl: null,
       port: null,
+      cpuShares: 0,
+      memLimitMb: 0,
+      build: null,
       createdAt: '2026-01-01T00:00:00Z',
       updatedAt: '2026-01-01T00:00:00Z',
     };
 
     it('accepts a full service row', () => {
       expect(service.safeParse(valid).success).toBe(true);
+    });
+
+    it('accepts a row with a build config', () => {
+      expect(
+        service.safeParse({
+          ...valid,
+          build: {
+            buildPack: 'dockerfile',
+            baseDir: '/app',
+            installCmd: null,
+            buildCmd: 'npm run build',
+            startCmd: null,
+            dockerfilePath: './Dockerfile',
+          },
+        }).success,
+      ).toBe(true);
     });
 
     it('rejects invalid rows', () => {
@@ -424,7 +443,7 @@ describe('service', () => {
     });
 
     it('domain accepts a row', () => {
-      const data = ok(domain, { id: 1, serviceId: 2, hostname: 'a.example.com', path: '/', ssl: true, status: 'active', createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' });
+      const data = ok(domain, { id: 1, serviceId: 2, hostname: 'a.example.com', path: '/', ssl: true, redirectWww: false, headers: '[]', status: 'active', createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' });
       expect(data?.hostname).toBe('a.example.com');
       bad(domain, { ...(data as object), ssl: 'yes' });
     });
@@ -438,13 +457,13 @@ describe('service', () => {
     });
 
     it('webhook accepts a row', () => {
-      const data = ok(webhook, { id: 1, branch: 'main', active: true, url: 'https://x', createdAt: '2026-01-01T00:00:00Z' });
+      const data = ok(webhook, { id: 1, branch: 'main', active: true, watchPaths: '', url: 'https://x', createdAt: '2026-01-01T00:00:00Z' });
       expect(data?.active).toBe(true);
-      bad(webhook, { id: 1, branch: 'main', active: true, url: 'https://x', createdAt: 'bad' });
+      bad(webhook, { id: 1, branch: 'main', active: true, watchPaths: '', url: 'https://x', createdAt: 'bad' });
     });
 
     it('createdWebhook includes a secret', () => {
-      const data = ok(createdWebhook, { id: 1, branch: 'main', active: true, url: 'https://x', createdAt: '2026-01-01T00:00:00Z', secret: 's3cr3t' });
+      const data = ok(createdWebhook, { id: 1, branch: 'main', active: true, watchPaths: '', url: 'https://x', createdAt: '2026-01-01T00:00:00Z', secret: 's3cr3t' });
       expect(data?.secret).toBe('s3cr3t');
       bad(createdWebhook, { id: 1, branch: 'main', active: true, url: 'https://x', createdAt: '2026-01-01T00:00:00Z' });
     });
@@ -606,9 +625,9 @@ describe('service', () => {
 
   describe('volumeEntry', () => {
     it('accepts a row with nullable owner', () => {
-      const data = ok(volumeEntry, { name: 'v', sizeBytes: 100, owner: null });
+      const data = ok(volumeEntry, { name: 'v', sizeBytes: 100, owner: null, inUse: false });
       expect(data?.owner).toBeNull();
-      expect(volumeEntry.safeParse({ name: 'v', sizeBytes: 100, owner: { kind: 'database', name: 'db', engine: 'postgres' } }).success).toBe(true);
+      expect(volumeEntry.safeParse({ name: 'v', sizeBytes: 100, owner: { kind: 'database', name: 'db', engine: 'postgres' }, inUse: true }).success).toBe(true);
       bad(volumeEntry, { name: 'v', sizeBytes: 100, owner: { kind: 'x' } });
     });
   });

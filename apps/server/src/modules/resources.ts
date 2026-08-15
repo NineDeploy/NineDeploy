@@ -6,6 +6,7 @@ import { databases, deployments, services, users } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { capture, run } from '../lib/exec.js';
 import { config } from '../config.js';
+import { checkForUpdate } from '../lib/updateCheck.js';
 import { NETWORK } from '../engine/proxy.js';
 
 function parseDf(line: string): Record<string, string> | null {
@@ -17,6 +18,10 @@ export const systemRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('onRequest', app.authenticate);
   // System resources, prune, export/import — admin-only (host-level operations).
   app.addHook('preHandler', app.requireAdmin);
+
+  // Latest-release check (GitHub Releases feed, 6h cache; "unknown" when
+  // offline or disabled — never throws so the dashboard stays usable).
+  app.get('/update-check', async (req) => checkForUpdate((req.query as { force?: string })?.force === '1'));
 
   app.get('/resources', async () => {
     let images: Array<{ repo: string; tag: string; size: string }> = [];

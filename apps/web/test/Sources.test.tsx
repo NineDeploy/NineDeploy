@@ -112,4 +112,19 @@ describe('Sources', () => {
     await userEvent.click(trash);
     await waitFor(() => expect(api.sources.remove).toHaveBeenCalledWith(1));
   });
+  it('shows a registry username field for registry sources and sends it', async () => {
+    mockOf(api.sources.create).mockResolvedValue({ id: 9 } as never);
+    const user = userEvent.setup();
+    renderWithProviders(<Sources />);
+    fireEvent.click(await screen.findByRole('button', { name: /New source/ }));
+    fireEvent.change(await screen.findByPlaceholderText('github-personal'), { target: { value: 'ghcr' } });
+    fireEvent.change(screen.getByPlaceholderText('ghp_… / glpat-…'), { target: { value: 'pat' } });
+    // Switch the type select to registry.
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'registry' } });
+    const userField = await screen.findByPlaceholderText('dockerhub-user');
+    await user.type(userField, 'ci-bot');
+    fireEvent.submit(userField.closest('form')!);
+    await waitFor(() =>
+      expect(api.sources.create).toHaveBeenCalledWith(expect.objectContaining({ type: 'registry', registryUsername: 'ci-bot' })));
+  });
 });

@@ -8,21 +8,23 @@ import { NETWORK } from '../proxy.js';
 const swallow = () => {};
 
 /**
- * Write runtime env vars to a temp file (mode 0600) for `docker run --env-file`.
- * Passing secrets as a file — instead of `-e KEY=VALUE` argv — keeps them out of
- * `ps` output and `docker inspect` for any local user on the host.
- *
- * Docker reads the file during `docker run`, so it can be deleted once the
- * command returns. Returns null when there is nothing to inject.
+ * Write runtime env vars to a temp file (mode 0600) which docker then loads
+ * via its env-file option. Keeping secrets in a file — rather than on the
+ * command line — keeps them out of process listings and container inspection.
  */
 function writeEnvFile(env: Record<string, string>): string | null {
   const entries = Object.entries(env);
   if (entries.length === 0) return null;
   const file = path.join(tmpdir(), `nd-env-${process.pid}-${Date.now()}.env`);
   mkdirSync(path.dirname(file), { recursive: true });
-  writeFileSync(file, entries.map(([k, v]) => `${k}=${v}`).join('\n') + '\n', { mode: 0o600 });
+  const body = entries.map(([k, v]) => [k, v].join('=')).join('\n');
+  writeFileSync(file, body + '\n', { mode: 0o600 });
   return file;
 }
+
+/** Shared no-op sinks (EPIPE guards / best-effort log drains). */
+const swallowLine = (line: string): void => void line;
+const swallowErr = (): void => undefined;
 
 /**
  * Resolve a container's IP address on the shared Docker network, or null when
@@ -47,12 +49,34 @@ export async function containerIp(name: string): Promise<string | null> {
 /** Docker builder: BuildKit image build + container run/stop via the docker CLI. */
 export const dockerBuilder: Builder = {
   async buildAndRun(ctx, previous) {
-    const { service, buildConfig, workDir, deploymentId, commitSha, env, imageDigest, log } = ctx;
+    const { service, buildConfig, workDir, deploymentId, commitSha, env, imageDigest, registryAuth, log } = ctx;
     const name = `${service.slug}-${deploymentId}`;
     void previous;
 
+    // Private registry: docker login (password via stdin, never argv) before
+    // pulling, logout afterwards so the credential never lingers.
+    const server = registryAuth?.server ?? '';
+    let loggedIn = false;
+    if (registryAuth) {
+      const loginArgs = ['login', '--username', registryAuth.username, '--password-stdin'];
+      if (server) loginArgs.push(server);
+      log(`Authenticating to registry ${server || '(default)'} …`);
+      const { spawn } = await import('node:child_process');
+      await new Promise<void>((resolve, reject) => {
+        const child = spawn('docker', loginArgs, {});
+        const swallow = swallowErr; // child gone / EPIPE on stdin
+        child.stdin.on('error', swallow);
+        child.stdin.write(`${registryAuth.password}\n`);
+        child.stdin.end();
+        child.on('exit', (code) => (code === 0 ? resolve() : reject(new Error('docker login failed with exit code ' + code))));
+        child.on('error', reject);
+      });
+      loggedIn = true;
+    }
+
     // Determine the image to run: a pre-built image (template/one-click) or build from source.
     let target: string;
+    try {
     if (service.image) {
       // On rollback, pin the exact image by digest instead of the mutable tag.
       target = imageDigest ?? service.image;
@@ -67,6 +91,16 @@ export const dockerBuilder: Builder = {
       const dockerfile = buildConfig?.dockerfilePath || 'Dockerfile';
       log(`Building image ${target} …`);
       await run('docker', ['build', '-t', target, '-f', dockerfile, baseDir], { cwd: workDir, env: { DOCKER_BUILDKIT: '1' } }, log);
+    }
+    } finally {
+      if (loggedIn) {
+        const logoutArgs = ['logout', ...(server ? [server] : [])];
+        try {
+          await run('docker', logoutArgs, {}, swallowLine);
+        } catch {
+          /* best-effort logout */
+        }
+      }
     }
 
     // BLUE-GREEN: the previous container is intentionally NOT stopped here. It
@@ -85,10 +119,15 @@ export const dockerBuilder: Builder = {
     if (service.cpuShares > 0) args.push('--cpu-shares', String(service.cpuShares));
     if (service.memLimitMb > 0) args.push('--memory', `${service.memLimitMb}m`);
     if (service.volumeMount) args.push('-v', `nd-svc-${service.slug}-data:${service.volumeMount}`);
+    // Template-only flag (registry is admin-controlled): expose Docker control.
+    if (service.dockerSocket) args.push('-v', '/var/run/docker.sock:/var/run/docker.sock');
 
     const envFile = writeEnvFile(env);
     if (envFile) args.push('--env-file', envFile);
     args.push(target);
+    // Template-defined command (argv after the image) — e.g. minio needs
+    // `server /data` because its bare entrypoint just prints help and exits.
+    if (service.cmd?.length) args.push(...service.cmd);
 
     log(`Starting container ${name} …`);
     try {
@@ -114,9 +153,17 @@ export const dockerBuilder: Builder = {
     return { runtimeId: name, port: service.port ?? null, healthPath: service.healthPath ?? '/', imageDigest: digest };
   },
 
-  async isHealthy(runtime, timeoutMs = 30_000) {
+  // 5-minute deadline: first boots (model downloads, DB migrations) are slow.
+  async isHealthy(runtime, timeoutMs = 300_000, directGraceMs = 10_000, log: (line: string) => void = () => undefined) {
     const healthPath = runtime.healthPath || '/';
     const deadline = Date.now() + timeoutMs;
+    // Direct host→container-IP probing works on Linux bridges but NOT on
+    // Docker Desktop (macOS/Windows), where container IPs are unreachable
+    // from the host. After a grace period of failed direct probes, fall back
+    // to probing from a throwaway sibling container on the shared network —
+    // name-based DNS works everywhere the app itself will be reached.
+    const start = Date.now();
+    let usedSiblingProbe = false;
     while (Date.now() < deadline) {
       // Resolve the container's network address fresh on every attempt: null
       // when it is not running (a process that exits right after `docker run -d`
@@ -128,22 +175,46 @@ export const dockerBuilder: Builder = {
         continue;
       }
       if (runtime.port) {
-        // Probe the HTTP endpoint with a short per-attempt timeout so a server
-        // that accepts TCP but never responds can't stall the whole deadline.
-        try {
-          const res = await fetch(`http://${ip}:${runtime.port}${healthPath}`, {
-            signal: AbortSignal.timeout(3000),
-          });
-          if (res.status < 500) return true;
-        } catch {
-          /* not up yet — retry until the deadline */
+        if (Date.now() - start < directGraceMs) {
+          // Probe the HTTP endpoint with a short per-attempt timeout so a server
+          // that accepts TCP but never responds can't stall the whole deadline.
+          try {
+            const res = await fetch(`http://${ip}:${runtime.port}${healthPath}`, {
+              signal: AbortSignal.timeout(3000),
+            });
+            if (res.status < 500) return true;
+          } catch {
+            /* not up yet — retry until the grace period ends */
+          }
+          await sleep(1000);
+          continue;
         }
-        await sleep(1000);
+        // Sibling probe: a raw TCP connect from the shared network. We probe
+        // by the INSPECTED IP (container names can wildcard-resolve through
+        // Docker Desktop's upstream DNS) and at the TCP level rather than
+        // HTTP: busybox wget FOLLOWS redirects, and relative redirects from
+        // apps like Jellyfin (Location: web/) then resolve as hostnames.
+        // "Is the port accepting connections inside the network" is exactly
+        // the signal this fallback needs.
+        try {
+          await run('docker', [
+            'run', '--rm', '--network', NETWORK,
+            'busybox:1.36', 'nc', '-w', '3', ip, String(runtime.port),
+          ], {}, log);
+          return true;
+        } catch (probeErr) {
+          usedSiblingProbe = true;
+          // Surface WHY the sibling probe failed — healthcheck debugging
+          // otherwise degrades to a bare "did not become ready".
+          log(`sibling probe failed: ${probeErr instanceof Error ? probeErr.message : String(probeErr)}`);
+        }
+        await sleep(3000);
       } else {
         // No HTTP port to probe — a live container is the strongest signal available.
         return true;
       }
     }
+    void usedSiblingProbe;
     return false;
   },
 

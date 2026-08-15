@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { authRoutes, createFirstAdmin, registerAccount } from '../src/modules/auth.js';
 import { asUser, buildTestApp, createFakeDb, tokenRow, userRow } from './helpers.js';
 
@@ -21,10 +21,27 @@ const jwtMocks = vi.hoisted(() => ({
 vi.mock('../src/lib/crypto.js', () => cryptoMocks);
 vi.mock('../src/lib/jwt.js', () => jwtMocks);
 
+const notifierMocks = vi.hoisted(() => ({
+  sendSystemEmail: vi.fn(async () => false),
+  notifyEvent: vi.fn(async () => undefined),
+}));
+vi.mock('../src/lib/notifier.js', () => notifierMocks);
+
+const totpMocks = vi.hoisted(() => ({
+  generateSecret: vi.fn(() => 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ'),
+  otpauthUri: vi.fn(() => 'otpauth://totp/x'),
+  verifyTotp: vi.fn(() => true),
+}));
+vi.mock('../src/lib/totp.js', () => totpMocks);
+
 const validRegister = { email: 'new@example.com', password: 'password123' };
 
-describe('auth module helpers', () => {
-  it('createFirstAdmin succeeds when no users exist', async () => {
+beforeEach(() => {
+  notifierMocks.sendSystemEmail.mockReset();
+  notifierMocks.sendSystemEmail.mockResolvedValue(false);
+});
+
+describe('auth module helpers', () => {  it('createFirstAdmin succeeds when no users exist', async () => {
     const db = createFakeDb({
       counts: { users: [{ n: 0 }] },
       insert: { users: [userRow({ id: 1, email: 'new@example.com' })] },
@@ -446,5 +463,116 @@ describe('auth routes', () => {
     expect(me.statusCode).toBe(401);
     const list = await app.inject({ method: 'GET', url: '/tokens' });
     expect(list.statusCode).toBe(401);
+  });
+
+  // ── forgot / reset password ─────────────────────────────────────────────
+  it('accepts a forgot-password request for an existing user', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { users: userRow({ id: 1 }) },
+        delete: { password_reset_tokens: [{}] },
+        insert: { password_reset_tokens: [{}] },
+      }),
+    });
+    await app.register(authRoutes);
+    const res = await app.inject({ method: 'POST', url: '/forgot-password', payload: { email: 'admin@example.com' } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: true });
+  });
+
+  it('answers forgot-password identically for an unknown user (no enumeration)', async () => {
+    const app = await buildTestApp({ db: createFakeDb() });
+    await app.register(authRoutes);
+    const res = await app.inject({ method: 'POST', url: '/forgot-password', payload: { email: 'ghost@example.com' } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: true });
+  });
+
+  it('emails the reset link when an email channel exists; a failure still answers ok', async () => {
+    notifierMocks.sendSystemEmail.mockResolvedValueOnce(true);
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { users: userRow({ id: 1 }) },
+        delete: { password_reset_tokens: [{}] },
+        insert: { password_reset_tokens: [{}] },
+      }),
+    });
+    await app.register(authRoutes);
+    const ok = await app.inject({ method: 'POST', url: '/forgot-password', payload: { email: 'admin@example.com' } });
+    expect(ok.statusCode).toBe(200);
+    expect(notifierMocks.sendSystemEmail).toHaveBeenCalledTimes(1);
+    // Delivery failure must not change the response (no enumeration signal).
+    notifierMocks.sendSystemEmail.mockRejectedValueOnce(new Error('smtp down'));
+    const still = await app.inject({ method: 'POST', url: '/forgot-password', payload: { email: 'admin@example.com' } });
+    expect(still.statusCode).toBe(200);
+    expect(still.json()).toEqual({ ok: true });
+  });
+
+  it('rejects an invalid forgot-password payload', async () => {
+    const app = await buildTestApp({ db: createFakeDb() });
+    await app.register(authRoutes);
+    const res = await app.inject({ method: 'POST', url: '/forgot-password', payload: { email: 'not-an-email' } });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('resets a password with a valid token', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: {
+          passwordResetTokens: {
+            id: 7, userId: 1, tokenHash: 'tok-hash', expiresAt: new Date(Date.now() + 60_000),
+            usedAt: null, requestedFrom: null, createdAt: new Date(),
+          },
+          users: userRow({ id: 1, tokenVersion: 3 }),
+        },
+        update: { users: [userRow({ id: 1, tokenVersion: 4 })], password_reset_tokens: [{}] },
+      }),
+    });
+    await app.register(authRoutes);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/reset-password',
+      payload: { token: 'raw-token-1234567890abcdef', newPassword: 'fresh-password' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: true });
+  });
+
+  it('rejects a reset with an unknown token', async () => {
+    const app = await buildTestApp({ db: createFakeDb() });
+    await app.register(authRoutes);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/reset-password',
+      payload: { token: 'raw-token-1234567890abcdef', newPassword: 'fresh-password' },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  // ── per-account login lockout ────────────────────────────────────────────
+  it('locks an account after 5 failed logins (same message as a wrong password)', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({ findFirst: { users: userRow({ id: 1 }) } }),
+    });
+    await app.register(authRoutes);
+    cryptoMocks.verifyPassword.mockResolvedValue(false);
+    for (let i = 0; i < 5; i++) {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/login',
+        payload: { email: 'lockme@example.com', password: 'wrong' },
+      });
+      expect(res.statusCode).toBe(401);
+      expect(res.json().error.message).toBe('Invalid email or password');
+    }
+    // Even the CORRECT password is rejected while locked.
+    cryptoMocks.verifyPassword.mockResolvedValue(true);
+    const locked = await app.inject({
+      method: 'POST',
+      url: '/login',
+      payload: { email: 'lockme@example.com', password: 'password123' },
+    });
+    expect(locked.statusCode).toBe(401);
+    cryptoMocks.verifyPassword.mockResolvedValue(true);
   });
 });

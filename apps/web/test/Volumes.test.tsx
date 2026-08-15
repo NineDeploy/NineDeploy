@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { screen, waitFor, fireEvent } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { Volumes } from '../src/routes/Volumes.js';
 import { api } from '../src/lib/api.js';
 import { renderWithProviders, mockOf } from './helpers.js';
@@ -9,10 +10,16 @@ vi.mock('../src/lib/api.js', async () => {
   return createFakeApiModule();
 });
 
+const toastSpy = vi.hoisted(() => ({ toast: vi.fn() }));
+vi.mock('../src/components/Toast.js', async () => {
+  const actual = await vi.importActual<typeof import('../src/components/Toast.js')>('../src/components/Toast.js');
+  return { ...actual, useToast: () => toastSpy };
+});
+
 const volumes = [
-  { name: 'nd-data', sizeBytes: 512 * 1024 * 1024, owner: { kind: 'database', name: 'db', engine: 'postgres' } },
-  { name: 'nd-app', sizeBytes: 2 * 1024 ** 3, owner: { kind: 'service', name: 'api', engine: null } },
-  { name: 'nd-old', sizeBytes: 100, owner: null },
+  { name: 'nd-data', sizeBytes: 512 * 1024 * 1024, owner: { kind: 'database', name: 'db', engine: 'postgres' }, inUse: false },
+  { name: 'nd-app', sizeBytes: 2 * 1024 ** 3, owner: { kind: 'service', name: 'api', engine: null }, inUse: false },
+  { name: 'nd-old', sizeBytes: 100, owner: null, inUse: false },
 ];
 
 describe('Volumes', () => {
@@ -58,7 +65,7 @@ describe('Volumes', () => {
     expect(screen.getByText('2.00 GB')).toBeInTheDocument(); // GB branch
     expect(screen.getByText('Retained')).toBeInTheDocument();
     expect(screen.getByText('no active owner')).toBeInTheDocument();
-    expect(screen.getAllByText('attached').length).toBe(2);
+    expect(screen.getAllByText('attached · stopped').length).toBe(2);
     expect(screen.getByText('retained · reusable')).toBeInTheDocument();
     // retained count in subtitle
     expect(screen.getByText(/1 retained/)).toBeInTheDocument();
@@ -67,23 +74,108 @@ describe('Volumes', () => {
     expect(screen.getByRole('link', { name: 'Backups' })).toHaveAttribute('href', '/backups');
   });
 
-  it('deletes a volume after confirmation', async () => {
+  it('deletes a volume after typing its name', async () => {
+    const user = userEvent.setup();
     mockOf(api.volumes.list).mockResolvedValue(volumes as never);
     mockOf(api.system.resources).mockResolvedValue({} as never);
     mockOf(api.volumes.remove).mockResolvedValue(undefined as never);
     renderWithProviders(<Volumes />);
-    const trash = await screen.findAllByTitle('Delete volume (destructive)');
-    fireEvent.click(trash[0]!);
+    fireEvent.click((await screen.findAllByTitle('Delete volume (destructive)'))[0]!);
+    // Delete stays disabled until the exact volume name is typed.
+    const del = screen.getByRole('button', { name: /^Delete$/ });
+    expect(del).toBeDisabled();
+    await user.type(screen.getByLabelText('Confirm volume name'), 'nd-data');
+    expect(del).toBeEnabled();
+    fireEvent.click(del);
     await waitFor(() => expect(api.volumes.remove).toHaveBeenCalledWith('nd-data'));
   });
 
-  it('does not delete when confirmation is declined', async () => {
-    vi.stubGlobal('confirm', vi.fn(() => false));
+  it('ignores a form submit with a mismatched name (button disabled path)', async () => {
+    const user = userEvent.setup();
     mockOf(api.volumes.list).mockResolvedValue(volumes as never);
     mockOf(api.system.resources).mockResolvedValue({} as never);
     renderWithProviders(<Volumes />);
-    const trash = await screen.findAllByTitle('Delete volume (destructive)');
-    fireEvent.click(trash[0]!);
+    fireEvent.click((await screen.findAllByTitle('Delete volume (destructive)'))[0]!);
+    await user.type(screen.getByLabelText('Confirm volume name'), 'nope');
+    fireEvent.submit(screen.getByLabelText('Confirm volume name').closest('form')!);
+    expect(api.volumes.remove).not.toHaveBeenCalled();
+  });
+
+  it('keeps delete disabled for a mismatched volume name', async () => {
+    const user = userEvent.setup();
+    mockOf(api.volumes.list).mockResolvedValue(volumes as never);
+    mockOf(api.system.resources).mockResolvedValue({} as never);
+    renderWithProviders(<Volumes />);
+    fireEvent.click((await screen.findAllByTitle('Delete volume (destructive)'))[0]!);
+    await user.type(screen.getByLabelText('Confirm volume name'), 'wrong');
+    expect(screen.getByRole('button', { name: /^Delete$/ })).toBeDisabled();
+    expect(api.volumes.remove).not.toHaveBeenCalled();
+  });
+
+  it('hides the delete button for in-use volumes and shows the lock', async () => {
+    mockOf(api.volumes.list).mockResolvedValue([
+      { name: 'nd-live', sizeBytes: 10, owner: { kind: 'service', name: 'busy', engine: null }, inUse: true },
+    ] as never);
+    mockOf(api.system.resources).mockResolvedValue({} as never);
+    renderWithProviders(<Volumes />);
+    await screen.findByText('busy');
+    expect(screen.getByText('in use · locked')).toBeInTheDocument();
+    expect(screen.queryByTitle('Delete volume (destructive)')).not.toBeInTheDocument();
+  });
+
+  it('reports a non-Error delete failure with the generic toast', async () => {
+    const user = userEvent.setup();
+    mockOf(api.volumes.list).mockResolvedValue(volumes as never);
+    mockOf(api.system.resources).mockResolvedValue({} as never);
+    mockOf(api.volumes.remove).mockRejectedValue('plain' as never);
+    renderWithProviders(<Volumes />);
+    fireEvent.click((await screen.findAllByTitle('Delete volume (destructive)'))[0]!);
+    await user.type(screen.getByLabelText('Confirm volume name'), 'nd-data');
+    fireEvent.click(screen.getByRole('button', { name: /^Delete$/ }));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Delete failed', 'error'));
+  });
+
+  it('shows the lock title for an in-use volume without an owner kind', async () => {
+    mockOf(api.volumes.list).mockResolvedValue([
+      { name: 'nd-live', sizeBytes: 10, owner: null, inUse: true },
+    ] as never);
+    mockOf(api.system.resources).mockResolvedValue({} as never);
+    renderWithProviders(<Volumes />);
+    const lock = await screen.findByTitle('Attached to a running workload — stop it first');
+    expect(lock).toBeInTheDocument();
+  });
+
+  it('shows the pending label while a delete is in flight', async () => {
+    const user = userEvent.setup();
+    mockOf(api.volumes.list).mockResolvedValue(volumes as never);
+    mockOf(api.system.resources).mockResolvedValue({} as never);
+    mockOf(api.volumes.remove).mockReturnValue(new Promise(() => {}) as never);
+    renderWithProviders(<Volumes />);
+    fireEvent.click((await screen.findAllByTitle('Delete volume (destructive)'))[0]!);
+    await user.type(screen.getByLabelText('Confirm volume name'), 'nd-data');
+    fireEvent.click(screen.getByRole('button', { name: /^Delete$/ }));
+    expect(await screen.findByText('…')).toBeInTheDocument();
+  });
+
+  it('reports delete failures via toast', async () => {
+    const user = userEvent.setup();
+    mockOf(api.volumes.list).mockResolvedValue(volumes as never);
+    mockOf(api.system.resources).mockResolvedValue({} as never);
+    mockOf(api.volumes.remove).mockRejectedValue(new Error('boom') as never);
+    renderWithProviders(<Volumes />);
+    fireEvent.click((await screen.findAllByTitle('Delete volume (destructive)'))[0]!);
+    await user.type(screen.getByLabelText('Confirm volume name'), 'nd-data');
+    fireEvent.click(screen.getByRole('button', { name: /^Delete$/ }));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('boom', 'error'));
+  });
+
+  it('cancels the inline delete form without deleting', async () => {
+    mockOf(api.volumes.list).mockResolvedValue(volumes as never);
+    mockOf(api.system.resources).mockResolvedValue({} as never);
+    renderWithProviders(<Volumes />);
+    fireEvent.click((await screen.findAllByTitle('Delete volume (destructive)'))[0]!);
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByLabelText('Confirm volume name')).not.toBeInTheDocument();
     expect(api.volumes.remove).not.toHaveBeenCalled();
   });
 

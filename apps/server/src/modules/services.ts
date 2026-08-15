@@ -7,6 +7,7 @@ import { audit } from '../lib/audit.js';
 import { config } from '../config.js';
 import { badRequest, notFound } from '../lib/errors.js';
 import { slugify } from '../lib/slug.js';
+import { composeBuilder } from '../engine/builders/compose.js';
 import { dockerBuilder } from '../engine/builders/docker.js';
 import { pm2Builder, pm2Logs, pm2Restart, pm2Start, pm2Stop } from '../engine/builders/pm2.js';
 import { writeDynamicConfig } from '../engine/proxy.js';
@@ -30,8 +31,22 @@ function serialize(s: Service) {
     healthPath: s.healthPath,
     port: s.port,
     autoUrl: config.wildcardDomain ? `${s.slug}.${config.wildcardDomain}` : null,
+    cpuShares: s.cpuShares,
+    memLimitMb: s.memLimitMb,
     createdAt: s.createdAt.toISOString(),
     updatedAt: s.updatedAt.toISOString(),
+  };
+}
+
+/** Build-config row → API representation. */
+function serializeBuild(b: typeof buildConfigs.$inferSelect) {
+  return {
+    buildPack: b.buildPack,
+    baseDir: b.baseDir,
+    installCmd: b.installCmd,
+    buildCmd: b.buildCmd,
+    startCmd: b.startCmd,
+    dockerfilePath: b.dockerfilePath,
   };
 }
 
@@ -43,7 +58,8 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
 
   app.get('/', async () => {
     const rows = await app.db.query.services.findMany({ orderBy: (s, { desc }) => [desc(s.id)] });
-    return rows.map(serialize);
+    // List view omits the build config (detail endpoint joins it); keep the shape stable.
+    return rows.map((s) => ({ ...serialize(s), build: null }));
   });
 
   app.post('/', async (req) => {
@@ -83,17 +99,35 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.get('/:id', async (req) => {
-    const svc = await app.db.query.services.findFirst({ where: eq(services.id, num((req.params as { id: string }).id)) });
+    const id = num((req.params as { id: string }).id);
+    const svc = await app.db.query.services.findFirst({ where: eq(services.id, id) });
     if (!svc) throw notFound('Service not found');
-    return serialize(svc);
+    const build = await app.db.query.buildConfigs.findFirst({ where: eq(buildConfigs.serviceId, id) });
+    return { ...serialize(svc), build: build ? serializeBuild(build) : null };
   });
 
   app.patch('/:id', async (req) => {
     const id = num((req.params as { id: string }).id);
-    const { build: _build, ...patch } = updateService.parse(req.body ?? {});
-    // Build config updates land in F2 alongside the engine; not stored on the service row.
+    const { build, ...patch } = updateService.parse(req.body ?? {});
+    // Build-config keys are optional; null out omitted-but-cleared ones via `set` semantics.
     const [svc] = await app.db.update(services).set(patch).where(eq(services.id, id)).returning();
     if (!svc) throw notFound('Service not found');
+    if (build) {
+      // Only overwrite the keys the client sent — a PATCH must not reset the
+      // rest of the build config back to defaults.
+      const values: Partial<typeof buildConfigs.$inferInsert> = {};
+      if (build.buildPack !== undefined) values.buildPack = build.buildPack;
+      if (build.baseDir !== undefined) values.baseDir = build.baseDir;
+      for (const key of ['installCmd', 'buildCmd', 'startCmd', 'dockerfilePath'] as const) {
+        const v = build[key];
+        if (v !== undefined) values[key] = v === '' ? null : v;
+      }
+      if (Object.keys(values).length > 0) {
+        const updated = await app.db.update(buildConfigs).set(values).where(eq(buildConfigs.serviceId, id)).returning();
+        if (updated.length === 0) throw notFound('Service not found');
+      }
+    }
+    void audit(app.db, req.user!.id, 'service.update', svc.name);
     return serialize(svc);
   });
 
@@ -120,6 +154,7 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
     if (svc.runtimeId) {
       if (svc.type === 'pm2') await pm2Builder.stop(svc.runtimeId);
       else if (svc.type === 'docker') await dockerBuilder.stop(svc.runtimeId);
+      else if (svc.type === 'compose') await composeBuilder.stop(svc.runtimeId);
       else req.log.warn({ type: svc.type, runtimeId: svc.runtimeId }, 'unsupported service type — leaving runtime in place');
     }
     void audit(app.db, req.user!.id, 'service.delete', svc.name);
@@ -147,7 +182,7 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
     if (svc.type === 'pm2') {
       await pm2Stop(svc.runtimeId).catch((err) =>
         req.log.warn({ err, runtimeId: svc.runtimeId }, 'failed to stop pm2 process'));
-    } else if (svc.type === 'docker') {
+    } else if (svc.type === 'docker' || svc.type === 'compose') {
       await run('docker', ['stop', '-t', '5', svc.runtimeId], {}, () => {}).catch((err) =>
         req.log.warn({ err, runtimeId: svc.runtimeId }, 'failed to stop docker container'));
     } else {
@@ -165,7 +200,7 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
     if (svc.type === 'pm2') {
       await pm2Start(svc.runtimeId).catch((err) =>
         req.log.warn({ err, runtimeId: svc.runtimeId }, 'failed to start pm2 process'));
-    } else if (svc.type === 'docker') {
+    } else if (svc.type === 'docker' || svc.type === 'compose') {
       await run('docker', ['start', svc.runtimeId], {}, () => {}).catch((err) =>
         req.log.warn({ err, runtimeId: svc.runtimeId }, 'failed to start docker container'));
     } else {
@@ -183,7 +218,7 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
     if (svc.type === 'pm2') {
       await pm2Restart(svc.runtimeId).catch((err) =>
         req.log.warn({ err, runtimeId: svc.runtimeId }, 'failed to restart pm2 process'));
-    } else if (svc.type === 'docker') {
+    } else if (svc.type === 'docker' || svc.type === 'compose') {
       await run('docker', ['restart', svc.runtimeId], {}, () => {}).catch((err) =>
         req.log.warn({ err, runtimeId: svc.runtimeId }, 'failed to restart docker container'));
     } else {

@@ -74,7 +74,7 @@ describe('Login', () => {
     await user.type(await screen.findByPlaceholderText('you@example.com'), 'a@b.c');
     await user.type(screen.getByPlaceholderText('••••••••'), 'secret');
     await user.click(screen.getByRole('button', { name: /Sign in/ }));
-    await waitFor(() => expect(login).toHaveBeenCalledWith('a@b.c', 'secret'));
+    await waitFor(() => expect(login).toHaveBeenCalledWith('a@b.c', 'secret', undefined));
     await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/hub'));
   });
 
@@ -145,5 +145,64 @@ describe('Login', () => {
     await user.type(screen.getByPlaceholderText('••••••••'), 'wrong');
     await user.click(screen.getByRole('button', { name: /Sign in/ }));
     await screen.findByText('Something went wrong');
+  });
+
+  it('switches to the two-factor step and signs in with the code', async () => {
+    const user = userEvent.setup();
+    // First attempt: the account has 2FA enabled and no code was given.
+    const login = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Two-factor code required'))
+      .mockResolvedValueOnce(undefined);
+    mockOf(api.auth.status).mockResolvedValue({ initialized: true } as never);
+    mockOf(useAuth).mockReturnValue(authValue({ login }) as never);
+    renderWithProviders(<Login />);
+    await user.type(await screen.findByPlaceholderText('you@example.com'), 'a@b.c');
+    await user.type(screen.getByPlaceholderText('••••••••'), 'secret');
+    await user.click(screen.getByRole('button', { name: /Sign in/ }));
+    // The second step appears without an error banner.
+    expect(await screen.findByPlaceholderText('123456')).toBeInTheDocument();
+    expect(screen.queryByText('Two-factor code required')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Verify & sign in/ })).toBeInTheDocument();
+    await user.type(screen.getByPlaceholderText('123456'), '123456');
+    await user.click(screen.getByRole('button', { name: /Verify & sign in/ }));
+    await waitFor(() => expect(login).toHaveBeenLastCalledWith('a@b.c', 'secret', '123456'));
+  });
+
+  it('shows the error when the two-factor code is wrong', async () => {
+    const user = userEvent.setup();
+    const login = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Two-factor code required'))
+      .mockRejectedValueOnce(new Error('Invalid two-factor code'));
+    mockOf(api.auth.status).mockResolvedValue({ initialized: true } as never);
+    mockOf(useAuth).mockReturnValue(authValue({ login }) as never);
+    renderWithProviders(<Login />);
+    await user.type(await screen.findByPlaceholderText('you@example.com'), 'a@b.c');
+    await user.type(screen.getByPlaceholderText('••••••••'), 'secret');
+    await user.click(screen.getByRole('button', { name: /Sign in/ }));
+    await user.type(await screen.findByPlaceholderText('123456'), '000000');
+    await user.click(screen.getByRole('button', { name: /Verify & sign in/ }));
+    expect(await screen.findByText('Invalid two-factor code')).toBeInTheDocument();
+  });
+
+  it('links to forgot-password on initialized instances and hides it on fresh ones', async () => {
+    mockOf(api.auth.status).mockResolvedValue({ initialized: true } as never);
+    mockOf(useAuth).mockReturnValue(authValue() as never);
+    const { unmount } = renderWithProviders(<Login />);
+    expect(await screen.findByRole('link', { name: /Forgot your password\?/ })).toHaveAttribute('href', '/forgot-password');
+    unmount();
+
+    mockOf(api.auth.status).mockResolvedValue({ initialized: false } as never);
+    renderWithProviders(<Login />);
+    await screen.findByRole('heading', { name: 'Create admin account' });
+    expect(screen.queryByRole('link', { name: /Forgot your password\?/ })).not.toBeInTheDocument();
+  });
+
+  it('shows the password-reset success banner after a completed reset', async () => {
+    mockOf(api.auth.status).mockResolvedValue({ initialized: true } as never);
+    mockOf(useAuth).mockReturnValue(authValue() as never);
+    renderWithProviders(<Login />, { initialEntries: ['/login?reset=ok'] });
+    expect(await screen.findByText(/Password updated — sign in with your new password/)).toBeInTheDocument();
   });
 });

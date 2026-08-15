@@ -6,6 +6,7 @@ import {
   deploysRollback,
   systemDashboard,
   systemInfo,
+  systemUpdateCheck,
   tokenCreate,
   tokenList,
   tplDeploy,
@@ -75,8 +76,9 @@ describe('dbCreate', () => {
   it.each([
     ['1', 'postgres'],
     ['2', 'mysql'],
-    ['3', 'redis'],
-    ['4', 'mongo'],
+    ['3', 'mariadb'],
+    ['4', 'redis'],
+    ['5', 'mongo'],
   ])('creates a %s database from engine choice %s', async (choice, engine) => {
     const create = vi.fn().mockResolvedValue({ id: 9, name: 'db1', connectionString: 'postgres://x' });
     h.prompt.mockResolvedValueOnce('db1').mockResolvedValueOnce(choice);
@@ -334,6 +336,17 @@ describe('systemInfo', () => {
     expect(text).toContain('MIT');
     expect(text).toContain('node 24');
   });
+
+  it('prints dashes when the feed omits instance counts (unauthenticated shape)', async () => {
+    const get = vi.fn().mockResolvedValue({
+      version: '1.2.3', license: 'MIT', repo: 'https://github.com/acme/ninedeploy', techStack: [],
+    });
+    await systemInfo({ about: { get } } as never);
+    const text = logSpy.mock.calls.map((call) => call[0]).join('\n');
+    expect(text).toContain('Services');
+    // The four optional stats all fall back to the em dash.
+    expect((text.match(/—/g) ?? []).length).toBeGreaterThanOrEqual(4);
+  });
 });
 
 describe('systemDashboard', () => {
@@ -398,5 +411,50 @@ describe('systemDashboard', () => {
 
     const text = logSpy.mock.calls.map((call) => call[0]).join('\n');
     expect(text).toContain('No deployments.');
+  });
+});
+
+describe('systemUpdateCheck', () => {
+  it('announces an available update with its notes URL', async () => {
+    const updateCheck = vi.fn().mockResolvedValue({
+      current: '0.1.0', latest: '0.2.0', updateAvailable: true,
+      notesUrl: 'https://github.com/ninedeploy/ninedeploy/releases/tag/v0.2.0',
+      checkedAt: '2026-08-15T00:00:00Z',
+    });
+    await systemUpdateCheck({ system: { updateCheck } } as never, true);
+    expect(updateCheck).toHaveBeenCalledWith(true);
+    const text = logSpy.mock.calls.map((call) => call[0]).join('\n');
+    expect(text).toContain('A new release is available');
+    expect(text).toContain('releases/tag/v0.2.0');
+  });
+
+  it('links to the tag page when the feed gave no notes URL', async () => {
+    const updateCheck = vi.fn().mockResolvedValue({
+      current: '0.1.0', latest: 'v0.2.0', updateAvailable: true, notesUrl: null,
+      checkedAt: '2026-08-15T00:00:00Z',
+    });
+    await systemUpdateCheck({ system: { updateCheck } } as never, false);
+    const text = logSpy.mock.calls.map((call) => call[0]).join('\n');
+    expect(text).toContain('releases/tag/v0.2.0');
+  });
+
+  it('reports the latest release when up to date', async () => {
+    const updateCheck = vi.fn().mockResolvedValue({
+      current: '0.1.0', latest: '0.1.0', updateAvailable: false, notesUrl: null,
+      checkedAt: '2026-08-15T00:00:00Z',
+    });
+    await systemUpdateCheck({ system: { updateCheck } } as never, false);
+    const text = logSpy.mock.calls.map((call) => call[0]).join('\n');
+    expect(text).toContain('latest release');
+  });
+
+  it('reports unknown when the feed is unreachable or disabled', async () => {
+    const updateCheck = vi.fn().mockResolvedValue({
+      current: '0.1.0', latest: null, updateAvailable: null, notesUrl: null,
+      checkedAt: '2026-08-15T00:00:00Z',
+    });
+    await systemUpdateCheck({ system: { updateCheck } } as never, false);
+    const text = logSpy.mock.calls.map((call) => call[0]).join('\n');
+    expect(text).toContain('Latest release unknown');
   });
 });

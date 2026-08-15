@@ -15,7 +15,7 @@ import {
 import '@xyflow/react/dist/style.css';
 import { Database, Globe, Server } from 'lucide-react';
 import { api } from '../lib/api.js';
-import { StatusBadge } from '../components/ui.js';
+import { StatusBadge, Button } from '../components/ui.js';
 
 const SERVICE_X = 380;
 const DB_X = 780;
@@ -154,6 +154,11 @@ export function Topology() {
       <div className="nd-fade h-[72vh] overflow-hidden rounded-2xl border border-white/10 bg-slate-950/40">
         {graph.isLoading ? (
           <div className="grid h-full place-items-center text-sm text-slate-500">Loading graph…</div>
+        ) : graph.isError ? (
+          <div className="grid h-full place-items-center gap-2 text-sm text-rose-300">
+            Couldn't load the topology.
+            <Button size="sm" variant="secondary" onClick={() => graph.refetch()}>Retry</Button>
+          </div>
         ) : nodes.length === 0 ? (
           <div className="grid h-full place-items-center text-sm text-slate-500">Nothing deployed yet.</div>
         ) : (

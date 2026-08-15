@@ -14,8 +14,20 @@ export type Setup = Register;
 export const login = z.object({
   email: z.email(),
   password: z.string().min(1),
+  /** Required when the account has 2FA enabled. */
+  totpCode: z.string().regex(/^\d{6}$/).optional(),
 });
 export type Login = z.infer<typeof login>;
+
+/** Verifying a two-factor action (enable / disable companion). */
+export const twoFactorCode = z.object({ code: z.string().regex(/^\d{6}$/) });
+export type TwoFactorCode = z.infer<typeof twoFactorCode>;
+
+export const twoFactorDisable = z.object({
+  password: z.string().min(1),
+  code: z.string().regex(/^\d{6}$/),
+});
+export type TwoFactorDisable = z.infer<typeof twoFactorDisable>;
 
 /** Self-service password change: requires the current password. */
 export const passwordChange = z.object({
@@ -29,6 +41,19 @@ export const passwordReset = z.object({
   newPassword: z.string().min(8).max(128),
 });
 export type PasswordReset = z.infer<typeof passwordReset>;
+
+/** Forgot-password request. Always answers 200 (no user enumeration). */
+export const forgotPassword = z.object({
+  email: z.email(),
+});
+export type ForgotPassword = z.infer<typeof forgotPassword>;
+
+/** Complete a reset with the token from the email / admin-issued link. */
+export const passwordResetWithToken = z.object({
+  token: z.string().min(20).max(128),
+  newPassword: z.string().min(8).max(128),
+});
+export type PasswordResetWithToken = z.infer<typeof passwordResetWithToken>;
 
 /** Tokens issued after a successful login/refresh. */
 export const tokenPair = z.object({

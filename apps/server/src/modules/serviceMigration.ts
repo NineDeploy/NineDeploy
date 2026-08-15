@@ -107,7 +107,7 @@ export const serviceMigrationRoutes: FastifyPluginAsync = async (app) => {
     // Validate/normalize the shape: unknown enum values rejected, missing
     // optional arrays defaulted (a malformed bundle must 400, not crash a
     // handler with a TypeError on .map of undefined).
-    if (raw.service.type !== 'docker' && raw.service.type !== 'pm2') {
+    if (raw.service.type !== 'docker' && raw.service.type !== 'pm2' && raw.service.type !== 'compose') {
       throw badRequest('Invalid bundle: service.type must be "docker" or "pm2"');
     }
     const bundle: ServiceBundle = {
@@ -126,7 +126,7 @@ export const serviceMigrationRoutes: FastifyPluginAsync = async (app) => {
       name: bundle.service.name,
       slug,
       // Narrowed by the runtime validation above.
-      type: bundle.service.type as 'docker' | 'pm2',
+      type: bundle.service.type as 'docker' | 'pm2' | 'compose',
       repoUrl: bundle.service.repoUrl,
       branch: bundle.service.branch,
       image: bundle.service.image,

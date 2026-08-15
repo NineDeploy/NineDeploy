@@ -7,6 +7,7 @@ import { Button, Input, cn } from './ui.js';
 const ENGINES = [
   { id: 'postgres', label: 'PostgreSQL', emoji: '🐘', hint: 'Relational · SQL' },
   { id: 'mysql', label: 'MySQL', emoji: '🐬', hint: 'Relational · SQL' },
+  { id: 'mariadb', label: 'MariaDB', emoji: '🦭', hint: 'Relational · SQL' },
   { id: 'redis', label: 'Redis', emoji: '⚡', hint: 'Key-value · cache' },
   { id: 'mongo', label: 'MongoDB', emoji: '🍃', hint: 'Document · NoSQL' },
 ] as const;

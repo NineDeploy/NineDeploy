@@ -13,6 +13,7 @@ function serialize(s: Source) {
     type: s.type,
     hasToken: !!s.tokenEncrypted,
     hasDeployKey: !!s.deployKeyEncrypted,
+    registryUsername: s.registryUsername ?? null,
     defaultBranch: s.defaultBranch,
     createdAt: s.createdAt.toISOString(),
     updatedAt: s.updatedAt.toISOString(),
@@ -39,6 +40,7 @@ export const sourcesRoutes: FastifyPluginAsync = async (app) => {
         type: input.type,
         tokenEncrypted: input.token ? encrypt(input.token) : null,
         deployKeyEncrypted: input.deployKey ? encrypt(input.deployKey) : null,
+        registryUsername: input.registryUsername ?? null,
         defaultBranch: input.defaultBranch ?? 'main',
       })
       .returning();
@@ -54,6 +56,7 @@ export const sourcesRoutes: FastifyPluginAsync = async (app) => {
     if (input.defaultBranch !== undefined) patch.defaultBranch = input.defaultBranch;
     if (input.token !== undefined) patch.tokenEncrypted = input.token ? encrypt(input.token) : null;
     if (input.deployKey !== undefined) patch.deployKeyEncrypted = input.deployKey ? encrypt(input.deployKey) : null;
+    if (input.registryUsername !== undefined) patch.registryUsername = input.registryUsername || null;
     const [updated] = await app.db.update(sources).set(patch).where(eq(sources.id, id)).returning();
     if (!updated) throw notFound('Source not found');
     return serialize(updated);

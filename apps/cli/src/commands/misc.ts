@@ -18,9 +18,9 @@ export async function dbCreate(client: NineDeployClient): Promise<void> {
   header('Create Database');
   const name = await prompt('Database name');
   if (!name) return error('Name required');
-  console.log('  Engines: 1=PostgreSQL  2=MySQL  3=Redis  4=MongoDB');
+  console.log('  Engines: 1=PostgreSQL  2=MySQL  3=MariaDB  4=Redis  5=MongoDB');
   const choice = await prompt('Select engine (1-4)', '1');
-  const engines = ['postgres', 'mysql', 'redis', 'mongo'] as const;
+  const engines = ['postgres', 'mysql', 'mariadb', 'redis', 'mongo'] as const;
   const engine = engines[Number(choice) - 1] ?? 'postgres';
   try {
     const db = await spinner('Creating database', () => client.databases.create({ name, engine }));
@@ -100,10 +100,10 @@ export async function systemInfo(client: NineDeployClient): Promise<void> {
     banner();
     kv('Version', c.bold(`v${about.version}`));
     kv('License', about.license);
-    kv('Services', about.stats.services);
-    kv('Databases', about.stats.databases);
-    kv('Deploys', about.stats.deployments);
-    kv('Users', about.stats.users);
+    kv('Services', about.stats?.services ?? '—');
+    kv('Databases', about.stats?.databases ?? '—');
+    kv('Deploys', about.stats?.deployments ?? '—');
+    kv('Users', about.stats?.users ?? '—');
     kv('Repo', about.repo);
     console.log();
     header('Tech Stack');
@@ -111,6 +111,23 @@ export async function systemInfo(client: NineDeployClient): Promise<void> {
       kv(group.category, group.items.join(', '));
     }
   });
+}
+
+/** `ninedeploy system update-check` */
+export async function systemUpdateCheck(client: NineDeployClient, force: boolean): Promise<void> {
+  header('Update check');
+  const res = await spinner('Checking for updates', () => client.system.updateCheck(force));
+  kv('Current', c.bold(`v${res.current}`));
+  if (res.updateAvailable == null) {
+    info('Latest release unknown (feed unreachable or checks disabled).');
+  } else if (res.updateAvailable) {
+    kv('Latest', c.bold(`v${res.latest}`));
+    success(`A new release is available → ${c.cyan(res.notesUrl ?? `https://github.com/ninedeploy/ninedeploy/releases/tag/${res.latest}`)}`);
+    info('Upgrade: curl -fsSL https://raw.githubusercontent.com/ninedeploy/ninedeploy/main/install.sh | bash');
+  } else {
+    kv('Latest', `v${res.latest}`);
+    success('You are on the latest release.');
+  }
 }
 
 /** `ninedeploy system dashboard` */

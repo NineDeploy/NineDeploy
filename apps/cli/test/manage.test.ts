@@ -4,7 +4,7 @@ import {
   backupsCreate, backupsList, backupsRestore,
   deploysWatch, domainsAdd, domainsList, domainsRemove,
   envList, envRemove, envSet, systemExport, systemImport,
-  usersList, volumesList, volumesRemove,
+  usersList, usersResetLink, volumesList, volumesRemove,
 } from '../src/commands/manage.js';
 
 const h = vi.hoisted(() => ({ prompt: vi.fn() }));
@@ -460,5 +460,53 @@ describe('users & activity', () => {
     await activityList(client as never);
     expect(client.activity.list).toHaveBeenCalled();
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('deploy.completed'));
+  });
+});
+
+describe('usersResetLink', () => {
+  const users = [
+    { id: 1, email: 'admin@example.com', name: 'Admin', role: 'admin' },
+    { id: 2, email: 'member@example.com', name: null, role: 'member' },
+  ];
+
+  it('mints a link for a user matched by id or email', async () => {
+    const client = {
+      users: {
+        list: vi.fn().mockResolvedValue(users),
+        resetLink: vi.fn().mockResolvedValue({
+          url: 'http://srv.test/reset-password?token=abc',
+          expiresAt: '2026-08-15T12:30:00Z',
+        }),
+      },
+    };
+
+    await usersResetLink(client as never, '2');
+    expect(client.users.resetLink).toHaveBeenCalledWith(2);
+    let text = logSpy.mock.calls.map((c) => c[0]).join('\n');
+    expect(text).toContain('reset-password?token=abc');
+
+    logSpy.mockClear();
+    await usersResetLink(client as never, 'admin@example.com');
+    expect(client.users.resetLink).toHaveBeenCalledWith(1);
+    text = logSpy.mock.calls.map((c) => c[0]).join('\n');
+    expect(text).toContain('reset-password?token=abc');
+  });
+
+  it('errors when no user matches', async () => {
+    const client = { users: { list: vi.fn().mockResolvedValue(users), resetLink: vi.fn() } };
+    await usersResetLink(client as never, 'ghost@example.com');
+    expect(client.users.resetLink).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('No user matches'));
+  });
+
+  it('errors when the API call fails', async () => {
+    const client = {
+      users: {
+        list: vi.fn().mockResolvedValue(users),
+        resetLink: vi.fn().mockRejectedValue(new Error('403')),
+      },
+    };
+    await usersResetLink(client as never, '1');
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('403'));
   });
 });

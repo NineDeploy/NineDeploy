@@ -2,7 +2,7 @@ import { deployments, envVars, services } from '@ninedeploy/db';
 import { audit } from "../lib/audit.js";
 import type { FastifyPluginAsync } from 'fastify';
 import { getTemplates, type Template } from '../templates/registry.js';
-import { encrypt } from '../lib/crypto.js';
+import { encrypt, randomToken } from '../lib/crypto.js';
 import { notFound } from '../lib/errors.js';
 import { slugify } from '../lib/slug.js';
 
@@ -36,11 +36,19 @@ export const templateRoutes: FastifyPluginAsync = async (app) => {
         port: t.port,
         volumeMount: t.volumeMount ?? null,
         repoUrl: null,
+        cmd: t.cmd ?? null,
+        dockerSocket: t.dockerSocket ?? false,
       })
       .returning();
 
+    // Secret env values are ALWAYS freshly generated — registry defaults like
+    // "changeme" must never reach a running container. The generated values
+    // are returned once so the caller (CLI/UI) can show them to the user.
+    const generatedSecrets: Array<{ key: string; value: string }> = [];
     for (const e of t.env ?? []) {
-      await app.db.insert(envVars).values({ serviceId: svc!.id, key: e.key, valueEncrypted: encrypt(e.value), isSecret: e.secret ?? false });
+      const value = e.secret ? randomToken(18) : e.value;
+      if (e.secret) generatedSecrets.push({ key: e.key, value });
+      await app.db.insert(envVars).values({ serviceId: svc!.id, key: e.key, valueEncrypted: encrypt(value), isSecret: e.secret ?? false });
     }
 
     const [dep] = await app.db
@@ -48,6 +56,6 @@ export const templateRoutes: FastifyPluginAsync = async (app) => {
       .values({ serviceId: svc!.id, status: 'queued', trigger: 'user', message: `Deploy from template: ${t.name}` })
       .returning();
     void audit(app.db, req.user!.id, 'template.deploy', t.name);
-    return { serviceId: svc!.id, deploymentId: dep!.id };
+    return { serviceId: svc!.id, deploymentId: dep!.id, generatedSecrets };
   });
 };

@@ -1,6 +1,7 @@
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { createRef } from 'react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import './web-utils.js';
 import {
   BrandMark,
@@ -15,6 +16,7 @@ import {
   Skeleton,
   Spinner,
   StatusBadge,
+  Tabs,
   Textarea,
   cn,
 } from '../src/components/ui.js';
@@ -214,5 +216,30 @@ describe('EmptyState', () => {
     expect(screen.getByText('ic')).toBeInTheDocument();
     expect(screen.getByText('Try again')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Act' })).toBeInTheDocument();
+  });
+});
+
+describe('Tabs', () => {
+  const tabs = [
+    { id: 'a', label: 'Alpha' },
+    { id: 'b', label: 'Beta', count: 3 },
+  ];
+
+  it('marks the active tab and reports clicks on inactive ones', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<Tabs tabs={tabs} active="a" onChange={onChange} />);
+    const alpha = screen.getByRole('tab', { name: /Alpha/ });
+    expect(alpha).toHaveAttribute('aria-selected', 'true');
+    const beta = screen.getByRole('tab', { name: /Beta/ });
+    expect(beta).toHaveAttribute('aria-selected', 'false');
+    expect(screen.getByText('3')).toBeInTheDocument();
+    await user.click(beta);
+    expect(onChange).toHaveBeenCalledWith('b');
+  });
+
+  it('omits the count badge when no count is given', () => {
+    render(<Tabs tabs={tabs} active="b" onChange={() => {}} />);
+    expect(screen.queryByText('0')).not.toBeInTheDocument();
   });
 });

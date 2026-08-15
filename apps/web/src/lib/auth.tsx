@@ -5,7 +5,7 @@ import { api, clearTokens, getToken, setSessionTokens } from './api.js';
 interface AuthContextValue {
   user: PublicUser | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<void>;
+  login: (email: string, password: string, totpCode?: string) => Promise<void>;
   setup: (email: string, password: string, name?: string) => Promise<void>;
   logout: () => void;
 }
@@ -32,8 +32,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const value: AuthContextValue = {
     user,
     loading,
-    login: async (email, password) => {
-      const session = await api.auth.login({ email, password });
+    login: async (email, password, totpCode) => {
+      const session = await api.auth.login(totpCode ? { email, password, totpCode } : { email, password });
       setSessionTokens(session.tokens.accessToken, session.tokens.refreshToken);
       setUser(session.user);
     },

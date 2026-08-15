@@ -37,6 +37,7 @@ import type {
   TopologyGraph,
   TunnelEntry,
   TriggerDeploy,
+  UpdateCheckResult,
   UpdateServiceInput,
   UpsertEnvVarInput,
   VolumeEntry,
@@ -86,6 +87,16 @@ export interface NineDeployClient {
     logout: () => Promise<{ ok: boolean }>;
     /** Self-service password change; revokes other sessions, returns a fresh token pair. */
     changePassword: (input: PasswordChange) => Promise<Session>;
+    /** Request a reset link (always 200 — no user enumeration). */
+    forgotPassword: (email: string) => Promise<{ ok: boolean }>;
+    /** Complete a reset with a single-use token; revokes all sessions. */
+    resetPasswordWithToken: (input: { token: string; newPassword: string }) => Promise<{ ok: boolean }>;
+    twoFactor: {
+      /** Generate a pending secret + otpauth URI (auth required). */
+      setup: () => Promise<{ secret: string; otpauthUri: string }>;
+      enable: (code: string) => Promise<{ ok: boolean; totpEnabled: boolean }>;
+      disable: (input: { password: string; code: string }) => Promise<{ ok: boolean; totpEnabled: boolean }>;
+    };
     me: () => Promise<PublicUser>;
     tokens: {
       create: (input?: CreateApiToken) => Promise<CreatedApiToken>;
@@ -110,11 +121,15 @@ export interface NineDeployClient {
     trigger: (serviceId: number, input?: TriggerDeploy) => Promise<{ deploymentId: number }>;
     list: (serviceId: number) => Promise<Deployment[]>;
     rollback: (serviceId: number, deploymentId: number) => Promise<{ deploymentId: number }>;
+    /** Cancel a queued/in-flight deployment (checkpoints abort at step boundaries). */
+    cancel: (serviceId: number, deploymentId: number) => Promise<{ ok: boolean; status: string }>;
   };
   domains: {
     list: (serviceId: number) => Promise<Domain[]>;
     create: (serviceId: number, input: CreateDomainInput) => Promise<Domain>;
     remove: (serviceId: number, domainId: number) => Promise<void>;
+    /** Update routing extras: ssl toggle, www→apex redirect, custom headers. */
+    update: (serviceId: number, domainId: number, input: { ssl?: boolean; redirectWww?: boolean; headers?: string }) => Promise<Domain>;
     all: () => Promise<DomainEntry[]>;
     setSsl: (domainId: number, ssl: boolean) => Promise<{ id: number; ssl: boolean }>;
   };
@@ -126,6 +141,8 @@ export interface NineDeployClient {
     resources: () => Promise<DockerResources>;
     pruneImages: () => Promise<{ ok: boolean }>;
     exportUrl: () => string;
+    /** Latest-release check (admin). updateAvailable is null when offline/disabled. */
+    updateCheck: (force?: boolean) => Promise<UpdateCheckResult>;
   };
   tunnels: {
     list: () => Promise<TunnelEntry[]>;
@@ -155,13 +172,16 @@ export interface NineDeployClient {
     remove: (id: number) => Promise<void>;
     /** Admin reset of another user's password (revokes their sessions). */
     resetPassword: (id: number, input: PasswordReset) => Promise<{ ok: boolean }>;
+    /** Mint a one-time reset link for a user (returned exactly once). */
+    resetLink: (id: number) => Promise<{ url: string; expiresAt: string }>;
   };
   about: {
     get: () => Promise<{
       name: string; version: string; description: string; license: string; repo: string; docs: string;
       techStack: Array<{ category: string; items: string[] }>;
       changelog: Array<{ version: string; date: string; title: string; changes: string[] }>;
-      stats: { services: number; databases: number; deployments: number; users: number };
+      /** Instance counts are only returned for authenticated requests. */
+      stats?: { services: number; databases: number; deployments: number; users: number };
     }>;
   };
   notifications: {
@@ -222,6 +242,28 @@ export interface NineDeployClient {
     list: () => Promise<BackupWithDb[]>;
     remove: (backupId: number) => Promise<void>;
     downloadUrl: (backupId: number) => string;
+  };
+  backupDestinations: {
+    list: () => Promise<Array<{ id: number; name: string; endpoint: string; region: string; bucket: string; prefix: string; active: boolean; createdAt: string }>>;
+    create: (input: { name: string; endpoint: string; region?: string; bucket: string; prefix?: string; accessKeyId: string; secretAccessKey: string }) => Promise<{ id: number }>;
+    update: (id: number, input: Partial<{ name: string; endpoint: string; region: string; bucket: string; prefix: string; active: boolean; accessKeyId: string; secretAccessKey: string }>) => Promise<{ ok: boolean }>;
+    remove: (id: number) => Promise<{ ok: boolean }>;
+    test: (id: number) => Promise<{ ok: boolean }>;
+  };
+  jobs: {
+    list: (serviceId: number) => Promise<Array<{ id: number; name: string; cron: string; kind: 'deploy' | 'exec'; command: string; enabled: boolean; lastRunAt: string | null }>>;
+    create: (serviceId: number, input: { name: string; cron: string; kind: 'deploy' | 'exec'; command?: string; enabled?: boolean }) => Promise<{ id: number }>;
+    update: (serviceId: number, jobId: number, input: Partial<{ name: string; cron: string; kind: 'deploy' | 'exec'; command: string; enabled: boolean }>) => Promise<{ ok: boolean }>;
+    remove: (serviceId: number, jobId: number) => Promise<{ ok: boolean }>;
+    run: (serviceId: number, jobId: number) => Promise<{ ok: boolean }>;
+    runs: (serviceId: number, jobId: number) => Promise<Array<{ id: number; status: string; output: string; exitCode: number | null; createdAt: string }>>;
+  };
+  servers: {
+    list: () => Promise<Array<{ id: number; name: string; host: string; port: number; status: string; lastSeenAt: string | null }>>;
+    /** Register a server — the agent token + its sha256 are returned exactly once. */
+    create: (input: { name: string; host: string; port?: number }) => Promise<{ id: number; token: string; tokenSha256: string; agentCommand: string }>;
+    remove: (id: number) => Promise<{ ok: boolean }>;
+    test: (id: number) => Promise<{ ok: boolean; status: string }>;
   };
   templates: {
     list: () => Promise<TemplateSummary[]>;
@@ -304,6 +346,13 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
       /** Revoke this user's outstanding JWTs server-side (tokenVersion bump). */
       logout: () => send<{ ok: boolean }>('POST', '/v1/auth/logout', {}),
       changePassword: (input) => send<Session>('POST', '/v1/auth/password', input),
+      forgotPassword: (email) => send<{ ok: boolean }>('POST', '/v1/auth/forgot-password', { email }),
+      resetPasswordWithToken: (input) => send<{ ok: boolean }>('POST', '/v1/auth/reset-password', input),
+      twoFactor: {
+        setup: () => send<{ secret: string; otpauthUri: string }>('POST', '/v1/auth/2fa/setup'),
+        enable: (code) => send<{ ok: boolean; totpEnabled: boolean }>('POST', '/v1/auth/2fa/enable', { code }),
+        disable: (input) => send<{ ok: boolean; totpEnabled: boolean }>('POST', '/v1/auth/2fa/disable', input),
+      },
       me: () => get<PublicUser>('/v1/auth/me'),
       tokens: {
         create: (input) => send<CreatedApiToken>('POST', '/v1/auth/tokens', input ?? {}),
@@ -334,10 +383,14 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
       list: (serviceId) => get<Deployment[]>(`/v1/services/${serviceId}/deploys`),
       rollback: (serviceId, deploymentId) =>
         send<{ deploymentId: number }>('POST', `/v1/services/${serviceId}/deploys/${deploymentId}/rollback`),
+      cancel: (serviceId, deploymentId) =>
+        send<{ ok: boolean; status: string }>('POST', `/v1/services/${serviceId}/deploys/${deploymentId}/cancel`),
     },
     domains: {
       list: (serviceId) => get<Domain[]>(`/v1/services/${serviceId}/domains`),
       create: (serviceId, input) => send<Domain>('POST', `/v1/services/${serviceId}/domains`, input),
+      update: (serviceId, domainId, input) =>
+        send<Domain>('PATCH', `/v1/services/${serviceId}/domains/${domainId}`, input),
       remove: async (serviceId, domainId) => {
         await request(`/v1/services/${serviceId}/domains/${domainId}`, { method: 'DELETE' });
       },
@@ -353,6 +406,7 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
     system: {
       resources: () => get<DockerResources>('/v1/system/resources'),
       pruneImages: () => send<{ ok: boolean }>('POST', '/v1/system/prune-images'),
+      updateCheck: (force) => get<UpdateCheckResult>(`/v1/system/update-check${force ? '?force=1' : ''}`),
       exportUrl: () => '/v1/system/export',
     },
     tunnels: {
@@ -388,6 +442,7 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
       list: () => get<PublicUser[]>('/v1/users'),
       setRole: (id, role) => send<PublicUser>('PATCH', `/v1/users/${id}/role`, { role }),
       resetPassword: (id, input) => send<{ ok: boolean }>('PATCH', `/v1/users/${id}/password`, input),
+      resetLink: (id) => send<{ url: string; expiresAt: string }>('POST', `/v1/users/${id}/reset-link`),
       remove: async (id) => {
         await request(`/v1/users/${id}`, { method: 'DELETE' });
       },
@@ -469,6 +524,27 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
         await request(`/v1/backups/${backupId}`, { method: 'DELETE' });
       },
       downloadUrl: (backupId) => `/v1/backups/${backupId}/download`,
+    },
+    backupDestinations: {
+      list: () => get('/v1/backup-destinations'),
+      create: (input) => send<{ id: number }>('POST', '/v1/backup-destinations', input),
+      update: (id, input) => send<{ ok: boolean }>('PATCH', `/v1/backup-destinations/${id}`, input),
+      remove: (id) => send<{ ok: boolean }>('DELETE', `/v1/backup-destinations/${id}`),
+      test: (id) => send<{ ok: boolean }>('POST', `/v1/backup-destinations/${id}/test`),
+    },
+    jobs: {
+      list: (serviceId) => get(`/v1/services/${serviceId}/jobs`),
+      create: (serviceId, input) => send<{ id: number }>('POST', `/v1/services/${serviceId}/jobs`, input),
+      update: (serviceId, jobId, input) => send<{ ok: boolean }>('PATCH', `/v1/services/${serviceId}/jobs/${jobId}`, input),
+      remove: (serviceId, jobId) => send<{ ok: boolean }>('DELETE', `/v1/services/${serviceId}/jobs/${jobId}`),
+      run: (serviceId, jobId) => send<{ ok: boolean }>('POST', `/v1/services/${serviceId}/jobs/${jobId}/run`),
+      runs: (serviceId, jobId) => get(`/v1/services/${serviceId}/jobs/${jobId}/runs`),
+    },
+    servers: {
+      list: () => get('/v1/servers'),
+      create: (input) => send('POST', '/v1/servers', input),
+      remove: (id) => send<{ ok: boolean }>('DELETE', `/v1/servers/${id}`),
+      test: (id) => send<{ ok: boolean; status: string }>('POST', `/v1/servers/${id}/test`),
     },
     limits: {
       setService: (serviceId, input) =>

@@ -3,6 +3,7 @@ import { auditLog, notificationLog } from '@ninedeploy/db';
 import fp from 'fastify-plugin';
 import { run } from '../lib/exec.js';
 import { pruneOldLogs } from '../engine/logs.js';
+import { pruneResetTokens } from '../lib/passwordReset.js';
 
 const swallow = () => {};
 const INTERVAL_MS = 60 * 60 * 1000; // hourly
@@ -39,6 +40,7 @@ export default fp(
         const now = Date.now();
         await fastify.db.delete(auditLog).where(lt(auditLog.ts, new Date(now - AUDIT_MAX_AGE_MS)));
         await fastify.db.delete(notificationLog).where(lt(notificationLog.ts, new Date(now - NOTIF_MAX_AGE_MS)));
+        await pruneResetTokens(fastify.db);
         pruneDanglingImages();
       } catch (err) {
         fastify.log.error({ err }, 'housekeeping failed');

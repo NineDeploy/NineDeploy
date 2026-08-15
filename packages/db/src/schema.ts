@@ -20,7 +20,7 @@ const tsUpdatable = (name: string) =>
 
 // ─── enums (stored as TEXT) ───────────────────────────────────────────────
 export const userRole = ['admin', 'member'] as const;
-export const serviceType = ['pm2', 'docker'] as const;
+export const serviceType = ['pm2', 'docker', 'compose'] as const;
 export const serviceStatus = [
   'idle',
   'deploying',
@@ -40,9 +40,12 @@ export const deploymentStatus = [
 ] as const;
 export const deploymentTrigger = ['user', 'webhook', 'cli', 'schedule'] as const;
 export const domainStatus = ['pending', 'active', 'error'] as const;
-export const sourceType = ['github', 'gitlab', 'gitea', 'bitbucket', 'custom'] as const;
+export const sourceType = ['github', 'gitlab', 'gitea', 'bitbucket', 'custom', 'registry'] as const;
 export const backupScope = ['db', 'scheduled', 'volumes', 'full'] as const;
 export const backupStatus = ['pending', 'running', 'completed', 'failed'] as const;
+export const jobKind = ['deploy', 'exec'] as const;
+export const jobRunStatus = ['running', 'completed', 'failed'] as const;
+export const serverStatus = ['offline', 'online', 'error'] as const;
 
 // ─── users & auth ─────────────────────────────────────────────────────────
 export const users = sqliteTable('users', {
@@ -55,6 +58,9 @@ export const users = sqliteTable('users', {
   // (logout / role change / password change) invalidates all outstanding tokens
   // for the user without needing a server-side blocklist.
   tokenVersion: integer('token_version').notNull().default(0),
+  // TOTP (2FA): secret encrypted at rest; null = never set up.
+  totpSecretEncrypted: text('totp_secret_encrypted'),
+  totpEnabled: integer('totp_enabled', { mode: 'boolean' }).notNull().default(false),
   createdAt: ts('created_at'),
   updatedAt: tsUpdatable('updated_at'),
 });
@@ -117,6 +123,15 @@ export const services = sqliteTable(
     // memLimitMb maps to docker --memory (MiB).
     cpuShares: integer('cpu_shares').notNull().default(0),
     memLimitMb: integer('mem_limit_mb').notNull().default(0),
+    // Template-defined container command (argv after the image). Only the
+    // admin-controlled template registry sets it — not the create-service API.
+    cmd: text('cmd', { mode: 'json' }).$type<string[]>(),
+    // Bind-mount the host Docker socket (template flag only — docker control).
+    dockerSocket: integer('docker_socket', { mode: 'boolean' }).notNull().default(false),
+    // Remote server this service deploys to (null = this host). Agent-based.
+    serverId: integer('server_id').references(() => servers.id, { onDelete: 'set null' }),
+    // Compose deploys: the "main" service in the compose file (routing target).
+    composeService: text('compose_service'),
     createdAt: ts('created_at'),
     updatedAt: tsUpdatable('updated_at'),
   },
@@ -191,6 +206,8 @@ export const sources = sqliteTable('sources', {
   // OAuth/token or deploy key material — always encrypted at rest.
   tokenEncrypted: text('token_encrypted'),
   deployKeyEncrypted: text('deploy_key_encrypted'),
+  // Registry-type sources: username for `docker login` (token = password).
+  registryUsername: text('registry_username'),
   defaultBranch: text('default_branch').default('main'),
   createdAt: ts('created_at'),
   updatedAt: tsUpdatable('updated_at'),
@@ -207,6 +224,8 @@ export const domains = sqliteTable(
     path: text('path').notNull().default('/'),
     ssl: integer('ssl', { mode: 'boolean' }).notNull().default(true),
     redirectWww: integer('redirect_www', { mode: 'boolean' }).notNull().default(false),
+    // Custom response headers as a JSON array [{name, value}] → Traefik headers middleware.
+    headers: text('headers'),
     status: text('status', { enum: domainStatus }).notNull().default('pending'),
     createdAt: ts('created_at'),
     updatedAt: tsUpdatable('updated_at'),
@@ -225,6 +244,8 @@ export const webhooks = sqliteTable('webhooks', {
     .references(() => services.id, { onDelete: 'cascade' }),
   branch: text('branch').notNull(),
   events: text('events', { mode: 'json' }).$type<string[]>().notNull().default(sql`'["push"]'`),
+  // Optional newline/comma-separated globs — deploy only when a changed file matches (monorepos).
+  watchPaths: text('watch_paths'),
   secretEncrypted: text('secret_encrypted').notNull(),
   active: integer('active', { mode: 'boolean' }).notNull().default(true),
   createdAt: ts('created_at'),
@@ -239,11 +260,29 @@ export const backups = sqliteTable(
     scope: text('scope', { enum: backupScope }).notNull(),
     status: text('status', { enum: backupStatus }).notNull().default('pending'),
     path: text('path').notNull(),
+    // S3 object key when the encrypted envelope was uploaded to a destination.
+    remoteKey: text('remote_key'),
     sizeBytes: integer('size_bytes').notNull().default(0),
     createdAt: ts('created_at'),
   },
   (t) => ({ dbStatusIdx: index('backups_db_status_idx').on(t.databaseId, t.status) }),
 );
+
+// ─── S3-compatible backup destinations ────────────────────────────────────
+export const backupDestinations = sqliteTable('backup_destinations', {
+  id: id(),
+  name: text('name').notNull(),
+  // S3-compatible endpoint, e.g. https://s3.eu-central-1.amazonaws.com or a MinIO URL.
+  endpoint: text('endpoint').notNull(),
+  region: text('region').notNull().default('us-east-1'),
+  bucket: text('bucket').notNull(),
+  prefix: text('prefix').notNull().default('ninedeploy'),
+  accessKeyId: text('access_key_id').notNull(),
+  secretKeyEncrypted: text('secret_key_encrypted').notNull(),
+  active: integer('active', { mode: 'boolean' }).notNull().default(true),
+  createdAt: ts('created_at'),
+  updatedAt: tsUpdatable('updated_at'),
+});
 
 export const metrics = sqliteTable(
   'metrics',
@@ -285,7 +324,7 @@ export const settings = sqliteTable(
 );
 
 // ─── managed databases ────────────────────────────────────────────────────
-export const dbEngine = ['postgres', 'mysql', 'redis', 'mongo'] as const;
+export const dbEngine = ['postgres', 'mysql', 'mariadb', 'redis', 'mongo'] as const;
 export const dbStatus = ['creating', 'running', 'stopped', 'error', 'deleting'] as const;
 
 export const databases = sqliteTable(
@@ -421,6 +460,77 @@ export const alertState = sqliteTable('alert_state', {
 });
 
 // ─── relations ────────────────────────────────────────────────────────────
+// ─── scheduled jobs (cron) ────────────────────────────────────────────────
+export const scheduledJobs = sqliteTable(
+  'scheduled_jobs',
+  {
+    id: id(),
+    serviceId: integer('service_id')
+      .notNull()
+      .references(() => services.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    // 5-field cron expression (minute hour dom month dow), user-local timezone.
+    cron: text('cron').notNull(),
+    // deploy → re-deploy the service; exec → run `command` inside the runtime container.
+    kind: text('kind', { enum: jobKind }).notNull().default('deploy'),
+    command: text('command'),
+    enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+    lastRunAt: integer('last_run_at', { mode: 'timestamp' }),
+    createdAt: ts('created_at'),
+    updatedAt: tsUpdatable('updated_at'),
+  },
+  (t) => ({ serviceIdx: index('scheduled_jobs_service_idx').on(t.serviceId) }),
+);
+
+export const jobRuns = sqliteTable(
+  'job_runs',
+  {
+    id: id(),
+    jobId: integer('job_id')
+      .notNull()
+      .references(() => scheduledJobs.id, { onDelete: 'cascade' }),
+    status: text('status', { enum: jobRunStatus }).notNull().default('running'),
+    output: text('output').notNull().default(''),
+    exitCode: integer('exit_code'),
+    startedAt: integer('started_at', { mode: 'timestamp' }),
+    finishedAt: integer('finished_at', { mode: 'timestamp' }),
+    createdAt: ts('created_at'),
+  },
+  (t) => ({ jobIdx: index('job_runs_job_idx').on(t.jobId) }),
+);
+
+// ─── remote servers (agent-based multi-server) ────────────────────────────
+export const servers = sqliteTable('servers', {
+  id: id(),
+  name: text('name').notNull(),
+  host: text('host').notNull(),
+  port: integer('port').notNull().default(4600),
+  status: text('status', { enum: serverStatus }).notNull().default('offline'),
+  // Shared secret the agent presents. The raw token is encrypted at rest so
+  // the core can use it for exec calls; sha256 hash would be one-way.
+  tokenEncrypted: text('token_encrypted').notNull(),
+  lastSeenAt: integer('last_seen_at', { mode: 'timestamp' }),
+  createdAt: ts('created_at'),
+  updatedAt: tsUpdatable('updated_at'),
+});
+
+export const passwordResetTokens = sqliteTable('password_reset_tokens', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  userId: integer('user_id')
+    .notNull()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  // sha256 of the raw token — the raw value exists only in the delivery message.
+  tokenHash: text('token_hash').notNull().unique(),
+  expiresAt: integer('expires_at', { mode: 'timestamp' }).notNull(),
+  usedAt: integer('used_at', { mode: 'timestamp' }),
+  requestedFrom: text('requested_from'),
+  createdAt: tsUpdatable('created_at'),
+}, (t) => [index('password_reset_tokens_user_idx').on(t.userId)]);
+
+export const passwordResetTokensRelations = relations(passwordResetTokens, ({ one }) => ({
+  user: one(users, { fields: [passwordResetTokens.userId], references: [users.id] }),
+}));
+
 export const usersRelations = relations(users, ({ many }) => ({
   apiTokens: many(apiTokens),
 }));
@@ -513,3 +623,8 @@ export type NotificationChannel = typeof notificationChannels.$inferSelect;
 export type NotificationLog = typeof notificationLog.$inferSelect;
 export type AlertRule = typeof alertRules.$inferSelect;
 export type AlertState = typeof alertState.$inferSelect;
+export type PasswordResetToken = typeof passwordResetTokens.$inferSelect;
+export type BackupDestination = typeof backupDestinations.$inferSelect;
+export type ScheduledJob = typeof scheduledJobs.$inferSelect;
+export type JobRun = typeof jobRuns.$inferSelect;
+export type ServerRow = typeof servers.$inferSelect;

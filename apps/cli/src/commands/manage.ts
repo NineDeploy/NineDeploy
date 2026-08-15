@@ -223,6 +223,22 @@ export async function usersList(client: NineDeployClient): Promise<void> {
   });
 }
 
+/** `ninedeploy users reset-link <id|email>` — mint a one-time reset link. */
+export async function usersResetLink(client: NineDeployClient, who: string): Promise<void> {
+  header('Password reset link');
+  try {
+    const link = await spinner('Resolving user', async () => {
+      const users = await client.users.list();
+      const target = users.find((u) => String(u.id) === who || u.email === who);
+      if (!target) throw new Error(`No user matches "${who}"`);
+      return client.users.resetLink(target.id);
+    });
+    success('One-time reset link (copy it now — shown once):');
+    console.log(`  ${c.cyan(link.url)}`);
+    info(`Expires ${new Date(link.expiresAt).toLocaleString()}`);
+  } catch (err) { fail(err); }
+}
+
 /** `ninedeploy activity list` */
 export async function activityList(client: NineDeployClient): Promise<void> {
   header('Activity');

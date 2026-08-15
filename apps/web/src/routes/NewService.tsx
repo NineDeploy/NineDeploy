@@ -45,7 +45,7 @@ export function NewService() {
   return (
     <div className="max-w-2xl">
       <div className="mb-6">
-        <Link to="/" className="text-sm text-slate-400 hover:text-slate-200">
+        <Link to="/services" className="text-sm text-slate-400 hover:text-slate-200">
           ← Back to services
         </Link>
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">New service</h1>
@@ -112,7 +112,7 @@ export function NewService() {
             {error && <p className="rounded-lg bg-rose-500/10 px-3 py-2 text-sm text-rose-300">{error}</p>}
 
             <div className="flex justify-end gap-2 pt-2">
-              <Link to="/">
+              <Link to="/services">
                 <Button type="button" variant="ghost">
                   Cancel
                 </Button>

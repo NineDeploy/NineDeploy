@@ -10,8 +10,22 @@ export const rolePatch = z.object({
 });
 export type RolePatch = z.infer<typeof rolePatch>;
 
+// ── Update check (admin) ───────────────────────────────────────────────────
+export const updateCheckResult = z.object({
+  current: z.string(),
+  /** null when the feed was unreachable or checks are disabled. */
+  latest: z.string().nullable(),
+  /** null = unknown; otherwise true when latest > current. */
+  updateAvailable: z.boolean().nullable(),
+  notesUrl: z.string().nullable(),
+  checkedAt: z.string().datetime(),
+});
+export type UpdateCheckResult = z.infer<typeof updateCheckResult>;
+
 export const webhookCreate = z.object({
   branch: z.string().max(255).optional(),
+  /** Newline/comma-separated globs — deploy only when a changed file matches. */
+  watchPaths: z.string().max(4000).optional(),
 });
 export type WebhookCreate = z.infer<typeof webhookCreate>;
 
@@ -19,6 +33,7 @@ export const sourcePatch = z.object({
   name: z.string().min(1).max(100).optional(),
   token: z.string().max(4096).optional(),
   deployKey: z.string().max(16384).optional(),
+  registryUsername: z.string().max(255).optional(),
   defaultBranch: z.string().max(255).optional(),
 });
 export type SourcePatch = z.infer<typeof sourcePatch>;

@@ -15,6 +15,22 @@ export interface BuildContext {
   imageDigest?: string;
   /** Environment variables to inject at runtime (service env vars + attached DB connection strings). */
   env: Record<string, string>;
+  /**
+   * Private-registry credentials (from a registry-type source): username +
+   * password used to `docker login` before pulling the image. Absent for
+   * public registries.
+   */
+  registryAuth?: { username: string; password: string; server?: string };
+  /**
+   * Remote server this service deploys to (null = this host). Builders route
+   * their docker/git operations through the typed agent protocol when set.
+   */
+  serverId?: number;
+  /**
+   * When serverId is set, the pipeline pre-binds this typed-op caller so
+   * builders can run remote operations without touching the DB layer.
+   */
+  agentCall?: (op: string, params: Record<string, unknown>, sink: (line: string) => void) => Promise<{ exitCode: number; lines: string[] }>;
   /** Append a log line (persisted + broadcast to subscribers). */
   log: (line: string) => void;
 }
@@ -32,6 +48,6 @@ export interface DeployRuntime {
 /** A runtime backend (Docker / PM2). Implementations live in ./builders. */
 export interface Builder {
   buildAndRun(ctx: BuildContext, previous?: DeployRuntime): Promise<DeployRuntime>;
-  isHealthy(runtime: DeployRuntime, timeoutMs?: number): Promise<boolean>;
+  isHealthy(runtime: DeployRuntime, timeoutMs?: number, directGraceMs?: number, log?: (line: string) => void): Promise<boolean>;
   stop(runtimeId: string): Promise<void>;
 }

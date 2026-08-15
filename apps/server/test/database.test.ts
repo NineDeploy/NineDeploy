@@ -66,6 +66,8 @@ describe('ENGINES metadata', () => {
     expect(ENGINES.postgres.image('17')).toBe('postgres:17');
     expect(ENGINES.mysql.image()).toBe('mysql:8');
     expect(ENGINES.mysql.image('9')).toBe('mysql:9');
+    expect(ENGINES.mariadb.image()).toBe('mariadb:11');
+    expect(ENGINES.mariadb.image('12')).toBe('mariadb:12');
     expect(ENGINES.redis.image()).toBe('redis:7');
     expect(ENGINES.redis.image('8')).toBe('redis:8');
     expect(ENGINES.mongo.image()).toBe('mongo:7');
@@ -73,27 +75,36 @@ describe('ENGINES metadata', () => {
 
     expect(ENGINES.postgres.port).toBe(5432);
     expect(ENGINES.mysql.port).toBe(3306);
+    expect(ENGINES.mariadb.port).toBe(3306);
     expect(ENGINES.redis.port).toBe(6379);
     expect(ENGINES.mongo.port).toBe(27017);
 
     expect(ENGINES.postgres.volumePath).toBe('/var/lib/postgresql/data');
     expect(ENGINES.mysql.volumePath).toBe('/var/lib/mysql');
+    expect(ENGINES.mariadb.volumePath).toBe('/var/lib/mysql');
     expect(ENGINES.redis.volumePath).toBe('/data');
     expect(ENGINES.mongo.volumePath).toBe('/data/db');
 
     expect(ENGINES.postgres.username()).toBe('nine');
     expect(ENGINES.mysql.username()).toBe('root');
+    expect(ENGINES.mariadb.username()).toBe('root');
     expect(ENGINES.mongo.username()).toBe('nine');
     expect(ENGINES.redis.username()).toBeUndefined();
     expect(ENGINES.postgres.dbName()).toBe('app');
     expect(ENGINES.mysql.dbName()).toBeUndefined();
+    expect(ENGINES.mariadb.dbName()).toBeUndefined();
     expect(ENGINES.redis.dbName()).toBeUndefined();
     expect(ENGINES.mongo.dbName()).toBeUndefined();
 
     expect(ENGINES.postgres.env('p')).toEqual({ POSTGRES_USER: 'nine', POSTGRES_PASSWORD: 'p', POSTGRES_DB: 'app' });
     expect(ENGINES.mysql.env('p')).toEqual({ MYSQL_ROOT_PASSWORD: 'p' });
+    expect(ENGINES.mariadb.env('p')).toEqual({ MARIADB_ROOT_PASSWORD: 'p' });
     expect(ENGINES.redis.env('p')).toEqual({});
     expect(ENGINES.mongo.env('p')).toEqual({ MONGO_INITDB_ROOT_USERNAME: 'nine', MONGO_INITDB_ROOT_PASSWORD: 'p' });
+  });
+
+  it('renders mariadb connection strings', () => {
+    expect(ENGINES.mariadb.connectionString('db', 3306, 'root', 'pw', undefined)).toBe('mariadb://root:pw@db:3306/');
   });
 });
 
@@ -480,6 +491,35 @@ describe('restoreDatabase', () => {
       'exec', 'c', 'mysql', '-uroot', '--password=pw:enc', '-e', 'source /tmp/ninedeploy-restore',
     ], {}, log);
     expect(h.decrypt).toHaveBeenCalledWith('enc');
+  });
+
+  it('backs up mariadb via mariadb-dump', async () => {
+    const file = path.join(tmp, 'mariadb.sql');
+    writeFileSync(file, '');
+    h.capture.mockResolvedValueOnce('MARIADB_DUMP');
+    await backupDatabase(dbRow({ engine: 'mariadb' }), file, vi.fn());
+    expect(h.capture).toHaveBeenCalledWith('docker', [
+      'exec', 'c', 'mariadb-dump', '-uroot', '--password=pw:enc', '--all-databases',
+    ]);
+    expect(readFileSync(file, 'utf8')).toBe(`v0:${Buffer.from('MARIADB_DUMP').toString('base64')}`);
+  });
+
+  it('restores mariadb via the mariadb client', async () => {
+    const log = vi.fn();
+    const file = encFile('USE app;');
+    await restoreDatabase(dbRow({ engine: 'mariadb' }), file, log);
+    expect(h.run).toHaveBeenCalledWith('docker', [
+      'exec', 'c', 'mariadb', '-uroot', '--password=pw:enc', '-e', 'source /tmp/ninedeploy-restore',
+    ], {}, log);
+  });
+
+  it('queries the mariadb size like mysql', async () => {
+    h.capture.mockResolvedValueOnce('4242');
+    await expect(databaseSize(dbRow({ engine: 'mariadb' }))).resolves.toBe(4242);
+    expect(h.capture).toHaveBeenCalledWith('docker', [
+      'exec', 'c', 'mariadb', '-uroot', '--password=pw:enc', '-N',
+      '-e', 'SELECT IFNULL(SUM(data_length+index_length),0) FROM information_schema.tables',
+    ]);
   });
 
   it('restores mongo via docker cp + mongorestore --archive=path', async () => {

@@ -12,6 +12,7 @@ import backupSchedulerPlugin from './plugins/backupScheduler.js';
 import collectorPlugin from './plugins/collector.js';
 import dbPlugin from './plugins/db.js';
 import housekeepingPlugin from './plugins/housekeeping.js';
+import jobSchedulerPlugin from './plugins/jobScheduler.js';
 import rateLimitPlugin from './plugins/rateLimit.js';
 import rawBodyPlugin from './plugins/rawBody.js';
 import traefikPlugin from './plugins/traefik.js';
@@ -93,6 +94,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(backupSchedulerPlugin);
   // Periodic log/audit/notification-log retention (disk-fill prevention)
   await app.register(housekeepingPlugin);
+  await app.register(jobSchedulerPlugin);
 
   // About info
   void ABOUT;

@@ -29,6 +29,27 @@ describe('template routes', () => {
     expect(res.statusCode).toBe(404);
   });
 
+  it('generates fresh secrets for secret env values on one-click deploys', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        insert: {
+          services: [svcRow({ id: 7, name: 'Grafana', slug: 'grafana-0001' })],
+          deployments: [depRow({ id: 8 })],
+          env_vars: [{ id: 1, key: 'GF_SECURITY_ADMIN_PASSWORD', valueEncrypted: 'x', isSecret: true }],
+        },
+      }),
+    });
+    await app.register(templateRoutes);
+    const res = await app.inject({ method: 'POST', url: '/grafana/deploy', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    // The generated secret is returned once and is NOT the registry default.
+    expect(body.generatedSecrets).toHaveLength(1);
+    expect(body.generatedSecrets[0]).toMatchObject({ key: 'GF_SECURITY_ADMIN_PASSWORD' });
+    expect(body.generatedSecrets[0].value).not.toBe('admin');
+    expect(body.generatedSecrets[0].value.length).toBeGreaterThanOrEqual(16);
+  });
+
   it('deploys a template with env vars and a secret', async () => {
     const app = await buildTestApp({
       db: createFakeDb({
@@ -42,7 +63,7 @@ describe('template routes', () => {
     await app.register(templateRoutes);
     const res = await app.inject({ method: 'POST', url: '/grafana/deploy', headers: asUser() });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ serviceId: 7, deploymentId: 8 });
+    expect(res.json()).toMatchObject({ serviceId: 7, deploymentId: 8 });
   });
 
   it('deploys a template with a non-secret env var', async () => {
@@ -69,7 +90,7 @@ describe('template routes', () => {
     await app.register(templateRoutes);
     const res = await app.inject({ method: 'POST', url: '/n8n/deploy', headers: asUser() });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ serviceId: 7, deploymentId: 8 });
+    expect(res.json()).toMatchObject({ serviceId: 7, deploymentId: 8 });
   });
 
   it('deploys a template without a volume mount', async () => {
@@ -84,7 +105,7 @@ describe('template routes', () => {
     await app.register(templateRoutes);
     const res = await app.inject({ method: 'POST', url: '/excalidraw/deploy', headers: asUser() });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ serviceId: 7, deploymentId: 8 });
+    expect(res.json()).toMatchObject({ serviceId: 7, deploymentId: 8 });
   });
 
   it('returns 404 when deploying an unknown template', async () => {

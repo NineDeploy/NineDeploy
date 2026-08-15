@@ -206,5 +206,38 @@ export async function notifyEvent(db: DB, event: AppEvent): Promise<void> {
   }
 }
 
+/**
+ * Send an ad-hoc email through the first active email channel (used by the
+ * forgot-password flow). Returns true when a channel existed and the message
+ * was sent; false when no email channel is configured (the caller then relies
+ * on admin-issued links). Failures are logged into notification_log like any
+ * other delivery.
+ */
+export async function sendSystemEmail(db: DB, subject: string, text: string): Promise<boolean> {
+  let channel;
+  try {
+    channel = (await db.query.notificationChannels.findMany()).find((c) => c.active && c.type === 'email');
+  } catch {
+    return false; // table might not exist yet
+  }
+  if (!channel) return false;
+  const target = decrypt(channel.targetEncrypted);
+  try {
+    await withRetry(() => sendEmail(target, subject, text));
+    await db.insert(notificationLog).values({ channelId: channel.id, event: 'email.system', entity: subject, status: 'sent', attempts: 1 });
+    return true;
+  } catch (err) {
+    await db.insert(notificationLog).values({
+      channelId: channel.id,
+      event: 'email.system',
+      entity: subject,
+      status: 'failed',
+      attempts: RETRY_DELAYS_MS.length + 1,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return false;
+  }
+}
+
 // Re-export encrypt for the notifications module
 export { encrypt };

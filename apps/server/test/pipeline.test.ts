@@ -19,7 +19,8 @@ const h = vi.hoisted(() => {
     paths: { reposDir: '', logsDir: '', dataDir: '' },
     wildcardDomain: '',
   };
-  return { builder, checkoutCommit, decrypt, connectionString, writeDynamicConfig, config };
+  const agentOp = vi.fn(async () => ({ exitCode: 0, lines: [] }));
+  return { builder, checkoutCommit, decrypt, connectionString, writeDynamicConfig, config, agentOp };
 });
 
 vi.mock('../src/config.js', () => ({ config: h.config }));
@@ -28,6 +29,7 @@ const sleepMock = vi.hoisted(() => ({ sleep: vi.fn(async () => undefined) }));
 vi.mock('../src/lib/exec.js', () => sleepMock);
 vi.mock('../src/lib/crypto.js', () => ({ decrypt: h.decrypt }));
 vi.mock('../src/lib/git.js', () => ({ checkoutCommit: h.checkoutCommit }));
+vi.mock('../src/lib/agentClient.js', () => ({ agentOp: h.agentOp }));
 vi.mock('../src/engine/database.js', () => ({ connectionString: h.connectionString }));
 vi.mock('../src/engine/builders/docker.js', () => ({ dockerBuilder: h.builder }));
 vi.mock('../src/engine/builders/pm2.js', () => ({ pm2Builder: h.builder }));
@@ -113,7 +115,12 @@ function makeDb(): { db: FakeDb; updates: { table: unknown; values: Record<strin
     update: vi.fn((table: unknown) => ({
       set: (values: Record<string, unknown>) => {
         updates.push({ table, values });
-        return { where: vi.fn().mockResolvedValue(undefined) };
+        return {
+          where: vi.fn(() => ({
+            // Success-path finalize guard: pretend the row was still `building`.
+            returning: vi.fn().mockResolvedValue([{ id: 1 }]),
+          })),
+        };
       },
     })),
     insert: vi.fn((table: unknown) => ({
@@ -581,5 +588,247 @@ describe('runDeployment', () => {
     expect(h.connectionString).toHaveBeenCalledTimes(1);
     expect(h.connectionString).toHaveBeenCalledWith(expect.objectContaining({ id: 10 }));
     expect(h.decrypt).toHaveBeenCalledWith('e1');
+  });
+
+  // ── private-registry auth ────────────────────────────────────────────────
+  it('resolves registry auth from a registry-type source for image deploys', async () => {
+    const { db } = makeDb();
+    baseSetup(db, { image: 'ghcr.io/acme/app:1', sourceId: 7 });
+    db.query.sources.findFirst.mockResolvedValue({
+      id: 7, type: 'registry', registryUsername: 'ci', tokenEncrypted: 'tok-enc',
+    });
+
+    await runDeployment(db as never, 1);
+
+    const [ctx] = h.builder.buildAndRun.mock.calls[0] as [Record<string, unknown>];
+    expect(ctx.registryAuth).toEqual({ username: 'ci', password: 'dec:tok-enc', server: 'ghcr.io' });
+  });
+
+  it('derives no server for bare image names and skips incomplete credentials', async () => {
+    const { db } = makeDb();
+    baseSetup(db, { image: 'nginx:latest', sourceId: 7 });
+    db.query.sources.findFirst.mockResolvedValue({
+      id: 7, type: 'registry', registryUsername: 'ci', tokenEncrypted: null,
+    });
+    await runDeployment(db as never, 1);
+    let [ctx] = h.builder.buildAndRun.mock.calls[0] as [Record<string, unknown>];
+    expect(ctx.registryAuth).toBeUndefined();
+
+    // A non-registry source and a missing source row behave the same.
+    h.builder.buildAndRun.mockClear();
+    db.query.sources.findFirst.mockResolvedValue({ id: 8, type: 'github', registryUsername: 'ci', tokenEncrypted: 'x' });
+    await runDeployment(db as never, 1);
+    [ctx] = h.builder.buildAndRun.mock.calls[0] as [Record<string, unknown>];
+    expect(ctx.registryAuth).toBeUndefined();
+
+    h.builder.buildAndRun.mockClear();
+    db.query.sources.findFirst.mockResolvedValue(undefined);
+    await runDeployment(db as never, 1);
+    [ctx] = h.builder.buildAndRun.mock.calls[0] as [Record<string, unknown>];
+    expect(ctx.registryAuth).toBeUndefined();
+  });
+
+  it('skips registry auth for repo deploys even with a registry source', async () => {
+    const { db } = makeDb();
+    baseSetup(db, { image: null, sourceId: 7 });
+    db.query.sources.findFirst.mockResolvedValue({ id: 7, type: 'registry', registryUsername: 'u', tokenEncrypted: 't' });
+    await runDeployment(db as never, 1);
+    const [ctx] = h.builder.buildAndRun.mock.calls[0] as [Record<string, unknown>];
+    expect(ctx.registryAuth).toBeUndefined();
+  });
+
+  it('binds the agent call for services assigned to a remote server', async () => {
+    const { db } = makeDb();
+    baseSetup(db, { image: 'nginx:latest', serverId: 4 });
+    await runDeployment(db as never, 1);
+    const [ctx] = h.builder.buildAndRun.mock.calls[0] as [Record<string, unknown>];
+    expect(typeof ctx.agentCall).toBe('function');
+    // Invoking the bound call routes through agentOp against the remote server.
+    const out = await (ctx.agentCall as (op: string, p: Record<string, unknown>, s: (l: string) => void) => Promise<unknown>)(
+      'docker.pull', { image: 'nginx' }, () => {},
+    );
+    expect(out).toEqual({ exitCode: 0, lines: [] });
+    expect(h.agentOp).toHaveBeenCalledWith(expect.anything(), 4, 'docker.pull', { image: 'nginx' }, expect.any(Function));
+  });
+
+  it('detects registry hosts with a port and skips Docker Hub names', async () => {
+    const { db } = makeDb();
+    baseSetup(db, { image: 'registry.local:5000/app:1', sourceId: 7 });
+    db.query.sources.findFirst.mockResolvedValue({ id: 7, type: 'registry', registryUsername: 'u', tokenEncrypted: 't' });
+    await runDeployment(db as never, 1);
+    const [ctx] = h.builder.buildAndRun.mock.calls[0] as [Record<string, unknown>];
+    expect(ctx.registryAuth).toMatchObject({ server: 'registry.local:5000' });
+
+    // org/app (no dot in the first segment) → no server, Docker Hub default.
+    h.builder.buildAndRun.mockClear();
+    baseSetup(db, { image: 'acme/app:1', sourceId: 7 });
+    db.query.sources.findFirst.mockResolvedValue({ id: 7, type: 'registry', registryUsername: 'u', tokenEncrypted: 't' });
+    await runDeployment(db as never, 1);
+    const [ctx2] = h.builder.buildAndRun.mock.calls[0] as [Record<string, unknown>];
+    expect(ctx2.registryAuth).toMatchObject({ server: undefined });
+  });
+
+  it('covers null registryUsername and port-style bare image names', async () => {
+    const { db } = makeDb();
+    // registryUsername null → username '' → auth skipped (incomplete).
+    baseSetup(db, { image: 'reg.io/app:1', sourceId: 7 });
+    db.query.sources.findFirst.mockResolvedValue({ id: 7, type: 'registry', registryUsername: null, tokenEncrypted: 't' });
+    await runDeployment(db as never, 1);
+    const [ctx] = h.builder.buildAndRun.mock.calls[0] as [Record<string, unknown>];
+    expect(ctx.registryAuth).toBeUndefined();
+
+    // A bare name with a single segment: split('/')[0] is the whole name.
+    h.builder.buildAndRun.mockClear();
+    baseSetup(db, { image: 'app:1', sourceId: 7 });
+    db.query.sources.findFirst.mockResolvedValue({ id: 7, type: 'registry', registryUsername: 'u', tokenEncrypted: 't' });
+    await runDeployment(db as never, 1);
+    const [ctx2] = h.builder.buildAndRun.mock.calls[0] as [Record<string, unknown>];
+    expect(ctx2.registryAuth).toMatchObject({ server: undefined });
+  });
+
+  // ── cancellation ─────────────────────────────────────────────────────────
+  it('aborts before the build when the deployment was cancelled mid-flight', async () => {
+    const { db, updates } = makeDb();
+    baseSetup(db, { image: 'nginx:latest' });
+    // First read: the pipeline's initial fetch. Subsequent reads (checkpoints)
+    // observe the cancel route's write.
+    db.query.deployments.findFirst
+      .mockResolvedValueOnce(dep)
+      .mockResolvedValue({ ...dep, status: 'cancelled' });
+    const lines = collectLogs(1);
+
+    await runDeployment(db as never, 1);
+
+    expect(h.builder.buildAndRun).not.toHaveBeenCalled();
+    expect(lines.join('\n')).toContain('⏹ Deployment cancelled');
+    // No previous runtime → the service is idle, the deployment cancelled.
+    const svcUpdate = updates.find((u) => u.table === services && u.values.status === 'idle');
+    expect(svcUpdate).toBeTruthy();
+    const depUpdate = updates.find((u) => u.table === deployments && u.values.status === 'cancelled');
+    expect(depUpdate?.values.finishedAt).toBeInstanceOf(Date);
+  });
+
+  it('cancelling with a healthy previous runtime keeps the old version serving', async () => {
+    const { db, updates } = makeDb();
+    baseSetup(db, { image: 'nginx:latest', runtimeId: 'old-c' });
+    // Reads: 1 = initial fetch, 2 = pre-build checkpoint, 3 = post-checkout
+    // checkpoint (still in-flight); 4+ = the cancel is visible post-build.
+    db.query.deployments.findFirst
+      .mockResolvedValueOnce(dep)
+      .mockResolvedValueOnce(dep)
+      .mockResolvedValueOnce(dep)
+      .mockResolvedValue({ ...dep, status: 'cancelled' });
+    h.builder.buildAndRun.mockImplementation(async () => ({ runtimeId: 'new-c', port: 3000, healthPath: '/' }));
+    h.builder.isHealthy.mockImplementation(async (runtime: { runtimeId: string }) => runtime.runtimeId === 'old-c');
+    const lines = collectLogs(1);
+
+    await runDeployment(db as never, 1);
+
+    expect(lines.join('\n')).toContain('⏹ Deployment cancelled');
+    expect(lines.join('\n')).toContain('↩ Previous runtime is still healthy — rolled back to it.');
+    // The new runtime was retired, the service stays running.
+    expect(h.builder.stop).toHaveBeenCalledWith('new-c');
+    const svcUpdate = updates.find((u) => u.table === services && u.values.status === 'running');
+    expect(svcUpdate).toBeTruthy();
+  });
+
+  it('a cancel landing just before the finalize write retires the new container', async () => {
+    const { db } = makeDb();
+    baseSetup(db, { image: 'nginx:latest', runtimeId: 'old-c' });
+    db.query.deployments.findFirst.mockResolvedValue(dep);
+    // …but the conditional finalize update (status running + imageDigest set)
+    // returns no rows — as if the cancel flipped the row between checkpoint and write.
+    const dbAny = db as unknown as {
+      update: (t: unknown) => { set: (v: Record<string, unknown>) => { where: () => { returning: () => Promise<unknown[]> } } };
+    };
+    const origUpdate = dbAny.update.bind(dbAny);
+    dbAny.update = ((table: unknown) => {
+      const builder = origUpdate(table);
+      return {
+        set: (values: Record<string, unknown>) => {
+          const inner = builder.set(values);
+          if (values.status === 'running' && 'imageDigest' in values) {
+            return { where: () => ({ returning: () => Promise.resolve([]) }) };
+          }
+          return inner;
+        },
+      };
+    }) as typeof dbAny.update;
+    h.builder.buildAndRun.mockImplementation(async () => ({ runtimeId: 'new-c', port: 3000, healthPath: '/' }));
+    const lines = collectLogs(1);
+
+    await runDeployment(db as never, 1);
+
+    const text = lines.join('\n');
+    expect(text).toContain('Cancelled just before finalizing');
+    expect(h.builder.stop).toHaveBeenCalledWith('new-c');
+  });
+
+  it('cancels a repo deploy at the post-checkout checkpoint', async () => {
+    const { db } = makeDb();
+    baseSetup(db, { repoUrl: 'https://github.com/a/b.git' });
+    // Reads: 1 = initial, 2 = pre-build checkpoint; 3 = post-checkout → cancelled.
+    db.query.deployments.findFirst
+      .mockResolvedValueOnce(dep)
+      .mockResolvedValueOnce(dep)
+      .mockResolvedValue({ ...dep, status: 'cancelled' });
+    const lines = collectLogs(1);
+
+    await runDeployment(db as never, 1);
+
+    expect(h.checkoutCommit).toHaveBeenCalledTimes(1);
+    expect(h.builder.buildAndRun).not.toHaveBeenCalled();
+    expect(lines.join('\n')).toContain('⏹ Deployment cancelled');
+  });
+
+  it('cancels after a passing healthcheck, just before the success writes', async () => {
+    const { db } = makeDb();
+    baseSetup(db, { image: 'nginx:latest' });
+    // Reads: 1 initial, 2 pre-build, 3 post-checkout, 4 post-build; 5 = final checkpoint.
+    db.query.deployments.findFirst
+      .mockResolvedValueOnce(dep)
+      .mockResolvedValueOnce(dep)
+      .mockResolvedValueOnce(dep)
+      .mockResolvedValueOnce(dep)
+      .mockResolvedValue({ ...dep, status: 'cancelled' });
+    h.builder.buildAndRun.mockImplementation(async () => ({ runtimeId: 'new-c', port: 3000, healthPath: '/' }));
+    const lines = collectLogs(1);
+
+    await runDeployment(db as never, 1);
+
+    // The healthcheck ran; the success path never executed.
+    expect(lines.join('\n')).toContain('Running healthcheck');
+    expect(lines.join('\n')).toContain('⏹ Deployment cancelled');
+    expect(lines.join('\n')).not.toContain('✓ Deployment successful');
+  });
+
+  it('a finalize-race cancel without a previous runtime leaves the service untouched', async () => {    const { db } = makeDb();
+    baseSetup(db, { image: 'nginx:latest', runtimeId: null });
+    db.query.deployments.findFirst.mockResolvedValue(dep);
+    const dbAny = db as unknown as {
+      update: (t: unknown) => { set: (v: Record<string, unknown>) => { where: () => { returning: () => Promise<unknown[]> } } };
+    };
+    const origUpdate = dbAny.update.bind(dbAny);
+    dbAny.update = ((table: unknown) => {
+      const builder = origUpdate(table);
+      return {
+        set: (values: Record<string, unknown>) => {
+          const inner = builder.set(values);
+          if (values.status === 'running' && 'imageDigest' in values) {
+            return { where: () => ({ returning: () => Promise.resolve([]) }) };
+          }
+          return inner;
+        },
+      };
+    }) as typeof dbAny.update;
+    h.builder.buildAndRun.mockImplementation(async () => ({ runtimeId: 'new-c', port: 3000, healthPath: '/' }));
+    // A failing stop must be swallowed by the cancellation cleanup path.
+    h.builder.stop.mockRejectedValueOnce(new Error('docker gone'));
+    const lines = collectLogs(1);
+
+    await runDeployment(db as never, 1);
+
+    expect(lines.join('\n')).toContain('Cancelled just before finalizing');
+    expect(h.builder.stop).toHaveBeenCalledWith('new-c');
   });
 });

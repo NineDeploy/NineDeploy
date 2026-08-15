@@ -4,6 +4,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { webhookCreate } from '@ninedeploy/schemas';
 import { config } from '../config.js';
 import { decrypt, encrypt, randomToken } from '../lib/crypto.js';
+import { matchesAny, parseWatchPaths } from '../lib/glob.js';
 import { parseId, unauthorized } from '../lib/errors.js';
 import { isPing, parsePush, verifyWebhook } from '../lib/webhooks.js';
 
@@ -28,6 +29,15 @@ export const hookReceiveRoutes: FastifyPluginAsync = async (app) => {
     if (!push) return { ok: 'ignored', reason: 'not_a_push' };
 
     if (push.branch !== hook.branch) return { ok: 'skipped', reason: 'branch', branch: push.branch };
+
+    // Watch paths (monorepos): when the webhook defines globs, deploy only if
+    // at least one changed file matches. Payloads without file lists (rare)
+    // still deploy — never silently block an unverifiable push.
+    const patterns = parseWatchPaths(hook.watchPaths);
+    if (patterns.length > 0 && push.changedFiles.length > 0) {
+      const hit = push.changedFiles.some((f) => matchesAny(f, patterns));
+      if (!hit) return { ok: 'skipped', reason: 'watch_paths', patterns: patterns.length };
+    }
 
     // Replay dedup: a captured valid push replays indefinitely (the HMAC covers
     // the body, not freshness). Skip when a deployment for this exact commit is
@@ -70,6 +80,7 @@ export const webhookMgmtRoutes: FastifyPluginAsync = async (app) => {
       id: w.id,
       branch: w.branch,
       active: w.active,
+      watchPaths: w.watchPaths ?? '',
       url: webhookUrl(w.id),
       createdAt: w.createdAt.toISOString(),
     }));
@@ -84,7 +95,13 @@ export const webhookMgmtRoutes: FastifyPluginAsync = async (app) => {
     const secret = randomToken(24);
     const [w] = await app.db
       .insert(webhooks)
-      .values({ serviceId: id, branch, secretEncrypted: encrypt(secret), active: true })
+      .values({
+        serviceId: id,
+        branch,
+        watchPaths: input.watchPaths?.trim() || null,
+        secretEncrypted: encrypt(secret),
+        active: true,
+      })
       .returning();
     // The raw secret is returned exactly once.
     return { id: w!.id, branch: w!.branch, active: w!.active, url: webhookUrl(w!.id), secret };

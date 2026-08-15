@@ -3,9 +3,11 @@ import { AlertCircle, CheckCircle2, Database, Globe, Link2, Package, Rocket, Ser
 import { useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { api } from '../lib/api.js';
-import { Card, CardBody, Skeleton, cn } from '../components/ui.js';
+import { useToast } from '../components/Toast.js';
+import { Card, CardBody, Skeleton, cn, Button } from '../components/ui.js';
 
 export function Dashboard() {
+  const { toast } = useToast();
   const dash = useQuery({ queryKey: ['dashboard'], queryFn: () => api.dashboard.get(), refetchInterval: 5000 });
   const importRef = useRef<HTMLInputElement>(null);
   const [importing, setImporting] = useState(false);
@@ -19,6 +21,7 @@ export function Dashboard() {
       window.location.href = `/services/${res.serviceId}`;
     } catch {
       setImporting(false);
+      toast('Import failed', 'error');
     }
   };
 
@@ -33,7 +36,18 @@ export function Dashboard() {
   }
 
   const data = dash.data;
-  if (!data) return null;
+  if (!data) {
+    // Query failed (not loading) — show an actionable error instead of a blank page.
+    return (
+      <Card className="p-10 text-center">
+        <p className="text-sm font-medium text-rose-300">Couldn't load the dashboard.</p>
+        <p className="mt-1 text-xs text-slate-500">The server may be restarting or unreachable.</p>
+        <div className="mt-4 flex justify-center gap-2">
+          <Button size="sm" variant="secondary" onClick={() => dash.refetch()}>Retry</Button>
+        </div>
+      </Card>
+    );
+  }
   const s = data.stats;
   const allHealthy = data.health.every((h) => h.healthy || h.status !== 'running');
   const unhealthyCount = data.health.filter((h) => !h.healthy && h.status === 'running').length;
@@ -59,6 +73,7 @@ export function Dashboard() {
             {allHealthy ? <CheckCircle2 size={24} /> : <AlertCircle size={24} />}
           </div>
           <div>
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Dashboard</p>
             <h1 className="text-lg font-semibold">
               {allHealthy ? 'All systems operational' : `${unhealthyCount} service${unhealthyCount > 1 ? 's' : ''} need attention`}
             </h1>

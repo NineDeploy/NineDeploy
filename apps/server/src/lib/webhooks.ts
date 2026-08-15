@@ -8,6 +8,8 @@ export interface PushEvent {
   message: string;
   author: string;
   repoUrl?: string;
+  /** Paths added/modified/removed across the push (drives watch-path filtering). */
+  changedFiles: string[];
 }
 
 /** Constant-time comparison of two hex/base64 strings. */
@@ -67,6 +69,20 @@ export function isPing(headers: Record<string, string | string[] | undefined>, p
   return h('x-gitlab-event') === 'Ping Hook';
 }
 
+/** Collect added/modified/removed paths from a commits array. */
+function changedFilesFrom(commits: Array<Record<string, unknown>>): string[] {
+  const out: string[] = [];
+  for (const c of commits) {
+    for (const key of ['added', 'modified', 'removed'] as const) {
+      const list = c[key];
+      if (Array.isArray(list)) {
+        for (const f of list) if (typeof f === 'string') out.push(f);
+      }
+    }
+  }
+  return out;
+}
+
 /** Parse a push payload into the fields the deploy pipeline needs. */
 export function parsePush(body: unknown, provider: Provider): PushEvent | null {
   const b = body as Record<string, unknown>;
@@ -86,6 +102,7 @@ export function parsePush(body: unknown, provider: Provider): PushEvent | null {
       message: String(last['message'] ?? ''),
       author: String(author ?? ''),
       repoUrl: typeof project?.['git_http_url'] === 'string' ? (project['git_http_url'] as string) : undefined,
+      changedFiles: changedFilesFrom(commits),
     };
   }
 
@@ -93,11 +110,14 @@ export function parsePush(body: unknown, provider: Provider): PushEvent | null {
   const head = (b['head_commit'] as Record<string, unknown> | undefined) ?? {};
   const author = (head['author'] as Record<string, unknown> | undefined);
   const repo = (b['repository'] as Record<string, unknown> | undefined);
+  const commits = (b['commits'] as Array<Record<string, unknown>> | undefined) ?? [];
+  const withHead = [...commits, ...(Object.keys(head).length > 0 ? [head] : [])];
   return {
     branch,
     sha: String(head['id'] ?? ''),
     message: String(head['message'] ?? ''),
     author: String(author?.['username'] ?? ''),
     repoUrl: typeof repo?.['clone_url'] === 'string' ? (repo['clone_url'] as string) : undefined,
+    changedFiles: changedFilesFrom(withHead),
   };
 }

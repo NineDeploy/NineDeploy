@@ -30,6 +30,10 @@ const schema = z.object({
   // How many deployments the worker processes in parallel (1-8). The same
   // service is never deployed concurrently regardless of this value.
   NINEDEPLOY_DEPLOY_CONCURRENCY: z.coerce.number().int().min(1).max(8).default(1),
+  // Update-check source: a JSON endpoint returning {"tag_name": "vX.Y.Z", ...}
+  // (GitHub Releases format). Defaults to the NineDeploy releases feed; set to
+  // "disabled" to turn update checks off (air-gapped instances).
+  NINEDEPLOY_UPDATE_CHECK_URL: z.string().optional(),
 });
 
 export type Env = z.infer<typeof schema>;

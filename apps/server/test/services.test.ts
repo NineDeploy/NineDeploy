@@ -116,12 +116,91 @@ describe('services routes', () => {
     const res = await app.inject({ method: 'GET', url: '/3', headers: asUser() });
     expect(res.statusCode).toBe(200);
     expect(res.json().id).toBe(3);
+    expect(res.json().build).toBeNull();
+  });
+
+  it('gets a service with its build config', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: {
+          services: svcRow({ id: 3 }),
+          buildConfigs: {
+            serviceId: 3, buildPack: 'dockerfile', baseDir: '/app', installCmd: null,
+            buildCmd: 'npm run build', startCmd: 'npm start', dockerfilePath: './Dockerfile',
+          },
+        },
+      }),
+    });
+    await app.register(servicesRoutes);
+    const res = await app.inject({ method: 'GET', url: '/3', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().build).toMatchObject({
+      buildPack: 'dockerfile',
+      baseDir: '/app',
+      installCmd: null,
+      buildCmd: 'npm run build',
+      startCmd: 'npm start',
+      dockerfilePath: './Dockerfile',
+    });
   });
 
   it('returns 404 for a missing service', async () => {
     const app = await buildTestApp({ db: createFakeDb() });
     await app.register(servicesRoutes);
     const res = await app.inject({ method: 'GET', url: '/99', headers: asUser() });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('patches the build config alongside the service row', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { services: svcRow() },
+        update: {
+          services: [svcRow({ id: 1, name: 'renamed' })],
+          build_configs: [{ serviceId: 1, buildPack: 'nixpacks' }],
+        },
+      }),
+    });
+    await app.register(servicesRoutes);
+    const res = await app.inject({
+      method: 'PATCH', url: '/1', headers: asUser(),
+      payload: {
+        name: 'renamed',
+        build: {
+          buildPack: 'nixpacks', baseDir: '/app', installCmd: 'npm ci',
+          buildCmd: '', startCmd: 'npm start', dockerfilePath: '',
+        },
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ id: 1, name: 'renamed' });
+  });
+
+  it('skips the build config write when the patch carries no build keys', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { services: svcRow() },
+        update: { services: [svcRow({ id: 1 })], build_configs: [] },
+      }),
+    });
+    await app.register(servicesRoutes);
+    const res = await app.inject({
+      method: 'PATCH', url: '/1', headers: asUser(), payload: { build: {} },
+    });
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('returns 404 when patching a service whose build config row is missing', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { services: svcRow() },
+        update: { services: [svcRow({ id: 1 })], build_configs: [] },
+      }),
+    });
+    await app.register(servicesRoutes);
+    const res = await app.inject({
+      method: 'PATCH', url: '/1', headers: asUser(), payload: { build: { startCmd: 'npm start' } },
+    });
     expect(res.statusCode).toBe(404);
   });
 
@@ -173,11 +252,24 @@ describe('services routes', () => {
     expect(execMocks.run).not.toHaveBeenCalled();
   });
 
+  it('tears a compose project down on delete', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { services: svcRow({ id: 1, name: 'stack', type: 'compose', runtimeId: 'ndcmp-stack-api-1' }) },
+      }),
+    });
+    await app.register(servicesRoutes);
+    const res = await app.inject({ method: 'DELETE', url: '/1', headers: asUser() });
+    expect(res.statusCode).toBe(204);
+    const composeCall = execMocks.run.mock.calls.find((c) => (c[1] as string[])[0] === 'compose');
+    expect(composeCall).toBeTruthy();
+    expect((composeCall![1] as string[])).toEqual(['compose', '-p', 'ndcmp-stack', 'down', '--remove-orphans']);
+  });
+
   it('stops and removes the docker container and rewrites traefik config on delete', async () => {
     const app = await buildTestApp({
       db: createFakeDb({
-        findFirst: { services: svcRow({ id: 1, name: 'web', type: 'docker', runtimeId: 'c1' }) },
-      }),
+        findFirst: { services: svcRow({ id: 1, name: 'web', type: 'docker', runtimeId: 'c1' }) },      }),
     });
     await app.register(servicesRoutes);
     const res = await app.inject({ method: 'DELETE', url: '/1', headers: asUser() });

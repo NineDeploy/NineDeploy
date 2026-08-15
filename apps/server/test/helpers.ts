@@ -364,6 +364,20 @@ export const backupRow = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
+export const jobRow = (over: Record<string, unknown> = {}) => ({
+  id: 1,
+  serviceId: 1,
+  name: 'job',
+  cron: '0 3 * * *',
+  kind: 'deploy',
+  command: null,
+  enabled: true,
+  lastRunAt: null,
+  createdAt: NOW,
+  updatedAt: NOW,
+  ...over,
+});
+
 export const envVarRow = (over: Record<string, unknown> = {}) => ({
   id: 1,
   serviceId: 1,
@@ -417,6 +431,7 @@ export const sourceRow = (over: Record<string, unknown> = {}) => ({
   name: 'repo',
   tokenEncrypted: null,
   deployKeyEncrypted: null,
+  registryUsername: null,
   defaultBranch: 'main',
   createdAt: NOW,
   updatedAt: NOW,

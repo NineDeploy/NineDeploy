@@ -15,6 +15,26 @@ const h = vi.hoisted(() => {
 vi.mock('../../src/lib/exec.js', () => ({ run: h.run, sleep: h.sleep, capture: h.capture }));
 vi.mock('../../src/config.js', () => ({ config: h.config }));
 
+const spawnMocks = vi.hoisted(() => {
+  const handlers: Array<{ ev: string; cb: (code: number | null) => void }> = [];
+  const stdinHandlers: Array<{ ev: string; cb: (err?: Error) => void }> = [];
+  const child = {
+    stdin: {
+      on: vi.fn((ev: string, cb: (err?: Error) => void) => {
+        if (ev === 'error') stdinHandlers.push({ ev, cb });
+      }),
+      write: vi.fn(),
+      end: vi.fn(),
+    },
+    on: vi.fn((ev: string, cb: (code: number | null) => void) => {
+      if (ev === 'exit') handlers.push({ ev, cb });
+    }),
+  };
+  const spawn = vi.fn(() => child);
+  return { spawn, child, handlers, stdinHandlers };
+});
+vi.mock('node:child_process', () => ({ spawn: spawnMocks.spawn }));
+
 const makeCtx = (over: Record<string, unknown> = {}) => ({
   deploymentId: 3,
   service: {
@@ -46,6 +66,17 @@ describe('dockerBuilder.buildAndRun', () => {
     h.run.mockResolvedValue(undefined);
     h.capture.mockReset();
     h.capture.mockResolvedValue('running');
+  });
+
+  it('appends the template command after the image and mounts the docker socket when flagged', async () => {
+    h.run.mockResolvedValue(undefined);
+    const ctx = makeCtx({ service: { slug: 'minio', image: 'minio/minio', port: 9000, cpuShares: 0, memLimitMb: 0, volumeMount: '/data', healthPath: '/', cmd: ['server', '/data', '--console-address', ':9001'], dockerSocket: true } });
+
+    await dockerBuilder.buildAndRun(ctx as never);
+
+    const runArgs = h.run.mock.calls.at(-1)![1] as unknown[];
+    expect(runArgs.join(' ')).toContain('-v /var/run/docker.sock:/var/run/docker.sock');
+    expect(runArgs.join(' ')).toContain('minio/minio server /data --console-address :9001');
   });
 
   it('pulls a pre-built image and starts a container with resource/env-file flags', async () => {
@@ -272,6 +303,48 @@ describe('dockerBuilder.isHealthy', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('falls back to a sibling-container probe when direct IP probing fails (Docker Desktop)', async () => {
+    // Direct fetch never succeeds (macOS-style unreachable container IP)…
+    fetchMock.mockRejectedValue(new Error('unreachable'));
+    // …but after the direct grace window the busybox TCP sibling probe succeeds.
+    h.run.mockImplementation(async () => undefined);
+
+    await expect(
+      dockerBuilder.isHealthy({ runtimeId: 'r', port: 3000, healthPath: '/x' }, 5_000, 100),
+    ).resolves.toBe(true);
+
+    const siblingCall = h.run.mock.calls.find((c) => c[1].includes('busybox:1.36'));
+    expect(siblingCall).toBeDefined();
+    // TCP probe by the inspected IP, not the (DNS-flaky) container name.
+    expect(siblingCall![1].join(' ')).toContain('nc -w 3 172.17.0.2 3000');
+  });
+
+  it('logs the sibling probe failure reason and formats non-Error rejections', async () => {
+    fetchMock.mockRejectedValue(new Error('unreachable'));
+    const log = vi.fn();
+    h.run.mockImplementation(async () => { throw new Error('nc: connection refused'); });
+    await expect(
+      dockerBuilder.isHealthy({ runtimeId: 'r', port: 3000, healthPath: '/' }, 1_000, 0, log),
+    ).resolves.toBe(false);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('nc: connection refused'));
+
+    // Non-Error rejections are stringified, not crashed on .message.
+    h.run.mockImplementation(async () => { throw 'plain failure'; });
+    await expect(
+      dockerBuilder.isHealthy({ runtimeId: 'r', port: 3000, healthPath: '/' }, 500, 0, log),
+    ).resolves.toBe(false);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('plain failure'));
+  });
+
+  it('stays unhealthy when both direct and sibling probes fail', async () => {
+    fetchMock.mockRejectedValue(new Error('unreachable'));
+    h.run.mockImplementation(async () => { throw new Error('nc: connection refused'); });
+
+    await expect(
+      dockerBuilder.isHealthy({ runtimeId: 'r', port: 3000, healthPath: '/' }, 1_500, 100),
+    ).resolves.toBe(false);
+  });
+
   it('returns true when the healthcheck responds below 500', async () => {
     fetchMock.mockResolvedValue({ status: 200 });
 
@@ -339,5 +412,113 @@ describe('dockerBuilder.stop', () => {
     h.run.mockRejectedValueOnce(new Error('gone')).mockRejectedValueOnce(new Error('gone'));
 
     await expect(dockerBuilder.stop('web-3')).resolves.toBeUndefined();
+  });
+});
+
+describe('dockerBuilder registry auth', () => {
+  beforeEach(() => {
+    h.run.mockReset();
+    // Keep the sink invocation (mirrors the real run) so no-op log drains run.
+    h.run.mockImplementation(async (_c: string, _a: unknown[], _o: unknown, sink?: (line: string) => void) => {
+      sink?.('');
+    });
+    h.capture.mockReset();
+    h.capture.mockResolvedValue('running');
+    spawnMocks.spawn.mockClear();
+    spawnMocks.child.stdin.write.mockClear();
+    spawnMocks.handlers.length = 0;
+    spawnMocks.child.on.mockImplementation((ev: string, cb: (code: number | null) => void) => {
+      if (ev === 'exit') spawnMocks.handlers.push({ ev, cb });
+    });
+    spawnMocks.child.stdin.on.mockImplementation((ev: string, cb: (err?: Error) => void) => {
+      if (ev === 'error') spawnMocks.stdinHandlers.push({ ev, cb });
+    });
+  });
+
+  it('logs in and out around a private-registry pull (password via stdin)', async () => {
+    // A successful login exit fires as soon as the handler registers.
+    spawnMocks.child.on.mockImplementation((ev: string, cb: (code: number | null) => void) => {
+      if (ev === 'exit') queueMicrotask(() => cb(0));
+    });
+
+    await dockerBuilder.buildAndRun(
+      makeCtx({
+        service: { slug: 'web', image: 'ghcr.io/acme/app:1', port: 3000, cpuShares: 0, memLimitMb: 0, healthPath: '/' },
+        registryAuth: { username: 'u', password: 'p', server: 'ghcr.io' },
+      }) as never,
+    );
+
+    expect(spawnMocks.spawn).toHaveBeenCalledWith('docker', ['login', '--username', 'u', '--password-stdin', 'ghcr.io'], {});
+    // The password traveled over stdin, never argv.
+    expect(spawnMocks.child.stdin.write).toHaveBeenCalledWith('p\n');
+    // Logout after the pull.
+    const logoutCall = h.run.mock.calls.find((c) => (c[1] as string[])[0] === 'logout');
+    expect(logoutCall).toBeTruthy();
+    expect((logoutCall![1] as string[])).toContain('ghcr.io');
+    spawnMocks.child.on.mockImplementation((ev: string, cb: (code: number | null) => void) => {
+      if (ev === 'exit') spawnMocks.handlers.push({ ev, cb });
+    });
+  });
+
+  it('fails the build when docker login exits non-zero', async () => {
+    spawnMocks.child.on.mockImplementation((ev: string, cb: (code: number | null) => void) => {
+      if (ev === 'exit') queueMicrotask(() => cb(1));
+    });
+    await expect(
+      dockerBuilder.buildAndRun(
+        makeCtx({
+          service: { slug: 'web', image: 'ghcr.io/acme/app:1', port: 3000, cpuShares: 0, memLimitMb: 0, healthPath: '/' },
+          registryAuth: { username: 'u', password: 'p' },
+        }) as never,
+      ),
+    ).rejects.toThrow('docker login failed');
+    spawnMocks.child.on.mockImplementation((ev: string, cb: (code: number | null) => void) => {
+      if (ev === 'exit') spawnMocks.handlers.push({ ev, cb });
+    });
+  });
+
+  it('propagates spawn errors from docker login', async () => {
+    spawnMocks.child.on.mockImplementation((ev: string, cb: (code: number | null) => void) => {
+      if (ev === 'error') queueMicrotask(() => cb(new Error('ENOENT') as never));
+    });
+    await expect(
+      dockerBuilder.buildAndRun(
+        makeCtx({
+          service: { slug: 'web', image: 'ghcr.io/acme/app:1', port: 3000, cpuShares: 0, memLimitMb: 0, healthPath: '/' },
+          registryAuth: { username: 'u', password: 'p' },
+        }) as never,
+      ),
+    ).rejects.toThrow();
+    spawnMocks.child.on.mockImplementation((ev: string, cb: (code: number | null) => void) => {
+      if (ev === 'exit') spawnMocks.handlers.push({ ev, cb });
+    });
+  });
+
+  it('tolerates an EPIPE on the login stdin', async () => {
+    spawnMocks.child.on.mockImplementation((ev: string, cb: (code: number | null) => void) => {
+      if (ev === 'exit') queueMicrotask(() => cb(0));
+    });
+    // Fire the stdin error handler as soon as it registers (EPIPE race).
+    spawnMocks.child.stdin.on.mockImplementation((ev: string, cb: (err?: Error) => void) => {
+      if (ev === 'error') queueMicrotask(() => cb(new Error('EPIPE')));
+    });
+    await dockerBuilder.buildAndRun(
+      makeCtx({
+        service: { slug: 'web', image: 'ghcr.io/acme/app:1', port: 3000, cpuShares: 0, memLimitMb: 0, healthPath: '/' },
+        registryAuth: { username: 'u', password: 'p' },
+      }) as never,
+    );
+    expect(spawnMocks.child.stdin.on).toHaveBeenCalledWith('error', expect.any(Function));
+    spawnMocks.child.on.mockImplementation((ev: string, cb: (code: number | null) => void) => {
+      if (ev === 'exit') spawnMocks.handlers.push({ ev, cb });
+    });
+  });
+
+  it('skips login entirely without registryAuth', async () => {
+    await dockerBuilder.buildAndRun(
+      makeCtx({ service: { slug: 'web', image: 'nginx:latest', port: 80, cpuShares: 0, memLimitMb: 0, healthPath: '/' } }) as never,
+    );
+    expect(spawnMocks.spawn).not.toHaveBeenCalled();
+    expect(h.run.mock.calls.some((c) => (c[1] as string[])[0] === 'logout')).toBe(false);
   });
 });

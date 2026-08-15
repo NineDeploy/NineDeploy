@@ -89,8 +89,8 @@ describe('Layout', () => {
     expect(screen.queryByText('Collapse')).not.toBeInTheDocument();
   });
 
-  it('uses exact matching for the root Services link', () => {
-    renderLayout('/');
+  it('marks the Services link active on /services', () => {
+    renderLayout('/services');
     const link = screen.getByRole('link', { name: /Services/ });
     expect(link.className).toContain('bg-indigo-500/15');
   });

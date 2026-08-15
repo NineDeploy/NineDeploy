@@ -14,6 +14,13 @@ const engineMocks = vi.hoisted(() => ({
 }));
 vi.mock('../src/engine/database.js', () => engineMocks);
 
+const remoteMocks = vi.hoisted(() => ({
+  uploadBackup: vi.fn(async () => undefined),
+  fetchRemoteBackup: vi.fn(async (_db: unknown, key: string, p: string) => p),
+  deleteRemoteBackup: vi.fn(async () => undefined),
+}));
+vi.mock('../src/lib/backupRemote.js', () => remoteMocks);
+
 const fsMocks = vi.hoisted(() => ({
   exists: false,
   existsSync: vi.fn(() => fsMocks.exists),
@@ -152,6 +159,50 @@ describe('database backup routes', () => {
     expect(engineMocks.restoreDatabase).toHaveBeenCalled();
   });
 
+  it('fetches a remote-only backup before restoring', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: {
+          databases: dbRow({ id: 1 }),
+          backups: backupRow({ id: 4, path: '/tmp/gone.dump', remoteKey: 'nd/gone.dump' }),
+        },
+      }),
+    });
+    await app.register(databaseBackupRoutes);
+    fsMocks.exists = false;
+    const res = await app.inject({ method: 'POST', url: '/1/backups/4/restore', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    expect(remoteMocks.fetchRemoteBackup).toHaveBeenCalledWith(expect.anything(), 'nd/gone.dump', expect.stringContaining('gone.dump'));
+    expect(engineMocks.restoreDatabase).toHaveBeenCalled();
+  });
+
+  it('404s for a remote-less backup whose local file is gone', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { databases: dbRow({ id: 1 }), backups: backupRow({ id: 4, path: '/tmp/gone.dump' }) },
+      }),
+    });
+    await app.register(databaseBackupRoutes);
+    fsMocks.exists = false;
+    const res = await app.inject({ method: 'POST', url: '/1/backups/4/restore', headers: asUser() });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('uploads completed backups off-site', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { databases: dbRow({ id: 1, slug: 'pg' }), backups: backupRow({ id: 4, status: 'completed', sizeBytes: 4321 }) },
+        insert: { backups: [backupRow({ id: 4, status: 'running' })] },
+        update: { backups: [backupRow({ id: 4, status: 'completed' })] },
+      }),
+    });
+    await app.register(databaseBackupRoutes);
+    fsMocks.exists = true;
+    const res = await app.inject({ method: 'POST', url: '/1/backups', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    expect(remoteMocks.uploadBackup).toHaveBeenCalled();
+  });
+
   it('returns 404 when the backup row is missing', async () => {
     const app = await buildTestApp({
       db: createFakeDb({ findFirst: { databases: dbRow({ id: 1 }) } }),
@@ -227,7 +278,7 @@ describe('backup routes', () => {
 
   it('deletes a backup and its file', async () => {
     const app = await buildTestApp({
-      db: createFakeDb({ findFirst: { backups: backupRow({ id: 1, path: dumpFile }) } }),
+      db: createFakeDb({ findFirst: { backups: backupRow({ id: 1, path: dumpFile, remoteKey: 'nd/x.dump' }) } }),
     });
     await app.register(backupRoutes);
     fsMocks.exists = true;
@@ -235,6 +286,8 @@ describe('backup routes', () => {
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ ok: true });
     expect(fs.readdirSync(path.dirname(dumpFile))).toEqual([]);
+    // The remote object is removed too.
+    expect(remoteMocks.deleteRemoteBackup).toHaveBeenCalledWith(expect.anything(), 'nd/x.dump');
   });
 
   it('deletes a backup row even when the file is gone', async () => {

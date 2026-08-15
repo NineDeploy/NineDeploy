@@ -5,6 +5,7 @@ import { backups, databases } from '@ninedeploy/db';
 import fp from 'fastify-plugin';
 import { config } from '../config.js';
 import { backupDatabase } from '../engine/database.js';
+import { uploadBackup } from '../lib/backupRemote.js';
 
 const KEEP_PER_DB = 7;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -24,13 +25,18 @@ export default fp(
           const log = (line: string) => fastify.log.info({ component: 'backup' }, line);
           try {
             await backupDatabase(d, file, log);
-            await fastify.db.insert(backups).values({
-              databaseId: d.id,
-              scope: 'scheduled',
-              status: 'completed',
-              path: file,
-              sizeBytes: existsSync(file) ? statSync(file).size : 0,
-            });
+            const [row] = await fastify.db
+              .insert(backups)
+              .values({
+                databaseId: d.id,
+                scope: 'scheduled',
+                status: 'completed',
+                path: file,
+                sizeBytes: existsSync(file) ? statSync(file).size : 0,
+              })
+              .returning({ id: backups.id });
+            // Remote copy (best-effort, same as manual backups).
+            if (row) await uploadBackup(fastify.db, row.id, file, log);
           } catch (err) {
             fastify.log.error({ err }, `scheduled backup failed for ${d.name}`);
           }

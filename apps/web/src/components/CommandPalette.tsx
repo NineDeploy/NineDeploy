@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 import {
   Activity, Cloud, Database, Globe, HardDrive, KeyRound,
-  Layers, type LucideIcon, Network, Rocket, Search, Server,
+  Layers, LayoutDashboard, type LucideIcon, Network, Rocket, Search, Server,
   Settings as SettingsIcon, Sparkles, Users,
 } from 'lucide-react';
 import { useNavigate } from 'react-router';
@@ -19,7 +19,8 @@ interface Cmd {
 
 const NAV_COMMANDS: Cmd[] = [
   { type: 'Navigate', label: 'Hub', sub: 'Template gallery', to: '/hub', icon: Sparkles },
-  { type: 'Navigate', label: 'Services', sub: 'All services', to: '/', icon: Server },
+  { type: 'Navigate', label: 'Dashboard', sub: 'Overview & health', to: '/dashboard', icon: LayoutDashboard },
+  { type: 'Navigate', label: 'Services', sub: 'All services', to: '/services', icon: Server },
   { type: 'Navigate', label: 'Databases', sub: 'Managed databases', to: '/databases', icon: Database },
   { type: 'Navigate', label: 'Domains', sub: 'Domain routing & SSL', to: '/domains', icon: Globe },
   { type: 'Navigate', label: 'Tunnels', sub: 'Cloudflare tunnels', to: '/tunnels', icon: Cloud },
@@ -59,7 +60,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
     const q = query.toLowerCase();
     return all
       .filter((c) => c.label.toLowerCase().includes(q) || c.sub.toLowerCase().includes(q) || c.type.toLowerCase().includes(q))
-      .slice(0, 15);
+      .slice(0, 24);
   }, [query, services.data, databases.data, templates.data]);
 
   useEffect(() => {
