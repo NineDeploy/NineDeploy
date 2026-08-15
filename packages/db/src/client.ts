@@ -31,7 +31,13 @@ export function createDb(opts: CreateDbOptions): CreateDbResult {
   // `onDelete cascade` / `set null` rule declared in the schema. Enable it per
   // connection. Fired without awaiting — execute calls on a single libSQL client
   // are serialized, so this runs before any subsequent query on this connection.
-  void client.execute('PRAGMA foreign_keys = ON;').catch(() => undefined);
+  // Also: WAL allows the API/worker/collector to read while the deploy worker
+  // writes (busy_timeout 0 would fail readers immediately during a write).
+  void client
+    .execute('PRAGMA foreign_keys = ON;')
+    .then(() => client.execute('PRAGMA journal_mode = WAL;'))
+    .then(() => client.execute('PRAGMA busy_timeout = 5000;'))
+    .catch(() => undefined);
   const db = drizzle(client, { schema });
   return { db, client };
 }
