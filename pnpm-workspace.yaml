@@ -8,9 +8,10 @@ packages:
 overrides:
   js-yaml: "^4.3.1"
   # esbuild <=0.24.2 (GHSA-67mh-4wv8-2f99) arrives via the deprecated
-  # @esbuild-kit toolchain under drizzle-kit (0.18.20). >=0.24.3 unifies every
-  # esbuild in the tree to 0.28.2 — the same version vite/tsx/vitest already use.
-  esbuild: ">=0.24.3"
+  # @esbuild-kit toolchain under drizzle-kit (0.18.20). Pin the exact patched
+  # version drizzle-kit already uses (0.25.12) — not a bare >= range, which
+  # would let the deprecated toolchain ride a newer major than drizzle-kit's own.
+  esbuild: "0.25.12"
 
 # Dependencies allowed to run install scripts (pnpm 11 blocks these by default).
 # esbuild ships its native binary via postinstall; Vite/tsx need it.
@@ -35,3 +36,6 @@ minimumReleaseAgeExclude:
   - '@node-rs/argon2-win32-ia32-msvc@2.1.0'
   - '@node-rs/argon2-win32-x64-msvc@2.1.0'
   - '@node-rs/argon2@2.1.0'
+
+patchedDependencies:
+  drizzle-kit@0.31.10: patches/drizzle-kit@0.31.10.patch
