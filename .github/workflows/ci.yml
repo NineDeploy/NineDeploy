@@ -48,6 +48,22 @@ jobs:
       - name: Test
         run: pnpm test
 
+      # Schema↔snapshot drift guard: 'drizzle-kit generate' must be a no-op.
+      # Any change (edited snapshot, new migration) means schema.ts and the
+      # migrations meta snapshots disagree — fail instead of letting a spurious
+      # migration surface later. `git status --porcelain` (not `git diff
+      # --exit-code`) is used so brand-new untracked migration files are caught
+      # too. When drift involves a column conflict drizzle-kit aborts on the
+      # missing TTY, so the step also fails fast rather than hanging.
+      - name: Check for schema drift
+        run: |
+          pnpm --filter @ninedeploy/db exec drizzle-kit generate
+          if [ -n "$(git status --porcelain -- packages/db/src/migrations)" ]; then
+            echo "::error::Schema drift detected: drizzle-kit generate changed files under packages/db/src/migrations"
+            git status --porcelain -- packages/db/src/migrations
+            exit 1
+          fi
+
   docker-image:
     name: Docker image build
     runs-on: ubuntu-latest

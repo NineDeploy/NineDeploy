@@ -1850,7 +1850,7 @@
           "autoincrement": false,
           "default": "'offline'"
         },
-        "token_hash": {
+        "token_encrypted": {
           "name": "token_encrypted",
           "type": "text",
           "primaryKey": false,
