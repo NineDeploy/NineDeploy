@@ -48,6 +48,7 @@ describe('job scheduler plugin', () => {
   });
 
   it('skips invalid cron expressions without breaking the plugin', async () => {
+    // biome-ignore lint/complexity/useArrowFunction: the plugin constructs Cron with `new`, so the mock implementation must be a constructable function, not an arrow.
     CronMock.Cron.mockImplementationOnce(function () {
       throw new Error('invalid pattern');
     });
