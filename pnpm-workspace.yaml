@@ -38,4 +38,11 @@ minimumReleaseAgeExclude:
   - '@node-rs/argon2@2.1.0'
 
 patchedDependencies:
+  # glob@10.5.0 is deprecated (isaacs: "contain widely publicized security
+  # vulnerabilities, fixed in the current version") and arrives via
+  # testcontainers → archiver@7.0.1 → archiver-utils@5.0.2, which pins glob ^10.
+  # archiver@8.0.0 would drop the chain but is ESM-only while testcontainers is
+  # CJS (ERR_REQUIRE_ESM). Patch archiver-utils' range to ^13.0.6 instead: glob
+  # 13 is already in the tree (fastify) and its sync API is a drop-in.
+  archiver-utils@5.0.2: patches/archiver-utils@5.0.2.patch
   drizzle-kit@0.31.10: patches/drizzle-kit@0.31.10.patch

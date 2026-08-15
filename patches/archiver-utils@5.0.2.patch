@@ -1,0 +1,13 @@
+diff --git a/package.json b/package.json
+index 23ec1a0dbbda040f0b9171da477533924d00a617..ff3dcf2a625c7b2e63e237d7b2ff09c88bd90115 100644
+--- a/package.json
++++ b/package.json
+@@ -31,7 +31,7 @@
+     "test": "mocha --reporter dot"
+   },
+   "dependencies": {
+-    "glob": "^10.0.0",
++    "glob": "^13.0.6",
+     "graceful-fs": "^4.2.0",
+     "is-stream": "^2.0.1",
+     "lazystream": "^1.0.0",
