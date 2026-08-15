@@ -27,7 +27,7 @@
     "@testing-library/user-event": "^14.6.4",
     "@vitest/coverage-v8": "^4.1.10",
     "jsdom": "^30.0.1",
-    "turbo": "^2.10.9",
+    "turbo": "^2.10.10",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10"
   }
