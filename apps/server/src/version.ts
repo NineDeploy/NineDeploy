@@ -21,7 +21,7 @@ export const CHANGELOG: ChangelogEntry[] = [
       'Backups (encrypted at rest) with daily scheduler and restore',
       'Traefik routing with automatic HTTPS (Let\'s Encrypt) and Cloudflare Tunnels',
       'Multi-user RBAC, audit log, rate limiting, master-key rotation',
-      'Web dashboard, CLI, template hub (49 one-click apps)',
+      'Web dashboard, CLI, template hub (48 one-click apps)',
       'SQLite — zero external dependencies; 100% test coverage enforced in CI',
       'Metric-driven alert rules (CPU/memory/cert-expiry) with duration windows, cooldown, and recovery notifications',
       'New notification channels: Slack, ntfy, and email (SMTP with encrypted credentials)',
