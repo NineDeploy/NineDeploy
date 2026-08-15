@@ -4,6 +4,14 @@ import { z } from 'zod';
 /** The insecure dev-only JWT secret. Never permitted in production. */
 export const INSECURE_JWT_SECRET = 'dev-insecure-secret-change-me';
 
+/** Well-known placeholders that must never be accepted in production. */
+const KNOWN_INSECURE_JWT_SECRETS = new Set([
+  INSECURE_JWT_SECRET,
+  // The value shipped in .env.example — a user copying it verbatim with
+  // NODE_ENV=production would otherwise boot with a publicly known secret.
+  'change-me-to-a-long-random-string',
+]);
+
 const schema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   NINEDEPLOY_HOST: z.string().default('0.0.0.0'),
@@ -48,7 +56,7 @@ function parseEnv(): Env {
   // Hard guard: the publicly-known default JWT secret would let anyone forge
   // tokens, so refuse to boot in production with it still in place. (Only
   // evaluated on a successful parse; on failure we already exited above.)
-  if (parsed.success && parsed.data.NODE_ENV === 'production' && parsed.data.NINEDEPLOY_JWT_SECRET === INSECURE_JWT_SECRET) {
+  if (parsed.success && parsed.data.NODE_ENV === 'production' && KNOWN_INSECURE_JWT_SECRETS.has(parsed.data.NINEDEPLOY_JWT_SECRET)) {
     // eslint-disable-next-line no-console
     console.error(
       '❌ NINEDEPLOY_JWT_SECRET must be set to a strong, unique secret in production. The insecure default is not allowed.',

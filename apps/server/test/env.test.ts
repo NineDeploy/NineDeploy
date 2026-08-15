@@ -103,6 +103,19 @@ describe('env', () => {
     expect(errorSpy.mock.calls[0]?.[0]).toMatch(/NINEDEPLOY_JWT_SECRET/);
   });
 
+  it('refuses to boot in production with the .env.example placeholder JWT secret', async () => {
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    vi.stubEnv('NODE_ENV', 'production');
+    // The value shipped in .env.example — copying it verbatim must not boot.
+    vi.stubEnv('NINEDEPLOY_JWT_SECRET', 'change-me-to-a-long-random-string');
+    await loadEnv();
+
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(errorSpy.mock.calls[0]?.[0]).toMatch(/NINEDEPLOY_JWT_SECRET/);
+  });
+
   it('boots in production when a strong custom JWT secret is set', async () => {
     vi.stubEnv('NODE_ENV', 'production');
     vi.stubEnv('NINEDEPLOY_JWT_SECRET', 'a-strong-unique-production-secret');
