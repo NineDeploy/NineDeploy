@@ -15,7 +15,6 @@ After=network.target docker.service
 Requires=docker.service
 
 [Service]
-Type=simple
 User=@USER@
 Group=@GROUP@
 WorkingDirectory=@INSTALL_DIR@
