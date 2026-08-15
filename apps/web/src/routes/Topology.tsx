@@ -93,7 +93,9 @@ export function Topology() {
 
     // Domains on the far left, grouped near their service's y.
     const svcIndex = new Map<number, number>();
-    services.forEach((s, i) => svcIndex.set(s.id, i));
+    services.forEach((s, i) => {
+      svcIndex.set(s.id, i);
+    });
     const domainCountBySvc = new Map<number, number>();
     (g?.domains ?? []).forEach((d) => {
       const si = svcIndex.get(d.serviceId);

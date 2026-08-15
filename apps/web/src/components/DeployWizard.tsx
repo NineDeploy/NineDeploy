@@ -135,14 +135,14 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
   const setEnv = (i: number, patch: Partial<EnvRow>) => setEnvRows((rows) => rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm sm:items-center sm:p-6" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-6">
+      <button type="button" aria-label="Close dialog" tabIndex={-1} aria-hidden="true" onClick={onClose} className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
       <div
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-label={template ? `Deploy ${template.name}` : 'New service'}
-        className="nd-fade flex max-h-[92vh] w-full max-w-xl flex-col overflow-hidden rounded-t-2xl border border-white/10 bg-slate-950 shadow-2xl sm:rounded-2xl"
-        onClick={(e) => e.stopPropagation()}
+        className="nd-fade relative flex max-h-[92vh] w-full max-w-xl flex-col overflow-hidden rounded-t-2xl border border-white/10 bg-slate-950 shadow-2xl sm:rounded-2xl"
       >
         {/* Header + stepper */}
         <div className="border-b border-white/5 p-5">
@@ -150,7 +150,7 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
             <h2 className="flex items-center gap-2 text-lg font-semibold">
               <Rocket size={18} className="text-indigo-400" /> {template ? `Deploy ${template.name}` : 'New service'}
             </h2>
-            <button onClick={onClose} className="rounded-lg p-1.5 text-slate-500 hover:bg-white/5 hover:text-slate-300"><X size={16} /></button>
+            <button type="button" onClick={onClose} className="rounded-lg p-1.5 text-slate-500 hover:bg-white/5 hover:text-slate-300"><X size={16} /></button>
           </div>
           <div className="flex items-center gap-2">
             {STEPS.map((label, i) => (
@@ -231,6 +231,7 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
               )}
               {envRows.length === 0 && <p className="py-2 text-xs text-slate-600">No environment variables.</p>}
               {envRows.map((row, i) => (
+                // biome-ignore lint/suspicious/noArrayIndexKey: env rows are indexed form state — setEnv(i, …) mutates by position, so the index IS the identity.
                 <div key={i} className="flex items-center gap-2">
                   <Input value={row.key} onChange={(e) => setEnv(i, { key: e.target.value })} placeholder="KEY" className="h-9 w-32 font-mono text-xs" />
                   <Input value={row.value} onChange={(e) => setEnv(i, { value: e.target.value })} placeholder="value" type={row.secret ? 'password' : 'text'} className="h-9 flex-1 font-mono text-xs" />

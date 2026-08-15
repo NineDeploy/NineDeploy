@@ -87,17 +87,17 @@ export function Backups() {
                   <td className="px-5 py-3 text-xs text-slate-500">{formatDateTime(b.createdAt)}</td>
                   <td className="px-5 py-3">
                     <div className="flex items-center justify-end gap-1">
-                      <button
+                      <button type="button"
                         onClick={() => b.databaseId && setPending({ kind: 'restore', databaseId: b.databaseId, id: b.id, name: b.databaseName ?? '' })}
                         className="rounded p-1.5 text-slate-500 transition hover:bg-white/5 hover:text-indigo-300 disabled:opacity-40"
                         title="Restore"
                       >
                         <RotateCcw size={14} />
                       </button>
-                      <button onClick={() => download(b.id)} className="rounded p-1.5 text-slate-500 transition hover:bg-white/5 hover:text-sky-300" title="Download">
+                      <button type="button" onClick={() => download(b.id)} className="rounded p-1.5 text-slate-500 transition hover:bg-white/5 hover:text-sky-300" title="Download">
                         <Download size={14} />
                       </button>
-                      <button onClick={() => setPending({ kind: 'delete', id: b.id })} className="rounded p-1.5 text-slate-500 transition hover:bg-white/5 hover:text-rose-400" title="Delete">
+                      <button type="button" onClick={() => setPending({ kind: 'delete', id: b.id })} className="rounded p-1.5 text-slate-500 transition hover:bg-white/5 hover:text-rose-400" title="Delete">
                         <Trash2 size={14} />
                       </button>
                     </div>
@@ -223,7 +223,7 @@ function DestinationsCard({ onRemove }: { onRemove: (id: number, name: string) =
                   </span>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
-                  <button
+                  <button type="button"
                     onClick={() => toggle.mutate({ id: d.id, active: d.active })}
                     className={cn(
                       'rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset transition',
@@ -232,10 +232,10 @@ function DestinationsCard({ onRemove }: { onRemove: (id: number, name: string) =
                   >
                     {d.active ? 'active' : 'paused'}
                   </button>
-                  <button onClick={() => test.mutate(d.id)} className="text-xs text-slate-500 hover:text-indigo-300" title="Test connection">
+                  <button type="button" onClick={() => test.mutate(d.id)} className="text-xs text-slate-500 hover:text-indigo-300" title="Test connection">
                     test
                   </button>
-                  <button onClick={() => onRemove(d.id, d.name)} className="text-slate-600 transition hover:text-rose-400" title="Remove destination">
+                  <button type="button" onClick={() => onRemove(d.id, d.name)} className="text-slate-600 transition hover:text-rose-400" title="Remove destination">
                     <Trash2 size={13} />
                   </button>
                 </div>

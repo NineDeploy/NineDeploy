@@ -58,7 +58,7 @@ export const backupDestinationRoutes: FastifyPluginAsync = async (app) => {
       if (typeof v === 'string' && v.trim()) values[key] = v.trim();
     }
     if (input.active !== undefined) values.active = input.active;
-    if (input.accessKeyId !== undefined && input.accessKeyId.trim()) values.accessKeyId = input.accessKeyId.trim();
+    if (input.accessKeyId?.trim()) values.accessKeyId = input.accessKeyId.trim();
     if (input.secretAccessKey) {
       values.secretKeyEncrypted = encrypt(input.secretAccessKey);
     }

@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import Fastify from 'fastify';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
-import { backups, databases } from '@ninedeploy/db';
+import { backups, } from '@ninedeploy/db';
 
 const engineMock = vi.hoisted(() => ({
   backupDatabase: vi.fn(async () => undefined),

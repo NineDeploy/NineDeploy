@@ -38,7 +38,7 @@ export function verifyWebhook(headers: Record<string, string | string[] | undefi
   if (h('x-github-event')) {
     const sig = h('x-hub-signature-256');
     if (!sig?.startsWith('sha256=')) return null;
-    const expected = 'sha256=' + hmac(secret, rawBody, 'hex');
+    const expected = `sha256=${hmac(secret, rawBody, 'hex')}`;
     return safeEqual(sig, expected) ? 'github' : null;
   }
 

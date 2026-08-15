@@ -71,7 +71,7 @@ export function Volumes() {
                     {v.inUse ? 'in use · locked' : isRetained ? 'retained · reusable' : 'attached · stopped'}
                   </span>
                   {!v.inUse && (
-                    <button
+                    <button type="button"
                       onClick={() => setPendingDelete(v.name)}
                       className="text-slate-600 transition hover:text-rose-400"
                       title="Delete volume (destructive)"

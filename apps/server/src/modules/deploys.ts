@@ -26,7 +26,9 @@ export const deploysRoutes: FastifyPluginAsync = async (app) => {
     const id = num((req.params as { id: string }).id);
     const rows = await app.db.query.deployments.findMany({
       where: eq(deployments.serviceId, id),
-      orderBy: desc(deployments.createdAt),
+      // id is monotonic and unambiguous — createdAt is second-precision, so
+      // ordering by it ties for same-second deploys.
+      orderBy: desc(deployments.id),
       limit: 50,
     });
     return rows.map((d) => ({
@@ -107,7 +109,7 @@ export const deploysRoutes: FastifyPluginAsync = async (app) => {
     if (backlog) socket.send(backlog);
     const unsub = logBus.subscribe(depId, (line) => {
       try {
-        socket.send(line + '\n');
+        socket.send(`${line}\n`);
       } catch {
         /* socket closed */
       }

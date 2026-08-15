@@ -366,6 +366,7 @@ describe('deploys watch', () => {
       close: vi.fn(() => handlers['close']?.()),
     };
     // Regular function so `new WebSocket(...)` returns the socket object.
+    // biome-ignore lint/complexity/useArrowFunction: `new WebSocket(...)` requires a constructable function — arrow functions cannot be constructed.
     sys.WebSocket.mockImplementationOnce(function () {
       return socket;
     });
@@ -389,8 +390,8 @@ describe('deploys watch', () => {
     const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     const pending = deploysWatch('1', '2');
     await new Promise((r) => setTimeout(r, 10));
-    handlers['message']?.('hello' + String.fromCharCode(10));
-    expect(writeSpy).toHaveBeenCalledWith('hello' + String.fromCharCode(10));
+    handlers['message']?.(`hello${String.fromCharCode(10)}`);
+    expect(writeSpy).toHaveBeenCalledWith(`hello${String.fromCharCode(10)}`);
     handlers['close']?.();
     await pending;
     writeSpy.mockRestore();
@@ -424,6 +425,7 @@ describe('deploys watch', () => {
   it('closes the socket when the deadline elapses', async () => {
     const handlers: Record<string, (...a: unknown[]) => void> = {};
     let closed = false;
+    // biome-ignore lint/complexity/useArrowFunction: `new WebSocket(...)` requires a constructable function — arrow functions cannot be constructed.
     sys.WebSocket.mockImplementationOnce(function () {
       return {
         on: (ev: string, cb: (...a: unknown[]) => void) => { handlers[ev] = cb; },
@@ -435,7 +437,7 @@ describe('deploys watch', () => {
   });
 
   it('exits cleanly on SIGINT', async () => {
-    const handlers = fakeSocket();
+    const _handlers = fakeSocket();
     const pending = deploysWatch('1', '2', 60_000);
     await new Promise((r) => setTimeout(r, 10));
     process.emit('SIGINT');

@@ -58,7 +58,7 @@ async function loadRegistryAuth(
 ): Promise<{ username: string; password: string; server?: string } | undefined> {
   if (!service.sourceId || !service.image) return undefined;
   const src = await db.query.sources.findFirst({ where: eq(sources.id, service.sourceId) });
-  if (!src || src.type !== 'registry') return undefined;
+  if (src?.type !== 'registry') return undefined;
   const username = src.registryUsername ?? '';
   const password = src.tokenEncrypted ? decrypt(src.tokenEncrypted) : '';
   if (!username || !password) return undefined;

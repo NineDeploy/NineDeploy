@@ -14,10 +14,10 @@ function Probe() {
     <div>
       <span data-testid="theme">{theme}</span>
       <span data-testid="accent">{accent}</span>
-      <button onClick={toggleTheme}>toggle</button>
-      <button onClick={() => setTheme('light')}>set-light</button>
-      <button onClick={() => setTheme('dark')}>set-dark</button>
-      <button onClick={() => setAccent('rose')}>set-rose</button>
+      <button type="button" onClick={toggleTheme}>toggle</button>
+      <button type="button" onClick={() => setTheme('light')}>set-light</button>
+      <button type="button" onClick={() => setTheme('dark')}>set-dark</button>
+      <button type="button" onClick={() => setAccent('rose')}>set-rose</button>
     </div>
   );
 }

@@ -73,6 +73,7 @@ export function About() {
           <p className="mb-3 text-sm font-medium text-slate-300">{latest.title}</p>
           <ul className="space-y-1.5">
             {latest.changes.map((change, i) => (
+              // biome-ignore lint/suspicious/noArrayIndexKey: static changelog list, never reordered or filtered.
               <li key={i} className="flex items-start gap-2 text-sm text-slate-400">
                 <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-indigo-400" />
                 {change}

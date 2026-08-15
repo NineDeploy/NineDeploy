@@ -74,7 +74,7 @@ export function AttachmentsCard({ serviceId }: { serviceId: number }) {
                   {a.database && <StatusBadge status={a.database.status} />}
                   <code className="rounded bg-black/30 px-1.5 py-0.5 font-mono text-[10px] text-emerald-300/80">{a.envAlias}</code>
                 </div>
-                <button onClick={() => detach.mutate(a.id)} className="text-slate-600 transition hover:text-rose-400" title="Detach">
+                <button type="button" onClick={() => detach.mutate(a.id)} className="text-slate-600 transition hover:text-rose-400" title="Detach">
                   <Trash2 size={13} />
                 </button>
               </div>

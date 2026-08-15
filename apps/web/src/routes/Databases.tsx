@@ -93,7 +93,7 @@ export function Databases() {
 
               <div className="mt-4 flex-1">
                 {d.connectionString ? (
-                  <button
+                  <button type="button"
                     onClick={() => void copy(d.connectionString!)}
                     className="group flex w-full items-center gap-2 rounded-lg bg-black/30 px-2.5 py-2 text-left ring-1 ring-inset ring-white/5 hover:ring-white/15"
                     title="Copy connection string"
@@ -114,14 +114,14 @@ export function Databases() {
               </div>
 
               <div className="mt-4 flex items-center justify-between">
-                <button
+                <button type="button"
                   onClick={() => backup.mutate(d.id)}
                   disabled={backup.isPending}
                   className="flex items-center gap-1 text-xs text-slate-400 transition hover:text-indigo-300 disabled:opacity-50"
                 >
                   <HardDriveDownload size={12} /> Backup
                 </button>
-                <button
+                <button type="button"
                   onClick={() => setPendingRemove({ id: d.id, name: d.name })}
                   className={cn('flex items-center gap-1 text-xs text-slate-600 transition hover:text-rose-400')}
                 >

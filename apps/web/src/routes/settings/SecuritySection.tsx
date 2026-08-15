@@ -72,7 +72,7 @@ export function SecuritySection() {
           </p>
           <label className="flex max-w-md items-center justify-between gap-4 rounded-lg border border-slate-800 bg-slate-900/40 px-4 py-3">
             <span className="text-sm text-slate-300">Allow open registration</span>
-            <button
+            <button type="button"
               role="switch"
               aria-checked={allowRegistration}
               disabled={instanceSettings.isLoading || setAllowRegistration.isPending}

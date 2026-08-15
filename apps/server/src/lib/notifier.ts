@@ -1,4 +1,4 @@
-import { type DB, notificationLog } from '@ninedeploy/db';
+import { type DB, notificationLog, type NotificationChannel } from '@ninedeploy/db';
 import { decrypt } from './crypto.js';
 import type { AppEvent } from './events.js';
 import { encrypt } from './crypto.js';
@@ -176,7 +176,7 @@ export async function dispatchChannel(type: string, target: string, event: AppEv
  * Email target format: JSON {host, port, from, to, user?, pass?}
  */
 export async function notifyEvent(db: DB, event: AppEvent): Promise<void> {
-  let channels;
+  let channels: NotificationChannel[];
   try {
     channels = await db.query.notificationChannels.findMany();
   } catch {
@@ -214,7 +214,7 @@ export async function notifyEvent(db: DB, event: AppEvent): Promise<void> {
  * other delivery.
  */
 export async function sendSystemEmail(db: DB, subject: string, text: string): Promise<boolean> {
-  let channel;
+  let channel: NotificationChannel | undefined;
   try {
     channel = (await db.query.notificationChannels.findMany()).find((c) => c.active && c.type === 'email');
   } catch {

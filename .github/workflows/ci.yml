@@ -38,7 +38,6 @@ jobs:
 
       - name: Lint
         run: pnpm lint
-        continue-on-error: true # lint is advisory until fully wired across packages
 
       - name: Build
         run: pnpm build

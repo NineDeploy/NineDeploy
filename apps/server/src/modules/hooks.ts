@@ -16,7 +16,7 @@ export const hookReceiveRoutes: FastifyPluginAsync = async (app) => {
     // webhook") rather than 400 — don't reveal param validation to probers.
     const id = Number((req.params as { id: string }).id);
     const hook = await app.db.query.webhooks.findFirst({ where: eq(webhooks.id, id) });
-    if (!hook || !hook.active) return reply.code(404).send({ error: { code: 'not_found', message: 'Unknown webhook' } });
+    if (!hook?.active) return reply.code(404).send({ error: { code: 'not_found', message: 'Unknown webhook' } });
 
     const rawBody = req.rawBody?.toString('utf8') ?? '';
     const secret = decrypt(hook.secretEncrypted);

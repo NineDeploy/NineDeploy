@@ -15,10 +15,10 @@ import { notifyReady, startWatchdog } from './lib/sdNotify.js';
 
 // ── operand validators ────────────────────────────────────────────────────
 const RE_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/; // container/volume/project names, slugs
-const RE_IMAGE = /^[A-Za-z0-9][A-Za-z0-9@:\/._-]*$/; // image refs incl. digests, registries
-const RE_PATH = /^[A-Za-z0-9@._][A-Za-z0-9@._\/-]*$|^\/[A-Za-z0-9@._\/-]*$/; // relative or absolute, no traversal up
+const RE_IMAGE = /^[A-Za-z0-9][A-Za-z0-9@:/._-]*$/; // image refs incl. digests, registries
+const RE_PATH = /^[A-Za-z0-9@._][A-Za-z0-9@._/-]*$|^\/[A-Za-z0-9@._/-]*$/; // relative or absolute, no traversal up
 const RE_SHA = /^(HEAD|[0-9a-f]{6,64})$/;
-const RE_REF = /^[A-Za-z0-9@:\/._-]+$/; // branches, tags, URLs
+const RE_REF = /^[A-Za-z0-9@:/._-]+$/; // branches, tags, URLs
 
 type Params = Record<string, unknown>;
 
@@ -49,7 +49,7 @@ const OPS: Record<string, { exe: 'docker' | 'git'; build: Op }> = {
       const cpu = str(p, 'cpuShares');
       if (cpu !== undefined) argv.push('--cpu-shares', /^\d{1,6}$/.test(cpu) ? cpu : '0');
       const mem = str(p, 'memLimitMb');
-      if (mem !== undefined) argv.push('--memory', (/^\d{1,6}$/.test(mem) ? mem : '0') + 'm');
+      if (mem !== undefined) argv.push('--memory', `${/^\d{1,6}$/.test(mem) ? mem : '0'}m`);
       const vol = str(p, 'volume');
       if (vol !== undefined) argv.push('-v', `${validated(vol, RE_NAME, 'volume name')}:${validated(str(p, 'mount') ?? '/', RE_PATH, 'mount path')}`);
       argv.push(validated(str(p, 'image'), RE_IMAGE, 'image'));
@@ -66,7 +66,7 @@ const OPS: Record<string, { exe: 'docker' | 'git'; build: Op }> = {
       const cpu = str(p, 'cpuShares');
       if (cpu !== undefined) argv.push('--cpu-shares', /^\d{1,6}$/.test(cpu) ? cpu : '0');
       const mem = str(p, 'memLimitMb');
-      if (mem !== undefined) argv.push('--memory', (/^\d{1,6}$/.test(mem) ? mem : '0') + 'm');
+      if (mem !== undefined) argv.push('--memory', `${/^\d{1,6}$/.test(mem) ? mem : '0'}m`);
       const vol = str(p, 'volume');
       if (vol !== undefined) argv.push('-v', `${validated(vol, RE_NAME, 'volume name')}:${validated(str(p, 'mount') ?? '/', RE_PATH, 'mount path')}`);
       argv.push('--env-file', validated(str(p, 'envFile'), RE_PATH, 'env file path'));

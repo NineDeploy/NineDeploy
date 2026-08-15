@@ -9,12 +9,14 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
+    "lint": "biome lint .",
     "test": "vitest run --coverage",
     "clean": "rm -rf dist .turbo .data"
   },
   "dependencies": {
     "@fastify/cors": "^11.3.0",
     "@fastify/rate-limit": "^11.2.0",
+    "@fastify/static": "^10.1.3",
     "@fastify/websocket": "^11.3.0",
     "@ninedeploy/db": "workspace:*",
     "@ninedeploy/schemas": "workspace:*",

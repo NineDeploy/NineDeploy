@@ -64,7 +64,7 @@ export function ContainerTerminal({ serviceId, onClose }: { serviceId: number; o
             container shell {connected ? '●' : '○ connecting'}
           </span>
         </div>
-        <button onClick={onClose} className="text-xs text-slate-500 transition hover:text-slate-300">
+        <button type="button" onClick={onClose} className="text-xs text-slate-500 transition hover:text-slate-300">
           close
         </button>
       </div>

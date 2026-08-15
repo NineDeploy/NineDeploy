@@ -7,10 +7,10 @@ function Trigger() {
   const { toast } = useToast();
   return (
     <div>
-      <button onClick={() => toast('Saved!', 'success')}>success</button>
-      <button onClick={() => toast('Boom', 'error')}>error</button>
-      <button onClick={() => toast('Heads up', 'info')}>info</button>
-      <button onClick={() => toast('Default type')}>default</button>
+      <button type="button" onClick={() => toast('Saved!', 'success')}>success</button>
+      <button type="button" onClick={() => toast('Boom', 'error')}>error</button>
+      <button type="button" onClick={() => toast('Heads up', 'info')}>info</button>
+      <button type="button" onClick={() => toast('Default type')}>default</button>
     </div>
   );
 }

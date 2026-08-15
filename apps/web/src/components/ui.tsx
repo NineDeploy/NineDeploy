@@ -132,6 +132,7 @@ export function Tabs({
     <div className={cn('flex flex-wrap items-center gap-1 rounded-xl bg-white/[0.03] p-1 ring-1 ring-inset ring-white/[0.06]', className)}>
       {tabs.map((t) => (
         <button
+          type="button"
           key={t.id}
           onClick={() => onChange(t.id)}
           className={cn(
@@ -180,7 +181,8 @@ export function StatusBadge({ status }: { status: string }) {
 // ── Spinner ───────────────────────────────────────────────────────────────
 export function Spinner({ className }: { className?: string }) {
   return (
-    <svg className={cn('animate-spin', className)} viewBox="0 0 24 24" fill="none" width="1em" height="1em">
+    <svg className={cn('animate-spin', className)} viewBox="0 0 24 24" fill="none" width="1em" height="1em" role="status">
+      <title>Loading</title>
       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
       <path className="opacity-90" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
     </svg>
@@ -298,21 +300,21 @@ export function Modal({
   }, [onClose, initialFocusRef]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm sm:items-center sm:p-6" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-6">
+      <button type="button" aria-label="Close dialog" tabIndex={-1} aria-hidden="true" onClick={onClose} className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
       <div
         ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-label={typeof title === 'string' ? title : undefined}
         className={cn(
-          'nd-fade flex max-h-[92vh] w-full flex-col overflow-hidden rounded-t-2xl border border-white/10 bg-slate-950 shadow-2xl sm:rounded-2xl',
+          'nd-fade relative flex max-h-[92vh] w-full flex-col overflow-hidden rounded-t-2xl border border-white/10 bg-slate-950 shadow-2xl sm:rounded-2xl',
           wide ? 'max-w-3xl' : 'max-w-xl',
         )}
-        onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-white/5 px-5 py-4">
           <h2 className="text-lg font-semibold">{title}</h2>
-          <button onClick={onClose} aria-label="Close dialog" className="rounded-lg p-1.5 text-slate-500 hover:bg-white/5 hover:text-slate-300">
+          <button type="button" onClick={onClose} aria-label="Close dialog" className="rounded-lg p-1.5 text-slate-500 hover:bg-white/5 hover:text-slate-300">
             ✕
           </button>
         </div>

@@ -11,7 +11,7 @@ class LogBus extends EventEmitter {
   publish(deploymentId: number, line: string): void {
     const file = path.join(config.paths.logsDir, `${deploymentId}.log`);
     try {
-      appendFileSync(file, line + '\n');
+      appendFileSync(file, `${line}\n`);
     } catch {
       /* best effort */
     }

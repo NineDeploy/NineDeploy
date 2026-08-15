@@ -3,7 +3,7 @@ import { screen, waitFor, fireEvent, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ServiceDetail } from '../src/routes/service/index.js';
 import { api, getToken } from '../src/lib/api.js';
-import { renderRoute, renderWithProviders, mockOf } from './helpers.js';
+import { renderRoute, mockOf } from './helpers.js';
 
 vi.mock('../src/lib/api.js', async () => {
   const { createFakeApiModule } = await import('./helpers.js');
@@ -24,7 +24,7 @@ vi.mock('../src/components/ContainerTerminal.js', () => ({
   ContainerTerminal: ({ serviceId, onClose }: { serviceId: number; onClose: () => void }) => (
     <div data-testid="terminal">
       terminal-{serviceId}
-      <button onClick={onClose}>close terminal</button>
+      <button type="button" onClick={onClose}>close terminal</button>
     </div>
   ),
 }));
@@ -200,7 +200,7 @@ describe('ServiceDetail', () => {
     mockOf((await import('../src/lib/useDeployLogs.js')).useDeployLogs).mockReturnValue({ lines: 'deploy log line', open: true });
     renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
     await user.click(await screen.findByRole('button', { name: /Runtime logs/ }));
-    await screen.findByText((content, el) => el?.textContent === 'line one\nline two');
+    await screen.findByText((_content, el) => el?.textContent === 'line one\nline two');
     // toggle to hide
     await user.click(screen.getByRole('button', { name: /Hide logs/ }));
     expect(screen.queryByText('line one')).not.toBeInTheDocument();
@@ -224,7 +224,7 @@ describe('ServiceDetail', () => {
     );
     renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
     await openTab('Deploys');
-    await screen.findByText((content, el) => el?.textContent === 'line one\nline two');
+    await screen.findByText((_content, el) => el?.textContent === 'line one\nline two');
     expect(screen.queryByText('Connecting…')).not.toBeInTheDocument();
   });
 

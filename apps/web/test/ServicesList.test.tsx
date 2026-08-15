@@ -14,7 +14,7 @@ vi.mock('../src/components/DeployWizard.js', () => ({
   DeployWizard: ({ onClose }: { onClose: () => void }) => (
     <div data-testid="deploy-wizard">
       wizard
-      <button onClick={onClose}>close wizard</button>
+      <button type="button" onClick={onClose}>close wizard</button>
     </div>
   ),
 }));

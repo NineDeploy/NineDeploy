@@ -39,6 +39,7 @@ function makeDb(rules: Rule[], states: State[]) {
           then: (ok: (v: unknown) => unknown, rej?: (e: Error) => unknown) => unknown;
           where: () => Promise<typeof rows>;
         } = {
+          // biome-ignore lint/suspicious/noThenProperty: intentional thenable — the fake alert query result must be awaitable by the code under test.
           then: (ok, rej) => Promise.resolve(rows).then(ok as never, rej as never),
           where: () => Promise.resolve(rows),
         };
@@ -214,6 +215,7 @@ describe('alert state helpers', () => {
     const db = {
       select: () => ({
         from: () => ({
+          // biome-ignore lint/suspicious/noThenProperty: intentional thenable — the fake alert query result must be awaitable by the code under test.
           then: (ok: (v: unknown) => unknown) => Promise.resolve(states).then(ok as never),
           where: () => Promise.resolve(states),
         }),

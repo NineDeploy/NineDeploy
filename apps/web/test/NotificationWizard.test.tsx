@@ -30,12 +30,6 @@ function renderWizard(onClose = vi.fn()) {
   return { ...utils, onClose };
 }
 
-async function goToStep(user: ReturnType<typeof userEvent.setup>, target: number) {
-  for (let i = 0; i < target; i++) {
-    await user.click(screen.getByRole('button', { name: /continue/i }));
-  }
-}
-
 describe('NotificationWizard', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -274,7 +268,7 @@ describe('NotificationWizard', () => {
     const closeBtn = container.querySelector('h2 + button') as HTMLButtonElement;
     await user.click(closeBtn);
     expect(onClose).toHaveBeenCalledTimes(1);
-    await user.click(screen.getByText('New Notification').closest('.fixed') as HTMLElement);
+    await user.click(screen.getByText('New Notification').closest('.fixed')!.firstElementChild as HTMLElement);
     expect(onClose).toHaveBeenCalledTimes(2);
   });
 

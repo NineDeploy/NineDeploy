@@ -2,6 +2,16 @@ packages:
   - "apps/*"
   - "packages/*"
 
+# Force js-yaml >= 4.3.1 (CVE-2026-59870 / GHSA-5p4m-2wfm-xmqj): pm2 pins the
+# vulnerable 4.3.0 exactly. ^4.3.1 resolves to 4.3.1 — the minimal patched
+# version — without silently jumping pm2's dependency to the 5.x major.
+overrides:
+  js-yaml: "^4.3.1"
+  # esbuild <=0.24.2 (GHSA-67mh-4wv8-2f99) arrives via the deprecated
+  # @esbuild-kit toolchain under drizzle-kit (0.18.20). >=0.24.3 unifies every
+  # esbuild in the tree to 0.28.2 — the same version vite/tsx/vitest already use.
+  esbuild: ">=0.24.3"
+
 # Dependencies allowed to run install scripts (pnpm 11 blocks these by default).
 # esbuild ships its native binary via postinstall; Vite/tsx need it.
 allowBuilds:

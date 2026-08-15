@@ -12,6 +12,7 @@ export function Sparkline({
   if (points.length < 2) {
     return (
       <svg width={width} height={height} className="opacity-40">
+        <title>Trend</title>
         <line x1="0" y1={height - 1} x2={width} y2={height - 1} stroke={color} strokeWidth="1" />
       </svg>
     );
@@ -29,6 +30,7 @@ export function Sparkline({
 
   return (
     <svg width={width} height={height} className="overflow-visible">
+      <title>Trend</title>
       <path d={area} fill={color} opacity="0.12" />
       <path d={line} stroke={color} strokeWidth="1.5" fill="none" strokeLinejoin="round" strokeLinecap="round" />
     </svg>

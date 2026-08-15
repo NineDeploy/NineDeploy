@@ -62,9 +62,10 @@ COPY --from=build /app/packages/schemas/package.json packages/schemas/
 COPY --from=build /app/packages/sdk/package.json packages/sdk/
 RUN pnpm install --frozen-lockfile --prod --filter @ninedeploy/server... 
 
-# Compiled output (the templates registry compiles into dist; the dashboard is
-# a separate static bundle deployed alongside, not served by the API).
+# Compiled output (the templates registry compiles into dist; the web dashboard
+# is served by the API itself via @fastify/static with an SPA fallback).
 COPY --from=build /app/apps/server/dist apps/server/dist
+COPY --from=build /app/apps/web/dist apps/web/dist
 COPY --from=build /app/packages/db/dist packages/db/dist
 # SQL migrations: the server self-migrates at startup via the runtime migrator
 # (drizzle-kit is a devDependency and absent here).

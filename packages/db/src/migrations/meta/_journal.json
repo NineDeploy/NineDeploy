@@ -127,6 +127,13 @@
       "when": 1786775556934,
       "tag": "0017_high_junta",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1786814967849,
+      "tag": "0018_mellow_gecko",
+      "breakpoints": true
     }
   ]
 }

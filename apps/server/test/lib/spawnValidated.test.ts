@@ -7,14 +7,14 @@ const childMocks = vi.hoisted(() => {
     return {
       handlers,
       child: {
-        stdin: { on: vi.fn((ev: string, cb: (arg: unknown) => void) => { (handlers[`stdin:${ev}`] ??= []).push(cb); }) },
+        stdin: { on: vi.fn((ev: string, cb: (arg: unknown) => void) => { const list = (handlers[`stdin:${ev}`] ?? []); list.push(cb); handlers[`stdin:${ev}`] = list; }) },
         stdout: {
-          on: vi.fn((ev: string, cb: (arg: unknown) => void) => { (handlers[`stdout:${ev}`] ??= []).push(cb); }),
+          on: vi.fn((ev: string, cb: (arg: unknown) => void) => { const list = (handlers[`stdout:${ev}`] ?? []); list.push(cb); handlers[`stdout:${ev}`] = list; }),
         },
         stderr: {
-          on: vi.fn((ev: string, cb: (arg: unknown) => void) => { (handlers[`stderr:${ev}`] ??= []).push(cb); }),
+          on: vi.fn((ev: string, cb: (arg: unknown) => void) => { const list = (handlers[`stderr:${ev}`] ?? []); list.push(cb); handlers[`stderr:${ev}`] = list; }),
         },
-        on: vi.fn((ev: string, cb: (arg: unknown) => void) => { (handlers[ev] ??= []).push(cb); }),
+        on: vi.fn((ev: string, cb: (arg: unknown) => void) => { const list = (handlers[ev] ?? []); list.push(cb); handlers[ev] = list; }),
       },
       emit: (ev: string, arg: unknown) => { for (const cb of handlers[ev] ?? []) cb(arg); },
     };
@@ -35,7 +35,7 @@ describe('spawnValidated', () => {
 
   it('collects stdout/stderr lines and resolves with the exit code', async () => {
     const lines: string[] = [];
-    const mock = childMocks.current!;
+    const _mock = childMocks.current!;
     const promise = spawnValidated('docker', ['ps'], (l) => lines.push(l));
     const cur = childMocks.current!;
     cur.emit('stdout:data', Buffer.from('line1\nline2\n'));

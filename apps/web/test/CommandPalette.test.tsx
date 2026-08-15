@@ -164,7 +164,7 @@ describe('CommandPalette', () => {
   it('closes when the backdrop is clicked', async () => {
     const { onClose } = renderPalette();
     await waitFor(() => expect(screen.getByText('Hub')).toBeInTheDocument());
-    fireEvent.click(screen.getByText('Hub').closest('.fixed'));
+    fireEvent.click(screen.getByText('Hub').closest('.fixed')!.firstElementChild!);
     expect(onClose).toHaveBeenCalled();
   });
 });

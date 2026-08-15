@@ -50,16 +50,16 @@ export function NotificationsSection() {
                   {!ch.active && <span className="rounded bg-slate-500/15 px-1.5 py-0.5 text-[10px] text-slate-400">paused</span>}
                 </div>
                 <div className="flex items-center gap-1">
-                  <button
+                  <button type="button"
                     onClick={() => updateChannel.mutate({ id: ch.id, active: !ch.active })}
                     className={cn('rounded p-1.5 hover:bg-white/5', ch.active ? 'text-emerald-400' : 'text-slate-500')}
                     title={ch.active ? 'Pause (deactivate)' : 'Activate'}
                   >
                     {ch.active ? <CirclePause size={13} /> : <CirclePlay size={13} />}
                   </button>
-                  <button onClick={() => testChannel.mutate(ch.id)} className="rounded p-1.5 text-slate-500 hover:bg-white/5 hover:text-emerald-300" title="Send test"><Send size={13} /></button>
-                  <button onClick={() => setEditChannel({ id: ch.id, name: ch.name, eventFilter: ch.eventFilter ?? '' })} className="rounded p-1.5 text-slate-500 hover:bg-white/5 hover:text-indigo-300" title="Edit"><Pencil size={13} /></button>
-                  <button onClick={() => removeChannel.mutate(ch.id)} className="rounded p-1.5 text-slate-500 hover:bg-white/5 hover:text-rose-400" title="Remove"><Trash2 size={13} /></button>
+                  <button type="button" onClick={() => testChannel.mutate(ch.id)} className="rounded p-1.5 text-slate-500 hover:bg-white/5 hover:text-emerald-300" title="Send test"><Send size={13} /></button>
+                  <button type="button" onClick={() => setEditChannel({ id: ch.id, name: ch.name, eventFilter: ch.eventFilter ?? '' })} className="rounded p-1.5 text-slate-500 hover:bg-white/5 hover:text-indigo-300" title="Edit"><Pencil size={13} /></button>
+                  <button type="button" onClick={() => removeChannel.mutate(ch.id)} className="rounded p-1.5 text-slate-500 hover:bg-white/5 hover:text-rose-400" title="Remove"><Trash2 size={13} /></button>
                 </div>
               </div>
               {editChannel !== null && editChannel.id === ch.id && (

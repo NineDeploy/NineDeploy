@@ -87,7 +87,7 @@ function WebhooksCard({ serviceId }: { serviceId: number }) {
             </p>
             <SecretRow label="Payload URL" value={revealed.url} />
             <SecretRow label="Secret" value={revealed.secret} />
-            <button
+            <button type="button"
               onClick={() => setRevealed(null)}
               className="text-xs text-amber-200/70 underline-offset-2 hover:underline"
             >
@@ -116,7 +116,7 @@ function WebhooksCard({ serviceId }: { serviceId: number }) {
                       </span>
                     )}
                   </div>
-                  <button
+                  <button type="button"
                     onClick={() => void copy(w.url)}
                     className="mt-0.5 flex items-center gap-1 truncate font-mono text-[11px] text-slate-300 hover:text-indigo-300"
                     title={w.url}
@@ -125,7 +125,7 @@ function WebhooksCard({ serviceId }: { serviceId: number }) {
                     <Copy size={10} className="shrink-0 opacity-0 group-hover:opacity-100" />
                   </button>
                 </div>
-                <button
+                <button type="button"
                   onClick={() => remove.mutate(w.id)}
                   className="text-slate-600 transition hover:text-rose-400"
                   title="Remove webhook"
@@ -234,7 +234,7 @@ function JobsCard({ serviceId }: { serviceId: number }) {
                   )}
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
-                  <button
+                  <button type="button"
                     onClick={() => toggle.mutate({ id: j.id, enabled: j.enabled })}
                     className={cn(
                       'rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset transition',
@@ -243,10 +243,10 @@ function JobsCard({ serviceId }: { serviceId: number }) {
                   >
                     {j.enabled ? 'on' : 'off'}
                   </button>
-                  <button onClick={() => runNow.mutate(j.id)} className="text-[11px] text-slate-500 hover:text-indigo-300" title="Run now">
+                  <button type="button" onClick={() => runNow.mutate(j.id)} className="text-[11px] text-slate-500 hover:text-indigo-300" title="Run now">
                     run
                   </button>
-                  <button onClick={() => remove.mutate(j.id)} className="text-slate-600 transition hover:text-rose-400" title="Delete job">
+                  <button type="button" onClick={() => remove.mutate(j.id)} className="text-slate-600 transition hover:text-rose-400" title="Delete job">
                     <Trash2 size={13} />
                   </button>
                 </div>

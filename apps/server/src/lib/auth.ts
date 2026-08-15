@@ -3,7 +3,7 @@ import type { DB } from '@ninedeploy/db';
 import { apiTokens, users } from '@ninedeploy/db';
 import type { AuthUser } from '../plugins/auth.js';
 import { sha256 } from './crypto.js';
-import { verifyJwt } from './jwt.js';
+import { verifyJwt, type AppJwtPayload } from './jwt.js';
 
 /** Load a user's id + role + tokenVersion, or null if the account no longer exists. */
 async function loadUser(db: DB, userId: number): Promise<(AuthUser & { tokenVersion: number }) | null> {
@@ -29,7 +29,7 @@ async function loadUser(db: DB, userId: number): Promise<(AuthUser & { tokenVers
 export async function resolveUser(db: DB, token: string): Promise<AuthUser | null> {
   // JWT access token (three dot-separated segments).
   if (token.split('.').length === 3) {
-    let payload;
+    let payload: AppJwtPayload;
     try {
       payload = await verifyJwt(token);
     } catch {

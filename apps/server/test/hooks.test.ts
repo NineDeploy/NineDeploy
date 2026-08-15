@@ -1,5 +1,5 @@
 import { createHmac } from 'node:crypto';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, } from 'vitest';
 import { encrypt } from '../src/lib/crypto.js';
 import { hookReceiveRoutes, webhookMgmtRoutes } from '../src/modules/hooks.js';
 import { asUser, buildTestApp, createFakeDb, depRow, svcRow, webhookRow } from './helpers.js';
@@ -8,7 +8,7 @@ const SECRET = 'hook-secret';
 const hook = (over: Record<string, unknown> = {}) =>
   webhookRow({ id: 1, secretEncrypted: encrypt(SECRET), branch: 'main', ...over });
 
-const sig = (body: string) => 'sha256=' + createHmac('sha256', SECRET).update(body).digest('hex');
+const sig = (body: string) => `sha256=${createHmac('sha256', SECRET).update(body).digest('hex')}`;
 
 function pushPayload(branch = 'main') {
   return {

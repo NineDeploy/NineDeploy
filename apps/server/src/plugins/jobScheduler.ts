@@ -1,5 +1,5 @@
 import { Cron } from 'croner';
-import { scheduledJobs, type DB } from '@ninedeploy/db';
+import type { scheduledJobs, DB } from '@ninedeploy/db';
 import fp from 'fastify-plugin';
 import { runJob } from '../lib/jobRunner.js';
 

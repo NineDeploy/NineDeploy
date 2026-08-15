@@ -34,7 +34,7 @@ describe('config', () => {
     expect(config.port).toBe(3000);
     expect(config.paths.dataDir).toBe(path.resolve(cwd, './.data'));
     expect(config.paths.dbFile).toBe(path.resolve(cwd, './.data/ninedeploy.db'));
-    expect(config.dbUrl).toBe('file:' + path.resolve(cwd, './.data/ninedeploy.db'));
+    expect(config.dbUrl).toBe(`file:${path.resolve(cwd, './.data/ninedeploy.db')}`);
     expect(config.jwt.secret).toBe('dev-insecure-secret-change-me');
     expect(config.wildcardDomain).toBe('');
 
@@ -63,7 +63,7 @@ describe('config', () => {
     expect(config.port).toBe(8443);
     expect(config.publicUrl).toBe('https://deploy.example.com');
     expect(config.paths.dataDir).toBe(path.join(tmp, 'data'));
-    expect(config.dbUrl).toBe('file:' + path.join(tmp, 'db', 'ninedeploy.db'));
+    expect(config.dbUrl).toBe(`file:${path.join(tmp, 'db', 'ninedeploy.db')}`);
     expect(config.jwt).toMatchObject({ secret: 'x'.repeat(32), accessTtl: '30m', refreshTtl: '30d' });
     expect(config.wildcardDomain).toBe('apps.example.com');
     expect(existsSync(config.paths.backupsDir)).toBe(true);

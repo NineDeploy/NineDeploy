@@ -93,7 +93,7 @@ describe('job scheduler plugin', () => {
     // The 2nd findMany (first reload) blocks until we release it, so close()
     // lands while armJobs is still pending — the follow-up scheduleReload must
     // observe `stopped` and arm nothing.
-    let releaseGate: ((v: void) => void) | null = null;
+    let releaseGate: ((v: undefined) => void) | null = null;
     let calls = 0;
     const findMany = vi.fn(async () => {
       calls += 1;

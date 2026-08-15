@@ -298,6 +298,7 @@ function LimitsRow({ kind, id, memLimitMb }: { kind: 'service' | 'database'; id:
   // Prefill with the current limits whenever the container (re)mounts or the
   // reported limit changes; cpu shares are not exposed by the stats API, so
   // that field starts empty (placeholder describes the unit).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentionally keyed on id — the form prefill must reset when a different service/database is selected, even though the body doesn't reference id directly.
   useEffect(() => {
     setCpu('');
     setMem(memLimitMb > 0 ? String(memLimitMb) : '');

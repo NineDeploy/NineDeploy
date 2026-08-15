@@ -77,6 +77,8 @@ docker run -d --name ninedeploy \
 
 All state (SQLite, repos, logs, backups, master key) lives in the `ninedeploy-data` volume; schema migrations apply automatically on startup. The host Docker socket lets the deploy engine manage your other containers. PM2-based services need the bare-metal install; Docker services and templates work in both modes.
 
+The web dashboard is **served by the API itself** — open `http://localhost:3000` (or your `NINEDEPLOY_PUBLIC_URL`) and create the first admin account. The container image bundles the built dashboard (`apps/web/dist`) alongside the API.
+
 ### Option C: From source (development)
 
 ```bash

@@ -4,7 +4,7 @@ import { isPing, parsePush, verifyWebhook } from '../../src/lib/webhooks.js';
 
 const SECRET = 'whsec_test';
 
-const sig = (body: string) => 'sha256=' + createHmac('sha256', SECRET).update(body).digest('hex');
+const sig = (body: string) => `sha256=${createHmac('sha256', SECRET).update(body).digest('hex')}`;
 const giteaSig = (body: string) => createHmac('sha256', SECRET).update(body).digest('hex');
 
 const githubHeaders = (body: string, overrides: Record<string, string> = {}) => ({

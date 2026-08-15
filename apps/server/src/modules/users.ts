@@ -19,7 +19,7 @@ export const userRoutes: FastifyPluginAsync = async (app) => {
   // Admin guard.
   app.addHook('preHandler', async (req) => {
     const u = await app.db.query.users.findFirst({ where: eq(users.id, req.user!.id) });
-    if (!u || u.role !== 'admin') throw forbidden('Admin access required');
+    if (u?.role !== 'admin') throw forbidden('Admin access required');
   });
 
   app.get('/', async () => {
@@ -45,7 +45,7 @@ export const userRoutes: FastifyPluginAsync = async (app) => {
       .where(eq(users.id, id))
       .returning();
     if (!updated) throw notFound('User not found');
-    void audit(app.db, req.user!.id, 'user.role', String(id) + ' → ' + role);
+    void audit(app.db, req.user!.id, 'user.role', `${String(id)} → ${role}`);
     return serialize(updated);
   });
 

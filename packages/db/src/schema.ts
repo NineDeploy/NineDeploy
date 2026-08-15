@@ -175,7 +175,11 @@ export const deployments = sqliteTable(
     createdAt: ts('created_at'),
   },
   (t) => ({
-    serviceCreatedIdx: uniqueIndex('deployments_service_created_idx').on(t.serviceId, t.createdAt),
+    // Non-unique on purpose: `created_at` is second-precision (unixepoch), so a
+    // second deploy of the same service within the same second would collide
+    // with a UNIQUE constraint and 500 on trigger. History lists order by id
+    // (monotonic) instead, so the index only needs to accelerate the filter.
+    serviceCreatedIdx: index('deployments_service_created_idx').on(t.serviceId, t.createdAt),
     // The deploy worker polls WHERE status='queued' every 2s — index status.
     statusIdx: index('deployments_status_idx').on(t.status),
   }),

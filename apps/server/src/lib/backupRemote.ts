@@ -1,11 +1,11 @@
 import { eq } from 'drizzle-orm';
-import { backups, type DB } from '@ninedeploy/db';
+import { backups, type BackupDestination, type DB } from '@ninedeploy/db';
 import { decrypt } from './crypto.js';
 import { s3Delete, s3Get, s3Put, type S3Config } from './s3.js';
 
 /** Resolve the first active destination into an S3 client config (or null). */
 export async function activeDestination(db: DB): Promise<(S3Config & { prefix: string }) | null> {
-  let row;
+  let row: BackupDestination | undefined;
   try {
     row = (await db.query.backupDestinations.findMany()).find((d) => d.active);
   } catch {

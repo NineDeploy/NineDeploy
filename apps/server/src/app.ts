@@ -15,6 +15,7 @@ import housekeepingPlugin from './plugins/housekeeping.js';
 import jobSchedulerPlugin from './plugins/jobScheduler.js';
 import rateLimitPlugin from './plugins/rateLimit.js';
 import rawBodyPlugin from './plugins/rawBody.js';
+import staticFilesPlugin from './plugins/staticFiles.js';
 import traefikPlugin from './plugins/traefik.js';
 import workerPlugin from './plugins/worker.js';
 
@@ -95,6 +96,10 @@ export async function buildApp(): Promise<FastifyInstance> {
   // Periodic log/audit/notification-log retention (disk-fill prevention)
   await app.register(housekeepingPlugin);
   await app.register(jobSchedulerPlugin);
+
+  // Web dashboard (SPA) — registered LAST so every API/WS route wins over the
+  // catch-all; unknown API paths still get JSON 404s via the SPA fallback guard.
+  await app.register(staticFilesPlugin);
 
   // About info
   void ABOUT;

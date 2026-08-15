@@ -19,6 +19,7 @@
     "build": "tsc",
     "dev": "tsc --watch --preserveWatchOutput",
     "typecheck": "tsc --noEmit",
+    "lint": "biome lint .",
     "test": "vitest run --coverage",
     "clean": "rm -rf dist .turbo",
     "db:generate": "drizzle-kit generate",

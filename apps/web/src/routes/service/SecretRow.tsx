@@ -11,7 +11,7 @@ export function SecretRow({ label, value }: { label: string; value: string }) {
         <code className="min-w-0 flex-1 truncate rounded bg-black/40 px-2 py-1 font-mono text-[11px] text-amber-100">
           {value}
         </code>
-        <button onClick={() => void copy(value)} className="shrink-0 text-amber-200/80 hover:text-amber-100">
+        <button type="button" onClick={() => void copy(value)} className="shrink-0 text-amber-200/80 hover:text-amber-100">
           {copied ? <Check size={13} /> : <Copy size={13} />}
         </button>
       </div>

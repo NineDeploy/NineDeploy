@@ -289,7 +289,7 @@ describe('Layout', () => {
     // Backdrop close: the backdrop sits inside the drawer's `.fixed`
     // wrapper as the first child (`absolute inset-0 bg-black/40`).
     await user.click(screen.getByTitle('Activity'));
-    const backdrop = container.querySelector('div.fixed > div.absolute') as HTMLElement;
+    const backdrop = container.querySelector('div.fixed > button.absolute') as HTMLElement;
     await user.click(backdrop);
     expect(screen.queryByText('Events')).not.toBeInTheDocument();
   });

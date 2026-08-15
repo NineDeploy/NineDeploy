@@ -414,7 +414,7 @@ describe('DeployWizard', () => {
   it('closes when the backdrop is clicked', async () => {
     const user = userEvent.setup();
     const { onClose } = renderWizard();
-    await user.click(screen.getByText('New service').closest('.fixed') as HTMLElement);
+    await user.click(screen.getByText('New service').closest('.fixed')!.firstElementChild as HTMLElement);
     expect(onClose).toHaveBeenCalled();
   });
 

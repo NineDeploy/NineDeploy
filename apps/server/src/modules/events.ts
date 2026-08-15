@@ -13,10 +13,10 @@ export const eventRoutes: FastifyPluginAsync = async (app) => {
 
     // Replay recent events, then stream live.
     for (const event of eventBus.backlog()) {
-      try { socket.send(JSON.stringify(event) + '\n'); } catch { /* closed */ }
+      try { socket.send(`${JSON.stringify(event)}\n`); } catch { /* closed */ }
     }
     const unsub = eventBus.subscribe((event) => {
-      try { socket.send(JSON.stringify(event) + '\n'); } catch { /* closed */ }
+      try { socket.send(`${JSON.stringify(event)}\n`); } catch { /* closed */ }
     });
     socket.on('close', unsub);
     socket.on('error', unsub);

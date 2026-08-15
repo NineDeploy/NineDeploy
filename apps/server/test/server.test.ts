@@ -33,14 +33,14 @@ function fakeApp(overrides: Partial<FakeApp> = {}): FakeApp {
   return app;
 }
 
-let exitSpy: ReturnType<typeof vi.spyOn>;
+let _exitSpy: ReturnType<typeof vi.spyOn>;
 let onSpy: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
   serverState.exitCalls = [];
   serverState.signalListeners = {};
   serverState.buildApp.mockReset();
-  exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+  _exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
     serverState.exitCalls.push(code ?? 0);
     return undefined as never;
   }) as never);

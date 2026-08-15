@@ -133,7 +133,7 @@ export function Sources() {
                     <div className="text-[11px] text-slate-500">{LABEL[s.type] ?? s.type}</div>
                   </div>
                 </div>
-                <button onClick={() => setPendingDelete({ id: s.id, name: s.name })} className="text-slate-600 transition hover:text-rose-400">
+                <button type="button" onClick={() => setPendingDelete({ id: s.id, name: s.name })} className="text-slate-600 transition hover:text-rose-400">
                   <Trash2 size={14} />
                 </button>
               </div>

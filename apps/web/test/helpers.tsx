@@ -2,7 +2,7 @@ import { afterEach, vi } from 'vitest';
 import { cleanup, render } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router';
-import { type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { ToastProvider } from '../src/components/Toast.js';
 import { ProjectScopeProvider } from '../src/lib/projects.js';
 

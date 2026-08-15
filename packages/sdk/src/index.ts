@@ -56,13 +56,11 @@ export type * from '@ninedeploy/schemas';
  * without pulling in DOM lib types. Both `globalThis.fetch` implementations
  * satisfy this shape.
  */
-export interface FetchLike {
-  (input: string, init: {
+export type FetchLike = (input: string, init: {
     method?: string;
     headers?: Record<string, string>;
     body?: string;
-  }): Promise<{ ok: boolean; status: number; text(): Promise<string> }>;
-}
+  }) => Promise<{ ok: boolean; status: number; text(): Promise<string> }>
 
 export interface HealthStatus {
   status: string;

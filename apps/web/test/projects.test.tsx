@@ -18,9 +18,9 @@ function ScopeProbe() {
       <span data-testid="count">{projects.length}</span>
       <span data-testid="selected-id">{selectedId ?? 'none'}</span>
       <span data-testid="selected-name">{selected?.name ?? 'none'}</span>
-      <button onClick={() => select(2)}>pick2</button>
-      <button onClick={() => select(null)}>clear</button>
-      <button onClick={() => setOther((v) => !v)}>{other ? 'other' : 'idle'}</button>
+      <button type="button" onClick={() => select(2)}>pick2</button>
+      <button type="button" onClick={() => select(null)}>clear</button>
+      <button type="button" onClick={() => setOther((v) => !v)}>{other ? 'other' : 'idle'}</button>
     </div>
   );
 }

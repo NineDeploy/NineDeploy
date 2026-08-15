@@ -51,7 +51,7 @@ export default fp(
       // `authenticate` is expected to run first (as an onRequest hook). A
       // missing/non-admin user is forbidden — destructive, system-wide actions
       // are admin-only under the agreed RBAC model.
-      if (!req.user || req.user.role !== 'admin') throw forbidden('Admin access required');
+      if (req.user?.role !== 'admin') throw forbidden('Admin access required');
     });
   },
   { name: 'ninedeploy-auth' },

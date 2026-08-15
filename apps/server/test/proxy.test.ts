@@ -310,7 +310,7 @@ describe('ensureNetwork', () => {
 
 describe('ensureTraefik', () => {
   const psWith = (ps: string, inspect = '{}') =>
-    h.capture.mockImplementation((cmd: string, args: string[]) =>
+    h.capture.mockImplementation((_cmd: string, args: string[]) =>
       args[0] === 'ps' ? Promise.resolve(ps) : Promise.resolve(inspect),
     );
 
@@ -371,7 +371,7 @@ describe('ensureTraefik', () => {
   });
 
   it('recreates when inspection fails', async () => {
-    h.capture.mockImplementation((cmd: string, args: string[]) =>
+    h.capture.mockImplementation((_cmd: string, args: string[]) =>
       args[0] === 'ps' ? Promise.resolve('abc\n') : Promise.reject(new Error('inspect failed')),
     );
     const log = vi.fn();
@@ -420,7 +420,7 @@ describe("ACME / Let's Encrypt", () => {
 
   it('omits the ACME resolver from the static config when no email is configured', async () => {
     const psWith = (ps: string) =>
-      h.capture.mockImplementation((cmd: string, args: string[]) =>
+      h.capture.mockImplementation((_cmd: string, args: string[]) =>
         args[0] === 'ps' ? Promise.resolve(ps) : Promise.resolve('{}'),
       );
     psWith('abc123\n');
@@ -436,7 +436,7 @@ describe("ACME / Let's Encrypt", () => {
   it('writes a letsencrypt certificatesResolver when an email is configured', async () => {
     h.config.acmeEmail = 'ops@example.com';
     try {
-      h.capture.mockImplementation((cmd: string, args: string[]) =>
+      h.capture.mockImplementation((_cmd: string, args: string[]) =>
         args[0] === 'ps' ? Promise.resolve('abc123\n') : Promise.resolve('{"ninedeploy":{}}'),
       );
       const log = vi.fn();
@@ -460,7 +460,7 @@ describe("ACME / Let's Encrypt", () => {
   it('mounts acme.json read-write and keeps the config dir read-only', async () => {
     h.config.acmeEmail = 'ops@example.com';
     try {
-      h.capture.mockImplementation((cmd: string, args: string[]) =>
+      h.capture.mockImplementation((_cmd: string, args: string[]) =>
         args[0] === 'ps' ? Promise.resolve('') : Promise.resolve('{}'),
       );
       // The stale-container rm is allowed to fail; the main run succeeds.

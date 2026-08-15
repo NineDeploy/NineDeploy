@@ -106,7 +106,7 @@ function fakeChild(trigger: (emit: Emit) => void) {
   const stdoutHandlers: Array<(...a: unknown[]) => void> = [];
   queueMicrotask(() => trigger(emit));
   return {
-    on: (ev: string, cb: (...a: unknown[]) => void) => { (handlers[ev] ??= []).push(cb); },
+    on: (ev: string, cb: (...a: unknown[]) => void) => { const list = (handlers[ev] ?? []); list.push(cb); handlers[ev] = list; },
     emit,
     stdout: { on: (ev: string, cb: (...a: unknown[]) => void) => { if (ev === 'data') stdoutHandlers.push(cb); } },
   };
@@ -161,7 +161,7 @@ describe('system resources routes', () => {
   });
 
   it('reports docker resources', async () => {
-    execMocks.capture.mockImplementation((cmd: string, args: string[]) => {
+    execMocks.capture.mockImplementation((_cmd: string, args: string[]) => {
       if (args[0] === 'system') {
         return Promise.resolve(
           '{"Type":"Images","Total":"3","Active":"2","Size":"1.2GB","Reclaimable":"300MB"}\n' +
@@ -191,7 +191,7 @@ describe('system resources routes', () => {
   });
 
   it('falls back to defaults for sparse docker output', async () => {
-    execMocks.capture.mockImplementation((cmd: string, args: string[]) => {
+    execMocks.capture.mockImplementation((_cmd: string, args: string[]) => {
       if (args[0] === 'system') {
         return Promise.resolve('{"Type":"Images"}\n');
       }

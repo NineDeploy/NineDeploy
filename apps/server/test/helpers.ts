@@ -106,6 +106,7 @@ export function createFakeDb(opts: FakeDbOpts = {}): DB {
         then: (ok: (v: unknown) => unknown, rej?: (e: Error) => unknown) => unknown;
         where: () => Promise<Row[]>;
       } = {
+        // biome-ignore lint/suspicious/noThenProperty: intentional thenable — the fake DB query result must be awaitable by the code under test.
         then: (ok, rej) => (error ? (rej ?? (() => {}))(error) : ok(rows)),
         where: () => (error ? Promise.reject(error) : Promise.resolve(rows)),
       };
@@ -123,6 +124,7 @@ export function createFakeDb(opts: FakeDbOpts = {}): DB {
           then: (ok: (v?: unknown) => unknown, rej?: (e: Error) => unknown) => unknown;
         } = {
           returning: () => rows(),
+          // biome-ignore lint/suspicious/noThenProperty: intentional thenable — the fake DB insert result must be awaitable by the code under test.
           then: (ok, rej) => {
             rows().then(ok, rej);
             return undefined;
@@ -144,6 +146,7 @@ export function createFakeDb(opts: FakeDbOpts = {}): DB {
             then: (ok: (v?: unknown) => unknown, rej?: (e: Error) => unknown) => unknown;
           } = {
             returning: () => rows(),
+            // biome-ignore lint/suspicious/noThenProperty: intentional thenable — the fake DB update result must be awaitable by the code under test.
             then: (ok, rej) => {
               rows().then(ok, rej);
               return undefined;
@@ -157,7 +160,8 @@ export function createFakeDb(opts: FakeDbOpts = {}): DB {
 
   const del = (_table: unknown) => ({
     where: () => ({
-      then: (ok: (v?: unknown) => unknown, rej?: (e: Error) => unknown) => {
+      // biome-ignore lint/suspicious/noThenProperty: intentional thenable — the fake DB delete result must be awaitable by the code under test.
+      then: (ok: (v?: unknown) => unknown, _rej?: (e: Error) => unknown) => {
         ok(undefined);
         return undefined;
       },
@@ -165,6 +169,7 @@ export function createFakeDb(opts: FakeDbOpts = {}): DB {
   });
 
   const run = () => ({
+    // biome-ignore lint/suspicious/noThenProperty: intentional thenable — the fake DB run result must be awaitable by the code under test.
     then: (ok: (v?: unknown) => unknown, rej: (e: Error) => unknown) =>
       opts.runError ? rej(new Error('db unavailable')) : ok(undefined),
   });
@@ -213,7 +218,7 @@ export async function buildTestApp(opts: TestAppOpts = {}): Promise<FastifyInsta
     void reply;
   });
   app.decorate('requireAdmin', async (req: FastifyRequest) => {
-    if (!req.user || req.user.role !== 'admin') throw forbidden('Admin access required');
+    if (req.user?.role !== 'admin') throw forbidden('Admin access required');
   });
   app.decorate('db', opts.db ?? createFakeDb());
   app.decorate('stats', {

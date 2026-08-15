@@ -14,7 +14,7 @@ vi.mock('../src/components/DatabaseWizard.js', () => ({
   DatabaseWizard: ({ onClose }: { onClose: () => void }) => (
     <div data-testid="db-wizard">
       wizard
-      <button onClick={onClose}>close wizard</button>
+      <button type="button" onClick={onClose}>close wizard</button>
     </div>
   ),
 }));

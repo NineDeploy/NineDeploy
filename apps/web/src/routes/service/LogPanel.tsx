@@ -32,6 +32,7 @@ export function LogPanel({ serviceId, deploymentId }: { serviceId: number; deplo
 }
 
 function useAutoScroll(ref: RefObject<HTMLPreElement | null>, content: string): void {
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentionally keyed on content — scroll to the newest line whenever a new log line arrives, even though the body only touches the DOM node.
   useEffect(() => {
     const el = ref.current;
     if (el) el.scrollTop = el.scrollHeight;

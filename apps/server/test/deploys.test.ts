@@ -20,7 +20,9 @@ const childProc = vi.hoisted(() => {
     const handlers: Record<string, Array<(...a: unknown[]) => void>> = {};
     return {
       on: (ev: string, cb: (...a: unknown[]) => void) => {
-        (handlers[ev] ??= []).push(cb);
+        const list = handlers[ev] ?? [];
+        list.push(cb);
+        handlers[ev] = list;
       },
       emit: (ev: string, ...a: unknown[]) => {
         for (const cb of handlers[ev] ?? []) cb(...a);
@@ -298,7 +300,7 @@ describe('deploys routes', () => {
     const port = await listen(app);
     const ws = await openWs(wsUrl(port, '/services/1/exec?token=member'));
     sockets.push(ws);
-    const closed = new Promise<void>((resolve) => ws.addEventListener('close', (ev) => resolve()));
+    const closed = new Promise<void>((resolve) => ws.addEventListener('close', (_ev) => resolve()));
     await closed;
     expect((ws as unknown as { _code?: number })._code ?? 1008).toBe(1008);
     expect(childProc.spawn).not.toHaveBeenCalled();

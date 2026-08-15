@@ -38,7 +38,10 @@ export async function checkForUpdate(force = false): Promise<UpdateCheckResult> 
   if (!force && cached && Date.now() - new Date(cached.checkedAt).getTime() < CACHE_TTL_MS) {
     return cached;
   }
-  if (config.updateCheckUrl === 'disabled') return (cached = unknown());
+  if (config.updateCheckUrl === 'disabled') {
+    cached = unknown();
+    return cached;
+  }
 
   let result: UpdateCheckResult;
   try {

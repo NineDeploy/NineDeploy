@@ -92,7 +92,7 @@ export function Tunnels() {
                   <td className="px-5 py-3"><StatusBadge status={t.status} /></td>
                   <td className="px-5 py-3 font-mono text-[11px] text-slate-500">{t.containerName}</td>
                   <td className="px-5 py-3 text-right">
-                    <button onClick={() => setPendingDelete({ id: t.id, name: t.name })} className="text-slate-600 transition hover:text-rose-400"><Trash2 size={14} /></button>
+                    <button type="button" onClick={() => setPendingDelete({ id: t.id, name: t.name })} className="text-slate-600 transition hover:text-rose-400"><Trash2 size={14} /></button>
                   </td>
                 </tr>
               ))}

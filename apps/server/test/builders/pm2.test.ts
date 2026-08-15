@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { pm2Builder, pm2Logs, pm2Restart, pm2Start, pm2Stop } from '../../src/engine/builders/pm2.js';
 
 const h = vi.hoisted(() => {
@@ -247,7 +247,7 @@ describe('pm2 lifecycle helpers', () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), 'nd-pm2-'));
     const out = path.join(dir, 'out.log');
     const err = path.join(dir, 'err.log');
-    writeFileSync(out, Array.from({ length: 320 }, (_, i) => `out-${i}`).join('\n') + '\n');
+    writeFileSync(out, `${Array.from({ length: 320 }, (_, i) => `out-${i}`).join('\n')}\n`);
     // No trailing newline — exercises the branch that skips the blank-line trim.
     writeFileSync(err, 'boom');
     h.pm2.describe.mockImplementationOnce((_n: string, cb: (err: Error | null, desc?: unknown[]) => void) =>

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { checkForUpdate, isNewer } from '../../src/lib/updateCheck.js';
+import { isNewer } from '../../src/lib/updateCheck.js';
 
 const feed = (body: unknown, ok = true) =>
   vi.fn(async () => (ok ? { ok: true, status: 200, json: async () => body } : { ok: false, status: 500 }));

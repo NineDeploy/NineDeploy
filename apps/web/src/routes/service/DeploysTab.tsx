@@ -118,7 +118,7 @@ function DeploymentsCard({
                   : null;
               return (
                 <li key={d.id} className="group flex items-center gap-1">
-                  <button
+                  <button type="button"
                     onClick={() => onSelect(d.id)}
                     className={cn(
                       'flex flex-1 items-center justify-between rounded-lg px-3 py-2 text-left text-sm transition',
@@ -141,7 +141,7 @@ function DeploymentsCard({
                     </span>
                   </button>
                   {onCancel && IN_FLIGHT.includes(d.status) && (
-                    <button
+                    <button type="button"
                       onClick={() => onCancel(d.id)}
                       className="shrink-0 rounded p-1.5 text-slate-500 opacity-0 transition hover:bg-white/5 hover:text-amber-300 group-hover:opacity-100"
                       title={`Cancel deployment #${d.id}`}
@@ -150,7 +150,7 @@ function DeploymentsCard({
                     </button>
                   )}
                   {onRollback && i > 0 && !IN_FLIGHT.includes(d.status) && d.status !== 'failed' && d.status !== 'cancelled' && (
-                    <button
+                    <button type="button"
                       onClick={() => onRollback(d.id)}
                       className="shrink-0 rounded p-1.5 text-slate-600 opacity-0 transition hover:bg-white/5 hover:text-indigo-300 group-hover:opacity-100"
                       title={`Rollback to #${d.id}`}

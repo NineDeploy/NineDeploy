@@ -16,7 +16,7 @@ beforeEach(() => {
 
 describe('volume routes', () => {
   it('lists managed volumes with owners and sizes', async () => {
-    execMocks.capture.mockImplementation((cmd: string, args: string[]) => {
+    execMocks.capture.mockImplementation((_cmd: string, args: string[]) => {
       if (args[0] === 'volume') return Promise.resolve('nd-svc-web\nnd-db-pg\nnd-svc-orphan\nnd-db-lonely\n');
       if (args[0] === 'ps') return Promise.resolve(''); // nothing running
       return Promise.resolve('2048 /v\n');
@@ -41,7 +41,7 @@ describe('volume routes', () => {
   });
 
   it('handles unparseable sizes as zero', async () => {
-    execMocks.capture.mockImplementation((cmd: string, args: string[]) => {
+    execMocks.capture.mockImplementation((_cmd: string, args: string[]) => {
       if (args[0] === 'volume') return Promise.resolve('nd-svc-web\n');
       return Promise.resolve('garbage output');
     });
@@ -64,7 +64,7 @@ describe('volume routes', () => {
   });
 
   it('treats a failing size probe as zero', async () => {
-    execMocks.capture.mockImplementation((cmd: string, args: string[]) => {
+    execMocks.capture.mockImplementation((_cmd: string, args: string[]) => {
       if (args[0] === 'volume') return Promise.resolve('nd-svc-web\n');
       return Promise.reject(new Error('docker run failed'));
     });
@@ -96,7 +96,7 @@ describe('volume routes', () => {
   });
 
   it('refuses (409) to delete a volume whose owner container is running', async () => {
-    execMocks.capture.mockImplementation((cmd: string, args: string[]) => {
+    execMocks.capture.mockImplementation((_cmd: string, args: string[]) => {
       if (args[0] === 'ps') return Promise.resolve('abc123\n'); // container running
       return Promise.resolve('');
     });
@@ -116,7 +116,7 @@ describe('volume routes', () => {
   });
 
   it('refuses (409) to delete a running database volume', async () => {
-    execMocks.capture.mockImplementation((cmd: string, args: string[]) => {
+    execMocks.capture.mockImplementation((_cmd: string, args: string[]) => {
       if (args[0] === 'ps') return Promise.resolve('abc123\n');
       return Promise.resolve('');
     });
@@ -135,7 +135,7 @@ describe('volume routes', () => {
   });
 
   it('deletes an owned volume once its owner is stopped (container not running)', async () => {
-    execMocks.capture.mockImplementation((cmd: string, args: string[]) => {
+    execMocks.capture.mockImplementation((_cmd: string, args: string[]) => {
       if (args[0] === 'ps') return Promise.resolve(''); // stopped
       return Promise.resolve('');
     });
@@ -154,7 +154,7 @@ describe('volume routes', () => {
   });
 
   it('treats a failing docker ps as not-running (never blocks deletes on docker hiccups)', async () => {
-    execMocks.capture.mockImplementation((cmd: string, args: string[]) => {
+    execMocks.capture.mockImplementation((_cmd: string, args: string[]) => {
       if (args[0] === 'ps') return Promise.reject(new Error('docker hiccup'));
       return Promise.resolve('');
     });
@@ -175,7 +175,7 @@ describe('volume routes', () => {
   it('treats an unmanaged volume name as ownerless in the listing path', async () => {
     // volumeOwner returns null for names outside nd-svc-/nd-db- prefixes;
     // exercised via the GET listing of a mixed set.
-    execMocks.capture.mockImplementation((cmd: string, args: string[]) => {
+    execMocks.capture.mockImplementation((_cmd: string, args: string[]) => {
       if (args[0] === 'volume') return Promise.resolve('nd-svc-web\n');
       if (args[0] === 'ps') return Promise.resolve('running-id\n'); // in-use path
       return Promise.resolve('4096 /v\n');

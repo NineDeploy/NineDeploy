@@ -18,7 +18,7 @@ function writeEnvFile(env: Record<string, string>): string | null {
   const file = path.join(tmpdir(), `nd-env-${process.pid}-${Date.now()}.env`);
   mkdirSync(path.dirname(file), { recursive: true });
   const body = entries.map(([k, v]) => [k, v].join('=')).join('\n');
-  writeFileSync(file, body + '\n', { mode: 0o600 });
+  writeFileSync(file, `${body}\n`, { mode: 0o600 });
   return file;
 }
 
@@ -68,7 +68,7 @@ export const dockerBuilder: Builder = {
         child.stdin.on('error', swallow);
         child.stdin.write(`${registryAuth.password}\n`);
         child.stdin.end();
-        child.on('exit', (code) => (code === 0 ? resolve() : reject(new Error('docker login failed with exit code ' + code))));
+        child.on('exit', (code) => (code === 0 ? resolve() : reject(new Error(`docker login failed with exit code ${code}`))));
         child.on('error', reject);
       });
       loggedIn = true;

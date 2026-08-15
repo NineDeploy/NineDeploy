@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from 'vitest';
-import { auditLog } from '@ninedeploy/db';
 import { eventBus } from '../../src/lib/events.js';
 
 const notifyMock = vi.hoisted(() => vi.fn(async () => undefined));

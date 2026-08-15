@@ -84,10 +84,10 @@ export function Users() {
               <code className="min-w-0 flex-1 truncate rounded bg-black/40 px-2 py-1.5 font-mono text-[11px] text-amber-100">
                 {revealedLink.url}
               </code>
-              <button onClick={() => copyLink(revealedLink.url)} className="shrink-0 text-xs font-medium text-amber-200 hover:text-amber-100">
+              <button type="button" onClick={() => copyLink(revealedLink.url)} className="shrink-0 text-xs font-medium text-amber-200 hover:text-amber-100">
                 Copy
               </button>
-              <button onClick={() => setRevealedLink(null)} className="shrink-0 text-xs text-amber-200/70 hover:underline">
+              <button type="button" onClick={() => setRevealedLink(null)} className="shrink-0 text-xs text-amber-200/70 hover:underline">
                 Done
               </button>
             </div>
@@ -130,7 +130,7 @@ export function Users() {
                       </div>
                     </td>
                     <td className="px-5 py-3">
-                      <button
+                      <button type="button"
                         onClick={() => setRole.mutate({ id: u.id, role: u.role === 'admin' ? 'member' : 'admin' })}
                         disabled={isMe}
                         className={cn(
@@ -155,9 +155,8 @@ export function Users() {
                                   onChange={(e) => setResetPw(e.target.value)}
                                   placeholder="new password (min 8)"
                                   className="w-44 rounded-lg border border-slate-700 bg-slate-900/60 px-2 py-1 text-xs outline-none focus:border-indigo-500"
-                                  autoFocus
                                 />
-                                <button
+                                <button type="button"
                                   onClick={submitReset}
                                   disabled={resetPassword.isPending}
                                   className="text-xs font-medium text-emerald-400 transition hover:brightness-125"
@@ -165,7 +164,7 @@ export function Users() {
                                 >
                                   {resetPassword.isPending ? 'Saving…' : 'Save'}
                                 </button>
-                                <button
+                                <button type="button"
                                   onClick={() => { setResetFor(null); setResetPw(''); }}
                                   className="text-xs text-slate-500 transition hover:text-slate-300"
                                 >
@@ -174,14 +173,14 @@ export function Users() {
                               </span>
                             ) : (
                               <>
-                                <button
+                                <button type="button"
                                   onClick={() => { setResetFor(u.id); setResetPw(''); }}
                                   className="text-slate-600 transition hover:text-amber-400"
                                   title="Reset password (signs the user out everywhere)"
                                 >
                                   <KeyRound size={14} />
                                 </button>
-                                <button
+                                <button type="button"
                                   onClick={() => resetLink.mutate(u.id)}
                                   disabled={resetLink.isPending}
                                   className="text-slate-600 transition hover:text-indigo-300"
@@ -191,7 +190,7 @@ export function Users() {
                                 </button>
                               </>
                             )}
-                            <button
+                            <button type="button"
                               onClick={() => setPendingDelete({ id: u.id, email: u.email })}
                               className="text-slate-600 transition hover:text-rose-400"
                               title="Delete user"

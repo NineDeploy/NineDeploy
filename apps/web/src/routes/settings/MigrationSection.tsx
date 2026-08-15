@@ -53,13 +53,13 @@ export function MigrationSection() {
             Import on the new server, then restart.
           </p>
           <div className="flex flex-wrap gap-2">
-            <button
+            <button type="button"
               onClick={doExport}
               className="flex items-center gap-2 rounded-lg bg-white/[0.04] px-4 py-2 text-sm text-slate-300 transition hover:bg-white/[0.08]"
             >
               <Download size={15} /> Export backup
             </button>
-            <button
+            <button type="button"
               onClick={() => fileRef.current?.click()}
               disabled={importing}
               className="flex items-center gap-2 rounded-lg bg-white/[0.04] px-4 py-2 text-sm text-slate-300 transition hover:bg-white/[0.08] disabled:opacity-50"

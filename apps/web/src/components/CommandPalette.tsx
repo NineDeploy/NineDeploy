@@ -65,6 +65,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
       .slice(0, 24);
   }, [query, services.data, databases.data, templates.data]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentionally keyed on query — the selection must reset whenever the search text changes, even though the body only touches the setter.
   useEffect(() => {
     setSelected(0);
   }, [query]);
@@ -83,16 +84,16 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
   const activate = (cmd: Cmd) => { navigate(cmd.to); onClose(); };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center pt-[12vh]" onClick={onClose}>
-      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+    <div className="fixed inset-0 z-50 flex items-start justify-center pt-[12vh]">
+      <button type="button" aria-label="Close palette" tabIndex={-1} aria-hidden="true" onClick={onClose} className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
       <div
         className="nd-fade relative w-full max-w-xl overflow-hidden rounded-2xl border border-white/10 bg-slate-950 shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
       >
         {/* Search input */}
         <div className="flex items-center gap-3 border-b border-white/5 px-4 py-3">
           <Search size={18} className="shrink-0 text-slate-500" />
           <input
+            // biome-ignore lint/a11y/noAutofocus: command-palette search should grab focus on open (the palette is modal; the user just pressed ⌘K).
             autoFocus
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -110,7 +111,8 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
             results.map((cmd, i) => {
               const Icon = cmd.icon;
               return (
-                <button
+                <button type="button"
+                  // biome-ignore lint/suspicious/noArrayIndexKey: the type+label prefix is not guaranteed unique across palette sections; the index disambiguates stable entries.
                   key={`${cmd.type}-${cmd.label}-${i}`}
                   onClick={() => activate(cmd)}
                   onMouseEnter={() => setSelected(i)}

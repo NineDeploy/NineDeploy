@@ -75,7 +75,7 @@ export function SystemSection() {
                 <span className="text-xs text-amber-400">{s.imagesSummary.reclaimable} reclaimable</span>
               )}
             </div>
-            <button
+            <button type="button"
               onClick={() => resources.refetch()}
               className="mt-3 text-xs text-indigo-400 hover:underline"
             >

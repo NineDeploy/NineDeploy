@@ -72,8 +72,8 @@ export const jobRoutes: FastifyPluginAsync = async (app) => {
     const jobId = parseId((req.params as { jobId: string }).jobId);
     const input = jobPatch.parse(req.body ?? {});
     const values: Partial<typeof scheduledJobs.$inferInsert> = {};
-    if (input.name !== undefined && input.name.trim()) values.name = input.name.trim();
-    if (input.cron !== undefined && input.cron.trim()) {
+    if (input.name?.trim()) values.name = input.name.trim();
+    if (input.cron?.trim()) {
       assertCron(input.cron.trim());
       values.cron = input.cron.trim();
     }

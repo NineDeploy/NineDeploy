@@ -34,10 +34,10 @@ function Probe() {
     <div>
       <span data-testid="loading">{String(loading)}</span>
       <span data-testid="email">{user?.email ?? 'none'}</span>
-      <button onClick={() => void login('a@b.c', 'pw')}>login</button>
-      <button onClick={() => void login('a@b.c', 'pw', '123456')}>login-2fa</button>
-      <button onClick={() => void setup('a@b.c', 'pw', 'Ann')}>setup</button>
-      <button onClick={logout}>logout</button>
+      <button type="button" onClick={() => void login('a@b.c', 'pw')}>login</button>
+      <button type="button" onClick={() => void login('a@b.c', 'pw', '123456')}>login-2fa</button>
+      <button type="button" onClick={() => void setup('a@b.c', 'pw', 'Ann')}>setup</button>
+      <button type="button" onClick={logout}>logout</button>
     </div>
   );
 }

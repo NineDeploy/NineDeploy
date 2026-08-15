@@ -12,7 +12,7 @@ export function AppearanceSection() {
           <span className="mb-2 block text-xs text-slate-500">Theme</span>
           <div className="flex gap-2">
             {(['dark', 'light'] as const).map((t) => (
-              <button
+              <button type="button"
                 key={t}
                 onClick={() => setTheme(t)}
                 className={cn(
@@ -31,7 +31,7 @@ export function AppearanceSection() {
           <span className="mb-2 block text-xs text-slate-500">Accent color</span>
           <div className="flex flex-wrap gap-2">
             {ACCENTS.map((a) => (
-              <button
+              <button type="button"
                 key={a.id}
                 onClick={() => setAccent(a.id)}
                 className={cn(

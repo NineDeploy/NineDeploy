@@ -133,7 +133,7 @@ describe('DatabaseWizard', () => {
     const headerClose = container.querySelector('h2 + button') as HTMLButtonElement;
     await user.click(headerClose);
     expect(onClose).toHaveBeenCalledTimes(1);
-    await user.click(screen.getByText('New database').closest('.fixed') as HTMLElement);
+    await user.click(screen.getByText('New database').closest('.fixed')!.firstElementChild as HTMLElement);
     expect(onClose).toHaveBeenCalledTimes(2);
   });
 

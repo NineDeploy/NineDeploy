@@ -111,7 +111,7 @@ export function Layout() {
           const Icon = g.icon;
           const active = activeGroup === g.id;
           return (
-            <button
+            <button type="button"
               key={g.id}
               onClick={() => toggleGroup(g.id)}
               className={cn(
@@ -134,7 +134,7 @@ export function Layout() {
         <div className="flex-1" />
 
         {/* User avatar */}
-        <button
+        <button type="button"
           onClick={logout}
           className="group relative grid h-9 w-9 place-items-center rounded-full bg-indigo-500/20 text-xs font-semibold text-indigo-300 ring-1 ring-inset ring-indigo-500/30 transition hover:bg-rose-500/20 hover:text-rose-300"
           title="Sign out"
@@ -177,7 +177,7 @@ export function Layout() {
           </nav>
 
           {/* Collapse button */}
-          <button
+          <button type="button"
             onClick={() => setActiveGroup(null)}
             className="flex items-center gap-1.5 px-4 py-2.5 text-xs text-slate-600 transition hover:text-slate-400"
           >
@@ -201,14 +201,14 @@ export function Layout() {
             )}
           </div>
           <div className="flex items-center gap-1.5">
-            <button
+            <button type="button"
               onClick={toggleTheme}
               className="rounded-lg p-2 text-slate-500 transition hover:bg-white/[0.06] hover:text-slate-300"
               title={theme === 'dark' ? 'Light mode' : 'Dark mode'}
             >
               {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
             </button>
-            <button
+            <button type="button"
               onClick={() => setPaletteOpen(true)}
               className="flex items-center gap-2 rounded-lg bg-white/[0.04] px-2.5 py-1.5 text-xs text-slate-500 transition hover:bg-white/[0.08] hover:text-slate-300"
               title="Search (⌘K)"
@@ -217,7 +217,7 @@ export function Layout() {
               <span className="hidden sm:inline">Search</span>
               <kbd className="rounded bg-white/[0.06] px-1 py-0.5 text-[9px]">⌘K</kbd>
             </button>
-            <button
+            <button type="button"
               onClick={() => setDrawerOpen(true)}
               className="relative rounded-lg p-2 text-slate-500 transition hover:bg-white/[0.06] hover:text-slate-300"
               title="Activity"
@@ -319,21 +319,21 @@ function ActivityDrawer({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="fixed inset-0 z-40 flex justify-end">
-      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
+      <button type="button" aria-label="Close events drawer" tabIndex={-1} aria-hidden="true" onClick={onClose} className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
       <div className="nd-fade relative flex h-full w-80 flex-col border-l border-white/10 bg-slate-950 shadow-2xl">
         <div className="flex items-center justify-between border-b border-white/5 px-4 py-3">
           <h2 className="flex items-center gap-2 text-sm font-semibold">
             <Activity size={15} className="text-indigo-400" /> Events
             <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-medium text-emerald-300">● live</span>
           </h2>
-          <button onClick={onClose} className="rounded-lg p-1 text-slate-500 hover:bg-white/5 hover:text-slate-300">
+          <button type="button" onClick={onClose} className="rounded-lg p-1 text-slate-500 hover:bg-white/5 hover:text-slate-300">
             <X size={16} />
           </button>
         </div>
         {/* Filter chips */}
         <div className="flex gap-1 overflow-x-auto border-b border-white/5 px-3 py-2">
           {filters.map((f) => (
-            <button
+            <button type="button"
               key={f}
               onClick={() => setFilter(f)}
               className={cn('shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium transition capitalize', filter === f ? 'bg-indigo-500 text-white' : 'bg-white/[0.04] text-slate-500 hover:bg-white/[0.08]')}

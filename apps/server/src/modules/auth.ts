@@ -6,7 +6,7 @@ import { forgotPassword, login, passwordChange, passwordResetWithToken, refresh,
 import { config } from '../config.js';
 import { decrypt, encrypt, hashPassword, randomToken, sha256, verifyPassword } from '../lib/crypto.js';
 import { badRequest, conflict, forbidden, unauthorized } from '../lib/errors.js';
-import { signAccessToken, signRefreshToken, ttlSeconds, verifyJwt } from '../lib/jwt.js';
+import { signAccessToken, signRefreshToken, ttlSeconds, verifyJwt, type AppJwtPayload } from '../lib/jwt.js';
 import { isLocked, recordFailure, recordSuccess } from '../lib/loginLockout.js';
 import { consumeResetToken, issueResetToken } from '../lib/passwordReset.js';
 import { sendSystemEmail } from '../lib/notifier.js';
@@ -198,7 +198,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
 
   app.post('/refresh', { config: { rateLimit: AUTH_LIMIT } }, async (req) => {
     const input = refresh.parse(req.body);
-    let payload;
+    let payload: AppJwtPayload;
     try {
       payload = await verifyJwt(input.refreshToken);
     } catch {

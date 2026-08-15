@@ -32,9 +32,9 @@ function fakeApp(): FakeApp {
   };
 }
 
-let exitSpy: ReturnType<typeof vi.spyOn>;
-let onSpy: ReturnType<typeof vi.spyOn>;
-let logSpy: ReturnType<typeof vi.spyOn>;
+let _exitSpy: ReturnType<typeof vi.spyOn>;
+let _onSpy: ReturnType<typeof vi.spyOn>;
+let _logSpy: ReturnType<typeof vi.spyOn>;
 let envAgent: string | undefined;
 let envToken: string | undefined;
 let envPort: string | undefined;
@@ -43,15 +43,15 @@ beforeEach(() => {
   state.exitCalls = [];
   state.signalListeners = {};
   state.buildApp.mockReset();
-  exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+  _exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
     state.exitCalls.push(code ?? 0);
     return undefined as never;
   }) as never);
-  onSpy = vi.spyOn(process, 'on').mockImplementation((((event: string, listener: () => void) => {
+  _onSpy = vi.spyOn(process, 'on').mockImplementation((((event: string, listener: () => void) => {
     state.signalListeners[event] = listener;
     return process;
   }) as never) as never);
-  logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+  _logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
   vi.spyOn(console, 'error').mockImplementation(() => undefined);
   envAgent = process.env['NINEDEPLOY_AGENT'];
   envToken = process.env['NINEDEPLOY_AGENT_TOKEN'];

@@ -71,9 +71,10 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
     const errored = allServices.filter((s) => s.status === 'error').length;
     const dbRunning = allDbs.filter((d) => d.status === 'running').length;
 
-    // Recent deployments (last 5)
+    // Recent deployments (last 5) — ordered by id (monotonic; createdAt is
+    // second-precision and would tie for same-second deploys).
     const recentDeploys = await app.db.query.deployments.findMany({
-      orderBy: desc(deployments.createdAt),
+      orderBy: desc(deployments.id),
       limit: 5,
     });
     const svcById = new Map(allServices.map((s) => [s.id, s]));
@@ -97,7 +98,7 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
     for (const svc of allServices) {
       const lastDep = await app.db.query.deployments.findFirst({
         where: eq(deployments.serviceId, svc.id),
-        orderBy: desc(deployments.createdAt),
+        orderBy: desc(deployments.id),
       });
 
       let healthy = false;

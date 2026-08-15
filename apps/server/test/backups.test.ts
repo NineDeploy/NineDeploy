@@ -16,7 +16,7 @@ vi.mock('../src/engine/database.js', () => engineMocks);
 
 const remoteMocks = vi.hoisted(() => ({
   uploadBackup: vi.fn(async () => undefined),
-  fetchRemoteBackup: vi.fn(async (_db: unknown, key: string, p: string) => p),
+  fetchRemoteBackup: vi.fn(async (_db: unknown, _key: string, p: string) => p),
   deleteRemoteBackup: vi.fn(async () => undefined),
 }));
 vi.mock('../src/lib/backupRemote.js', () => remoteMocks);

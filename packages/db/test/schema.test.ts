@@ -32,6 +32,7 @@ describe('schema', () => {
 
   it('exposes every expected table', () => {
     for (const table of tables) {
+      // biome-ignore lint/performance/noDynamicNamespaceImportAccess: the whole point of this test is verifying each export exists by name.
       expect(schema[table], `missing table ${table}`).toBeDefined();
     }
   });
@@ -56,6 +57,7 @@ describe('schema', () => {
       'alertOperator',
       'alertStateStatus',
     ] as const) {
+      // biome-ignore lint/performance/noDynamicNamespaceImportAccess: the whole point of this test is verifying each enum export exists by name.
       expect(schema[name], `missing enum ${name}`).toBeDefined();
     }
   });
@@ -79,6 +81,7 @@ describe('schema', () => {
       'alertStateRelations',
       'passwordResetTokensRelations',
     ] as const) {
+      // biome-ignore lint/performance/noDynamicNamespaceImportAccess: the whole point of this test is resolving each relation export by name.
       expect(schema[name], `missing relation ${name}`).toBeDefined();
     }
   });
@@ -138,5 +141,26 @@ describe('schema', () => {
     await db.update(schema.users).set({ name: 'Ada Lovelace' }).where(eq(schema.users.email, 'ada@example.com')).run();
     const updated = await db.select().from(schema.users).all();
     expect(updated[0]?.name).toBe('Ada Lovelace');
+  });
+
+  it('allows two deployments of the same service within the same second (non-unique index)', async () => {
+    const { db } = schema.createDb({ url: ':memory:' });
+    await migrate(db, { migrationsFolder });
+
+    const [svc] = await db.insert(schema.services).values({ name: 'web', slug: 'web' }).returning();
+    expect(svc?.id).toBeDefined();
+
+    // `created_at` is stored as unix epoch SECONDS (integer timestamp mode):
+    // two instants 500 ms apart within the same second map to the SAME stored
+    // value, which the old UNIQUE (service_id, created_at) index rejected with
+    // a constraint violation on the second insert (deploy trigger 500s).
+    const t0 = new Date(1700000000000);
+    const t1 = new Date(1700000000500);
+    await db.insert(schema.deployments).values({ serviceId: svc!.id, createdAt: t0 });
+    await db.insert(schema.deployments).values({ serviceId: svc!.id, createdAt: t1 });
+
+    const rows = await db.select().from(schema.deployments).all();
+    expect(rows).toHaveLength(2);
+    expect(rows.every((r) => r.serviceId === svc!.id)).toBe(true);
   });
 });

@@ -73,7 +73,7 @@ export function Servers() {
               <Button size="sm" variant="secondary" onClick={() => void copy(`NINEDEPLOY_AGENT=1 NINEDEPLOY_AGENT_TOKEN=${revealed.tokenSha256} node apps/server/dist/server.js`)}>
                 {copied ? 'Copied!' : 'Copy command'}
               </Button>
-              <button onClick={() => setRevealed(null)} className="text-xs text-amber-200/70 hover:underline">
+              <button type="button" onClick={() => setRevealed(null)} className="text-xs text-amber-200/70 hover:underline">
                 Done
               </button>
             </div>
@@ -142,10 +142,10 @@ export function Servers() {
                   </td>
                   <td className="px-5 py-3 text-right">
                     <div className="flex items-center justify-end gap-3">
-                      <button onClick={() => test.mutate(s.id)} className="text-xs text-slate-500 hover:text-indigo-300" title="Test connectivity">
+                      <button type="button" onClick={() => test.mutate(s.id)} className="text-xs text-slate-500 hover:text-indigo-300" title="Test connectivity">
                         test
                       </button>
-                      <button onClick={() => setPendingDelete({ id: s.id, name: s.name })} className="text-slate-600 transition hover:text-rose-400" title="Remove server">
+                      <button type="button" onClick={() => setPendingDelete({ id: s.id, name: s.name })} className="text-slate-600 transition hover:text-rose-400" title="Remove server">
                         <Trash2 size={14} />
                       </button>
                     </div>

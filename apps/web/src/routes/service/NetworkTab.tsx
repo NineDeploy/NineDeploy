@@ -95,7 +95,7 @@ function DomainsCard({ serviceId }: { serviceId: number }) {
                   </a>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
-                  <button
+                  <button type="button"
                     onClick={() => toggleSsl.mutate({ id: d.id, ssl: d.ssl })}
                     className={cn(
                       'rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset transition',
@@ -107,7 +107,7 @@ function DomainsCard({ serviceId }: { serviceId: number }) {
                   >
                     {d.ssl ? 'HTTPS' : 'HTTP'}
                   </button>
-                  <button
+                  <button type="button"
                     onClick={() => toggleWww.mutate({ id: d.id, redirectWww: d.redirectWww })}
                     className={cn(
                       'rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset transition',
@@ -119,7 +119,7 @@ function DomainsCard({ serviceId }: { serviceId: number }) {
                   >
                     www
                   </button>
-                  <button
+                  <button type="button"
                     onClick={() => remove.mutate(d.id)}
                     className="text-slate-600 transition hover:text-rose-400"
                     title="Remove domain"

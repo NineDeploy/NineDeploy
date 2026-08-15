@@ -169,7 +169,7 @@ function TwoFactorCard() {
               <code className="min-w-0 flex-1 break-all rounded bg-black/40 px-2 py-1.5 font-mono text-[11px] text-amber-100">
                 {setup.secret}
               </code>
-              <button onClick={() => copy(setup.secret)} className="shrink-0 text-xs font-medium text-amber-200 hover:text-amber-100">
+              <button type="button" onClick={() => copy(setup.secret)} className="shrink-0 text-xs font-medium text-amber-200 hover:text-amber-100">
                 Copy
               </button>
             </div>
@@ -177,7 +177,7 @@ function TwoFactorCard() {
               <code className="min-w-0 flex-1 truncate rounded bg-black/40 px-2 py-1.5 font-mono text-[10px] text-amber-100/80" title={setup.otpauthUri}>
                 {setup.otpauthUri}
               </code>
-              <button onClick={() => copy(setup.otpauthUri)} className="shrink-0 text-xs font-medium text-amber-200 hover:text-amber-100">
+              <button type="button" onClick={() => copy(setup.otpauthUri)} className="shrink-0 text-xs font-medium text-amber-200 hover:text-amber-100">
                 Copy URI
               </button>
             </div>

@@ -18,7 +18,9 @@ export function Hub() {
 
   const categories = useMemo(() => {
     const set = new Set<string>(['All']);
-    (list.data ?? []).forEach((t) => set.add(t.category));
+    (list.data ?? []).forEach((t) => {
+      set.add(t.category);
+    });
     return Array.from(set);
   }, [list.data]);
 
@@ -53,7 +55,7 @@ export function Hub() {
         </div>
         <div className="flex flex-wrap gap-1.5">
           {categories.map((c) => (
-            <button
+            <button type="button"
               key={c}
               onClick={() => setCategory(c)}
               className={cn(
@@ -83,7 +85,7 @@ export function Hub() {
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {filtered.map((t) => (
             <Card key={t.id} interactive className="group cursor-pointer p-5" >
-              <button className="w-full text-left" onClick={() => setSelected(t.id)}>
+              <button type="button" className="w-full text-left" onClick={() => setSelected(t.id)}>
                 <div className="flex items-start gap-3">
                   <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-white/[0.05] text-2xl ring-1 ring-inset ring-white/10">
                     {t.emoji}
@@ -118,10 +120,10 @@ function TemplateDetail({ id, onClose, onDeploy }: { id: string; onClose: () => 
   const detail = useQuery({ queryKey: ['template', id], queryFn: () => api.templates.get(id) });
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-0 backdrop-blur-sm sm:items-center sm:p-6" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-end justify-center p-0 sm:items-center sm:p-6">
+      <button type="button" aria-label="Close template details" tabIndex={-1} aria-hidden="true" onClick={onClose} className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
       <div
-        className="nd-fade w-full max-w-lg overflow-hidden rounded-t-2xl border border-white/10 bg-slate-950 shadow-2xl sm:rounded-2xl"
-        onClick={(e) => e.stopPropagation()}
+        className="nd-fade relative w-full max-w-lg overflow-hidden rounded-t-2xl border border-white/10 bg-slate-950 shadow-2xl sm:rounded-2xl"
       >
         {detail.isLoading || !detail.data ? (
           <div className="p-6"><Skeleton className="h-20 w-full" /></div>
@@ -135,7 +137,7 @@ function TemplateDetail({ id, onClose, onDeploy }: { id: string; onClose: () => 
                   <p className="text-xs text-slate-400">{detail.data.tagline}</p>
                 </div>
               </div>
-              <button onClick={onClose} className="rounded-lg p-1.5 text-slate-500 hover:bg-white/5 hover:text-slate-300"><X size={16} /></button>
+              <button type="button" onClick={onClose} className="rounded-lg p-1.5 text-slate-500 hover:bg-white/5 hover:text-slate-300"><X size={16} /></button>
             </div>
 
             <div className="max-h-[50vh] space-y-4 overflow-auto p-5">

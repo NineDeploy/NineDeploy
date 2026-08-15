@@ -75,7 +75,7 @@ export function EnvCard({ serviceId }: { serviceId: number }) {
                     onChange={(e) => setDrafts((d) => ({ ...d, [v.id]: e.target.value }))}
                     className="h-7 flex-1 font-mono text-[11px]"
                   />
-                  <button
+                  <button type="button"
                     onClick={() => update.mutate({ id: v.id, key: v.key, value: draft })}
                     disabled={!dirty}
                     className={cn('text-slate-600 transition', dirty ? 'hover:text-emerald-400' : 'opacity-30')}
@@ -83,7 +83,7 @@ export function EnvCard({ serviceId }: { serviceId: number }) {
                   >
                     <Save size={13} />
                   </button>
-                  <button onClick={() => remove.mutate(v.id)} className="text-slate-600 transition hover:text-rose-400" title="Delete">
+                  <button type="button" onClick={() => remove.mutate(v.id)} className="text-slate-600 transition hover:text-rose-400" title="Delete">
                     <Trash2 size={13} />
                   </button>
                 </div>

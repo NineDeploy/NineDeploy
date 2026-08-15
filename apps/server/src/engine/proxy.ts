@@ -330,7 +330,7 @@ export async function writeDynamicConfig(db: DB): Promise<void> {
 
   for (const d of all) {
     const svc = servicesById.get(d.serviceId);
-    if (!svc || !svc.port || !svc.runtimeId) continue; // need a running container to route to
+    if (!svc?.port || !svc.runtimeId) continue; // need a running container to route to
     const key = `${svc.slug}_${d.id}`;
     // Sanitize operands against rule/YAML injection (see HOST_RE/PATH_RE).
     const host = String(d.hostname ?? '').replace(HOST_RE, '');
@@ -411,11 +411,11 @@ export async function writeDynamicConfig(db: DB): Promise<void> {
     '# Managed by NineDeploy — regenerated on deploy/domain changes.\n' +
     'http:\n' +
     '  routers:\n' +
-    (routers.length ? routers.join('\n') + '\n' : '    {}\n') +
+    (routers.length ? `${routers.join('\n')}\n` : '    {}\n') +
     '  middlewares:\n' +
-    (middlewares.length ? middlewares.join('\n') + '\n' : '    {}\n') +
+    (middlewares.length ? `${middlewares.join('\n')}\n` : '    {}\n') +
     '  services:\n' +
-    (svcBlocks.length ? svcBlocks.join('\n') + '\n' : '    {}\n') +
+    (svcBlocks.length ? `${svcBlocks.join('\n')}\n` : '    {}\n') +
     tlsCerts;
 
   writeAtomic(dynamicPath(), yaml);

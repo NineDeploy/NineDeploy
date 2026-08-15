@@ -1,5 +1,5 @@
 import { desc, eq } from 'drizzle-orm';
-import { alertRules, alertState } from '@ninedeploy/db';
+import { alertRules, type alertState } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { alertRuleCreate, alertRulePatch } from '@ninedeploy/schemas';
 import { ensureAlertState, resetAlertState } from '../lib/alerting.js';

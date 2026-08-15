@@ -286,8 +286,8 @@ describe('Modal', () => {
     expect(screen.getByText('Body text')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument();
 
-    // Backdrop click closes.
-    dialog.parentElement!.click();
+    // Backdrop click closes (the backdrop button precedes the panel).
+    dialog.previousElementSibling!.click();
     expect(onClose).toHaveBeenCalledTimes(1);
 
     // Escape closes.

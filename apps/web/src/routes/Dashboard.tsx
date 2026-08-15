@@ -50,7 +50,7 @@ export function Dashboard() {
       {/* Hero status banner */}
       <input ref={importRef} type="file" accept=".json" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) doImport(f); e.target.value = ''; }} />
       <div className="mb-2 flex justify-end gap-2">
-        <button onClick={() => importRef.current?.click()} disabled={importing}
+        <button type="button" onClick={() => importRef.current?.click()} disabled={importing}
           className="flex items-center gap-1.5 rounded-lg bg-white/[0.04] px-3 py-1.5 text-xs text-slate-400 transition hover:bg-white/[0.08] hover:text-slate-200 disabled:opacity-50">
           <Upload size={13} /> {importing ? 'Importing…' : 'Import service'}
         </button>
