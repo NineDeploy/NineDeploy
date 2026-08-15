@@ -26,6 +26,7 @@ RUN corepack enable
 
 # Copy workspace manifests first for layer-cached installs.
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
+COPY patches/ ./patches/
 COPY apps/server/package.json apps/server/
 COPY apps/web/package.json apps/web/
 COPY apps/cli/package.json apps/cli/
@@ -54,6 +55,7 @@ RUN corepack enable
 # copied just to satisfy the workspace resolution — its deps are never installed
 # into the runtime (--filter keeps it to what apps/server imports).
 COPY --from=build /app/package.json /app/pnpm-workspace.yaml /app/pnpm-lock.yaml /app/.npmrc ./
+COPY --from=build /app/patches/ patches/
 COPY --from=build /app/apps/server/package.json apps/server/
 COPY --from=build /app/apps/web/package.json apps/web/
 COPY --from=build /app/apps/cli/package.json apps/cli/
