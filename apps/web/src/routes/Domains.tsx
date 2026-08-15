@@ -2,7 +2,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowRight, Globe, Lock } from 'lucide-react';
 import { Link } from 'react-router';
 import { api } from '../lib/api.js';
-import { Card, EmptyState, Skeleton, StatusBadge, cn } from '../components/ui.js';
+import { useToast } from '../components/Toast.js';
+import { Card, EmptyState, ErrorCard, PageHeader, Skeleton, StatusBadge, Switch, cn } from '../components/ui.js';
 
 /** Whole days between now and an ISO expiry timestamp. */
 function daysUntil(iso: string): number {
@@ -11,24 +12,29 @@ function daysUntil(iso: string): number {
 
 export function Domains() {
   const qc = useQueryClient();
+  const { toast } = useToast();
   const list = useQuery({ queryKey: ['domains-all'], queryFn: () => api.domains.all() });
   const toggle = useMutation({
     mutationFn: (d: { id: number; ssl: boolean }) => api.domains.setSsl(d.id, d.ssl),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['domains-all'] }),
+    onSuccess: (_res, vars) => {
+      qc.invalidateQueries({ queryKey: ['domains-all'] });
+      toast(vars.ssl ? 'HTTPS enabled for the domain' : 'HTTPS disabled — the domain now serves plain HTTP', 'success');
+    },
+    onError: () => toast('Could not update the SSL setting', 'error'),
   });
 
   return (
     <div>
-      <div className="mb-6 flex items-center gap-2">
-        <Globe size={20} className="text-indigo-400" />
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Domains</h1>
-          <p className="text-sm text-slate-400">Routing map &amp; SSL — where each domain points.</p>
-        </div>
-      </div>
+      <PageHeader
+        icon={<Globe size={18} />}
+        title="Domains"
+        subtitle="Routing map & SSL — where each domain points."
+      />
 
       {list.isLoading ? (
         <Card className="p-5"><Skeleton className="h-10 w-full" /></Card>
+      ) : list.isError ? (
+        <ErrorCard title="Couldn't load domains" error={list.error} onRetry={() => list.refetch()} />
       ) : !list.data || list.data.length === 0 ? (
         <Card><EmptyState icon={<Globe size={26} />} title="No domains" hint="Add a domain to a service to route traffic to it." /></Card>
       ) : (
@@ -63,16 +69,11 @@ export function Domains() {
                   </td>
                   <td className="px-5 py-3 font-mono text-[11px] text-slate-500">{d.container ?? '—'}</td>
                   <td className="px-5 py-3">
-                    <button
-                      onClick={() => toggle.mutate({ id: d.id, ssl: !d.ssl })}
-                      className={cn(
-                        'relative inline-flex h-5 w-9 items-center rounded-full transition',
-                        d.ssl ? 'bg-emerald-500' : 'bg-white/10',
-                      )}
-                      title={d.ssl ? 'HTTPS on' : 'HTTP only — click to enable HTTPS'}
-                    >
-                      <span className={cn('inline-block h-3.5 w-3.5 transform rounded-full bg-white transition', d.ssl ? 'translate-x-5' : 'translate-x-1')} />
-                    </button>
+                    <Switch
+                      checked={d.ssl}
+                      onChange={(v) => toggle.mutate({ id: d.id, ssl: v })}
+                      label={d.ssl ? 'HTTPS on' : 'Enable HTTPS'}
+                    />
                     {d.ssl && <Lock size={11} className="ml-1.5 inline text-emerald-400" />}
                     {d.certExpiresAt && (
                       <span

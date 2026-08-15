@@ -3,7 +3,8 @@ import { useState } from 'react';
 import { HardDrive, Plus, Server as ServerIcon, Trash2 } from 'lucide-react';
 import { api } from '../lib/api.js';
 import { useToast } from '../components/Toast.js';
-import { Button, Card, EmptyState, Field, Input, Skeleton, cn } from '../components/ui.js';
+import { Button, Card, ConfirmDialog, EmptyState, ErrorCard, Field, Input, PageHeader, Skeleton, cn } from '../components/ui.js';
+import { formatRelative, useCopy } from '../lib/format.js';
 
 /**
  * Remote server registry (admin). Registering prints the one-time agent token
@@ -13,11 +14,12 @@ export function Servers() {
   const qc = useQueryClient();
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<{ id: number; name: string } | null>(null);
   const [name, setName] = useState('');
   const [host, setHost] = useState('');
   const [port, setPort] = useState('4600');
   const [revealed, setRevealed] = useState<{ token: string; tokenSha256: string; agentCommand: string } | null>(null);
-  const [copied, setCopied] = useState(false);
+  const { copied, copy } = useCopy();
 
   const list = useQuery({ queryKey: ['servers'], queryFn: () => api.servers.list() });
   const create = useMutation({
@@ -29,12 +31,17 @@ export function Servers() {
       setHost('');
       setPort('4600');
       qc.invalidateQueries({ queryKey: ['servers'] });
+      toast('Server registered — copy the agent token now', 'success');
     },
     onError: () => toast('Could not register the server', 'error'),
   });
   const remove = useMutation({
     mutationFn: (id: number) => api.servers.remove(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['servers'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['servers'] });
+      toast('Server removed', 'success');
+    },
+    onError: () => toast('Could not remove the server', 'error'),
   });
   const test = useMutation({
     mutationFn: (id: number) => api.servers.test(id),
@@ -45,25 +52,13 @@ export function Servers() {
     onError: () => toast('Agent unreachable', 'error'),
   });
 
-  const copy = async (value: string) => {
-    try {
-      await navigator.clipboard.writeText(value);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      toast('Copy failed', 'error');
-    }
-  };
-
   return (
     <div className="max-w-3xl">
-      <div className="mb-6 flex items-center gap-2">
-        <ServerIcon size={20} className="text-indigo-400" />
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Servers</h1>
-          <p className="text-sm text-slate-400">Remote hosts running the NineDeploy agent — deploy services off-box.</p>
-        </div>
-      </div>
+      <PageHeader
+        icon={<ServerIcon size={18} />}
+        title="Servers"
+        subtitle="Remote hosts running the NineDeploy agent — deploy services off-box."
+      />
 
       {revealed && (
         <Card className="mb-5 border-amber-500/30">
@@ -75,7 +70,7 @@ export function Servers() {
               NINEDEPLOY_AGENT=1 NINEDEPLOY_AGENT_TOKEN={revealed.tokenSha256} NINEDEPLOY_AGENT_PORT=4600 node apps/server/dist/server.js
             </code>
             <div className="flex gap-2">
-              <Button size="sm" variant="secondary" onClick={() => copy(`NINEDEPLOY_AGENT=1 NINEDEPLOY_AGENT_TOKEN=${revealed.tokenSha256} node apps/server/dist/server.js`)}>
+              <Button size="sm" variant="secondary" onClick={() => void copy(`NINEDEPLOY_AGENT=1 NINEDEPLOY_AGENT_TOKEN=${revealed.tokenSha256} node apps/server/dist/server.js`)}>
                 {copied ? 'Copied!' : 'Copy command'}
               </Button>
               <button onClick={() => setRevealed(null)} className="text-xs text-amber-200/70 hover:underline">
@@ -116,6 +111,8 @@ export function Servers() {
 
       {list.isLoading ? (
         <Card className="p-5"><Skeleton className="h-10 w-full" /></Card>
+      ) : list.isError ? (
+        <ErrorCard title="Couldn't load servers" error={list.error} onRetry={() => list.refetch()} />
       ) : !list.data || list.data.length === 0 ? (
         <Card><EmptyState icon={<HardDrive size={26} />} title="No remote servers" hint="Everything deploys on this host. Register a server to deploy there." /></Card>
       ) : (
@@ -140,7 +137,7 @@ export function Servers() {
                       s.status === 'online' ? 'bg-emerald-500/15 text-emerald-300 ring-emerald-500/20' : s.status === 'error' ? 'bg-rose-500/15 text-rose-300 ring-rose-500/20' : 'bg-slate-500/15 text-slate-400 ring-slate-500/20',
                     )}>
                       {s.status}
-                      {s.lastSeenAt && <span className="text-[10px] opacity-70">· {new Date(s.lastSeenAt).toLocaleTimeString()}</span>}
+                      {s.lastSeenAt && <span className="text-[10px] opacity-70">· {formatRelative(s.lastSeenAt)}</span>}
                     </span>
                   </td>
                   <td className="px-5 py-3 text-right">
@@ -148,7 +145,7 @@ export function Servers() {
                       <button onClick={() => test.mutate(s.id)} className="text-xs text-slate-500 hover:text-indigo-300" title="Test connectivity">
                         test
                       </button>
-                      <button onClick={() => remove.mutate(s.id)} className="text-slate-600 transition hover:text-rose-400" title="Remove server">
+                      <button onClick={() => setPendingDelete({ id: s.id, name: s.name })} className="text-slate-600 transition hover:text-rose-400" title="Remove server">
                         <Trash2 size={14} />
                       </button>
                     </div>
@@ -162,6 +159,15 @@ export function Servers() {
       <p className="mt-3 text-xs text-slate-600">
         The agent runs the same binary with <code className="text-slate-400">NINEDEPLOY_AGENT=1</code> and only executes a fixed set of typed docker/git operations — never raw commands.
       </p>
+
+      <ConfirmDialog
+        open={pendingDelete != null}
+        title="Remove server"
+        message={`Remove "${pendingDelete?.name}"? Services already deployed there keep running but can no longer be managed from here.`}
+        confirmLabel="Remove"
+        onConfirm={() => pendingDelete && remove.mutate(pendingDelete.id)}
+        onClose={() => setPendingDelete(null)}
+      />
     </div>
   );
 }

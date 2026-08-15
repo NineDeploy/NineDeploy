@@ -66,6 +66,32 @@ describe('Hub', () => {
     expect(document.querySelectorAll('.animate-pulse').length).toBe(4);
   });
 
+  it('shows an error card with retry when the templates query fails', async () => {
+    mockOf(api.templates.list).mockRejectedValue(new Error('registry down') as never);
+    renderWithProviders(<Hub />);
+    expect(await screen.findByText("Couldn't load templates")).toBeInTheDocument();
+    expect(screen.getByText('registry down')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    await waitFor(() => expect(api.templates.list).toHaveBeenCalledTimes(2));
+  });
+
+  it('shows a zero-results empty state for unmatched search and empty categories', async () => {
+    const user = userEvent.setup();
+    mockOf(api.templates.list).mockResolvedValue(templates as never);
+    const { unmount } = renderWithProviders(<Hub />);
+    await screen.findByText('n8n');
+    await user.type(screen.getByPlaceholderText('Search templates…'), 'nothing-matches');
+    expect(await screen.findByText('No templates match')).toBeInTheDocument();
+    expect(screen.getByText(/Nothing matches "nothing-matches" in any category/)).toBeInTheDocument();
+    unmount();
+
+    // A registry with no templates at all shows the category-only hint branch.
+    mockOf(api.templates.list).mockResolvedValue([] as never);
+    renderWithProviders(<Hub />);
+    expect(await screen.findByText('No templates match')).toBeInTheDocument();
+    expect(screen.getByText(/No templates in All/)).toBeInTheDocument();
+  });
+
   it('renders templates with categories and filters by search + category', async () => {
     const user = userEvent.setup();
     mockOf(api.templates.list).mockResolvedValue(templates as never);

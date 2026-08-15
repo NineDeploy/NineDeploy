@@ -54,7 +54,7 @@ it('shows an error state with retry when the graph query fails', async () => {
     mockOf(api.topology.get).mockRejectedValue(new Error('boom'));
     renderWithProviders(<Topology />);
     expect(await screen.findByText(/Couldn't load the topology/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
     expect(api.topology.get).toHaveBeenCalledTimes(2);
   });
 

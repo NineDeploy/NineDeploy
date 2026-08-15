@@ -70,7 +70,14 @@ describe('App', () => {
     await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/login'));
   });
 
-  it('redirects unknown paths to /', async () => {
+  it('renders the 404 page for unknown paths', async () => {
+    authState({ id: 1, email: 'a@b.c' });
+    renderWithProviders(<App />, { route: '/does-not-exist' });
+    expect(await screen.findByText('Not found')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Back to dashboard' })).toHaveAttribute('href', '/');
+  });
+
+  it('redirects /dashboard to /', async () => {
     authState({ id: 1, email: 'a@b.c' });
     mockOf(api.dashboard.get).mockResolvedValue(emptyDash as never);
     renderWithProviders(
@@ -78,9 +85,10 @@ describe('App', () => {
         <App />
         <LocationProbe />
       </>,
-      { route: '/does-not-exist' },
+      { route: '/dashboard' },
     );
-    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/'));
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent(/^\/$/));
+    expect(await screen.findByText('All systems operational')).toBeInTheDocument();
   });
 
   it('renders the authenticated shell and the index route', async () => {

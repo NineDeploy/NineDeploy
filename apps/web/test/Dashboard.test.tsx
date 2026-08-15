@@ -45,7 +45,8 @@ it('shows an error card with retry when the dashboard query fails', async () => 
     mockOf(api.dashboard.get).mockRejectedValue(new Error('boom'));
     renderWithProviders(<Dashboard />);
     expect(await screen.findByText(/Couldn't load the dashboard/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(screen.getByText('boom')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
     expect(api.dashboard.get).toHaveBeenCalledTimes(2);
   });
 

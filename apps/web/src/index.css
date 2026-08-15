@@ -5,23 +5,71 @@
 @theme {
   --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
-  --color-indigo-300: var(--nd-a300);
-  --color-indigo-400: var(--nd-a400);
-  --color-indigo-500: var(--nd-a500);
-  --color-indigo-600: var(--nd-a600);
+  --color-indigo-300: var(--nd-accent-soft);
+  --color-indigo-400: var(--nd-accent-bright);
+  --color-indigo-500: var(--nd-accent);
+  --color-indigo-600: var(--nd-accent-strong);
 }
 
+/* ── Theme tokens ─────────────────────────────────────────────────────────
+   Every accent-driven color in the app resolves through these custom
+   properties, defined per data-accent (dark defaults here) and re-toned per
+   data-theme + data-accent combination below:
+     --nd-accent         primary fill (buttons, active fills, handles)
+     --nd-accent-strong  darker step (gradient ends, pressed states)
+     --nd-accent-bright  brighter step (icons, focus icons)
+     --nd-accent-soft    lightest step (text on tinted surfaces)
+     --nd-accent-ring    focus/outline ring tone
+     --nd-accent-soft-bg / --nd-accent-soft-text / --nd-accent-soft-ring
+                         badge/tinted-chip tones
+   Dark surface utilities are mapped to light equivalents per data-theme
+   further down so components never hardcode theme colors either.          */
 :root {
-  --nd-a300: #a5b4fc;
-  --nd-a400: #818cf8;
-  --nd-a500: #6366f1;
-  --nd-a600: #4f46e5;
+  --nd-accent: #6366f1;
+  --nd-accent-strong: #4f46e5;
+  --nd-accent-bright: #818cf8;
+  --nd-accent-soft: #a5b4fc;
+  --nd-accent-ring: rgba(129, 140, 248, 0.7);
+  --nd-accent-soft-bg: rgba(99, 102, 241, 0.15);
+  --nd-accent-soft-text: #a5b4fc;
+  --nd-accent-soft-ring: rgba(99, 102, 241, 0.2);
 }
-[data-accent='blue']    { --nd-a300:#93c5fd; --nd-a400:#60a5fa; --nd-a500:#3b82f6; --nd-a600:#2563eb; }
-[data-accent='emerald'] { --nd-a300:#6ee7b7; --nd-a400:#34d399; --nd-a500:#10b981; --nd-a600:#059669; }
-[data-accent='rose']    { --nd-a300:#fda4af; --nd-a400:#fb7185; --nd-a500:#f43f5e; --nd-a600:#e11d48; }
-[data-accent='amber']   { --nd-a300:#fcd34d; --nd-a400:#fbbf24; --nd-a500:#f59e0b; --nd-a600:#d97706; }
-[data-accent='violet']  { --nd-a300:#c4b5fd; --nd-a400:#a78bfa; --nd-a500:#8b5cf6; --nd-a600:#7c3aed; }
+[data-accent='blue'] {
+  --nd-accent: #3b82f6; --nd-accent-strong: #2563eb; --nd-accent-bright: #60a5fa; --nd-accent-soft: #93c5fd;
+  --nd-accent-ring: rgba(96, 165, 250, 0.7);
+  --nd-accent-soft-bg: rgba(59, 130, 246, 0.15); --nd-accent-soft-text: #93c5fd; --nd-accent-soft-ring: rgba(59, 130, 246, 0.2);
+}
+[data-accent='emerald'] {
+  --nd-accent: #10b981; --nd-accent-strong: #059669; --nd-accent-bright: #34d399; --nd-accent-soft: #6ee7b7;
+  --nd-accent-ring: rgba(52, 211, 153, 0.7);
+  --nd-accent-soft-bg: rgba(16, 185, 129, 0.15); --nd-accent-soft-text: #6ee7b7; --nd-accent-soft-ring: rgba(16, 185, 129, 0.2);
+}
+[data-accent='rose'] {
+  --nd-accent: #f43f5e; --nd-accent-strong: #e11d48; --nd-accent-bright: #fb7185; --nd-accent-soft: #fda4af;
+  --nd-accent-ring: rgba(251, 113, 133, 0.7);
+  --nd-accent-soft-bg: rgba(244, 63, 94, 0.15); --nd-accent-soft-text: #fda4af; --nd-accent-soft-ring: rgba(244, 63, 94, 0.2);
+}
+[data-accent='amber'] {
+  --nd-accent: #f59e0b; --nd-accent-strong: #d97706; --nd-accent-bright: #fbbf24; --nd-accent-soft: #fcd34d;
+  --nd-accent-ring: rgba(251, 191, 36, 0.7);
+  --nd-accent-soft-bg: rgba(245, 158, 11, 0.15); --nd-accent-soft-text: #fcd34d; --nd-accent-soft-ring: rgba(245, 158, 11, 0.2);
+}
+[data-accent='violet'] {
+  --nd-accent: #8b5cf6; --nd-accent-strong: #7c3aed; --nd-accent-bright: #a78bfa; --nd-accent-soft: #c4b5fd;
+  --nd-accent-ring: rgba(167, 139, 250, 0.7);
+  --nd-accent-soft-bg: rgba(139, 92, 246, 0.15); --nd-accent-soft-text: #c4b5fd; --nd-accent-soft-ring: rgba(139, 92, 246, 0.2);
+}
+
+/* ── Light theme re-toning (per data-theme + data-accent) ────────────────
+   On white surfaces the dark accent tints lack contrast, so the soft/bright
+   steps shift darker while fills stay readable.                          */
+html[data-theme='light'] { --nd-accent-ring: rgba(67, 56, 204, 0.45); }
+html[data-theme='light'][data-accent='indigo']  { --nd-accent-soft: #4f46e5; --nd-accent-bright: #4338ca; --nd-accent-soft-text: #4338ca; }
+html[data-theme='light'][data-accent='blue']    { --nd-accent-soft: #2563eb; --nd-accent-bright: #1d4ed8; --nd-accent-soft-text: #1d4ed8; --nd-accent-ring: rgba(29, 78, 216, 0.45); }
+html[data-theme='light'][data-accent='emerald'] { --nd-accent-soft: #059669; --nd-accent-bright: #047857; --nd-accent-soft-text: #047857; --nd-accent-ring: rgba(4, 120, 87, 0.45); }
+html[data-theme='light'][data-accent='rose']    { --nd-accent-soft: #e11d48; --nd-accent-bright: #be123c; --nd-accent-soft-text: #be123c; --nd-accent-ring: rgba(190, 18, 60, 0.45); }
+html[data-theme='light'][data-accent='amber']   { --nd-accent-soft: #b45309; --nd-accent-bright: #92400e; --nd-accent-soft-text: #92400e; --nd-accent-ring: rgba(146, 64, 14, 0.45); }
+html[data-theme='light'][data-accent='violet']  { --nd-accent-soft: #7c3aed; --nd-accent-bright: #6d28d9; --nd-accent-soft-text: #6d28d9; --nd-accent-ring: rgba(109, 40, 217, 0.45); }
 
 /* ── Base ──────────────────────────────────────────────────────────────── */
 @layer base {
@@ -29,13 +77,13 @@
   body {
     background-color: #07070b;
     background-image:
-      radial-gradient(60rem 60rem at 80% -20%, rgba(99,102,241,.12), transparent 60%),
-      radial-gradient(50rem 50rem at -10% 10%, rgba(139,92,246,.08), transparent 55%);
+      radial-gradient(60rem 60rem at 80% -20%, color-mix(in srgb, var(--nd-accent) 12%, transparent), transparent 60%),
+      radial-gradient(50rem 50rem at -10% 10%, color-mix(in srgb, var(--nd-accent-bright) 8%, transparent), transparent 55%);
     background-attachment: fixed;
     color: rgb(226 232 240);
     transition: background-color .2s, color .2s;
   }
-  ::selection { background: rgba(99,102,241,.35); }
+  ::selection { background: color-mix(in srgb, var(--nd-accent) 35%, transparent); }
 }
 
 /* ── Scrollbars ────────────────────────────────────────────────────────── */
@@ -50,11 +98,11 @@
 html[data-theme='light'] body {
   background-color: #f8fafc;
   background-image:
-    radial-gradient(60rem 60rem at 80% -20%, rgba(99,102,241,.06), transparent 60%),
-    radial-gradient(50rem 50rem at -10% 10%, rgba(139,92,246,.04), transparent 55%);
+    radial-gradient(60rem 60rem at 80% -20%, color-mix(in srgb, var(--nd-accent) 6%, transparent), transparent 60%),
+    radial-gradient(50rem 50rem at -10% 10%, color-mix(in srgb, var(--nd-accent-bright) 4%, transparent), transparent 55%);
   color: rgb(30 41 59);
 }
-html[data-theme='light'] ::selection { background: rgba(99,102,241,.2); }
+html[data-theme='light'] ::selection { background: color-mix(in srgb, var(--nd-accent) 20%, transparent); }
 
 /* Map dark surface utilities → light equivalents */
 html[data-theme='light'] .bg-slate-950 { background-color: #f8fafc; }

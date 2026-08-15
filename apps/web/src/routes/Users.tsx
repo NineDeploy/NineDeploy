@@ -4,20 +4,30 @@ import { useState } from 'react';
 import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.js';
 import { useToast } from '../components/Toast.js';
-import { Card, EmptyState, Skeleton, cn } from '../components/ui.js';
+import { Card, ConfirmDialog, EmptyState, ErrorCard, PageHeader, Skeleton, cn } from '../components/ui.js';
+import { formatDateTime, useCopy } from '../lib/format.js';
 
 export function Users() {
   const qc = useQueryClient();
   const { user: me } = useAuth();
   const { toast } = useToast();
+  const { copy } = useCopy();
   const list = useQuery({ queryKey: ['users'], queryFn: () => api.users.list() });
   const setRole = useMutation({
     mutationFn: ({ id, role }: { id: number; role: 'admin' | 'member' }) => api.users.setRole(id, role),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
+    onSuccess: (_res, vars) => {
+      qc.invalidateQueries({ queryKey: ['users'] });
+      toast(`Role changed to ${vars.role}`, 'success');
+    },
+    onError: () => toast('Could not change the role', 'error'),
   });
   const remove = useMutation({
     mutationFn: (id: number) => api.users.remove(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['users'] });
+      toast('User deleted', 'success');
+    },
+    onError: () => toast('Could not delete the user', 'error'),
   });
 
   // ── Admin password reset ────────────────────────────────────────────────
@@ -43,36 +53,32 @@ export function Users() {
 
   // ── One-time reset link (works without an email channel) ────────────────
   const [revealedLink, setRevealedLink] = useState<{ url: string; expiresAt: string } | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<{ id: number; email: string } | null>(null);
   const resetLink = useMutation({
     mutationFn: (id: number) => api.users.resetLink(id),
     onSuccess: (res) => setRevealedLink(res),
     onError: () => toast('Could not generate the reset link', 'error'),
   });
   const copyLink = async (url: string) => {
-    try {
-      await navigator.clipboard.writeText(url);
-      toast('Reset link copied', 'success');
-    } catch {
-      toast('Copy failed — select the link manually', 'error');
-    }
+    const ok = await copy(url);
+    if (ok) toast('Reset link copied', 'success');
+    else toast('Copy failed — select the link manually', 'error');
   };
 
   return (
     <div className="max-w-3xl">
-      <div className="mb-6 flex items-center gap-2">
-        <UsersIcon size={20} className="text-indigo-400" />
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Users</h1>
-          <p className="text-sm text-slate-400">Manage team members and roles.</p>
-        </div>
-      </div>
+      <PageHeader
+        icon={<UsersIcon size={18} />}
+        title="Users"
+        subtitle="Manage team members and roles."
+      />
 
       {revealedLink && (
         <Card className="mb-4 border-amber-500/30">
           <div className="p-4">
             <p className="text-xs font-medium text-amber-200">
               Copy this one-time link now — it is shown only once and expires{' '}
-              {new Date(revealedLink.expiresAt).toLocaleTimeString()} ({new Date(revealedLink.expiresAt).toLocaleDateString()}).
+              {formatDateTime(revealedLink.expiresAt)}.
             </p>
             <div className="mt-2 flex items-center gap-2">
               <code className="min-w-0 flex-1 truncate rounded bg-black/40 px-2 py-1.5 font-mono text-[11px] text-amber-100">
@@ -91,6 +97,8 @@ export function Users() {
 
       {list.isLoading ? (
         <Card className="p-5"><Skeleton className="h-10 w-full" /></Card>
+      ) : list.isError ? (
+        <ErrorCard title="Couldn't load users" error={list.error} onRetry={() => list.refetch()} />
       ) : !list.data || list.data.length === 0 ? (
         <Card><EmptyState icon={<UsersIcon size={26} />} title="No users" /></Card>
       ) : (
@@ -184,7 +192,7 @@ export function Users() {
                               </>
                             )}
                             <button
-                              onClick={() => confirm(`Delete user ${u.email}?`) && remove.mutate(u.id)}
+                              onClick={() => setPendingDelete({ id: u.id, email: u.email })}
                               className="text-slate-600 transition hover:text-rose-400"
                               title="Delete user"
                             >
@@ -204,6 +212,15 @@ export function Users() {
       <p className="mt-3 text-xs text-slate-600">
         New users can register at <code className="text-slate-400">/v1/auth/register</code>. The first user is always admin. Toggle role badges to promote/demote. The last admin cannot be removed.
       </p>
+
+      <ConfirmDialog
+        open={pendingDelete != null}
+        title="Delete user"
+        message={`Delete ${pendingDelete?.email}? Their sessions are revoked and their deployments stay owned by the admins.`}
+        confirmLabel="Delete"
+        onConfirm={() => pendingDelete && remove.mutate(pendingDelete.id)}
+        onClose={() => setPendingDelete(null)}
+      />
     </div>
   );
 }

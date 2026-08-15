@@ -4,13 +4,13 @@ import { GitBranch, Plus, Server } from 'lucide-react';
 import { Link } from 'react-router';
 import { api } from '../lib/api.js';
 import { useProjectScope } from '../lib/projects.js';
-import { Button, Card, EmptyState, PageHeader, Skeleton, StatusBadge } from '../components/ui.js';
+import { Button, Card, EmptyState, ErrorCard, PageHeader, Skeleton, StatusBadge } from '../components/ui.js';
 import { DeployWizard } from '../components/DeployWizard.js';
 
 export function ServicesList() {
   const [wizard, setWizard] = useState(false);
   const { selectedId } = useProjectScope();
-  const { data: services, isLoading } = useQuery({
+  const { data: services, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['services', selectedId],
     queryFn: () => api.services.list(selectedId != null ? `?projectId=${selectedId}` : ''),
   });
@@ -40,6 +40,8 @@ export function ServicesList() {
             </Card>
           ))}
         </div>
+      ) : isError ? (
+        <ErrorCard title="Couldn't load services" error={error} onRetry={() => void refetch()} />
       ) : !services || services.length === 0 ? (
         <Card>
           <EmptyState

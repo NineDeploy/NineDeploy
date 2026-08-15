@@ -4,7 +4,8 @@ import { useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { api } from '../lib/api.js';
 import { useToast } from '../components/Toast.js';
-import { Card, CardBody, Skeleton, cn, Button } from '../components/ui.js';
+import { Card, CardBody, ErrorCard, Skeleton, cn } from '../components/ui.js';
+import { formatDateTime } from '../lib/format.js';
 
 export function Dashboard() {
   const { toast } = useToast();
@@ -38,15 +39,7 @@ export function Dashboard() {
   const data = dash.data;
   if (!data) {
     // Query failed (not loading) — show an actionable error instead of a blank page.
-    return (
-      <Card className="p-10 text-center">
-        <p className="text-sm font-medium text-rose-300">Couldn't load the dashboard.</p>
-        <p className="mt-1 text-xs text-slate-500">The server may be restarting or unreachable.</p>
-        <div className="mt-4 flex justify-center gap-2">
-          <Button size="sm" variant="secondary" onClick={() => dash.refetch()}>Retry</Button>
-        </div>
-      </Card>
-    );
+    return <ErrorCard title="Couldn't load the dashboard" error={dash.error} onRetry={() => dash.refetch()} />;
   }
   const s = data.stats;
   const allHealthy = data.health.every((h) => h.healthy || h.status !== 'running');
@@ -192,7 +185,7 @@ export function Dashboard() {
                       )}>{d.status}</span>
                     </td>
                     <td className="px-5 py-3 text-right text-[10px] text-slate-600">
-                      {d.finishedAt ? new Date(d.finishedAt).toLocaleString() : new Date(d.createdAt).toLocaleString()}
+                      {d.finishedAt ? formatDateTime(d.finishedAt) : formatDateTime(d.createdAt)}
                     </td>
                   </tr>
                 ))

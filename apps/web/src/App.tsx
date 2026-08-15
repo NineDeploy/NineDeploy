@@ -1,23 +1,23 @@
 import { type ReactNode } from 'react';
-import { Navigate, Route, Routes, useLocation } from 'react-router';
+import { Link, Navigate, Route, Routes, useLocation } from 'react-router';
+import { Compass } from 'lucide-react';
 import { Layout } from './components/Layout.js';
-import { FullScreenSpinner } from './components/ui.js';
+import { Button, Card, EmptyState, FullScreenSpinner } from './components/ui.js';
 import { useAuth } from './lib/auth.js';
 import { Login } from './routes/Login.js';
 import { ForgotPassword } from './routes/ForgotPassword.js';
 import { ResetPassword } from './routes/ResetPassword.js';
 import { Monitoring } from './routes/Monitoring.js';
-import { NewService } from './routes/NewService.js';
 import { About } from './routes/About.js';
 import { Backups } from './routes/Backups.js';
 import { Dashboard } from './routes/Dashboard.js';
 import { Databases } from './routes/Databases.js';
 import { Domains } from './routes/Domains.js';
 import { Hub } from './routes/Hub.js';
-import { ServiceDetail } from './routes/ServiceDetail.js';
+import { ServiceDetail } from './routes/service/index.js';
 import { ServicesList } from './routes/ServicesList.js';
 import { Servers } from './routes/Servers.js';
-import { Settings } from './routes/Settings.js';
+import { Settings } from './routes/settings/index.js';
 import { Sources } from './routes/Sources.js';
 import { Topology } from './routes/Topology.js';
 import { Tunnels } from './routes/Tunnels.js';
@@ -29,6 +29,20 @@ function RequireAuth({ children }: { children: ReactNode }) {
   const location = useLocation();
   if (!user) return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   return <>{children}</>;
+}
+
+/** Wildcard fallback for unknown paths. */
+function NotFound() {
+  return (
+    <Card>
+      <EmptyState
+        icon={<Compass size={26} />}
+        title="Not found"
+        hint="The page you are looking for does not exist."
+        action={<Link to="/"><Button size="sm">Back to dashboard</Button></Link>}
+      />
+    </Card>
+  );
 }
 
 export default function App() {
@@ -48,7 +62,7 @@ export default function App() {
         }
       >
         <Route index element={<Dashboard />} />
-        <Route path="dashboard" element={<Dashboard />} />
+        <Route path="dashboard" element={<Navigate to="/" replace />} />
         <Route path="services" element={<ServicesList />} />
         <Route path="hub" element={<Hub />} />
         <Route path="databases" element={<Databases />} />
@@ -63,10 +77,9 @@ export default function App() {
         <Route path="settings" element={<Settings />} />
         <Route path="about" element={<About />} />
         <Route path="monitoring" element={<Monitoring />} />
-        <Route path="services/new" element={<NewService />} />
         <Route path="services/:id" element={<ServiceDetail />} />
       </Route>
-      <Route path="*" element={<Navigate to="/" replace />} />
+      <Route path="*" element={<NotFound />} />
     </Routes>
   );
 }

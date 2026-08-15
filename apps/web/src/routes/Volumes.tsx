@@ -4,28 +4,18 @@ import { Database, HardDrive, Layers, Lock, Package, Server, Trash2 } from 'luci
 import { Link } from 'react-router';
 import { api } from '../lib/api.js';
 import { useToast } from '../components/Toast.js';
-import { Button, Card, EmptyState, Input, Skeleton, cn } from '../components/ui.js';
-
-function fmt(bytes: number): string {
-  if (!bytes) return '—';
-  const mb = bytes / 1024 ** 2;
-  if (mb < 1) return `${(bytes / 1024).toFixed(0)} KB`;
-  if (mb >= 1024) return `${(mb / 1024).toFixed(2)} GB`;
-  return `${mb.toFixed(1)} MB`;
-}
+import { Button, Card, ConfirmDialog, EmptyState, ErrorCard, PageHeader, Skeleton, cn } from '../components/ui.js';
+import { formatBytes } from '../lib/format.js';
 
 export function Volumes() {
   const qc = useQueryClient();
   const { toast } = useToast();
   const list = useQuery({ queryKey: ['volumes'], queryFn: () => api.volumes.list() });
-  const [confirmName, setConfirmName] = useState('');
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const remove = useMutation({
     mutationFn: (name: string) => api.volumes.remove(name),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['volumes'] });
-      setPendingDelete(null);
-      setConfirmName('');
       toast('Volume deleted', 'success');
     },
     onError: (err) => toast(err instanceof Error ? err.message : 'Delete failed', 'error'),
@@ -36,15 +26,11 @@ export function Volumes() {
 
   return (
     <div>
-      <div className="mb-6 flex items-center gap-2">
-        <Layers size={20} className="text-indigo-400" />
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Volumes &amp; Storage</h1>
-          <p className="text-sm text-slate-400">
-            {(list.data?.length ?? 0)} volumes · {fmt(total)} used{retained > 0 ? ` · ${retained} retained` : ''}
-          </p>
-        </div>
-      </div>
+      <PageHeader
+        icon={<Layers size={18} />}
+        title="Volumes & Storage"
+        subtitle={`${(list.data?.length ?? 0)} volumes · ${formatBytes(total)} used${retained > 0 ? ` · ${retained} retained` : ''}`}
+      />
 
       <DockerResources />
 
@@ -53,6 +39,8 @@ export function Volumes() {
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {[0, 1, 2].map((i) => <Card key={i} className="p-5"><Skeleton className="h-12 w-full" /></Card>)}
         </div>
+      ) : list.isError ? (
+        <ErrorCard title="Couldn't load volumes" error={list.error} onRetry={() => list.refetch()} />
       ) : !list.data || list.data.length === 0 ? (
         <Card><EmptyState icon={<HardDrive size={26} />} title="No volumes" hint="Deploy a service with a volume or create a database." /></Card>
       ) : (
@@ -73,7 +61,7 @@ export function Volumes() {
                       </div>
                     </div>
                   </div>
-                  <span className="text-sm font-semibold tabular-nums text-slate-200">{fmt(v.sizeBytes)}</span>
+                  <span className="text-sm font-semibold tabular-nums text-slate-200">{formatBytes(v.sizeBytes)}</span>
                 </div>
                 <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/5">
                   <div className={cn('h-full rounded-full transition-all', isRetained ? 'bg-amber-500/70' : 'bg-indigo-500/70')} style={{ width: `${Math.max(3, (v.sizeBytes / max) * 100)}%` }} />
@@ -84,7 +72,7 @@ export function Volumes() {
                   </span>
                   {!v.inUse && (
                     <button
-                      onClick={() => { setPendingDelete(v.name); setConfirmName(''); }}
+                      onClick={() => setPendingDelete(v.name)}
                       className="text-slate-600 transition hover:text-rose-400"
                       title="Delete volume (destructive)"
                     >
@@ -93,24 +81,6 @@ export function Volumes() {
                   )}
                   {v.inUse && <span title={`Attached to a running ${v.owner?.kind ?? 'workload'} — stop it first`}><Lock size={13} className="text-slate-600" /></span>}
                 </div>
-                {pendingDelete === v.name && (
-                  <form
-                    onSubmit={(e) => { e.preventDefault(); if (confirmName === v.name) remove.mutate(v.name); }}
-                    className="mt-2 flex items-center gap-2"
-                  >
-                    <Input
-                      value={confirmName}
-                      onChange={(e) => setConfirmName(e.target.value)}
-                      placeholder={`Type ${v.name} to delete`}
-                      className="h-7 text-[11px]"
-                      aria-label="Confirm volume name"
-                    />
-                    <Button type="submit" size="sm" variant="danger" className="h-7 px-2 text-[11px]" disabled={confirmName !== v.name || remove.isPending}>
-                      {remove.isPending ? '…' : 'Delete'}
-                    </Button>
-                    <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-[11px]" onClick={() => setPendingDelete(null)}>Cancel</Button>
-                  </form>
-                )}
                 <div className="mt-1 truncate font-mono text-[10px] text-slate-600">{v.name}</div>
               </Card>
             );
@@ -120,16 +90,33 @@ export function Volumes() {
       <p className="mt-3 text-xs text-slate-600">
         Deleting a database keeps its volume (marked <span className="text-amber-400">retained</span>) so data survives — recreating the same database reuses it. Remove a volume here only to free disk. <Link to="/backups" className="text-indigo-400 hover:underline">Backups</Link>.
       </p>
+
+      <ConfirmDialog
+        open={pendingDelete != null}
+        title="Delete volume"
+        message={pendingDelete
+          ? <>Volume <code className="rounded bg-black/30 px-1.5 py-0.5 font-mono text-[11px]">{pendingDelete}</code> and all data in it will be removed permanently. This cannot be undone.</>
+          : ''}
+        confirmLabel="Delete"
+        confirmWord={pendingDelete ?? undefined}
+        onConfirm={() => pendingDelete && remove.mutate(pendingDelete)}
+        onClose={() => setPendingDelete(null)}
+      />
     </div>
   );
 }
 
 function DockerResources() {
   const qc = useQueryClient();
+  const { toast } = useToast();
   const res = useQuery({ queryKey: ['docker-resources'], queryFn: () => api.system.resources(), refetchInterval: 20000 });
   const prune = useMutation({
     mutationFn: () => api.system.pruneImages(),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['docker-resources'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['docker-resources'] });
+      toast('Image prune finished', 'success');
+    },
+    onError: () => toast('Prune failed', 'error'),
   });
   const s = res.data?.imagesSummary;
 
@@ -151,7 +138,8 @@ function DockerResources() {
       </div>
       {s && (
         <p className="mt-3 text-xs text-slate-500">
-          Images use <span className="text-slate-300">{s.size}</span>{s.reclaimable && s.reclaimable !== '0B' ? ` · <span className="text-amber-400">${s.reclaimable}</span> reclaimable` : ''}.
+          Images use <span className="text-slate-300">{s.size}</span>
+          {s.reclaimable && s.reclaimable !== '0B' && <> · <span className="text-amber-400">{s.reclaimable}</span> reclaimable</>}.
         </p>
       )}
     </Card>

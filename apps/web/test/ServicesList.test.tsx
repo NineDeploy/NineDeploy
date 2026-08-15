@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { screen } from '@testing-library/react';
+import { screen, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ServicesList } from '../src/routes/ServicesList.js';
 import { api } from '../src/lib/api.js';
@@ -35,6 +35,15 @@ describe('ServicesList', () => {
     expect(document.querySelectorAll('.animate-pulse').length).toBe(9);
   });
 
+  it('shows an error card with retry when the services query fails', async () => {
+    mockOf(api.services.list).mockRejectedValue(new Error('api down') as never);
+    renderWithProviders(<ServicesList />);
+    expect(await screen.findByText("Couldn't load services")).toBeInTheDocument();
+    expect(screen.getByText('api down')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    await waitFor(() => expect(api.services.list).toHaveBeenCalledTimes(2));
+  });
+
   it('shows empty state with a create action', async () => {
     const user = userEvent.setup();
     mockOf(api.services.list).mockResolvedValue([] as never);
@@ -66,5 +75,14 @@ describe('ServicesList', () => {
     renderWithProviders(<ServicesList />);
     await user.click(await screen.findByRole('button', { name: /New service/ }));
     expect(screen.getByTestId('deploy-wizard')).toBeInTheDocument();
+  });
+
+  it('scopes the list to the selected project', async () => {
+    localStorage.setItem('ninedeploy.projectId', '3');
+    mockOf(api.services.list).mockResolvedValue([] as never);
+    renderWithProviders(<ServicesList />);
+    await screen.findByText('No services yet');
+    expect(api.services.list).toHaveBeenCalledWith('?projectId=3');
+    localStorage.removeItem('ninedeploy.projectId');
   });
 });

@@ -72,9 +72,31 @@ describe('Domains', () => {
     mockOf(api.domains.all).mockResolvedValue(domains as never);
     mockOf(api.domains.setSsl).mockResolvedValue({ id: 2, ssl: true } as never);
     renderWithProviders(<Domains />);
-    const toggles = await screen.findAllByRole('button');
+    const toggles = await screen.findAllByRole('switch');
     // second row has ssl false -> click toggles to true
-    fireEvent.click(toggles[1]);
+    fireEvent.click(toggles[1]!);
     await waitFor(() => expect(api.domains.setSsl).toHaveBeenCalledWith(2, true));
+    // first row has ssl true -> click toggles to false (disable branch)
+    fireEvent.click(toggles[0]!);
+    await waitFor(() => expect(api.domains.setSsl).toHaveBeenCalledWith(1, false));
+  });
+
+  it('surfaces ssl toggle failures', async () => {
+    mockOf(api.domains.all).mockResolvedValue(domains as never);
+    mockOf(api.domains.setSsl).mockRejectedValue(new Error('acme') as never);
+    renderWithProviders(<Domains />);
+    const toggles = await screen.findAllByRole('switch');
+    fireEvent.click(toggles[1]!);
+    await waitFor(() => expect(api.domains.setSsl).toHaveBeenCalledWith(2, true));
+    await screen.findByText(/Could not update the SSL setting/);
+  });
+
+  it('shows an error card with retry when the domains query fails', async () => {
+    mockOf(api.domains.all).mockRejectedValue(new Error('no dns') as never);
+    renderWithProviders(<Domains />);
+    expect(await screen.findByText("Couldn't load domains")).toBeInTheDocument();
+    expect(screen.getByText('no dns')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    await waitFor(() => expect(api.domains.all).toHaveBeenCalledTimes(2));
   });
 });

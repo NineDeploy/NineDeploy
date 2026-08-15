@@ -102,7 +102,7 @@ export function Layout() {
       <div className="flex w-12 shrink-0 flex-col items-center border-r border-white/[0.06] bg-slate-950/70 py-3 backdrop-blur">
         {/* Brand mark */}
         <div className="mb-3 grid h-8 w-8 place-items-center rounded-lg text-sm font-bold text-white shadow-lg shadow-indigo-500/30"
-          style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6, #d946ef)' }}>
+          style={{ background: 'linear-gradient(135deg, var(--nd-accent), var(--nd-accent-strong))' }}>
           9
         </div>
 

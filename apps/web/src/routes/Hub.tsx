@@ -3,7 +3,7 @@ import { useMemo, useState } from 'react';
 import { ExternalLink, Rocket, Search, Sparkles, X } from 'lucide-react';
 import type { Template } from '@ninedeploy/sdk';
 import { api } from '../lib/api.js';
-import { Button, Card, Input, Skeleton, cn } from '../components/ui.js';
+import { Button, Card, EmptyState, ErrorCard, Input, PageHeader, Skeleton, cn } from '../components/ui.js';
 import { DeployWizard } from '../components/DeployWizard.js';
 
 export function Hub() {
@@ -30,23 +30,21 @@ export function Hub() {
 
   return (
     <div>
-      <div className="mb-6 flex items-center gap-2">
-        <Sparkles size={20} className="text-indigo-400" />
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            Hub
-            {customSource && (
-              <span
-                className="ml-2 align-middle rounded-full bg-indigo-500/10 px-2 py-0.5 text-[10px] font-medium text-indigo-300 ring-1 ring-inset ring-indigo-500/20"
-                title={`Custom registry: ${customSource}`}
-              >
-                custom registry
-              </span>
-            )}
-          </h1>
-          <p className="text-sm text-slate-400">One-click apps — deploy in seconds.</p>
-        </div>
-      </div>
+      <PageHeader
+        icon={<Sparkles size={18} />}
+        title="Hub"
+        subtitle="One-click apps — deploy in seconds."
+        actions={
+          customSource ? (
+            <span
+              className="rounded-full bg-indigo-500/10 px-2 py-0.5 text-[10px] font-medium text-indigo-300 ring-1 ring-inset ring-indigo-500/20"
+              title={`Custom registry: ${customSource}`}
+            >
+              custom registry
+            </span>
+          ) : undefined
+        }
+      />
 
       <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="relative max-w-xs flex-1">
@@ -75,6 +73,12 @@ export function Hub() {
             <Card key={i} className="p-5"><Skeleton className="h-16 w-full" /></Card>
           ))}
         </div>
+      ) : list.isError ? (
+        <ErrorCard title="Couldn't load templates" error={list.error} onRetry={() => list.refetch()} />
+      ) : filtered.length === 0 ? (
+        <Card>
+          <EmptyState icon={<Search size={26} />} title="No templates match" hint={query ? `Nothing matches "${query}" in ${category === 'All' ? 'any category' : category}.` : `No templates in ${category}.`} />
+        </Card>
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {filtered.map((t) => (

@@ -2,11 +2,14 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { type FormEvent, useState } from 'react';
 import { Cloud, Info, Plus, Trash2 } from 'lucide-react';
 import { api } from '../lib/api.js';
-import { Button, Card, EmptyState, Field, Input, Skeleton, StatusBadge } from '../components/ui.js';
+import { useToast } from '../components/Toast.js';
+import { Button, Card, ConfirmDialog, EmptyState, ErrorCard, Field, Input, PageHeader, Skeleton, StatusBadge } from '../components/ui.js';
 
 export function Tunnels() {
   const qc = useQueryClient();
+  const { toast } = useToast();
   const [open, setOpen] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<{ id: number; name: string } | null>(null);
   const [name, setName] = useState('');
   const [token, setToken] = useState('');
 
@@ -18,22 +21,26 @@ export function Tunnels() {
       setName('');
       setToken('');
       qc.invalidateQueries({ queryKey: ['tunnels'] });
+      toast('Tunnel started', 'success');
     },
+    onError: () => toast('Could not start the tunnel', 'error'),
   });
   const remove = useMutation({
     mutationFn: (id: number) => api.tunnels.remove(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['tunnels'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['tunnels'] });
+      toast('Tunnel deleted', 'success');
+    },
+    onError: () => toast('Could not delete the tunnel', 'error'),
   });
 
   return (
     <div>
-      <div className="mb-6 flex items-center gap-2">
-        <Cloud size={20} className="text-indigo-400" />
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Tunnels</h1>
-          <p className="text-sm text-slate-400">Cloudflare Tunnels — expose services without opening any ports.</p>
-        </div>
-      </div>
+      <PageHeader
+        icon={<Cloud size={18} />}
+        title="Tunnels"
+        subtitle="Cloudflare Tunnels — expose services without opening any ports."
+      />
 
       <Card className="mb-5 flex items-start gap-3 p-4">
         <Info size={16} className="mt-0.5 shrink-0 text-sky-400" />
@@ -63,6 +70,8 @@ export function Tunnels() {
 
       {list.isLoading ? (
         <Card className="p-5"><Skeleton className="h-10 w-full" /></Card>
+      ) : list.isError ? (
+        <ErrorCard title="Couldn't load tunnels" error={list.error} onRetry={() => list.refetch()} />
       ) : !list.data || list.data.length === 0 ? (
         <Card><EmptyState icon={<Cloud size={26} />} title="No tunnels" hint="Add a Cloudflare Tunnel token to expose services securely." /></Card>
       ) : (
@@ -83,7 +92,7 @@ export function Tunnels() {
                   <td className="px-5 py-3"><StatusBadge status={t.status} /></td>
                   <td className="px-5 py-3 font-mono text-[11px] text-slate-500">{t.containerName}</td>
                   <td className="px-5 py-3 text-right">
-                    <button onClick={() => remove.mutate(t.id)} className="text-slate-600 transition hover:text-rose-400"><Trash2 size={14} /></button>
+                    <button onClick={() => setPendingDelete({ id: t.id, name: t.name })} className="text-slate-600 transition hover:text-rose-400"><Trash2 size={14} /></button>
                   </td>
                 </tr>
               ))}
@@ -91,6 +100,15 @@ export function Tunnels() {
           </table>
         </Card>
       )}
+
+      <ConfirmDialog
+        open={pendingDelete != null}
+        title="Delete tunnel"
+        message={`Delete "${pendingDelete?.name}"? The cloudflared container stops and its hostnames stop resolving.`}
+        confirmLabel="Delete"
+        onConfirm={() => pendingDelete && remove.mutate(pendingDelete.id)}
+        onClose={() => setPendingDelete(null)}
+      />
     </div>
   );
 }

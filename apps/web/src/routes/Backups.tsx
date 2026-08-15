@@ -2,49 +2,66 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Download, HardDrive, RotateCcw, Trash2 } from 'lucide-react';
 import { api, getToken } from '../lib/api.js';
-import { Button, Card, EmptyState, Field, Input, Skeleton, StatusBadge, cn } from '../components/ui.js';
+import { useToast } from '../components/Toast.js';
+import { Button, Card, ConfirmDialog, EmptyState, ErrorCard, Field, Input, PageHeader, Skeleton, StatusBadge, cn } from '../components/ui.js';
+import { downloadBlob, formatBytes, formatDateTime } from '../lib/format.js';
 
-function fmtBytes(b: number): string {
-  if (!b) return '—';
-  const mb = b / 1024 ** 2;
-  if (mb < 1) return `${(b / 1024).toFixed(0)} KB`;
-  if (mb >= 1024) return `${(mb / 1024).toFixed(2)} GB`;
-  return `${mb.toFixed(1)} MB`;
-}
+type PendingAction =
+  | { kind: 'restore'; databaseId: number; id: number; name: string }
+  | { kind: 'delete'; id: number }
+  | { kind: 'remove-destination'; id: number; name: string };
 
 export function Backups() {
   const qc = useQueryClient();
+  const { toast } = useToast();
+  const [pending, setPending] = useState<PendingAction | null>(null);
   const list = useQuery({ queryKey: ['backups'], queryFn: () => api.backups.list() });
   const restore = useMutation({
     mutationFn: (b: { databaseId: number; id: number }) => api.backups.restore(b.databaseId, b.id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['backups'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['backups'] });
+      toast('Restore started — the database will restart with the snapshot data', 'success');
+    },
+    onError: () => toast('Restore failed', 'error'),
   });
   const remove = useMutation({
     mutationFn: (id: number) => api.backups.remove(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['backups'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['backups'] });
+      toast('Backup deleted', 'success');
+    },
+    onError: () => toast('Could not delete the backup', 'error'),
+  });
+  const destRemove = useMutation({
+    mutationFn: (id: number) => api.backupDestinations.remove(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['backup-destinations'] });
+      toast('Destination removed', 'success');
+    },
+    onError: () => toast('Could not remove the destination', 'error'),
   });
 
   const download = async (id: number) => {
     const res = await fetch(`/v1/backups/${id}/download`, { headers: { Authorization: `Bearer ${getToken() ?? ''}` } });
-    if (!res.ok) return;
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `backup-${id}.dump`;
-    a.click();
-    URL.revokeObjectURL(url);
+    if (!res.ok) {
+      toast('Download failed', 'error');
+      return;
+    }
+    downloadBlob(await res.blob(), `backup-${id}.dump`);
   };
 
   return (
     <div>
-      <div className="mb-7">
-        <h1 className="text-2xl font-semibold tracking-tight">Backups</h1>
-        <p className="mt-1 text-sm text-slate-400">Database snapshots — back up, restore and download. Daily auto-backups keep the latest 7 per database.</p>
-      </div>
+      <PageHeader
+        icon={<HardDrive size={18} />}
+        title="Backups"
+        subtitle="Database snapshots — back up, restore and download. Daily auto-backups keep the latest 7 per database."
+      />
 
       {list.isLoading ? (
         <Card className="p-5"><Skeleton className="h-8 w-full" /></Card>
+      ) : list.isError ? (
+        <ErrorCard title="Couldn't load backups" error={list.error} onRetry={() => list.refetch()} />
       ) : !list.data || list.data.length === 0 ? (
         <Card>
           <EmptyState icon={<HardDrive size={26} />} title="No backups yet" hint="Use the Backup button on a database to create a snapshot." />
@@ -66,13 +83,13 @@ export function Backups() {
                 <tr key={b.id} className="border-b border-white/5 last:border-0 hover:bg-white/[0.02]">
                   <td className="px-5 py-3 font-medium text-slate-200">{b.databaseName ?? '—'}</td>
                   <td className="px-5 py-3"><StatusBadge status={b.status} /></td>
-                  <td className="px-5 py-3 font-mono text-xs text-slate-400">{fmtBytes(b.sizeBytes)}</td>
-                  <td className="px-5 py-3 text-xs text-slate-500">{new Date(b.createdAt).toLocaleString()}</td>
+                  <td className="px-5 py-3 font-mono text-xs text-slate-400">{formatBytes(b.sizeBytes)}</td>
+                  <td className="px-5 py-3 text-xs text-slate-500">{formatDateTime(b.createdAt)}</td>
                   <td className="px-5 py-3">
                     <div className="flex items-center justify-end gap-1">
                       <button
-                        onClick={() => b.databaseId && confirm(`Restore ${b.databaseName ?? ''} from this backup? Current data will be overwritten.`) && restore.mutate({ databaseId: b.databaseId, id: b.id })}
-                        className="rounded p-1.5 text-slate-500 transition hover:bg-white/5 hover:text-indigo-300"
+                        onClick={() => b.databaseId && setPending({ kind: 'restore', databaseId: b.databaseId, id: b.id, name: b.databaseName ?? '' })}
+                        className="rounded p-1.5 text-slate-500 transition hover:bg-white/5 hover:text-indigo-300 disabled:opacity-40"
                         title="Restore"
                       >
                         <RotateCcw size={14} />
@@ -80,7 +97,7 @@ export function Backups() {
                       <button onClick={() => download(b.id)} className="rounded p-1.5 text-slate-500 transition hover:bg-white/5 hover:text-sky-300" title="Download">
                         <Download size={14} />
                       </button>
-                      <button onClick={() => remove.mutate(b.id)} className="rounded p-1.5 text-slate-500 transition hover:bg-white/5 hover:text-rose-400" title="Delete">
+                      <button onClick={() => setPending({ kind: 'delete', id: b.id })} className="rounded p-1.5 text-slate-500 transition hover:bg-white/5 hover:text-rose-400" title="Delete">
                         <Trash2 size={14} />
                       </button>
                     </div>
@@ -92,14 +109,40 @@ export function Backups() {
         </Card>
       )}
 
-      <DestinationsCard />
+      <ConfirmDialog
+        open={pending != null}
+        title={
+          pending?.kind === 'restore' ? 'Restore backup'
+          : pending?.kind === 'delete' ? 'Delete backup'
+          : 'Remove destination'
+        }
+        message={
+          pending?.kind === 'restore'
+            ? `Restore ${pending.name || 'the database'} from this backup? Current data will be overwritten.`
+            : pending?.kind === 'delete'
+              ? 'Delete this backup? The snapshot file is removed permanently.'
+              : `Remove "${pending?.name}" as an off-site destination? Existing remote copies stay in the bucket.`
+        }
+        confirmLabel={pending?.kind === 'restore' ? 'Restore' : 'Delete'}
+        onConfirm={() => {
+          // The dialog only renders its confirm button while `pending` is set.
+          const p = pending!;
+          if (p.kind === 'restore') restore.mutate({ databaseId: p.databaseId, id: p.id });
+          else if (p.kind === 'delete') remove.mutate(p.id);
+          else destRemove.mutate(p.id);
+        }}
+        onClose={() => setPending(null)}
+      />
+
+      <DestinationsCard onRemove={(id, name) => setPending({ kind: 'remove-destination', id, name })} />
     </div>
   );
 }
 
 // ── S3-compatible backup destinations (admin) ─────────────────────────────
-function DestinationsCard() {
+function DestinationsCard({ onRemove }: { onRemove: (id: number, name: string) => void }) {
   const qc = useQueryClient();
+  const { toast } = useToast();
   const [form, setForm] = useState({ name: '', endpoint: '', region: '', bucket: '', prefix: '', accessKeyId: '', secretAccessKey: '' });
   const [showForm, setShowForm] = useState(false);
 
@@ -110,22 +153,20 @@ function DestinationsCard() {
       setShowForm(false);
       setForm({ name: '', endpoint: '', region: '', bucket: '', prefix: '', accessKeyId: '', secretAccessKey: '' });
       qc.invalidateQueries({ queryKey: ['backup-destinations'] });
+      toast('Destination saved', 'success');
     },
-  });
-  const remove = useMutation({
-    mutationFn: (id: number) => api.backupDestinations.remove(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['backup-destinations'] }),
+    onError: () => toast('Could not save the destination', 'error'),
   });
   const test = useMutation({
     mutationFn: (id: number) => api.backupDestinations.test(id),
-    onSuccess: () => window.alert('Destination reachable — credentials work.'),
-    onError: (err) => window.alert(err instanceof Error ? err.message : 'Test failed'),
+    onSuccess: () => toast('Destination reachable — credentials work', 'success'),
+    onError: (err) => toast(err instanceof Error ? err.message : 'Test failed', 'error'),
   });
   const toggle = useMutation({
     mutationFn: (d: { id: number; active: boolean }) => api.backupDestinations.update(d.id, { active: !d.active }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['backup-destinations'] }),
   });
-
+  // The parent owns the destructive-confirm flow for removal (onRemove).
   const set = (k: keyof typeof form) => (e: { target: { value: string } }) => setForm({ ...form, [k]: e.target.value });
   const canCreate = form.name && form.endpoint && form.bucket && form.accessKeyId && form.secretAccessKey;
 
@@ -168,6 +209,8 @@ function DestinationsCard() {
         <div className="space-y-1.5">
           {list.isLoading ? (
             <Skeleton className="h-8 w-full" />
+          ) : list.isError ? (
+            <ErrorCard title="Couldn't load destinations" error={list.error} onRetry={() => list.refetch()} />
           ) : !list.data || list.data.length === 0 ? (
             <p className="py-2 text-xs text-slate-600">No destinations — backups stay local only.</p>
           ) : (
@@ -192,7 +235,7 @@ function DestinationsCard() {
                   <button onClick={() => test.mutate(d.id)} className="text-xs text-slate-500 hover:text-indigo-300" title="Test connection">
                     test
                   </button>
-                  <button onClick={() => remove.mutate(d.id)} className="text-slate-600 transition hover:text-rose-400" title="Remove destination">
+                  <button onClick={() => onRemove(d.id, d.name)} className="text-slate-600 transition hover:text-rose-400" title="Remove destination">
                     <Trash2 size={13} />
                   </button>
                 </div>

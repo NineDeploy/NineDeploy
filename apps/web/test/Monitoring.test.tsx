@@ -48,8 +48,17 @@ describe('Monitoring', () => {
     expect(screen.getByText('25%')).toBeInTheDocument();
     // disk 100/200 = 50%
     expect(screen.getByText('50%')).toBeInTheDocument();
-    expect(screen.getByText('4.0 GB / 16.0 GB')).toBeInTheDocument();
+    expect(screen.getByText('4.3 GB / 17.2 GB')).toBeInTheDocument();
     expect(screen.getByText('2')).toBeInTheDocument(); // workloads
+  });
+
+  it('shows an error card with retry when the stats query fails', async () => {
+    mockOf(api.stats.snapshot).mockRejectedValue(new Error('no stats') as never);
+    renderWithProviders(<Monitoring />);
+    expect(await screen.findByText("Couldn't load metrics")).toBeInTheDocument();
+    expect(screen.getByText('no stats')).toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole('button', { name: 'Try again' })[0]!);
+    await waitFor(() => expect(api.stats.snapshot).toHaveBeenCalledTimes(2));
   });
 
   it('shows skeleton while loading and empty state when no containers', async () => {
@@ -72,15 +81,15 @@ describe('Monitoring', () => {
         load1: 0.5,
         memUsedBytes: 512 * 1024 * 1024, // < 1GB -> MB
         memTotalBytes: 1024 * 1024 * 1024,
-        diskUsedBytes: 0, // falsy -> '—'
+        diskUsedBytes: 0, // -> '0 B'
         diskTotalBytes: 200 * 1024 ** 3,
       },
       containers: [],
     } as never);
     renderWithProviders(<Monitoring />);
-    await screen.findByText('512 MB / 1.0 GB');
-    // diskUsedBytes is 0 (falsy) → fmtBytes renders '—' as the used portion.
-    expect(screen.getByText(/—\s*\/\s*/)).toBeInTheDocument();
+    await screen.findByText('536.9 MB / 1.1 GB');
+    // diskUsedBytes is 0 → formatBytes renders '0 B' as the used portion.
+    expect(screen.getByText(/0 B\s*\/\s*/)).toBeInTheDocument();
   });
 
   it('renders container cards with cpu/mem and limits form for services', async () => {
@@ -97,21 +106,24 @@ describe('Monitoring', () => {
     expect(screen.getByText('postgres')).toBeInTheDocument();
     // service sparkline renders an svg
     expect(document.querySelectorAll('svg').length).toBeGreaterThan(0);
-    // limits form for service
+    // limits form for service — mem is prefilled with the current limit (512)
     const cpuInput = screen.getAllByPlaceholderText('cpu shares')[0]!;
     const memInput = screen.getAllByPlaceholderText('mem MB')[0]!;
+    expect(memInput).toHaveValue('512');
     await userEvent.type(cpuInput, '512');
+    await userEvent.clear(memInput);
     await userEvent.type(memInput, '1024');
     fireEvent.submit(cpuInput.closest('form')!);
     await waitFor(() => expect(api.limits.setService).toHaveBeenCalledWith(1, { cpuShares: 512, memLimitMb: 1024 }));
   });
 
-  it('submits zero limits when the fields are empty', async () => {
+  it('submits zero limits when the fields are emptied', async () => {
     mockOf(api.stats.snapshot).mockResolvedValue(snapshot as never);
     mockOf(api.limits.setService).mockResolvedValue({ cpuShares: 0, memLimitMb: 0 } as never);
     renderWithProviders(<Monitoring />);
     await screen.findByText('api');
     const cpuInput = screen.getAllByPlaceholderText('cpu shares')[0]!;
+    await userEvent.clear(screen.getAllByPlaceholderText('mem MB')[0]!);
     fireEvent.submit(cpuInput.closest('form')!);
     await waitFor(() => expect(api.limits.setService).toHaveBeenCalledWith(1, { cpuShares: 0, memLimitMb: 0 }));
   });
@@ -125,6 +137,34 @@ describe('Monitoring', () => {
     await userEvent.type(cpuInput, '256');
     fireEvent.submit(cpuInput.closest('form')!);
     expect(await screen.findByText('…')).toBeInTheDocument();
+  });
+
+  it('toasts on alert rule create/delete and limit-save failures', async () => {
+    mockOf(api.stats.snapshot).mockResolvedValue(snapshot as never);
+    mockOf(api.alerts.list).mockResolvedValue([] as never);
+    mockOf(api.alerts.create).mockRejectedValue(new Error('bad rule') as never);
+    const first = renderWithProviders(<Monitoring />);
+    await screen.findByPlaceholderText('rule name');
+    await userEvent.type(screen.getByPlaceholderText('rule name'), 'broken');
+    fireEvent.submit(screen.getByPlaceholderText('rule name').closest('form')!);
+    await waitFor(() => expect(api.alerts.create).toHaveBeenCalled());
+    first.unmount();
+
+    mockOf(api.alerts.list).mockResolvedValue([
+      { id: 7, serviceId: null, name: 'stale', metric: 'cpu', operator: '>', threshold: 50, durationWindows: 1, enabled: true, status: 'ok', lastValue: 10, firedAt: null, createdAt: 'x' },
+    ] as never);
+    mockOf(api.alerts.remove).mockRejectedValue(new Error('nope') as never);
+    const second = renderWithProviders(<Monitoring />);
+    await screen.findByText('stale');
+    fireEvent.click(screen.getByText('Delete'));
+    await waitFor(() => expect(api.alerts.remove).toHaveBeenCalledWith(7));
+    second.unmount();
+
+    mockOf(api.limits.setService).mockRejectedValue(new Error('denied') as never);
+    renderWithProviders(<Monitoring />);
+    await screen.findByText('api');
+    fireEvent.submit(screen.getAllByPlaceholderText('cpu shares')[0]!.closest('form')!);
+    await waitFor(() => expect(api.limits.setService).toHaveBeenCalled());
   });
 
   it('saves database limits and covers bar tones', async () => {
@@ -265,11 +305,14 @@ describe('Monitoring', () => {
     expect(screen.getAllByText('—').length).toBeGreaterThan(0);
   });
 
-  it('renders the empty state when the rules query fails', async () => {
+  it('renders an error card with retry when the rules query fails', async () => {
     mockOf(api.stats.snapshot).mockResolvedValue(snapshot as never);
     mockOf(api.alerts.list).mockRejectedValue(new Error('boom') as never);
     renderWithProviders(<Monitoring />);
-    await screen.findByText(/No alert rules yet/);
+    expect(await screen.findByText("Couldn't load alert rules")).toBeInTheDocument();
+    expect(screen.getByText('boom')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    await waitFor(() => expect(api.alerts.list).toHaveBeenCalledTimes(2));
   });
 
   it('does not submit when the name is empty', async () => {

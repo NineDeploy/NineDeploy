@@ -505,6 +505,13 @@ describe('createClient', () => {
       await client.activity.list();
       expect(last(calls)).toMatchObject({ url: '/v1/activity', init: { method: 'GET' } });
     });
+
+    it('filters the audit trail by entity', async () => {
+      const { fetchMock, calls } = makeFetch(() => ok([]));
+      const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
+      await client.activity.list('my app');
+      expect(last(calls)).toMatchObject({ url: '/v1/activity?entity=my%20app', init: { method: 'GET' } });
+    });
   });
 
   describe('users', () => {

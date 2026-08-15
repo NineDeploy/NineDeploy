@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 import {
-  Activity, Cloud, Database, Globe, HardDrive, KeyRound,
+  Activity, Cloud, Database, Globe, HardDrive, HelpCircle, KeyRound,
   Layers, LayoutDashboard, type LucideIcon, Network, Rocket, Search, Server,
   Settings as SettingsIcon, Sparkles, Users,
 } from 'lucide-react';
@@ -19,7 +19,7 @@ interface Cmd {
 
 const NAV_COMMANDS: Cmd[] = [
   { type: 'Navigate', label: 'Hub', sub: 'Template gallery', to: '/hub', icon: Sparkles },
-  { type: 'Navigate', label: 'Dashboard', sub: 'Overview & health', to: '/dashboard', icon: LayoutDashboard },
+  { type: 'Navigate', label: 'Dashboard', sub: 'Overview & health', to: '/', icon: LayoutDashboard },
   { type: 'Navigate', label: 'Services', sub: 'All services', to: '/services', icon: Server },
   { type: 'Navigate', label: 'Databases', sub: 'Managed databases', to: '/databases', icon: Database },
   { type: 'Navigate', label: 'Domains', sub: 'Domain routing & SSL', to: '/domains', icon: Globe },
@@ -30,6 +30,8 @@ const NAV_COMMANDS: Cmd[] = [
   { type: 'Navigate', label: 'Sources', sub: 'Private repo credentials', to: '/sources', icon: KeyRound },
   { type: 'Navigate', label: 'Users', sub: 'Team management', to: '/users', icon: Users },
   { type: 'Navigate', label: 'Monitoring', sub: 'Resource metrics', to: '/monitoring', icon: Activity },
+  { type: 'Navigate', label: 'Servers', sub: 'Remote hosts running the agent', to: '/servers', icon: HardDrive },
+  { type: 'Navigate', label: 'About', sub: 'System information', to: '/about', icon: HelpCircle },
   { type: 'Navigate', label: 'Settings', sub: 'System info', to: '/settings', icon: SettingsIcon },
 ];
 

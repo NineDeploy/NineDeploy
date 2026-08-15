@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { screen, waitFor, fireEvent, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { ServiceDetail } from '../src/routes/ServiceDetail.js';
+import { ServiceDetail } from '../src/routes/service/index.js';
 import { api, getToken } from '../src/lib/api.js';
 import { renderRoute, renderWithProviders, mockOf } from './helpers.js';
 
@@ -127,15 +127,16 @@ describe('ServiceDetail', () => {
     // runtimeId present -> logs and exec buttons
     expect(screen.getByRole('button', { name: /Runtime logs/ })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Exec/ })).toBeInTheDocument();
-    // live log panel with active deploy auto-selected (latest)
-    expect(await screen.findByText(/deploy #5/)).toBeInTheDocument();
-    // commitSha fallback: deploy #4 has null commitSha -> '—'
-    expect(screen.getAllByText('—').length).toBeGreaterThan(0);
     // metrics + runtime info on the overview tab
     expect(await screen.findByText('Metrics · last 60 min')).toBeInTheDocument();
     expect(screen.getAllByText('Runtime').length).toBeGreaterThan(0);
-    // cards live under the Config tab
-    await openTab('Config');
+    // deployments + the live log live under the Deploys tab (active = latest)
+    await openTab('Deploys');
+    expect(await screen.findByText(/deploy #5/)).toBeInTheDocument();
+    // commitSha fallback: deploy #4 has null commitSha -> '—'
+    expect(screen.getAllByText('—').length).toBeGreaterThan(0);
+    // cards live under the Environment tab
+    await openTab('Environment');
     expect(screen.getByTestId('env-card')).toBeInTheDocument();
     expect(screen.getByTestId('attachments-card')).toBeInTheDocument();
   });
@@ -222,6 +223,7 @@ describe('ServiceDetail', () => {
         depId == null ? { lines: '', open: false } : { lines: 'line one\nline two', open: true },
     );
     renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+    await openTab('Deploys');
     await screen.findByText((content, el) => el?.textContent === 'line one\nline two');
     expect(screen.queryByText('Connecting…')).not.toBeInTheDocument();
   });
@@ -229,6 +231,7 @@ describe('ServiceDetail', () => {
   it('renders an empty log panel when open with no lines', async () => {
     mockOf((await import('../src/lib/useDeployLogs.js')).useDeployLogs).mockReturnValue({ lines: '', open: true });
     renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+    await openTab('Deploys');
     // open=true with empty lines renders '' instead of 'Connecting…'
     await screen.findByText(/deploy #5/);
     expect(screen.queryByText('Connecting…')).not.toBeInTheDocument();
@@ -306,7 +309,7 @@ describe('ServiceDetail', () => {
     renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
     await openTab('Network');
     await screen.findByText('No domains attached.');
-    await openTab('Config');
+    await openTab('Environment');
     expect(await screen.findByText('No webhooks. Create one and add it to GitHub/GitLab.')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /New/ }));
     await waitFor(() => expect(api.webhooks.create).toHaveBeenCalledWith(1, undefined));
@@ -338,7 +341,7 @@ describe('ServiceDetail', () => {
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
     mockOf(api.webhooks.remove).mockResolvedValue(undefined as never);
     renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
-    await openTab('Config');
+    await openTab('Environment');
     await screen.findAllByText('main');
     fireEvent.click(screen.getByTitle('Remove webhook'));
     await waitFor(() => expect(api.webhooks.remove).toHaveBeenCalledWith(1, 1));
@@ -355,6 +358,7 @@ describe('ServiceDetail', () => {
     ] as never);
     mockOf(api.deploys.cancel).mockResolvedValue({ ok: true, status: 'cancelled' } as never);
     renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+    await openTab('Deploys');
     fireEvent.click(await screen.findByTitle('Cancel deployment #5'));
     await waitFor(() => expect(api.deploys.cancel).toHaveBeenCalledWith(1, 5));
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Deployment cancelled', 'info'));
@@ -364,7 +368,7 @@ describe('ServiceDetail', () => {
     const user = userEvent.setup();
     mockOf(api.webhooks.create).mockResolvedValue({ id: 4, url: 'https://hook.example.com/4', secret: 's4', branch: 'main' } as never);
     renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
-    await openTab('Config');
+    await openTab('Environment');
     expect(await screen.findByText(/watch: 1 path/)).toBeInTheDocument();
     await user.type(screen.getByPlaceholderText(/Watch paths/), 'apps/api/**');
     fireEvent.click(screen.getByRole('button', { name: /New/ }));
@@ -374,7 +378,7 @@ describe('ServiceDetail', () => {
   it('creates a webhook without watch paths when the field is empty', async () => {
     mockOf(api.webhooks.create).mockResolvedValue({ id: 5, url: 'https://hook.example.com/5', secret: 's5', branch: 'main' } as never);
     renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
-    await openTab('Config');
+    await openTab('Environment');
     await screen.findAllByText('main');
     fireEvent.click(screen.getByRole('button', { name: /New/ }));
     await waitFor(() => expect(api.webhooks.create).toHaveBeenCalledWith(1, undefined));
@@ -384,6 +388,7 @@ describe('ServiceDetail', () => {
     mockOf(api.deploys.list).mockResolvedValue([{ ...deploys[0], status: 'queued' }] as never);
     mockOf(api.deploys.cancel).mockRejectedValue(new Error('x') as never);
     renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+    await openTab('Deploys');
     fireEvent.click(await screen.findByTitle('Cancel deployment #5'));
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Cancel failed', 'error'));
   });
@@ -404,7 +409,7 @@ describe('ServiceDetail', () => {
   it('creates a webhook via the watch-paths form submit', async () => {
     mockOf(api.webhooks.create).mockResolvedValue({ id: 6, url: 'https://hook.example.com/6', secret: 's6', branch: 'main' } as never);
     renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
-    await openTab('Config');
+    await openTab('Environment');
     const input = await screen.findByPlaceholderText(/Watch paths/);
     fireEvent.change(input, { target: { value: 'apps/web/**' } });
     fireEvent.submit(input.closest('form')!);
@@ -430,7 +435,7 @@ describe('ServiceDetail', () => {
     mockOf(api.jobs.run).mockResolvedValue({ ok: true } as never);
     mockOf(api.jobs.update).mockResolvedValue({ ok: true } as never);
     renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
-    await openTab('Config');
+    await openTab('Environment');
     expect(await screen.findByText('nightly')).toBeInTheDocument();
     expect(screen.getByText('0 3 * * *')).toBeInTheDocument();
     expect(screen.getByText('rm -rf /tmp/*')).toBeInTheDocument();
@@ -460,7 +465,7 @@ describe('ServiceDetail', () => {
     mockOf(api.jobs.run).mockRejectedValue(new Error('x') as never);
     mockOf(api.jobs.create).mockRejectedValue(new Error('y') as never);
     renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
-    await openTab('Config');
+    await openTab('Environment');
     fireEvent.click(await screen.findByText('run'));
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Job run failed', 'error'));
     fireEvent.change(screen.getByPlaceholderText('nightly-rebuild'), { target: { value: 'z' } });
@@ -472,7 +477,7 @@ describe('ServiceDetail', () => {
   it('ignores job form submits with incomplete inputs', async () => {
     mockOf(api.jobs.list).mockResolvedValue([] as never);
     renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
-    await openTab('Config');
+    await openTab('Environment');
     expect(await screen.findByText('No scheduled jobs.')).toBeInTheDocument();
     fireEvent.submit(screen.getByPlaceholderText('nightly-rebuild').closest('form')!);
     expect(api.jobs.create).not.toHaveBeenCalled();
@@ -533,7 +538,8 @@ describe('ServiceDetail', () => {
     const user = userEvent.setup();
     renderRoute(<ServiceDetail />, { path: '/services/:id', initialEntries: ['/services/1'] });
 
-    // Rollback failure (overview tab).
+    // Rollback failure (deploys tab).
+    await openTab('Deploys');
     fireEvent.click(await screen.findByTitle('Rollback to #10'));
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Rollback failed', 'error'));
 
@@ -546,7 +552,7 @@ describe('ServiceDetail', () => {
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Could not remove the domain', 'error'));
 
     // Webhook create/remove failures (config tab).
-    await openTab('Config');
+    await openTab('Environment');
     fireEvent.click(screen.getByRole('button', { name: /New/ }));
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Could not create the webhook', 'error'));
     fireEvent.click(screen.getByTitle('Remove webhook'));
@@ -566,6 +572,7 @@ describe('ServiceDetail', () => {
     ] as never);
     mockOf(api.deploys.rollback).mockResolvedValue({ deploymentId: 12 } as never);
     renderRoute(<ServiceDetail />, { path: '/services/:id', initialEntries: ['/services/1'] });
+    await openTab('Deploys');
     const rb = await screen.findByTitle('Rollback to #10');
     fireEvent.click(rb);
     await waitFor(() => expect(api.deploys.rollback).toHaveBeenCalledWith(service.id, 10));
@@ -575,6 +582,7 @@ describe('ServiceDetail', () => {
 
   it('selects a deployment row when clicked', async () => {
     renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+    await openTab('Deploys');
     // active deploy auto-selects the latest (#5); click row #4 to select it
     const row4 = await screen.findByText('#4');
     fireEvent.click(row4.closest('button')!);
@@ -591,6 +599,7 @@ describe('ServiceDetail', () => {
       },
     ] as never);
     renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+    await openTab('Deploys');
     const row = await screen.findByText(/fix: resize sparkline/);
     expect(row.textContent).toContain('webhook');
     expect(row.textContent).toContain('ersin');
@@ -605,6 +614,7 @@ describe('ServiceDetail', () => {
     ];
     mockOf(api.deploys.list).mockResolvedValue(deploysWithOld as never);
     renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+    await openTab('Deploys');
     await screen.findByText('#5');
     fireEvent.click(await screen.findByTitle('Rollback to #4'));
     await waitFor(() => expect(api.deploys.rollback).toHaveBeenCalledWith(1, 4));
@@ -614,12 +624,14 @@ describe('ServiceDetail', () => {
   it('shows deployment list empty and loading states', async () => {
     mockOf(api.deploys.list).mockReturnValue(new Promise(() => {}) as never);
     const { unmount } = renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+    await openTab('Deploys');
     await screen.findByText('Deployments');
     expect(screen.getByText('Trigger a deploy to see live logs.')).toBeInTheDocument();
     unmount();
 
     mockOf(api.deploys.list).mockResolvedValue([] as never);
     renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+    await openTab('Deploys');
     await screen.findByText('No deployments yet.');
   });
 
@@ -627,6 +639,7 @@ describe('ServiceDetail', () => {
     // first list returns an in-flight deploy, second returns terminal
     mockOf(api.deploys.list).mockResolvedValueOnce([{ ...deploys[0], status: 'building' }] as never);
     const { queryClient } = renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+    await openTab('Deploys');
     await screen.findByText('#5');
     expect(screen.getAllByText('building').length).toBeGreaterThan(0);
     // now the deploy finishes
@@ -774,17 +787,17 @@ describe('ServiceDetail', () => {
     expect(await screen.findByText('Saving…')).toBeInTheDocument();
   });
 
-  it('shows the service-filtered activity trail', async () => {
+  it('shows the service-filtered activity trail (server-side ?entity=)', async () => {
     mockOf(api.activity.list).mockResolvedValue([
       { id: 1, userId: 1, action: 'service.update', entity: 'api', ts: '2026-01-01T00:00:00Z' },
-      { id: 2, userId: 1, action: 'service.create', entity: 'other', ts: '2026-01-01T00:01:00Z' },
       { id: 3, userId: 1, action: 'service.stop', entity: 'api', ts: '2026-01-01T00:02:00Z' },
     ] as never);
     renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
     await openTab('Activity');
+    // the page asks the server to filter by the service's entity name
+    await waitFor(() => expect(api.activity.list).toHaveBeenCalledWith('api'));
     expect(await screen.findByText('service.update')).toBeInTheDocument();
     expect(screen.getByText('service.stop')).toBeInTheDocument();
-    expect(screen.queryByText('service.create')).not.toBeInTheDocument();
   });
 
   it('shows the activity empty state', async () => {
@@ -800,7 +813,7 @@ describe('ServiceDetail', () => {
     renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
     await screen.findByText('Danger zone');
     expect(await screen.findByText(/nd-svc-api-data/)).toBeInTheDocument();
-    expect(screen.getByText(/5\.0 MiB/)).toBeInTheDocument();
+    expect(screen.getByText(/5\.2 MB/)).toBeInTheDocument();
   });
 
   it('reports limit save failures and shows the saving state', async () => {
@@ -842,9 +855,9 @@ describe('ServiceDetail', () => {
 
   it('formats data volume sizes and in-use states across unit ranges', async () => {
     const cases: Array<{ sizeBytes: number; expected: RegExp; inUse: boolean }> = [
-      { sizeBytes: 0, expected: /exists \(empty\)/, inUse: false },
+      { sizeBytes: 0, expected: /exists \(0 B\)/, inUse: false },
       { sizeBytes: 500, expected: /exists \(500 B\)/, inUse: false },
-      { sizeBytes: 3 * 1024 * 1024 * 1024, expected: /exists \(3\.0 GiB\)/, inUse: false },
+      { sizeBytes: 3 * 1024 * 1024 * 1024, expected: /exists \(3\.2 GB\)/, inUse: false },
     ];
     for (const c of cases) {
       mockOf(api.volumes.list).mockResolvedValue([

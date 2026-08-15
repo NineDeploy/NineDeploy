@@ -1,5 +1,6 @@
 import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import './web-utils.js';
 import { ACCENTS, ThemeProvider, useTheme } from '../src/lib/theme.js';
@@ -122,5 +123,50 @@ describe('useTheme', () => {
     } finally {
       console.error = original;
     }
+  });
+});
+
+describe('accent tokens (index.css)', () => {
+  const css = readFileSync('src/index.css', 'utf8');
+
+  it('defines the full token set for the default (indigo) accent', () => {
+    for (const token of [
+      '--nd-accent',
+      '--nd-accent-strong',
+      '--nd-accent-bright',
+      '--nd-accent-soft',
+      '--nd-accent-ring',
+      '--nd-accent-soft-bg',
+      '--nd-accent-soft-text',
+      '--nd-accent-soft-ring',
+    ]) {
+      expect(css).toMatch(new RegExp(`^  ${token}:`, 'm'));
+    }
+  });
+
+  it('defines tokens for every selectable accent', () => {
+    for (const a of ACCENTS) {
+      if (a.id === 'indigo') continue; // :root default
+      const block = css.match(new RegExp(`\\[data-accent='${a.id}'\\] \\{[^}]*\\}`));
+      expect(block, `missing [data-accent='${a.id}'] block`).toBeTruthy();
+      expect(block![0]).toContain('--nd-accent:');
+      expect(block![0]).toContain('--nd-accent-soft-bg:');
+    }
+  });
+
+  it('re-tones every accent for the light theme (data-theme + data-accent)', () => {
+    for (const a of ACCENTS) {
+      const block = css.match(
+        new RegExp(`html\\[data-theme='light'\\]\\[data-accent='${a.id}'\\]\\s*\\{[^}]*\\}`),
+      );
+      expect(block, `missing light-theme override for ${a.id}`).toBeTruthy();
+      expect(block![0]).toContain('--nd-accent-soft:');
+      expect(block![0]).toContain('--nd-accent-bright:');
+    }
+  });
+
+  it('routes indigo utilities and page backgrounds through the tokens', () => {
+    expect(css).toContain('--color-indigo-500: var(--nd-accent)');
+    expect(css).toContain('color-mix(in srgb, var(--nd-accent)');
   });
 });

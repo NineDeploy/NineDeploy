@@ -3,7 +3,9 @@ import { useState } from 'react';
 import { Check, Copy, Database, HardDriveDownload, Plus, Trash2 } from 'lucide-react';
 import { api } from '../lib/api.js';
 import { useProjectScope } from '../lib/projects.js';
-import { Button, Card, EmptyState, PageHeader, Skeleton, StatusBadge, cn } from '../components/ui.js';
+import { useToast } from '../components/Toast.js';
+import { Button, Card, ConfirmDialog, EmptyState, ErrorCard, PageHeader, Skeleton, StatusBadge, cn } from '../components/ui.js';
+import { useCopy } from '../lib/format.js';
 import { StorageGauge } from '../components/StorageGauge.js';
 import { DatabaseWizard } from '../components/DatabaseWizard.js';
 
@@ -11,8 +13,10 @@ const ENGINE_LABEL: Record<string, string> = { postgres: 'PostgreSQL', mysql: 'M
 
 export function Databases() {
   const qc = useQueryClient();
+  const { toast } = useToast();
   const [wizard, setWizard] = useState(false);
-  const [copied, setCopied] = useState<number | null>(null);
+  const [pendingRemove, setPendingRemove] = useState<{ id: number; name: string } | null>(null);
+  const { copied, copy } = useCopy();
   const { selectedId } = useProjectScope();
 
   const list = useQuery({
@@ -21,22 +25,20 @@ export function Databases() {
   });
   const remove = useMutation({
     mutationFn: (id: number) => api.databases.remove(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['databases'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['databases'] });
+      toast('Database deleted — its volume was kept (retained)', 'success');
+    },
+    onError: () => toast('Could not delete the database', 'error'),
   });
   const backup = useMutation({
     mutationFn: (id: number) => api.backups.backupNow(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['backups'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['backups'] });
+      toast('Backup started', 'success');
+    },
+    onError: () => toast('Backup failed', 'error'),
   });
-
-  const copy = async (id: number, value: string) => {
-    try {
-      await navigator.clipboard.writeText(value);
-      setCopied(id);
-      setTimeout(() => setCopied(null), 1500);
-    } catch {
-      /* blocked */
-    }
-  };
 
   return (
     <div>
@@ -62,6 +64,8 @@ export function Databases() {
             </Card>
           ))}
         </div>
+      ) : list.isError ? (
+        <ErrorCard title="Couldn't load databases" error={list.error} onRetry={() => list.refetch()} />
       ) : !list.data || list.data.length === 0 ? (
         <Card>
           <EmptyState
@@ -90,14 +94,14 @@ export function Databases() {
               <div className="mt-4 flex-1">
                 {d.connectionString ? (
                   <button
-                    onClick={() => copy(d.id, d.connectionString!)}
+                    onClick={() => void copy(d.connectionString!)}
                     className="group flex w-full items-center gap-2 rounded-lg bg-black/30 px-2.5 py-2 text-left ring-1 ring-inset ring-white/5 hover:ring-white/15"
                     title="Copy connection string"
                   >
                     <code className="min-w-0 flex-1 truncate font-mono text-[11px] text-emerald-300/90">
                       {d.connectionString}
                     </code>
-                    {copied === d.id ? <Check size={13} className="text-emerald-400" /> : <Copy size={13} className="shrink-0 text-slate-500" />}
+                    {copied ? <Check size={13} className="text-emerald-400" /> : <Copy size={13} className="shrink-0 text-slate-500" />}
                   </button>
                 ) : (
                   <div className="rounded-lg bg-black/20 px-2.5 py-2 text-[11px] text-slate-600">Not running</div>
@@ -118,7 +122,7 @@ export function Databases() {
                   <HardDriveDownload size={12} /> Backup
                 </button>
                 <button
-                  onClick={() => remove.mutate(d.id)}
+                  onClick={() => setPendingRemove({ id: d.id, name: d.name })}
                   className={cn('flex items-center gap-1 text-xs text-slate-600 transition hover:text-rose-400')}
                 >
                   <Trash2 size={12} /> Remove
@@ -128,6 +132,15 @@ export function Databases() {
           ))}
         </div>
       )}
+
+      <ConfirmDialog
+        open={pendingRemove != null}
+        title="Delete database"
+        message={`Delete "${pendingRemove?.name}"? The container is removed; its data volume is kept and can be freed under Volumes.`}
+        confirmLabel="Delete"
+        onConfirm={() => pendingRemove && remove.mutate(pendingRemove.id)}
+        onClose={() => setPendingRemove(null)}
+      />
     </div>
   );
 }

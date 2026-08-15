@@ -115,7 +115,40 @@ describe('Databases', () => {
     await waitFor(() => expect(api.backups.backupNow).toHaveBeenCalledWith(1));
     const removeButton = screen.getAllByRole('button', { name: /Remove/ })[0]!;
     fireEvent.click(removeButton);
+    // Removal is confirmed through the shared dialog.
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
     await waitFor(() => expect(api.databases.remove).toHaveBeenCalledWith(1));
+  });
+
+  it('toasts on backup and removal failures', async () => {
+    mockOf(api.databases.list).mockResolvedValue(databases as never);
+    mockOf(api.backups.storage).mockResolvedValue({ sizeBytes: 10 * 1024 * 1024 } as never);
+    mockOf(api.backups.backupNow).mockRejectedValue(new Error('dump') as never);
+    mockOf(api.databases.remove).mockRejectedValue(new Error('busy') as never);
+    renderWithProviders(<Databases />);
+    await screen.findByText('main-db');
+    fireEvent.click(screen.getAllByRole('button', { name: /Backup/ })[0]!);
+    await waitFor(() => expect(api.backups.backupNow).toHaveBeenCalledWith(1));
+    fireEvent.click(screen.getAllByRole('button', { name: /Remove/ })[0]!);
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    await waitFor(() => expect(api.databases.remove).toHaveBeenCalledWith(1));
+  });
+
+  it('cancels a removal without deleting and shows an error card on query failure', async () => {
+    mockOf(api.databases.list).mockResolvedValue(databases as never);
+    mockOf(api.backups.storage).mockResolvedValue({ sizeBytes: 10 * 1024 * 1024 } as never);
+    renderWithProviders(<Databases />);
+    await screen.findByText('main-db');
+    fireEvent.click(screen.getAllByRole('button', { name: /Remove/ })[0]!);
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(api.databases.remove).not.toHaveBeenCalled();
+
+    mockOf(api.databases.list).mockRejectedValue(new Error('db down') as never);
+    const { unmount } = renderWithProviders(<Databases />);
+    expect(await screen.findAllByText("Couldn't load databases")).toHaveLength(1);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Try again' })[0]!);
+    await waitFor(() => expect(api.databases.list).toHaveBeenCalledTimes(3)); // 2 renders + retry
+    unmount();
   });
 
   it('opens and closes the database wizard', async () => {
@@ -126,5 +159,14 @@ describe('Databases', () => {
     expect(screen.getByTestId('db-wizard')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'close wizard' }));
     expect(screen.queryByTestId('db-wizard')).not.toBeInTheDocument();
+  });
+
+  it('scopes the list to the selected project', async () => {
+    localStorage.setItem('ninedeploy.projectId', '3');
+    mockOf(api.databases.list).mockResolvedValue([] as never);
+    renderWithProviders(<Databases />);
+    await screen.findByText(/No databases/i);
+    expect(api.databases.list).toHaveBeenCalledWith('?projectId=3');
+    localStorage.removeItem('ninedeploy.projectId');
   });
 });

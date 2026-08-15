@@ -2,14 +2,17 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { type FormEvent, useState } from 'react';
 import { Check, KeyRound, Plus, ShieldCheck, Trash2 } from 'lucide-react';
 import { api } from '../lib/api.js';
-import { Button, Card, EmptyState, Field, Input, Select, Skeleton, Textarea, cn } from '../components/ui.js';
+import { useToast } from '../components/Toast.js';
+import { Button, Card, ConfirmDialog, EmptyState, ErrorCard, Field, Input, PageHeader, Select, Skeleton, Textarea, cn } from '../components/ui.js';
 
 const TYPES = ['github', 'gitlab', 'gitea', 'custom', 'registry'] as const;
 const LABEL: Record<string, string> = { github: 'GitHub', gitlab: 'GitLab', gitea: 'Gitea', custom: 'Custom', registry: 'Registry' };
 
 export function Sources() {
   const qc = useQueryClient();
+  const { toast } = useToast();
   const [open, setOpen] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<{ id: number; name: string } | null>(null);
   const [name, setName] = useState('');
   const [type, setType] = useState<(typeof TYPES)[number]>('github');
   const [token, setToken] = useState('');
@@ -26,21 +29,31 @@ export function Sources() {
       setDeployKey('');
       setRegistryUsername('');
       qc.invalidateQueries({ queryKey: ['sources'] });
+      toast('Source saved', 'success');
     },
+    onError: () => toast('Could not save the source', 'error'),
   });
-  const remove = useMutation({ mutationFn: (id: number) => api.sources.remove(id), onSuccess: () => qc.invalidateQueries({ queryKey: ['sources'] }) });
+  const remove = useMutation({
+    mutationFn: (id: number) => api.sources.remove(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['sources'] });
+      toast('Source deleted', 'success');
+    },
+    onError: () => toast('Could not delete the source', 'error'),
+  });
 
   return (
     <div>
-      <div className="mb-7 flex items-end justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Sources</h1>
-          <p className="mt-1 text-sm text-slate-400">Credentials for cloning private repositories.</p>
-        </div>
-        <Button onClick={() => setOpen((v) => !v)}>
-          <Plus size={16} /> New source
-        </Button>
-      </div>
+      <PageHeader
+        icon={<KeyRound size={18} />}
+        title="Sources"
+        subtitle="Credentials for cloning private repositories."
+        actions={
+          <Button onClick={() => setOpen((v) => !v)}>
+            <Plus size={16} /> New source
+          </Button>
+        }
+      />
 
       {open && (
         <Card className="mb-5 p-5 nd-fade">
@@ -100,6 +113,8 @@ export function Sources() {
             </Card>
           ))}
         </div>
+      ) : list.isError ? (
+        <ErrorCard title="Couldn't load sources" error={list.error} onRetry={() => list.refetch()} />
       ) : !list.data || list.data.length === 0 ? (
         <Card>
           <EmptyState icon={<KeyRound size={26} />} title="No sources" hint="Add a GitHub/GitLab token or SSH deploy key to deploy private repos." />
@@ -118,7 +133,7 @@ export function Sources() {
                     <div className="text-[11px] text-slate-500">{LABEL[s.type] ?? s.type}</div>
                   </div>
                 </div>
-                <button onClick={() => remove.mutate(s.id)} className="text-slate-600 transition hover:text-rose-400">
+                <button onClick={() => setPendingDelete({ id: s.id, name: s.name })} className="text-slate-600 transition hover:text-rose-400">
                   <Trash2 size={14} />
                 </button>
               </div>
@@ -130,6 +145,15 @@ export function Sources() {
           ))}
         </div>
       )}
+
+      <ConfirmDialog
+        open={pendingDelete != null}
+        title="Delete source"
+        message={`Delete "${pendingDelete?.name}"? Services deployed from it keep working, but new clones of private repos will fail until it is re-added.`}
+        confirmLabel="Delete"
+        onConfirm={() => pendingDelete && remove.mutate(pendingDelete.id)}
+        onClose={() => setPendingDelete(null)}
+      />
     </div>
   );
 }

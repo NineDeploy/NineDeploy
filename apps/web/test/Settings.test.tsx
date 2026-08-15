@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { Settings } from '../src/routes/Settings.js';
+import { Settings } from '../src/routes/settings/index.js';
 import { api, getToken } from '../src/lib/api.js';
 import { useTheme } from '../src/lib/theme.js';
 import { renderWithProviders, mockOf } from './helpers.js';
@@ -46,6 +46,8 @@ const channels = [
   { id: 3, name: 'webhook', type: 'generic', eventFilter: null, active: true, createdAt: 'x' },
 ];
 
+const upToDate = { current: 'v0.0.0', latest: null, updateAvailable: false, notesUrl: null, checkedAt: '2026-01-01T00:00:00Z' };
+
 describe('Settings', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -60,8 +62,13 @@ describe('Settings', () => {
       volumes: 2,
       imagesSummary: { active: 3, total: 3, size: '1 GB', reclaimable: '200 MB' },
     } as never);
+    mockOf(api.system.updateCheck).mockResolvedValue(upToDate as never);
     mockOf(api.notifications.listChannels).mockResolvedValue(channels as never);
   });
+
+  const openSection = async (label: string) => {
+    fireEvent.click(await screen.findByRole('tab', { name: label }));
+  };
 
   it('renders system info, resources, theme controls and notification channels', async () => {
     mockOf(useTheme).mockReturnValue({
@@ -71,21 +78,26 @@ describe('Settings', () => {
       setAccent: vi.fn(),
       toggleTheme: vi.fn(),
     } as never);
+    mockOf(api.settings.get).mockResolvedValue({ allowRegistration: true, wildcardApex: 'nd.local' } as never);
     renderWithProviders(<Settings />);
-    // system info rows
-    await screen.findByText('nd-net');
+    // system info rows (System section)
+    await openSection('System');
+    expect(await screen.findByText('nd-net')).toBeInTheDocument();
     expect(screen.getByText('v0.0.0 · MIT')).toBeInTheDocument();
     expect(screen.getByText('4')).toBeInTheDocument();
     expect(screen.getByText('3/3 active')).toBeInTheDocument();
-    // wildcard domain configured because host exists
-    expect(screen.getByText('*.nd.local')).toBeInTheDocument();
+    expect(screen.getByText('up to date')).toBeInTheDocument();
     // host resources bars
     expect(screen.getByText('50% · 8.0 GB / 16.0 GB')).toBeInTheDocument();
     expect(screen.getByText('1.25')).toBeInTheDocument();
     // image storage + reclaimable
     expect(screen.getByText('200 MB reclaimable')).toBeInTheDocument();
+    // wildcard domain (Security section) read from the configured settings API apex
+    await openSection('Security');
+    expect(await screen.findByText('*.nd.local')).toBeInTheDocument();
     // notification channels with type badges
-    expect(screen.getByText('telegram-main')).toBeInTheDocument();
+    await openSection('Notifications');
+    expect(await screen.findByText('telegram-main')).toBeInTheDocument();
     expect(screen.getByText('discord-alerts')).toBeInTheDocument();
     expect(screen.getByText('deploy.*')).toBeInTheDocument();
   });
@@ -100,9 +112,10 @@ describe('Settings', () => {
     };
     mockOf(useTheme).mockReturnValue(theme as never);
     renderWithProviders(<Settings />);
-    await userEvent.click(await screen.findByRole('button', { name: /light/ }));
+    await openSection('Appearance');
+    await userEvent.click(await screen.findByRole('button', { name: /^light$/ }));
     expect(theme.setTheme).toHaveBeenCalledWith('light');
-    await userEvent.click(screen.getByRole('button', { name: /Blue/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Blue' }));
     expect(theme.setAccent).toHaveBeenCalledWith('blue');
   });
 
@@ -111,24 +124,56 @@ describe('Settings', () => {
     mockOf(api.system.resources).mockResolvedValue(null as never);
     mockOf(api.notifications.listChannels).mockResolvedValue([] as never);
     renderWithProviders(<Settings />);
+    await openSection('System');
     // 'not configured' renders during loading too, so await a post-load-only text
     await screen.findByText('Docker daemon not reachable.');
-    expect(screen.getByText('not configured')).toBeInTheDocument();
     expect(screen.getByText('ninedeploy')).toBeInTheDocument(); // network fallback
-    expect(screen.getByText('No notification channels configured.')).toBeInTheDocument();
+    await openSection('Security');
+    expect(await screen.findByText('not configured')).toBeInTheDocument(); // wildcard apex unset
+    await openSection('Notifications');
+    expect(await screen.findByText('No notification channels configured.')).toBeInTheDocument();
   });
 
   it('shows skeleton for host resources while stats load', async () => {
     mockOf(api.stats.snapshot).mockReturnValue(new Promise(() => {}) as never);
     renderWithProviders(<Settings />);
+    await openSection('System');
     await screen.findByText('Host Resources');
     expect(document.querySelector('.animate-pulse')).not.toBeNull();
+  });
+
+  it('renders the update-check row for each availability state', async () => {
+    mockOf(api.system.updateCheck).mockResolvedValue({ ...upToDate, updateAvailable: true, latest: 'v9.9.9' } as never);
+    renderWithProviders(<Settings />);
+    await openSection('System');
+    expect(await screen.findByText('v9.9.9 available')).toBeInTheDocument();
+  });
+
+  it('renders the update-check unavailable state when the feed cannot be reached', async () => {
+    mockOf(api.system.updateCheck).mockResolvedValue({ ...upToDate, updateAvailable: null, latest: null } as never);
+    renderWithProviders(<Settings />);
+    await openSection('System');
+    expect(await screen.findByText('check unavailable')).toBeInTheDocument();
+  });
+
+  it('renders the update-check row while the check is in flight or fails', async () => {
+    mockOf(api.system.updateCheck).mockReturnValue(new Promise(() => {}) as never);
+    const first = renderWithProviders(<Settings />);
+    await openSection('System');
+    expect(await screen.findByText('checking…')).toBeInTheDocument();
+    first.unmount();
+
+    mockOf(api.system.updateCheck).mockRejectedValue(new Error('offline') as never);
+    renderWithProviders(<Settings />);
+    await openSection('System');
+    expect(await screen.findByText('check unavailable')).toBeInTheDocument();
   });
 
   it('exports backup on success and reports failure', async () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockResolvedValueOnce({ ok: true, blob: async () => new Blob(['x']) } as Response);
     renderWithProviders(<Settings />);
+    await openSection('Migration');
     fireEvent.click(await screen.findByRole('button', { name: /Export backup/ }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/v1/system/export');
@@ -145,6 +190,7 @@ describe('Settings', () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockResolvedValueOnce({ ok: true, blob: async () => new Blob(['x']) } as Response);
     renderWithProviders(<Settings />);
+    await openSection('Migration');
     fireEvent.click(await screen.findByRole('button', { name: /Export backup/ }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     expect(fetchMock.mock.calls[0]?.[1]?.headers).toEqual({ Authorization: 'Bearer ' });
@@ -154,6 +200,7 @@ describe('Settings', () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ message: 'Restart required' }) } as Response);
     renderWithProviders(<Settings />);
+    await openSection('Migration');
     await screen.findByRole('button', { name: /Export backup/ });
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;
     const file = new File(['data'], 'backup.tar.gz', { type: 'application/gzip' });
@@ -167,6 +214,7 @@ describe('Settings', () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({}) } as Response);
     renderWithProviders(<Settings />);
+    await openSection('Migration');
     await screen.findByRole('button', { name: /Export backup/ });
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;
     fireEvent.change(input, { target: { files: [new File(['x'], 'b.tar.gz')] } });
@@ -178,6 +226,7 @@ describe('Settings', () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ message: 'ok' }) } as Response);
     renderWithProviders(<Settings />);
+    await openSection('Migration');
     await screen.findByRole('button', { name: /Export backup/ });
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;
     fireEvent.change(input, { target: { files: [new File(['x'], 'b.tar.gz')] } });
@@ -187,6 +236,7 @@ describe('Settings', () => {
 
   it('ignores a change event without a selected file', async () => {
     renderWithProviders(<Settings />);
+    await openSection('Migration');
     await screen.findByRole('button', { name: /Export backup/ });
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;
     fireEvent.change(input, { target: { files: [] } });
@@ -198,6 +248,7 @@ describe('Settings', () => {
       host: { ...host, memUsedBytes: 15 * 1024 ** 3, memTotalBytes: 16 * 1024 ** 3 }, // ~94% -> rose
     } as never);
     renderWithProviders(<Settings />);
+    await openSection('System');
     await screen.findByText('94% · 15.0 GB / 16.0 GB');
   });
 
@@ -213,18 +264,21 @@ describe('Settings', () => {
       },
     } as never);
     renderWithProviders(<Settings />);
+    await openSection('System');
     await screen.findByText('50% · 512 MB / 1.0 GB');
     expect(screen.getByText('25% · 256 MB / 1.0 GB')).toBeInTheDocument();
   });
 
   it('refreshes docker resources from the image storage card', async () => {
     renderWithProviders(<Settings />);
+    await openSection('System');
     fireEvent.click(await screen.findByRole('button', { name: /Refresh/ }));
     await waitFor(() => expect(api.system.resources).toHaveBeenCalledTimes(2));
   });
 
   it('opens the file picker from the import backup button', async () => {
     renderWithProviders(<Settings />);
+    await openSection('Migration');
     fireEvent.click(await screen.findByRole('button', { name: /Import backup/ }));
     // clicking the hidden file input is a no-op in jsdom, but the handler ran
     expect(document.querySelector('input[type="file"]')).not.toBeNull();
@@ -234,6 +288,7 @@ describe('Settings', () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockRejectedValueOnce(new Error('boom'));
     renderWithProviders(<Settings />);
+    await openSection('Migration');
     await screen.findByRole('button', { name: /Export backup/ });
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;
     fireEvent.change(input, { target: { files: [new File(['data'], 'b.tar.gz')] } });
@@ -244,6 +299,7 @@ describe('Settings', () => {
     mockOf(api.notifications.testChannel).mockResolvedValue({ ok: true } as never);
     mockOf(api.notifications.removeChannel).mockResolvedValue(undefined as never);
     renderWithProviders(<Settings />);
+    await openSection('Notifications');
     const testButtons = await screen.findAllByTitle('Send test');
     fireEvent.click(testButtons[0]!);
     await waitFor(() => expect(api.notifications.testChannel).toHaveBeenCalledWith(1));
@@ -256,6 +312,7 @@ describe('Settings', () => {
   it('pauses and resumes a channel via the active toggle', async () => {
     mockOf(api.notifications.updateChannel).mockResolvedValue({ id: 1, active: false } as never);
     renderWithProviders(<Settings />);
+    await openSection('Notifications');
     const pause = (await screen.findAllByTitle('Pause (deactivate)'))[0]!;
     fireEvent.click(pause);
     await waitFor(() => expect(api.notifications.updateChannel).toHaveBeenCalledWith(1, { active: false }));
@@ -267,6 +324,7 @@ describe('Settings', () => {
     ] as never);
     mockOf(api.notifications.updateChannel).mockResolvedValue({ id: 9, active: true } as never);
     renderWithProviders(<Settings />);
+    await openSection('Notifications');
     expect(await screen.findByText('paused')).toBeInTheDocument();
     fireEvent.click(screen.getByTitle('Activate'));
     await waitFor(() => expect(api.notifications.updateChannel).toHaveBeenCalledWith(9, { active: true }));
@@ -275,6 +333,7 @@ describe('Settings', () => {
   it('edits a channel name and event filter inline', async () => {
     mockOf(api.notifications.updateChannel).mockResolvedValue({ id: 1 } as never);
     renderWithProviders(<Settings />);
+    await openSection('Notifications');
     fireEvent.click((await screen.findAllByTitle('Edit'))[0]!);
     const name = screen.getByLabelText('Channel name') as HTMLInputElement;
     const filter = screen.getByLabelText('Event filter') as HTMLInputElement;
@@ -290,6 +349,7 @@ describe('Settings', () => {
 
   it('opens the editor on a channel without a filter (null coalescing)', async () => {
     renderWithProviders(<Settings />);
+    await openSection('Notifications');
     fireEvent.click((await screen.findAllByTitle('Edit'))[1]!); // discord-alerts: eventFilter null
     const filter = screen.getByLabelText('Event filter') as HTMLInputElement;
     expect(filter.value).toBe('');
@@ -299,6 +359,7 @@ describe('Settings', () => {
   it('falls back to the current name when the edit field is emptied', async () => {
     mockOf(api.notifications.updateChannel).mockResolvedValue({ id: 1 } as never);
     renderWithProviders(<Settings />);
+    await openSection('Notifications');
     fireEvent.click((await screen.findAllByTitle('Edit'))[0]!);
     const name = screen.getByLabelText('Channel name') as HTMLInputElement;
     await userEvent.clear(name);
@@ -311,6 +372,7 @@ describe('Settings', () => {
   it('shows the saving state while a channel edit is in flight', async () => {
     mockOf(api.notifications.updateChannel).mockReturnValue(new Promise(() => {}) as never);
     renderWithProviders(<Settings />);
+    await openSection('Notifications');
     fireEvent.click((await screen.findAllByTitle('Edit'))[0]!);
     fireEvent.submit((screen.getByLabelText('Channel name') as HTMLInputElement).closest('form')!);
     expect(await screen.findByText('…')).toBeInTheDocument();
@@ -318,6 +380,7 @@ describe('Settings', () => {
 
   it('cancels the inline channel editor', async () => {
     renderWithProviders(<Settings />);
+    await openSection('Notifications');
     fireEvent.click((await screen.findAllByTitle('Edit'))[0]!);
     fireEvent.click(screen.getByText('Cancel'));
     expect(screen.queryByLabelText('Event filter')).not.toBeInTheDocument();
@@ -326,6 +389,7 @@ describe('Settings', () => {
   it('reports channel edit failures', async () => {
     mockOf(api.notifications.updateChannel).mockRejectedValue(new Error('500'));
     renderWithProviders(<Settings />);
+    await openSection('Notifications');
     fireEvent.click((await screen.findAllByTitle('Edit'))[0]!);
     fireEvent.submit((screen.getByLabelText('Channel name') as HTMLInputElement).closest('form')!);
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Could not update the channel', 'error'));
@@ -334,6 +398,7 @@ describe('Settings', () => {
   it('reports a failed test notification', async () => {
     mockOf(api.notifications.testChannel).mockRejectedValue(new Error('nope'));
     renderWithProviders(<Settings />);
+    await openSection('Notifications');
     const testButtons = await screen.findAllByTitle('Send test');
     fireEvent.click(testButtons[0]!);
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Test failed', 'error'));
@@ -342,6 +407,7 @@ describe('Settings', () => {
   it('opens and closes the notification wizard', async () => {
     const user = userEvent.setup();
     renderWithProviders(<Settings />);
+    await openSection('Notifications');
     await user.click(await screen.findByRole('button', { name: '+ Add channel' }));
     expect(screen.getByTestId('notif-wizard')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'close wizard' }));
@@ -358,6 +424,7 @@ describe('Settings', () => {
     mockOf(api.settings.get).mockResolvedValue({ allowRegistration: true, acmeEmail: 'ops@example.com' } as never);
     mockOf(api.settings.setAcmeEmail).mockResolvedValue({ ok: true, acmeEmail: 'new@example.com', applied: 'restart' } as never);
     renderWithProviders(<Settings />);
+    await openSection('Security');
 
     const input = await screen.findByLabelText('ACME account email') as HTMLInputElement;
     await waitFor(() => expect(input.value).toBe('ops@example.com'));
@@ -374,6 +441,7 @@ describe('Settings', () => {
     mockOf(api.settings.get).mockResolvedValue({ allowRegistration: true, acmeEmail: null, templatesSource: null } as never);
     mockOf(api.settings.setTemplatesSource).mockResolvedValue({ ok: true, templatesSource: 'https://registry.example.com/r.json' } as never);
     renderWithProviders(<Settings />);
+    await openSection('Security');
 
     const input = await screen.findByLabelText('Template registry source') as HTMLInputElement;
     expect(input.value).toBe('');
@@ -389,6 +457,7 @@ describe('Settings', () => {
     mockOf(api.settings.get).mockResolvedValue({ allowRegistration: true, acmeEmail: null, templatesSource: null, dnsProvider: 'cloudflare', hasDnsToken: true, wildcardApex: 'example.com' } as never);
     mockOf(api.settings.setDns).mockResolvedValue({ ok: true, dnsProvider: 'cloudflare', wildcardApex: 'example.com', applied: 'restart' } as never);
     renderWithProviders(<Settings />);
+    await openSection('Security');
 
     const provider = await screen.findByLabelText('DNS provider') as HTMLSelectElement;
     await waitFor(() => expect(provider.value).toBe('cloudflare'));
@@ -411,6 +480,7 @@ describe('Settings', () => {
     mockOf(api.settings.get).mockResolvedValue({ allowRegistration: true, acmeEmail: null, templatesSource: null, dnsProvider: '', hasDnsToken: true, wildcardApex: '' } as never);
     mockOf(api.settings.setDns).mockRejectedValue(new Error('500'));
     renderWithProviders(<Settings />);
+    await openSection('Security');
 
     await screen.findByLabelText('DNS provider');
     fireEvent.click(saveButtonNextTo('Wildcard domain apex'));
@@ -424,6 +494,7 @@ describe('Settings', () => {
     mockOf(api.settings.get).mockResolvedValue({ allowRegistration: true, acmeEmail: null, templatesSource: null, dnsProvider: '', hasDnsToken: false, wildcardApex: '' } as never);
     mockOf(api.settings.setDns).mockReturnValue(new Promise(() => {}) as never);
     renderWithProviders(<Settings />);
+    await openSection('Security');
 
     await screen.findByLabelText('DNS provider');
     fireEvent.click(saveButtonNextTo('Wildcard domain apex'));
@@ -434,6 +505,7 @@ describe('Settings', () => {
     mockOf(api.settings.get).mockResolvedValue({ allowRegistration: true, acmeEmail: null, templatesSource: null } as never);
     mockOf(api.settings.setTemplatesSource).mockReturnValue(new Promise(() => {}) as never);
     renderWithProviders(<Settings />);
+    await openSection('Security');
 
     await screen.findByLabelText('Template registry source');
     fireEvent.click(saveButtonNextTo('Template registry source'));
@@ -444,6 +516,7 @@ describe('Settings', () => {
     mockOf(api.settings.get).mockResolvedValue({ allowRegistration: true, acmeEmail: null, templatesSource: '/etc/ninedeploy/registry.json' } as never);
     mockOf(api.settings.setTemplatesSource).mockRejectedValue(new Error('500'));
     renderWithProviders(<Settings />);
+    await openSection('Security');
 
     const input = await screen.findByLabelText('Template registry source') as HTMLInputElement;
     await waitFor(() => expect(input.value).toBe('/etc/ninedeploy/registry.json'));
@@ -456,6 +529,7 @@ describe('Settings', () => {
     mockOf(api.settings.get).mockResolvedValue({ allowRegistration: true, acmeEmail: null } as never);
     mockOf(api.settings.setAcmeEmail).mockReturnValue(new Promise(() => {}) as never);
     renderWithProviders(<Settings />);
+    await openSection('Security');
 
     await screen.findByLabelText('ACME account email');
     fireEvent.click(saveButtonNextTo('ACME account email'));
@@ -466,6 +540,7 @@ describe('Settings', () => {
     mockOf(api.settings.get).mockResolvedValue({ allowRegistration: true, acmeEmail: null } as never);
     mockOf(api.settings.setAcmeEmail).mockRejectedValue(new Error('500'));
     renderWithProviders(<Settings />);
+    await openSection('Security');
 
     const input = await screen.findByLabelText('ACME account email') as HTMLInputElement;
     expect(input.value).toBe('');
@@ -481,6 +556,7 @@ describe('Settings', () => {
       .mockResolvedValueOnce({ allowRegistration: false } as never);
     mockOf(api.settings.setAllowRegistration).mockResolvedValue({ ok: true, allowRegistration: false } as never);
     renderWithProviders(<Settings />);
+    await openSection('Security');
 
     const sw = await screen.findByRole('switch');
     expect(sw).toHaveAttribute('aria-checked', 'true');
@@ -496,6 +572,7 @@ describe('Settings', () => {
     mockOf(api.settings.get).mockReturnValue(new Promise((r) => { resolveGet = r; }) as never);
     mockOf(api.settings.setAllowRegistration).mockRejectedValue(new Error('500'));
     renderWithProviders(<Settings />);
+    await openSection('Security');
 
     const sw = await screen.findByRole('switch');
     expect(sw).toHaveAttribute('aria-checked', 'true'); // optimistic default
@@ -512,6 +589,7 @@ describe('Settings', () => {
       new Promise((r) => { resolveToggle = r; }) as never,
     );
     renderWithProviders(<Settings />);
+    await openSection('Security');
 
     const sw = await screen.findByRole('switch');
     await user.click(sw);
@@ -523,6 +601,7 @@ describe('Settings', () => {
   it('renders the switch disabled while the settings query is loading', async () => {
     mockOf(api.settings.get).mockReturnValue(new Promise(() => {}) as never); // never resolves
     renderWithProviders(<Settings />);
+    await openSection('Security');
     const sw = await screen.findByRole('switch');
     expect(sw).toBeDisabled();
     expect(sw).toHaveAttribute('aria-checked', 'true'); // optimistic default

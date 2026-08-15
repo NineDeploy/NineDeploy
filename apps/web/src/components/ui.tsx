@@ -21,7 +21,7 @@ export function BrandMark({ size = 28 }: { size?: number }) {
         width: size,
         height: size,
         fontSize: size * 0.5,
-        background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #d946ef 100%)',
+        background: 'linear-gradient(135deg, var(--nd-accent) 0%, var(--nd-accent-strong) 100%)',
       }}
     >
       9
@@ -35,7 +35,7 @@ type Size = 'sm' | 'md' | 'lg';
 
 const VARIANTS: Record<Variant, string> = {
   primary:
-    'text-white shadow-lg shadow-indigo-500/25 hover:shadow-indigo-500/40 hover:brightness-110 [background-image:linear-gradient(135deg,#6366f1,#8b5cf6)]',
+    'text-white shadow-lg shadow-indigo-500/25 hover:shadow-indigo-500/40 hover:brightness-110 [background-image:linear-gradient(135deg,var(--nd-accent),var(--nd-accent-strong))]',
   secondary: 'bg-white/[0.06] hover:bg-white/[0.1] text-slate-100 ring-1 ring-inset ring-white/10',
   ghost: 'hover:bg-white/[0.08] text-slate-300',
   danger: 'bg-rose-500/90 hover:bg-rose-500 text-white',

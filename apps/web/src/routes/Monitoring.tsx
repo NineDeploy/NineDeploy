@@ -4,15 +4,10 @@ import { Activity, BellRing, Cpu, Database, Gauge, HardDrive, MemoryStick, Serve
 import { Link } from 'react-router';
 import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.js';
-import { Button, Card, Input, Select, Skeleton, StatusBadge, cn } from '../components/ui.js';
+import { useToast } from '../components/Toast.js';
+import { Button, Card, ErrorCard, Input, PageHeader, Select, Skeleton, StatusBadge, cn } from '../components/ui.js';
 import { Sparkline } from '../components/Sparkline.js';
-
-const fmtBytes = (b: number | null | undefined) => {
-  if (!b) return '—';
-  const gb = b / 1024 ** 3;
-  if (gb >= 1) return `${gb.toFixed(1)} GB`;
-  return `${(b / 1024 ** 2).toFixed(0)} MB`;
-};
+import { formatBytes } from '../lib/format.js';
 
 export function Monitoring() {
   const { user: me } = useAuth();
@@ -25,16 +20,13 @@ export function Monitoring() {
 
   return (
     <div className="nd-fade">
-      <div className="mb-6 flex items-center gap-2">
-        <Activity size={20} className="text-indigo-400" />
-        <h1 className="text-2xl font-semibold tracking-tight">Monitoring</h1>
-      </div>
+      <PageHeader icon={<Activity size={18} />} title="Monitoring" subtitle="Host and container resource metrics." />
 
       {/* Host overview */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard icon={<Cpu size={16} />} label="CPU" value={host ? `${host.cpuCores} cores` : '—'} sub={host ? `load ${host.load1.toFixed(2)}` : ''} />
-        <BarCard icon={<MemoryStick size={16} />} label="Memory" pct={memPct} text={host ? `${fmtBytes(host.memUsedBytes)} / ${fmtBytes(host.memTotalBytes)}` : '—'} />
-        <BarCard icon={<HardDrive size={16} />} label="Disk" pct={diskPct} text={host ? `${fmtBytes(host.diskUsedBytes)} / ${fmtBytes(host.diskTotalBytes)}` : '—'} />
+        <BarCard icon={<MemoryStick size={16} />} label="Memory" pct={memPct} text={host ? `${formatBytes(host.memUsedBytes)} / ${formatBytes(host.memTotalBytes)}` : '—'} />
+        <BarCard icon={<HardDrive size={16} />} label="Disk" pct={diskPct} text={host ? `${formatBytes(host.diskUsedBytes)} / ${formatBytes(host.diskTotalBytes)}` : '—'} />
         <StatCard icon={<Gauge size={16} />} label="Workloads" value={`${containers.length}`} sub="containers running" />
       </div>
 
@@ -49,6 +41,8 @@ export function Monitoring() {
             </Card>
           ))}
         </div>
+      ) : stats.isError ? (
+        <ErrorCard title="Couldn't load metrics" error={stats.error} onRetry={() => stats.refetch()} />
       ) : containers.length === 0 ? (
         <Card className="p-10 text-center text-sm text-slate-500">No running workloads yet.</Card>
       ) : (
@@ -66,6 +60,7 @@ export function Monitoring() {
 
 function AlertRulesCard({ isAdmin }: { isAdmin: boolean }) {
   const qc = useQueryClient();
+  const { toast } = useToast();
   const rules = useQuery({ queryKey: ['alerts'], queryFn: () => api.alerts.list() });
   const [name, setName] = useState('');
   const [metric, setMetric] = useState<'cpu' | 'memory' | 'cert-expiry'>('cpu');
@@ -89,12 +84,18 @@ function AlertRulesCard({ isAdmin }: { isAdmin: boolean }) {
     onSuccess: () => {
       setName('');
       void qc.invalidateQueries({ queryKey: ['alerts'] });
+      toast('Alert rule created', 'success');
     },
+    onError: () => toast('Could not create the alert rule', 'error'),
   });
 
   const remove = useMutation({
     mutationFn: (id: number) => api.alerts.remove(id),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ['alerts'] }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['alerts'] });
+      toast('Alert rule deleted', 'success');
+    },
+    onError: () => toast('Could not delete the alert rule', 'error'),
   });
 
   const rulesList = rules.data ?? [];
@@ -112,6 +113,8 @@ function AlertRulesCard({ isAdmin }: { isAdmin: boolean }) {
       <Card className="p-4">
         {rules.isLoading ? (
           <Skeleton className="h-16 w-full" />
+        ) : rules.isError ? (
+          <ErrorCard title="Couldn't load alert rules" error={rules.error} onRetry={() => rules.refetch()} />
         ) : rulesList.length === 0 ? (
           <p className="py-4 text-center text-sm text-slate-500">
             No alert rules yet — add one to get notified when a metric crosses a threshold.
@@ -255,7 +258,7 @@ function ContainerCard({ c }: { c: import('@ninedeploy/sdk').ContainerStat }) {
         {isService && <div className="ml-auto"><ServiceSpark id={c.refId} /></div>}
       </div>
 
-      <LimitsRow kind={c.kind} id={c.refId} />
+      <LimitsRow kind={c.kind} id={c.refId} memLimitMb={c.memLimitMb} />
     </Card>
   );
   // Service cards link to their detail page; the interactive affordance is real.
@@ -268,8 +271,9 @@ function ServiceSpark({ id }: { id: number }) {
   return <Sparkline points={pts} width={130} height={34} />;
 }
 
-function LimitsRow({ kind, id }: { kind: 'service' | 'database'; id: number }) {
+function LimitsRow({ kind, id, memLimitMb }: { kind: 'service' | 'database'; id: number; memLimitMb: number }) {
   const qc = useQueryClient();
+  const { toast } = useToast();
   const [cpu, setCpu] = useState('');
   const [mem, setMem] = useState('');
 
@@ -278,7 +282,11 @@ function LimitsRow({ kind, id }: { kind: 'service' | 'database'; id: number }) {
       const input = { cpuShares: cpu ? Number(cpu) : 0, memLimitMb: mem ? Number(mem) : 0 };
       return kind === 'service' ? api.limits.setService(id, input) : api.limits.setDatabase(id, input);
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['stats'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['stats'] });
+      toast('Limits updated', 'success');
+    },
+    onError: () => toast('Could not update the limits', 'error'),
   });
 
   // local form submit
@@ -287,10 +295,13 @@ function LimitsRow({ kind, id }: { kind: 'service' | 'database'; id: number }) {
     save.mutate();
   };
 
+  // Prefill with the current limits whenever the container (re)mounts or the
+  // reported limit changes; cpu shares are not exposed by the stats API, so
+  // that field starts empty (placeholder describes the unit).
   useEffect(() => {
     setCpu('');
-    setMem('');
-  }, [id]);
+    setMem(memLimitMb > 0 ? String(memLimitMb) : '');
+  }, [id, memLimitMb]);
 
   return (
     <form onSubmit={onSubmit} className="mt-4 flex items-center gap-2 border-t border-white/5 pt-3">

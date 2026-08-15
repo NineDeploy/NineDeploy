@@ -9,12 +9,19 @@ vi.mock('../src/lib/api.js', async () => {
   return createFakeApiModule();
 });
 
+const toastSpy = vi.hoisted(() => ({ toast: vi.fn() }));
+vi.mock('../src/components/Toast.js', async () => {
+  const actual = await vi.importActual<typeof import('../src/components/Toast.js')>('../src/components/Toast.js');
+  return { ...actual, useToast: () => toastSpy };
+});
+
 const backups = [
   { id: 1, databaseId: 10, databaseName: 'postgres-main', status: 'running', sizeBytes: 512 * 1024, createdAt: '2026-01-01T00:00:00Z' },
   { id: 2, databaseId: null, databaseName: null, status: 'failed', sizeBytes: 2 * 1024 ** 3, createdAt: '2026-01-02T00:00:00Z' },
   { id: 3, databaseId: 12, databaseName: 'cache', status: 'error', sizeBytes: 0, createdAt: '2026-01-03T00:00:00Z' },
   { id: 4, databaseId: 13, databaseName: 'tiny', status: 'idle', sizeBytes: 100, createdAt: '2026-01-04T00:00:00Z' },
   { id: 5, databaseId: 14, databaseName: 'medium', status: 'idle', sizeBytes: 50 * 1024 * 1024, createdAt: '2026-01-05T00:00:00Z' },
+  { id: 6, databaseId: 99, databaseName: null, status: 'idle', sizeBytes: 10, createdAt: '2026-01-06T00:00:00Z' },
 ];
 
 describe('Backups', () => {
@@ -44,13 +51,25 @@ describe('Backups', () => {
     mockOf(api.backups.list).mockResolvedValue(backups as never);
     renderWithProviders(<Backups />);
     await screen.findByText('postgres-main');
-    expect(screen.getByText('512 KB')).toBeInTheDocument(); // 512*1024 -> 0.5MB <1MB -> KB
-    expect(screen.getByText('2.00 GB')).toBeInTheDocument(); // >= 1024 MB
-    expect(screen.getByText('50.0 MB')).toBeInTheDocument(); // MB branch
-    expect(screen.getAllByText('—').length).toBeGreaterThan(0); // 0 bytes + null databaseName
+    expect(screen.getByText('524.3 KB')).toBeInTheDocument(); // decimal formatting
+    expect(screen.getByText('2.1 GB')).toBeInTheDocument();
+    expect(screen.getByText('52.4 MB')).toBeInTheDocument();
+    expect(screen.getByText('100 B')).toBeInTheDocument();
+    expect(screen.getAllByText('—').length).toBeGreaterThan(0); // null databaseName
     expect(screen.getByText('running')).toBeInTheDocument();
     expect(screen.getByText('error')).toBeInTheDocument();
     expect(screen.getAllByText('idle').length).toBeGreaterThan(0); // multiple idle backups
+    expect(screen.getByText(/01 Jan 2026/)).toBeInTheDocument(); // formatDateTime (en-GB)
+  });
+
+  it('shows an error card with retry when the backups query fails', async () => {
+    mockOf(api.backups.list).mockRejectedValue(new Error('boom') as never);
+    mockOf(api.backupDestinations.list).mockResolvedValue([] as never);
+    renderWithProviders(<Backups />);
+    expect(await screen.findByText("Couldn't load backups")).toBeInTheDocument();
+    expect(screen.getByText('boom')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    await waitFor(() => expect(api.backups.list).toHaveBeenCalledTimes(2));
   });
 
   it('restores a backup after confirmation', async () => {
@@ -58,25 +77,45 @@ describe('Backups', () => {
     mockOf(api.backups.restore).mockResolvedValue({ ok: true } as never);
     renderWithProviders(<Backups />);
     const buttons = await screen.findAllByTitle('Restore');
-    fireEvent.click(buttons[0]);
+    fireEvent.click(buttons[0]!);
+    // Two matches: the row icon button (title) and the dialog confirm button.
+    const confirm = screen.getAllByRole('button', { name: 'Restore' }).at(-1)!;
+    fireEvent.click(confirm);
     await waitFor(() => expect(api.backups.restore).toHaveBeenCalledWith(10, 1));
   });
 
-  it('skips restore when confirmation is declined', async () => {
-    vi.stubGlobal('confirm', vi.fn(() => false));
+  it('cancels a restore without calling the API', async () => {
     mockOf(api.backups.list).mockResolvedValue(backups as never);
     renderWithProviders(<Backups />);
     const buttons = await screen.findAllByTitle('Restore');
-    fireEvent.click(buttons[0]);
+    fireEvent.click(buttons[0]!);
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(api.backups.restore).not.toHaveBeenCalled();  });
+
+  it('opens a restore dialog for a backup without a database name and ignores restores without a database', async () => {
+    mockOf(api.backups.list).mockResolvedValue(backups as never);
+    mockOf(api.backups.restore).mockResolvedValue({ ok: true } as never);
+    renderWithProviders(<Backups />);
+    const buttons = await screen.findAllByTitle('Restore');
+    // Row with databaseId null -> clicking does nothing (no dialog, no call).
+    fireEvent.click(buttons[1]!);
+    expect(screen.queryByRole('button', { name: 'Cancel' })).not.toBeInTheDocument();
     expect(api.backups.restore).not.toHaveBeenCalled();
+    // Row with a databaseId but a null name falls back to generic copy.
+    fireEvent.click(buttons[5]!);
+    expect(await screen.findByText('Restore the database from this backup? Current data will be overwritten.')).toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole('button', { name: 'Restore' }).at(-1)!);
+    await waitFor(() => expect(api.backups.restore).toHaveBeenCalledWith(99, 6));
   });
 
-  it('deletes a backup', async () => {
+  it('deletes a backup after confirmation', async () => {
     mockOf(api.backups.list).mockResolvedValue(backups as never);
     mockOf(api.backups.remove).mockResolvedValue(undefined as never);
     renderWithProviders(<Backups />);
     const buttons = await screen.findAllByTitle('Delete');
-    fireEvent.click(buttons[0]);
+    fireEvent.click(buttons[0]!);
+    const confirm = screen.getAllByRole('button', { name: 'Delete' }).at(-1)!;
+    fireEvent.click(confirm);
     await waitFor(() => expect(api.backups.remove).toHaveBeenCalledWith(1));
   });
 
@@ -116,6 +155,50 @@ describe('Backups', () => {
     expect(fetchMock.mock.calls[0]?.[1]?.headers).toEqual({ Authorization: 'Bearer ' });
   });
 
+  it('toasts on restore and delete failures', async () => {
+    mockOf(api.backups.list).mockResolvedValue(backups as never);
+    mockOf(api.backups.restore).mockRejectedValue(new Error('nope') as never);
+    mockOf(api.backups.remove).mockRejectedValue(new Error('gone') as never);
+    renderWithProviders(<Backups />);
+    const restoreButtons = await screen.findAllByTitle('Restore');
+    fireEvent.click(restoreButtons[0]!);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Restore' }).at(-1)!);
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Restore failed', 'error'));
+    fireEvent.click(screen.getAllByTitle('Delete')[0]!);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Delete' }).at(-1)!);
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Could not delete the backup', 'error'));
+  });
+
+  it('toasts when a destination create or removal fails', async () => {
+    mockOf(api.backups.list).mockResolvedValue([] as never);
+    mockOf(api.backupDestinations.list).mockResolvedValue([
+      { id: 1, name: 'minio', endpoint: 'https://s3.example.com', region: 'eu', bucket: 'b', prefix: 'nd', active: true, createdAt: 'x' },
+    ] as never);
+    mockOf(api.backupDestinations.create).mockRejectedValueOnce(new Error('dup') as never);
+    mockOf(api.backupDestinations.remove).mockRejectedValueOnce(new Error('busy') as never);
+    renderWithProviders(<Backups />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Add destination' }));
+    const values = ['x', 'https://s3.example.com', 'eu', 'b', 'nd', 'ak'];
+    const inputs = screen.getAllByRole('textbox');
+    for (let i = 0; i < values.length; i++) fireEvent.change(inputs[i]!, { target: { value: values[i] } });
+    fireEvent.change(document.querySelector<HTMLInputElement>('input[type="password"]')!, { target: { value: 'sk' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save destination' }));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Could not save the destination', 'error'));
+    fireEvent.click(screen.getAllByTitle('Remove destination')[0]!);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Delete' }).at(-1)!);
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Could not remove the destination', 'error'));
+  });
+
+  it('shows an error card with retry for destinations', async () => {
+    mockOf(api.backups.list).mockResolvedValue([] as never);
+    mockOf(api.backupDestinations.list).mockRejectedValue(new Error('s3 down') as never);
+    renderWithProviders(<Backups />);
+    expect(await screen.findByText("Couldn't load destinations")).toBeInTheDocument();
+    expect(screen.getByText('s3 down')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    await waitFor(() => expect(api.backupDestinations.list).toHaveBeenCalledTimes(2));
+  });
+
   // ── off-site destinations ───────────────────────────────────────────────
   it('renders destinations with active/paused badges and test/remove actions', async () => {
     mockOf(api.backups.list).mockResolvedValue([] as never);
@@ -135,7 +218,10 @@ describe('Backups', () => {
     fireEvent.click(screen.getAllByTitle('Test connection')[0]!);
     await waitFor(() => expect(api.backupDestinations.test).toHaveBeenCalledWith(1));
     fireEvent.click(screen.getAllByTitle('Remove destination')[1]!);
+    // Removal goes through the shared confirm dialog now.
+    fireEvent.click(screen.getAllByRole('button', { name: 'Delete' }).at(-1)!);
     await waitFor(() => expect(api.backupDestinations.remove).toHaveBeenCalledWith(2));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Destination removed', 'success'));
   });
 
   it('creates a destination from the form', async () => {
@@ -196,12 +282,17 @@ describe('Backups', () => {
     renderWithProviders(<Backups />);
     fireEvent.click(await screen.findByText('active'));
     await waitFor(() => expect(api.backupDestinations.update).toHaveBeenCalledWith(1, { active: false }));
-    // Test failures surface via alert (non-Error rejections use the generic message).
+    // Test results surface via toasts now (non-Error rejections use the generic message).
     mockOf(api.backupDestinations.test).mockRejectedValueOnce(new Error('no route') as never);
     fireEvent.click(screen.getByTitle('Test connection'));
-    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith('no route'));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('no route', 'error'));
     mockOf(api.backupDestinations.test).mockRejectedValueOnce('boom' as never);
     fireEvent.click(screen.getByTitle('Test connection'));
-    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith('Test failed'));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Test failed', 'error'));
+    // Success path toasts too.
+    mockOf(api.backupDestinations.test).mockResolvedValueOnce({ ok: true } as never);
+    fireEvent.click(screen.getByTitle('Test connection'));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Destination reachable — credentials work', 'success'));
+    expect(alertSpy).not.toHaveBeenCalled();
   });
 });

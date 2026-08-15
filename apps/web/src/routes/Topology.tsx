@@ -15,7 +15,7 @@ import {
 import '@xyflow/react/dist/style.css';
 import { Database, Globe, Server } from 'lucide-react';
 import { api } from '../lib/api.js';
-import { StatusBadge, Button } from '../components/ui.js';
+import { ErrorCard, PageHeader, StatusBadge } from '../components/ui.js';
 
 const SERVICE_X = 380;
 const DB_X = 780;
@@ -30,8 +30,8 @@ function ServiceNode(props: NodeProps) {
   const data = props.data as ServiceData;
   return (
     <div className="w-52 rounded-xl border border-indigo-500/30 bg-slate-900/90 px-3 py-2.5 shadow-lg shadow-black/40 backdrop-blur">
-      <Handle type="target" position={Position.Left} style={{ background: '#6366f1' }} />
-      <Handle type="source" position={Position.Right} style={{ background: '#6366f1' }} />
+      <Handle type="target" position={Position.Left} style={{ background: 'var(--nd-accent)' }} />
+      <Handle type="source" position={Position.Right} style={{ background: 'var(--nd-accent)' }} />
       <div className="flex items-center gap-2">
         <span className="grid h-7 w-7 place-items-center rounded-lg bg-indigo-500/15 text-indigo-300">
           <Server size={14} />
@@ -144,20 +144,14 @@ export function Topology() {
 
   return (
     <div>
-      <div className="mb-5 flex items-end justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Topology</h1>
-          <p className="mt-1 text-sm text-slate-400">How services, databases and domains connect.</p>
-        </div>
-      </div>
+      <PageHeader title="Topology" subtitle="How services, databases and domains connect." />
 
       <div className="nd-fade h-[72vh] overflow-hidden rounded-2xl border border-white/10 bg-slate-950/40">
         {graph.isLoading ? (
           <div className="grid h-full place-items-center text-sm text-slate-500">Loading graph…</div>
         ) : graph.isError ? (
-          <div className="grid h-full place-items-center gap-2 text-sm text-rose-300">
-            Couldn't load the topology.
-            <Button size="sm" variant="secondary" onClick={() => graph.refetch()}>Retry</Button>
+          <div className="grid h-full place-items-center">
+            <ErrorCard title="Couldn't load the topology" error={graph.error} onRetry={() => graph.refetch()} />
           </div>
         ) : nodes.length === 0 ? (
           <div className="grid h-full place-items-center text-sm text-slate-500">Nothing deployed yet.</div>

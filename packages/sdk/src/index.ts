@@ -154,7 +154,8 @@ export interface NineDeployClient {
     remove: (id: number) => Promise<void>;
   };
   activity: {
-    list: () => Promise<Array<{ id: number; userId: number | null; action: string; entity: string | null; ts: string }>>;
+    /** Optional `entity` filters the audit trail server-side, e.g. `?entity=my-app`. */
+    list: (entity?: string) => Promise<Array<{ id: number; userId: number | null; action: string; entity: string | null; ts: string }>>;
   };
   alerts: {
     list: () => Promise<AlertRule[]>;
@@ -428,7 +429,7 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
       },
     },
   activity: {
-    list: () => get('/v1/activity'),
+    list: (entity?: string) => get(`/v1/activity${entity ? `?entity=${encodeURIComponent(entity)}` : ''}`),
   },
   alerts: {
     list: () => get('/v1/alerts'),

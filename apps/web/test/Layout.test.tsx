@@ -13,6 +13,7 @@ const apiMock = vi.hoisted(() => ({
     services: { list: vi.fn() },
     databases: { list: vi.fn() },
     templates: { list: vi.fn() },
+    projects: { list: vi.fn() },
   },
 }));
 
@@ -21,11 +22,13 @@ vi.mock('../src/lib/theme.js', () => ({ useTheme: themeMock.useTheme }));
 vi.mock('../src/lib/api.js', () => apiMock);
 
 import { Layout } from '../src/components/Layout.js';
+import { ProjectScopeProvider } from '../src/lib/projects.js';
 
 function renderLayout(path = '/databases') {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const utils = render(
     <QueryClientProvider client={queryClient}>
+      <ProjectScopeProvider>
       <MemoryRouter initialEntries={[path]}>
         <Routes>
           <Route element={<Layout />}>
@@ -33,6 +36,7 @@ function renderLayout(path = '/databases') {
           </Route>
         </Routes>
       </MemoryRouter>
+      </ProjectScopeProvider>
     </QueryClientProvider>,
   );
   return { ...utils, queryClient };
@@ -308,6 +312,24 @@ describe('Layout', () => {
   it('renders the outlet content', () => {
     renderLayout();
     expect(screen.getByTestId('outlet')).toHaveTextContent('page');
+  });
+
+  it('shows the global project switcher and scopes on change', async () => {
+    localStorage.removeItem('ninedeploy.projectId');
+    apiMock.api.projects.list.mockResolvedValue([
+      { id: 3, name: 'Acme', slug: 'acme', description: null, serviceCount: 1, databaseCount: 0, createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' },
+    ]);
+    renderLayout();
+    const select = await screen.findByLabelText('Project scope');
+    expect(select).toHaveValue('');
+    const acme = await screen.findByRole('option', { name: 'Acme' });
+    expect(acme).toHaveValue('3');
+    await act(async () => { fireEvent.change(select, { target: { value: '3' } }); });
+    expect(localStorage.getItem('ninedeploy.projectId')).toBe('3');
+    // Switching back to All clears the stored scope.
+    await act(async () => { fireEvent.change(select, { target: { value: '' } }); });
+    expect(localStorage.getItem('ninedeploy.projectId')).toBeNull();
+    localStorage.removeItem('ninedeploy.projectId');
   });
 
   it('colors delete and create actions with their dedicated tones', async () => {

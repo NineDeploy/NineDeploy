@@ -25,10 +25,10 @@ export function About() {
     <div className="max-w-3xl">
       {/* Hero */}
       <Card className="mb-5 overflow-hidden">
-        <div className="relative px-6 py-8" style={{ background: 'linear-gradient(135deg, rgba(99,102,241,.08), rgba(139,92,246,.04))' }}>
+        <div className="relative px-6 py-8" style={{ background: 'linear-gradient(135deg, color-mix(in srgb, var(--nd-accent) 8%, transparent), color-mix(in srgb, var(--nd-accent-bright) 4%, transparent))' }}>
           <div className="flex items-center gap-4">
             <div className="grid h-14 w-14 place-items-center rounded-2xl text-2xl font-bold text-white shadow-lg shadow-indigo-500/30"
-              style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6, #d946ef)' }}>
+              style={{ background: 'linear-gradient(135deg, var(--nd-accent), var(--nd-accent-strong))' }}>
               9
             </div>
             <div>

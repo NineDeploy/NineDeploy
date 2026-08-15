@@ -1,7 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useState } from 'react';
 import type { ProjectEntry } from '@ninedeploy/sdk';
-import { api } from './api.js';
 
 /**
  * Global project scope (the Dokploy #2805 problem, solved differently):
@@ -35,7 +34,15 @@ function readStoredId(): number | null {
 
 export function ProjectScopeProvider({ children }: { children: ReactNode }) {
   const [selectedId, setSelectedId] = useState<number | null>(readStoredId);
-  const { data } = useQuery({ queryKey: ['projects'], queryFn: () => api.projects.list() });
+  // The api client is imported dynamically: test helpers mock `lib/api.js`
+  // with a factory that itself imports this module, and a static import
+  // here would form a module-resolution cycle that deadlocks vitest.
+  // `?? []` keeps the provider resilient when the call resolves to nothing
+  // (mocks, empty 2xx bodies).
+  const { data } = useQuery({
+    queryKey: ['projects'],
+    queryFn: async () => (await (await import('./api.js')).api.projects.list()) ?? [],
+  });
 
   const projects = data ?? [];
   // Drop a stored selection that no longer exists (deleted project).
@@ -62,8 +69,14 @@ export function ProjectScopeProvider({ children }: { children: ReactNode }) {
   );
 }
 
+/** Fallback scope when rendered outside the provider (storybooks, bare tests): "All projects". */
+const FALLBACK: ProjectScope = {
+  projects: [],
+  selectedId: null,
+  selected: null,
+  select: () => {},
+};
+
 export function useProjectScope(): ProjectScope {
-  const ctx = useContext(ProjectContext);
-  if (!ctx) throw new Error('useProjectScope must be used inside <ProjectScopeProvider>');
-  return ctx;
+  return useContext(ProjectContext) ?? FALLBACK;
 }

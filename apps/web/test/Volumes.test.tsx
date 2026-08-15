@@ -25,7 +25,6 @@ const volumes = [
 describe('Volumes', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.stubGlobal('confirm', vi.fn(() => true));
   });
 
   it('shows skeleton while loading', () => {
@@ -45,7 +44,7 @@ describe('Volumes', () => {
     } as never);
     renderWithProviders(<Volumes />);
     await screen.findByText('No volumes');
-    expect(screen.getByText((_, el) => el?.textContent === '0 volumes · — used')).toBeInTheDocument();
+    expect(screen.getByText((_, el) => el?.textContent === '0 volumes · 0 B used')).toBeInTheDocument();
     // Docker resources card with metrics
     expect(screen.getByText('ninedeploy')).toBeInTheDocument();
     expect(screen.getByText('3/5 active')).toBeInTheDocument();
@@ -61,16 +60,17 @@ describe('Volumes', () => {
     } as never);
     renderWithProviders(<Volumes />);
     await screen.findByText('db');
-    expect(screen.getByText('512.0 MB')).toBeInTheDocument(); // MB branch (512 MiB)
-    expect(screen.getByText('2.00 GB')).toBeInTheDocument(); // GB branch
+    expect(screen.getByText('536.9 MB')).toBeInTheDocument(); // decimal 1000-based formatting
+    expect(screen.getByText('2.1 GB')).toBeInTheDocument();
+    expect(screen.getByText('100 B')).toBeInTheDocument();
     expect(screen.getByText('Retained')).toBeInTheDocument();
     expect(screen.getByText('no active owner')).toBeInTheDocument();
     expect(screen.getAllByText('attached · stopped').length).toBe(2);
     expect(screen.getByText('retained · reusable')).toBeInTheDocument();
     // retained count in subtitle
     expect(screen.getByText(/1 retained/)).toBeInTheDocument();
-    // docker resources reclaimable (rendered as literal text incl. <span> markup)
-    expect(screen.getAllByText((_, el) => el?.textContent?.includes('2 MB') === true).length).toBeGreaterThan(0);
+    // docker resources reclaimable rendered as a real element, not literal text
+    expect(screen.getByText('2 MB')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Backups' })).toHaveAttribute('href', '/backups');
   });
 
@@ -84,21 +84,10 @@ describe('Volumes', () => {
     // Delete stays disabled until the exact volume name is typed.
     const del = screen.getByRole('button', { name: /^Delete$/ });
     expect(del).toBeDisabled();
-    await user.type(screen.getByLabelText('Confirm volume name'), 'nd-data');
+    await user.type(screen.getByPlaceholderText('nd-data'), 'nd-data');
     expect(del).toBeEnabled();
     fireEvent.click(del);
     await waitFor(() => expect(api.volumes.remove).toHaveBeenCalledWith('nd-data'));
-  });
-
-  it('ignores a form submit with a mismatched name (button disabled path)', async () => {
-    const user = userEvent.setup();
-    mockOf(api.volumes.list).mockResolvedValue(volumes as never);
-    mockOf(api.system.resources).mockResolvedValue({} as never);
-    renderWithProviders(<Volumes />);
-    fireEvent.click((await screen.findAllByTitle('Delete volume (destructive)'))[0]!);
-    await user.type(screen.getByLabelText('Confirm volume name'), 'nope');
-    fireEvent.submit(screen.getByLabelText('Confirm volume name').closest('form')!);
-    expect(api.volumes.remove).not.toHaveBeenCalled();
   });
 
   it('keeps delete disabled for a mismatched volume name', async () => {
@@ -107,7 +96,7 @@ describe('Volumes', () => {
     mockOf(api.system.resources).mockResolvedValue({} as never);
     renderWithProviders(<Volumes />);
     fireEvent.click((await screen.findAllByTitle('Delete volume (destructive)'))[0]!);
-    await user.type(screen.getByLabelText('Confirm volume name'), 'wrong');
+    await user.type(screen.getByPlaceholderText('nd-data'), 'wrong');
     expect(screen.getByRole('button', { name: /^Delete$/ })).toBeDisabled();
     expect(api.volumes.remove).not.toHaveBeenCalled();
   });
@@ -130,7 +119,7 @@ describe('Volumes', () => {
     mockOf(api.volumes.remove).mockRejectedValue('plain' as never);
     renderWithProviders(<Volumes />);
     fireEvent.click((await screen.findAllByTitle('Delete volume (destructive)'))[0]!);
-    await user.type(screen.getByLabelText('Confirm volume name'), 'nd-data');
+    await user.type(screen.getByPlaceholderText('nd-data'), 'nd-data');
     fireEvent.click(screen.getByRole('button', { name: /^Delete$/ }));
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Delete failed', 'error'));
   });
@@ -145,16 +134,14 @@ describe('Volumes', () => {
     expect(lock).toBeInTheDocument();
   });
 
-  it('shows the pending label while a delete is in flight', async () => {
-    const user = userEvent.setup();
+  it('closes the confirm dialog without deleting on cancel', async () => {
     mockOf(api.volumes.list).mockResolvedValue(volumes as never);
     mockOf(api.system.resources).mockResolvedValue({} as never);
-    mockOf(api.volumes.remove).mockReturnValue(new Promise(() => {}) as never);
     renderWithProviders(<Volumes />);
     fireEvent.click((await screen.findAllByTitle('Delete volume (destructive)'))[0]!);
-    await user.type(screen.getByLabelText('Confirm volume name'), 'nd-data');
-    fireEvent.click(screen.getByRole('button', { name: /^Delete$/ }));
-    expect(await screen.findByText('…')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByPlaceholderText('nd-data')).not.toBeInTheDocument();
+    expect(api.volumes.remove).not.toHaveBeenCalled();
   });
 
   it('reports delete failures via toast', async () => {
@@ -164,19 +151,19 @@ describe('Volumes', () => {
     mockOf(api.volumes.remove).mockRejectedValue(new Error('boom') as never);
     renderWithProviders(<Volumes />);
     fireEvent.click((await screen.findAllByTitle('Delete volume (destructive)'))[0]!);
-    await user.type(screen.getByLabelText('Confirm volume name'), 'nd-data');
+    await user.type(screen.getByPlaceholderText('nd-data'), 'nd-data');
     fireEvent.click(screen.getByRole('button', { name: /^Delete$/ }));
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('boom', 'error'));
   });
 
-  it('cancels the inline delete form without deleting', async () => {
-    mockOf(api.volumes.list).mockResolvedValue(volumes as never);
+  it('shows an error card with retry when the volumes query fails', async () => {
+    mockOf(api.volumes.list).mockRejectedValue(new Error('docker down') as never);
     mockOf(api.system.resources).mockResolvedValue({} as never);
     renderWithProviders(<Volumes />);
-    fireEvent.click((await screen.findAllByTitle('Delete volume (destructive)'))[0]!);
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    expect(screen.queryByLabelText('Confirm volume name')).not.toBeInTheDocument();
-    expect(api.volumes.remove).not.toHaveBeenCalled();
+    expect(await screen.findByText("Couldn't load volumes")).toBeInTheDocument();
+    expect(screen.getByText('docker down')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    await waitFor(() => expect(api.volumes.list).toHaveBeenCalledTimes(2));
   });
 
   it('prunes images and shows reclaimed resources', async () => {
@@ -191,7 +178,15 @@ describe('Volumes', () => {
     renderWithProviders(<Volumes />);
     fireEvent.click(await screen.findByRole('button', { name: /Prune images/ }));
     await waitFor(() => expect(api.system.pruneImages).toHaveBeenCalled());
-    // reclaimable is rendered via a template literal containing literal <span> markup
-    expect(screen.getAllByText((_, el) => el?.textContent?.includes('300 MB') === true).length).toBeGreaterThan(0);
+    expect(screen.getByText('300 MB')).toBeInTheDocument();
+  });
+
+  it('toasts when a prune fails', async () => {
+    mockOf(api.volumes.list).mockResolvedValue(volumes as never);
+    mockOf(api.system.resources).mockResolvedValue({} as never);
+    mockOf(api.system.pruneImages).mockRejectedValue(new Error('docker busy') as never);
+    renderWithProviders(<Volumes />);
+    fireEvent.click(await screen.findByRole('button', { name: /Prune images/ }));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Prune failed', 'error'));
   });
 });

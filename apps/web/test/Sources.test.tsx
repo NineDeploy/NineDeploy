@@ -32,6 +32,32 @@ describe('Sources', () => {
     await screen.findByText('No sources');
   });
 
+  it('shows an error card with retry when the sources query fails', async () => {
+    mockOf(api.sources.list).mockRejectedValue(new Error('401') as never);
+    renderWithProviders(<Sources />);
+    expect(await screen.findByText("Couldn't load sources")).toBeInTheDocument();
+    expect(screen.getByText('401')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    await waitFor(() => expect(api.sources.list).toHaveBeenCalledTimes(2));
+  });
+
+  it('toasts on create and delete failures', async () => {
+    mockOf(api.sources.list).mockResolvedValue(sources as never);
+    mockOf(api.sources.create).mockRejectedValue(new Error('dup') as never);
+    mockOf(api.sources.remove).mockRejectedValue(new Error('busy') as never);
+    renderWithProviders(<Sources />);
+    fireEvent.click(await screen.findByRole('button', { name: /New source/ }));
+    await userEvent.type(await screen.findByPlaceholderText('github-personal'), 'x');
+    await userEvent.type(screen.getByPlaceholderText('ghp_… / glpat-…'), 'tok');
+    fireEvent.click(screen.getByRole('button', { name: /Save source/ }));
+    await waitFor(() => expect(api.sources.create).toHaveBeenCalled());
+    const buttons = screen.getAllByRole('button');
+    const trash = buttons.find((b) => b.querySelector('svg') !== null && b.className.includes('hover:text-rose-400'))!;
+    await userEvent.click(trash);
+    await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    await waitFor(() => expect(api.sources.remove).toHaveBeenCalled());
+  });
+
   it('renders sources with type labels and credential tags', async () => {
     mockOf(api.sources.list).mockResolvedValue(sources as never);
     renderWithProviders(<Sources />);
@@ -101,7 +127,7 @@ describe('Sources', () => {
     expect(api.sources.create).not.toHaveBeenCalled();
   });
 
-  it('removes a source', async () => {
+  it('removes a source after confirmation', async () => {
     mockOf(api.sources.list).mockResolvedValue(sources as never);
     mockOf(api.sources.remove).mockResolvedValue(undefined as never);
     renderWithProviders(<Sources />);
@@ -110,6 +136,7 @@ describe('Sources', () => {
     const buttons = screen.getAllByRole('button');
     const trash = buttons.find((b) => b.querySelector('svg') !== null && b.className.includes('hover:text-rose-400'))!;
     await userEvent.click(trash);
+    await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
     await waitFor(() => expect(api.sources.remove).toHaveBeenCalledWith(1));
   });
   it('shows a registry username field for registry sources and sends it', async () => {

@@ -80,15 +80,38 @@ describe('Users', () => {
     mockOf(api.users.remove).mockResolvedValue(undefined as never);
     renderWithProviders(<Users />);
     fireEvent.click((await screen.findAllByTitle('Delete user'))[0]!);
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
     await waitFor(() => expect(api.users.remove).toHaveBeenCalledWith(2));
   });
 
-  it('does not delete when confirmation is declined', async () => {
-    vi.stubGlobal('confirm', vi.fn(() => false));
+  it('does not delete when the dialog is cancelled', async () => {
     mockOf(api.users.list).mockResolvedValue(users as never);
     renderWithProviders(<Users />);
     fireEvent.click((await screen.findAllByTitle('Delete user'))[0]!);
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(api.users.remove).not.toHaveBeenCalled();
+  });
+
+  it('shows an error card with retry when the users query fails', async () => {
+    mockOf(api.users.list).mockRejectedValue(new Error('403') as never);
+    renderWithProviders(<Users />);
+    expect(await screen.findByText("Couldn't load users")).toBeInTheDocument();
+    expect(screen.getByText('403')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    await waitFor(() => expect(api.users.list).toHaveBeenCalledTimes(2));
+  });
+
+  it('toasts on role-toggle and delete failures', async () => {
+    mockOf(api.users.list).mockResolvedValue(users as never);
+    mockOf(api.users.setRole).mockRejectedValue(new Error('403') as never);
+    mockOf(api.users.remove).mockRejectedValue(new Error('last admin') as never);
+    renderWithProviders(<Users />);
+    const roleButtons = await screen.findAllByRole('button', { name: /admin|member/ });
+    fireEvent.click(roleButtons[1]!);
+    await waitFor(() => expect(api.users.setRole).toHaveBeenCalledWith(2, 'admin'));
+    fireEvent.click(screen.getAllByTitle('Delete user')[0]!);
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    await waitFor(() => expect(api.users.remove).toHaveBeenCalledWith(2));
   });
 
   it('resets another user password via the inline form', async () => {

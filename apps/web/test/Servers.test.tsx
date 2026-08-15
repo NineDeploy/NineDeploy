@@ -36,6 +36,15 @@ describe('Servers', () => {
     expect(await screen.findByText('No remote servers')).toBeInTheDocument();
   });
 
+  it('shows an error card with retry when the servers query fails', async () => {
+    mockOf(api.servers.list).mockRejectedValue(new Error('agent down') as never);
+    renderWithProviders(<Servers />);
+    expect(await screen.findByText("Couldn't load servers")).toBeInTheDocument();
+    expect(screen.getByText('agent down')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    await waitFor(() => expect(api.servers.list).toHaveBeenCalledTimes(2));
+  });
+
   it('lists servers with status badges', async () => {
     mockOf(api.servers.list).mockResolvedValue(servers as never);
     renderWithProviders(<Servers />);
@@ -81,7 +90,18 @@ describe('Servers', () => {
     fireEvent.click(screen.getAllByTitle('Test connectivity')[0]!);
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Agent unreachable', 'error'));
     fireEvent.click(screen.getAllByTitle('Remove server')[0]!);
+    // Removal goes through the shared confirm dialog.
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
     await waitFor(() => expect(api.servers.remove).toHaveBeenCalledWith(1));
+  });
+
+  it('toasts on remove failures', async () => {
+    mockOf(api.servers.list).mockResolvedValue(servers as never);
+    mockOf(api.servers.remove).mockRejectedValue(new Error('busy') as never);
+    renderWithProviders(<Servers />);
+    fireEvent.click((await screen.findAllByTitle('Remove server'))[0]!);
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Could not remove the server', 'error'));
   });
 
   it('reports registration failures', async () => {
@@ -176,7 +196,7 @@ describe('Servers', () => {
     fireEvent.change(screen.getByPlaceholderText('10.0.0.5'), { target: { value: 'h' } });
     fireEvent.click(screen.getByRole('button', { name: 'Register server' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Copy command' }));
-    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Copy failed', 'error'));
+    // A rejected clipboard write silently keeps the idle label (useCopy).
     fireEvent.click(screen.getByRole('button', { name: 'Copy command' }));
     const btn = await screen.findByRole('button', { name: 'Copy command' });
     expect(btn.textContent).toContain('Copied!');

@@ -33,6 +33,31 @@ describe('Tunnels', () => {
     expect(screen.getByText(/Add a Cloudflare Tunnel token/)).toBeInTheDocument();
   });
 
+  it('shows an error card with retry when the tunnels query fails', async () => {
+    mockOf(api.tunnels.list).mockRejectedValue(new Error('cf down') as never);
+    renderWithProviders(<Tunnels />);
+    expect(await screen.findByText("Couldn't load tunnels")).toBeInTheDocument();
+    expect(screen.getByText('cf down')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    await waitFor(() => expect(api.tunnels.list).toHaveBeenCalledTimes(2));
+  });
+
+  it('toasts on create and delete failures', async () => {
+    mockOf(api.tunnels.list).mockResolvedValue(tunnels as never);
+    mockOf(api.tunnels.create).mockRejectedValue(new Error('bad token') as never);
+    mockOf(api.tunnels.remove).mockRejectedValue(new Error('busy') as never);
+    renderWithProviders(<Tunnels />);
+    fireEvent.click(await screen.findByRole('button', { name: /New tunnel/ }));
+    await userEvent.type(await screen.findByPlaceholderText('production'), 'edge');
+    await userEvent.type(screen.getByPlaceholderText('eyJhIjoi…'), 'tok');
+    fireEvent.click(screen.getByRole('button', { name: /Start tunnel/ }));
+    await waitFor(() => expect(api.tunnels.create).toHaveBeenCalled());
+    const deleteButtons = screen.getAllByRole('button').filter((b) => b.textContent?.trim() === '');
+    fireEvent.click(deleteButtons[0]!);
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    await waitFor(() => expect(api.tunnels.remove).toHaveBeenCalled());
+  });
+
   it('renders the tunnel table with statuses and containers', async () => {
     mockOf(api.tunnels.list).mockResolvedValue(tunnels as never);
     renderWithProviders(<Tunnels />);
@@ -87,13 +112,14 @@ describe('Tunnels', () => {
     expect(await screen.findByText('Starting…')).toBeInTheDocument();
   });
 
-  it('removes a tunnel', async () => {
+  it('removes a tunnel after confirmation', async () => {
     mockOf(api.tunnels.list).mockResolvedValue(tunnels as never);
     mockOf(api.tunnels.remove).mockResolvedValue(undefined as never);
     renderWithProviders(<Tunnels />);
     await screen.findByText('production');
     const deleteButtons = screen.getAllByRole('button').filter((b) => b.textContent?.trim() === '');
     fireEvent.click(deleteButtons[0]!);
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
     await waitFor(() => expect(api.tunnels.remove).toHaveBeenCalledWith(1));
   });
 });
