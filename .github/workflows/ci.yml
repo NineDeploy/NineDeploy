@@ -64,6 +64,22 @@ jobs:
             exit 1
           fi
 
+      # Deprecated-dependency guard: a NON-frozen `pnpm install` re-derives the
+      # ORIGINAL dependency edges into the lockfile, silently re-adding
+      # @esbuild-kit/* and glob@10.5.0 even though patchedDependencies removes
+      # them (pnpm keeps the pre-patch edges when re-resolving). pnpm audit does
+      # NOT flag deprecated packages, so a re-derived lockfile would pass CI
+      # unnoticed. The lockfile is the source of truth for `--frozen-lockfile`
+      # installs, so grep it directly. Fix: hand-prune the edges (see
+      # packages/db migration note) or re-run the deterministic prune script.
+      - name: Check for deprecated dependencies
+        run: |
+          if grep -qE 'esbuild-kit|glob@10\.5\.0' pnpm-lock.yaml; then
+            echo "::error::Deprecated packages re-derived into pnpm-lock.yaml (non-frozen install re-added patched-away edges)"
+            grep -nE 'esbuild-kit|glob@10\.5\.0' pnpm-lock.yaml
+            exit 1
+          fi
+
   docker-image:
     name: Docker image build
     runs-on: ubuntu-latest
