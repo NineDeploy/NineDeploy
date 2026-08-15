@@ -14,6 +14,26 @@ NineDeploy is a self-hosted PaaS that runs on your own server. It wraps PM2 and 
 
 Deploy from a Git repository, a container image, or the built-in template hub with 48 one-click apps. All state stays on your server in a single SQLite database — no external dependencies. Every source file across the monorepo is held at **100% test coverage**, enforced in CI.
 
+**Highlights**
+
+- 🚀 **Zero-downtime deploys** — blue-green Docker releases with health-gated switch and automatic rollback (exact commit or pinned image digest)
+- 🗄️ **Managed databases** — PostgreSQL, MySQL, MariaDB, Redis, MongoDB with encrypted credentials, auto-injected connection strings, and encrypted backups to S3-compatible destinations
+- 🔒 **Security-first** — Argon2id, JWT + TOTP 2FA, AES-256-GCM secrets with key rotation, RBAC, audit log, rate limiting
+- 🌐 **Automatic HTTPS** — Traefik ingress with wildcard certificates via ACME DNS-01 (Cloudflare, DuckDNS, …)
+- 📦 **Multi-server** — register remote hosts running the NineDeploy agent; typed-operation protocol, never raw shell commands
+- 🤖 **Three clients, one API** — web dashboard, `ninedeploy` CLI, and an MCP server for AI assistants
+
+## Contents
+
+- [Quick start](#quick-start) — bare-metal, Docker, or from source · [Upgrading](#upgrading)
+- [Deploy pipeline](#deploy-pipeline)
+- [Security model](#security-model)
+- [Managed databases](#managed-databases)
+- [Management](#management) — dashboard, domains, SSL, monitoring, alerts, hub, topology, notifications, CLI
+- [Accounts & recovery](#accounts--recovery)
+- [Configuration](#configuration)
+- [API](#api) · [Development](#development) · [MCP server](#mcp-server-ai-assistants)
+
 ## Quick start
 
 ### Option A: One-click install (Linux, bare-metal — recommended)
@@ -36,15 +56,13 @@ bash install.sh --channel main     # edge: track the main branch
 
 Docker installs upgrade with `docker pull` + container recreate — pending migrations apply automatically on startup. The About page and `ninedeploy system update-check` compare the running version against the latest GitHub release (`NINEDEPLOY_UPDATE_CHECK_URL` overrides the feed; set it to `disabled` for air-gapped hosts).
 
-### Password recovery
+### Accounts & recovery
 
 - **Forgot password** — the login page links to `/forgot-password`; if an email (SMTP) notification channel is configured, a single-use 30-minute reset link is emailed to the user
 - **No SMTP?** An admin generates a one-time reset link from the Users page (link icon) or the CLI (`ninedeploy reset-link <idOrEmail>`) and hands it to the user — the raw token is shown exactly once
 - Completing a reset revokes all of the user's outstanding sessions; tokens are stored sha256-hashed and swept by housekeeping after 24 h
 - **Brute-force protection** — 5 failed logins lock an account for 15 minutes (on top of the per-IP rate limit)
 - **Two-factor authentication** — TOTP (RFC 6238) with a two-step login; disable requires password + code and revokes every session
-- **Scheduled jobs** — cron-scheduled redeploys and container commands per service (5-field expressions, run history with output)
-- **Remote servers** — register hosts running the NineDeploy agent (`NINEDEPLOY_AGENT=1`); the agent exposes a fixed table of typed operations (docker pull/build/run, compose up/down, git clone/checkout, env-file write) — requests never carry a program name or raw argv, and every operand is regex-validated
 
 ### Option B: Docker (persistent data volume)
 
@@ -74,7 +92,11 @@ Open `http://localhost:5173` and create the first admin account. Requires Node �
 
 ## Deploy pipeline
 
-- **Deploy pipeline** — cancel in-flight deployments, watch-path webhooks (monorepo filters), Docker Compose services, private-registry credentials, cron-scheduled jobs (redeploys + container commands), agent-based remote servers (typed-operation protocol — remote hosts never execute raw commands)
+- **Cancel & watch paths** — cancel in-flight deployments at every pipeline stage; monorepo-friendly webhooks that trigger only when watched paths change
+- **Compose services** — Docker Compose stacks as a first-class service type alongside Docker images and PM2 processes
+- **Private registries** — per-source registry credentials resolved at pull time (rollback pins an exact digest)
+- **Scheduled jobs** — cron-scheduled redeploys and container commands per service (5-field expressions, run history with captured output)
+- **Remote servers** — register hosts running the NineDeploy agent (`NINEDEPLOY_AGENT=1`); the agent exposes a fixed table of typed operations (docker pull/build/run, compose up/down, git clone/checkout, env-file write) — requests never carry a program name or raw argv, and every operand is regex-validated
 - **Git repo** (public/private via PAT or SSH deploy key) or **container image** — build from source or run pre-built images
 - **Zero-downtime releases (Docker)** — blue-green: the new container is healthchecked *before* the old one retires; on failure the previous version keeps serving (automatic rollback)
 - **Health checks** — container liveness (`docker inspect`) + HTTP probe on the container's network IP with a sibling-container probe fallback (so deploys also work on Docker Desktop, where container IPs are unreachable from the host)
@@ -119,6 +141,7 @@ Open `http://localhost:5173` and create the first admin account. Requires Node �
 - **Topology** — interactive graph of services ↔ databases ↔ domains
 - **Notifications** — Telegram / Discord / Slack / ntfy / email (SMTP, encrypted credentials) / generic webhooks, with event filters, timeouts, HTML-safe messages, and retry with exponential backoff (3 attempts)
 - **Multi-user** — roles, audit log, activity feed, registration toggle, ACME email setting
+- **Projects** — optional single-level grouping that scopes services, databases, and domains; the UI filters every list by the active project
 - **Migration** — full system export/import (with rollback) and per-service bundles (admin-only; bundles contain plaintext secrets)
 - **CLI** — `setup · login · logout · whoami · config · token · services · deploys (list/rollback/watch) · databases · templates · env · domains · volumes · backups · alerts · users · activity · system (info/dashboard/export/import)`
 - **UX** — command palette (⌘K), dark/light + 6 accents, toasts
@@ -264,6 +287,37 @@ pnpm clean       # remove dist and node_modules
 CI runs typecheck, build, the full test suite (100% coverage gated), advisory lint, and a Docker image build on every PR; releases publish the image to GHCR on tags. Integration tests (real PostgreSQL/MySQL/Redis/MongoDB via testcontainers + an end-to-end deploy pipeline run) live under `apps/server/test/integration/` and run with `RUN_INTEGRATION=1` (the deploy e2e additionally requires a host-routable Docker bridge — Linux/CI).
 
 See [ARCHITECTURE.md](./ARCHITECTURE.md) for the system diagram, deploy pipeline, and design decisions.
+
+## MCP server (AI assistants)
+
+NineDeploy ships an MCP server (`@ninedeploy/mcp`) so AI assistants can inspect and operate your instance. It exposes 15 tools over the same typed SDK as the web UI and CLI — 12 read-only (services, deploys, logs, domains, databases, projects, alerts, activity, stats, topology, health) plus three guarded actions (deploy, restart, rollback).
+
+```bash
+# 1. Create an API token in the web UI (Settings → API tokens).
+# 2. Point any MCP client (Claude Desktop, Cursor, …) at the server:
+npx --prefix /path/to/NineDeploy/packages/mcp ninedeploy-mcp
+```
+
+Configuration via environment:
+
+| Variable | Meaning | Default |
+|---|---|---|
+| `NINEDEPLOY_URL` | Control-plane base URL | `http://127.0.0.1:3000` |
+| `NINEDEPLOY_TOKEN` | API token (**required**) | — |
+
+Example client registration (Claude Desktop `claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "ninedeploy": {
+      "command": "node",
+      "args": ["/path/to/NineDeploy/packages/mcp/dist/index.js"],
+      "env": { "NINEDEPLOY_URL": "http://127.0.0.1:3000", "NINEDEPLOY_TOKEN": "nd_..." }
+    }
+  }
+}
+```
 
 ## License
 

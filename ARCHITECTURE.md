@@ -1,6 +1,6 @@
 # NineDeploy — Architecture
 
-A self-hosted, single-server deployment platform. The core server runs bare-metal (systemd) for direct PM2 + Docker daemon access; a container image is also published for Docker-based installs (host socket mounted). All app containers live on a shared Docker network (`ninedeploy`); only Traefik is exposed on :80/:443.
+A self-hosted deployment platform with optional multi-server support. The core server runs bare-metal (systemd) for direct PM2 + Docker daemon access; a container image is also published for Docker-based installs (host socket mounted). Remote hosts run the same binary in agent mode (`NINEDEPLOY_AGENT=1`) and execute a fixed table of typed, validated operations for the core. All app containers live on a shared Docker network (`ninedeploy`); only Traefik is exposed on :80/:443.
 
 ## System diagram
 
@@ -28,16 +28,17 @@ A self-hosted, single-server deployment platform. The core server runs bare-meta
                         │  │ Discord      │  │  ├─ Collector (metrics)│   │
                         │  │ Webhook      │  │  ├─ Traefik (proxy)    │   │
                         │  │              │  │  ├─ Backup scheduler   │   │
+                        │  │              │  │  ├─ Job scheduler      │   │
                         │  │              │  │  ├─ Housekeeping       │   │
                         │  │              │  │  ├─ Rate limit         │   │
                         │  │              │  │  └─ RawBody (HMAC)     │   │
-                        └──┬──────────┬───┴──┴───────────────────────┴───┘
-                           │          │
-              ┌────────────▼┐  ┌──────▼──────────────┐
-              │  Traefik    │  │   SQLite (.data/)    │
-              │  :80 / :443 │  │   Drizzle ORM        │
-              │  auto-HTTPS │  │   self-migrating     │
-              └──────┬──────┘  └─────────────────────┘
+                        └──┬──────┬──┬───┴──┴───────────────────────┴───┘
+                           │      │  │
+              ┌────────────▼┐  ┌──▼──────────────┐  ┌─────────────────────┐
+              │  Traefik    │  │   SQLite (.data/)│  │ Remote agents       │
+              │  :80 / :443 │  │   Drizzle ORM    │  │ (NINEDEPLOY_AGENT=1 │
+              │  auto-HTTPS │  │   self-migrating │  │  typed ops only)    │
+              └──────┬──────┘  └──────────────────┘  └──────────┬──────────┘
                      │
           ┌──────────┼──────────────────────────┐
           ▼          ▼                          ▼
@@ -61,34 +62,43 @@ ninedeploy/
 ├── apps/
 │   ├── server/                    Fastify API + deploy engine
 │   │   ├── src/
-│   │   │   ├── engine/            pipeline, builders (docker/pm2), database,
-│   │   │   │                      proxy (traefik), tunnel, logs
-│   │   │   ├── modules/           route handlers (25+ modules incl. settings)
+│   │   │   ├── engine/            pipeline, builders (docker/pm2/compose),
+│   │   │   │                      database, proxy (traefik), tunnel, logs
+│   │   │   ├── modules/           route handlers (30 modules incl. settings,
+│   │   │   │                      projects, servers, jobs)
 │   │   │   ├── plugins/           fastify plugins (db, auth, worker, traefik,
-│   │   │   │                      collector, backup, housekeeping, rateLimit,
-│   │   │   │                      rawBody)
-│   │   │   ├── lib/               crypto (key ring), jwt, exec (timeout+tree-kill,
-│   │   │   │                      env whitelist), git, settings, keyRotation,
-│   │   │   │                      audit, events, notifier, errors, webhooks
+│   │   │   │                      collector, backupScheduler, jobScheduler,
+│   │   │   │                      housekeeping, rateLimit, rawBody)
+│   │   │   ├── lib/               crypto (key ring), jwt, totp, loginLockout,
+│   │   │   │                      passwordReset, keyRotation, agentClient,
+│   │   │   │                      spawnValidated, sdNotify, exec (timeout+
+│   │   │   │                      tree-kill, env whitelist), git, settings,
+│   │   │   │                      audit, events, notifier, alerting, s3,
+│   │   │   │                      backupRemote, webhooks, jobRunner, errors
 │   │   │   ├── templates/         48-entry template registry
+│   │   │   ├── agent.ts           remote-host agent mode (NINEDEPLOY_AGENT=1)
 │   │   │   └── version.ts         VERSION + changelog
 │   │   ├── test/                  unit/route tests (100% coverage)
-│   │   └── test/integration/      testcontainers (real PostgreSQL), RUN_INTEGRATION=1
+│   │   └── test/integration/      testcontainers (real PostgreSQL/MySQL/Redis/
+│   │                              MongoDB + deploy e2e), RUN_INTEGRATION=1
 │   │
 │   ├── web/                       React 19 + Vite 8 + Tailwind v4
-│   │   ├── src/routes/            17 pages (Dashboard, Hub, Services,
-│   │   │                          ServiceDetail (tabbed: Overview/Settings/
-│   │   │                          Network/Config/Activity), NewService,
-│   │   │                          Databases, Domains, Tunnels, Volumes,
-│   │   │                          Topology, Backups, Sources, Users,
-│   │   │                          Monitoring, Settings, About, Login)
+│   │   ├── src/routes/            pages (Dashboard, Hub, Services,
+│   │   │                          ServiceDetail (tabbed: Overview/Deploys/
+│   │   │                          Environment/Network/Activity/Settings/
+│   │   │                          DangerZone), Databases, Domains, Tunnels,
+│   │   │                          Volumes, Topology, Backups, Sources,
+│   │   │                          Servers, Users, Monitoring, Settings,
+│   │   │                          About, Login, ForgotPassword, ResetPassword,
+│   │   │                          NotFound)
 │   │   ├── src/components/        Layout, DeployWizard, DatabaseWizard,
 │   │   │                          NotificationWizard, CommandPalette,
 │   │   │                          ContainerTerminal (xterm.js exec),
 │   │   │                          AttachmentsCard, EnvCard, Sparkline,
 │   │   │                          StorageGauge, Toast, …
-│   │   └── src/lib/               api (SDK + 401→refresh→retry), auth (context),
-│   │                              theme, useDeployLogs
+│   │   └── src/lib/               api (SDK + 401→refresh→retry), auth,
+│   │                              projects (project-scope context), theme
+│   │                              (dark/light + 6 accents), useDeployLogs
 │   │
 │   └── cli/                       `ninedeploy` CLI (commander)
 │
@@ -96,8 +106,15 @@ ninedeploy/
 │   ├── db/                        Drizzle ORM schema + migrations (SQL shipped;
 │   │                              server self-migrates at startup via the
 │   │                              runtime migrator — drizzle-kit is dev-only)
-│   ├── schemas/                   Zod validation schemas (shared)
-│   └── sdk/                       Typed API client (shared by web + cli)
+│   ├── schemas/                   Zod v4 validation schemas shared by server,
+│   │                              web, CLI, and SDK (common/auth/management/
+│   │                              project/service DTOs)
+│   ├── sdk/                       Typed API client over a FetchLike abstraction
+│   │                              (testable); covers all /v1 endpoints; shared
+│   │                              by web + cli + mcp
+│   └── mcp/                       MCP server (`ninedeploy-mcp`, stdio) — 15
+│                                  tools for AI assistants (12 read-only +
+│                                  deploy/restart/rollback) over the SDK
 │
 ├── .github/workflows/             ci.yml (typecheck/lint/build/test/image build),
 │                                  release.yml (tag → GHCR image)
@@ -109,7 +126,24 @@ ninedeploy/
 └── ARCHITECTURE.md                This file
 ```
 
-## Database schema (21 tables)
+## Clients
+
+Three first-class clients consume the same REST API (`/v1`) through the shared
+typed SDK and Zod schemas:
+
+- **Web** (`apps/web`) — React 19 dashboard; server state via TanStack Query,
+  live logs via the `/v1/events` WebSocket, project scoping via a context
+  provider
+- **CLI** (`apps/cli`) — `ninedeploy` (commander); token stored 0600 in
+  `~/.ninedeploy/config.json`
+- **MCP** (`packages/mcp`) — Model Context Protocol server (stdio) so AI
+  assistants can inspect and operate an instance: 12 read-only tools
+  (list/get services, logs, deploys, domains, databases, projects, alerts,
+  activity, stats, topology, health) + 3 guarded actions (deploy, restart,
+  rollback), authenticated with an API token via `NINEDEPLOY_URL` /
+  `NINEDEPLOY_TOKEN`
+
+## Database schema (26 tables, migrations 0000–0017)
 
 ```
 users              id, email, password_hash, name, role(admin|member),
@@ -162,6 +196,7 @@ servers               id, name, host, port, status(offline|online|error),
 | Module | Prefix | Routes |
 |---|---|---|
 | auth | /auth | register (toggle-gated), login (per-account lockout + TOTP 2FA), forgot-password, reset-password, 2FA setup/enable/disable, refresh, logout, password, me, status, tokens CRUD |
+| projects | /projects | project CRUD — services/databases/domains are scoped to a project (single level, optional) |
 | services | /services | CRUD (docker/pm2/compose types), update (incl. build config), stop/start/restart, limits, logs |
 | deploys | /services/:id/deploys | trigger, list, rollback, WS logs, WS exec (admin-only, audited) |
 | domains | /services/:id/domains | add, list, remove |
@@ -202,6 +237,7 @@ servers               id, name, host, port, status(offline|online|error),
 | traefik | Ensures network + Traefik container (config **directory** bind mount) + writes dynamic config atomically; ACME uses DNS-01 (wildcard certs) when a DNS provider+token are configured, else HTTP-01 |
 | collector | Samples container stats every 30s → metrics table; prunes metrics older than 24h; feeds the alert evaluator (cpu %, memory MiB, host, cert-expiry days) |
 | backupScheduler | Daily database backups (`scheduled` scope), keeps last 7 per DB — never prunes manual backups |
+| jobScheduler | Cron-scheduled per-service jobs via croner (deploy/exec kinds); re-reads the jobs table every 5 min so edits apply without a restart; run history captured in `job_runs` |
 | housekeeping | Hourly retention: deploy logs (30d), audit log (90d), notification log (30d), expired reset tokens (24h), dangling Docker images |
 | rawBody | Captures raw body for HMAC + binary uploads |
 
@@ -232,6 +268,28 @@ Zero-downtime for Docker, brief-gap-with-rollback for PM2. The worker runs up to
     build can never block the worker. Audit + EventBus + notification dispatch
     throughout; logs streamed via WebSocket.
 ```
+
+## Multi-server (agent mode)
+
+Remote hosts run the same server binary with `NINEDEPLOY_AGENT=1`, which boots
+a minimal HTTP agent instead of the full API (`src/agent.ts`):
+
+- Registered in the `servers` table via a one-time token; `last_seen_at`
+  tracks health, connectivity is testable from the Servers page
+- The core talks to agents through `lib/agentClient.ts` — requests carry a
+  **typed operation name** (docker pull/build/run, compose up/down, git
+  clone/checkout, env-file write), never a program name or raw argv
+- Every operand (names, paths, URLs) is validated by strict regexes on both
+  ends; all process spawning funnels through `lib/spawnValidated.ts`
+- Deploys targeting a remote service set `serverId`; the pipeline resolves it
+  into the `BuildContext` and the chosen builder executes against the agent
+
+## Projects
+
+A single-level, optional grouping: `projects` scope services, databases, and
+domains. The web UI keeps the active project in a context provider
+(`lib/projects.tsx`) and filters list views; the API accepts project filters
+on the relevant list endpoints and exposes `/projects` CRUD.
 
 ## Service Detail page (web)
 
@@ -296,12 +354,13 @@ ok → breaching (first breach, breach_since = now)
 - **Core runs bare-metal** (systemd) — direct PM2 + Docker daemon access; the published image covers Docker installs (socket-mounted, `/data` volume)
 - **Traefik file provider** — dynamic config regenerated atomically on every deploy/domain change; directory-mounted into the container
 - **Container-name routing** — Traefik reaches containers by name over the shared network; no host ports on apps
-- **Blue-green (Docker) + rollback (PM2)** — two versions run side by side (no port contention); PM2 can't (port conflict) so it auto-rolls back on failure
+- **Blue-green (Docker) + rollback (PM2)** — two versions run side by side (no port contention); PM2 can't (port conflict) so it auto-rolls back on failure. In-flight deploys can be **cancelled** — the pipeline checks cancel flags at each stage and tears down the partial runtime
+- **Typed agent protocol** — remote execution is a fixed table of operations with regex-validated operands, not arbitrary shell; the same validation guards local spawning (`spawnValidated`)
 - **Image digest pinning** — each deployment records the exact image digest it ran, so rollback redeploys that precise image
 - **Fire-and-forget notifications** — audit() → DB write + EventBus + notifier, never blocks the request
 - **Bounded retention** — metrics 24h (collector), deploy logs 30d, audit 90d, notification log 30d, dangling images hourly; scheduled backups keep 7 (manual backups untouched)
 - **Upgrades** — the installer resolves the target version (latest release tag by default, `--version` pin, `--channel main` edge), snapshots `.data` before upgrading, rebuilds + migrates + restarts and gates on `/health`; `GET /v1/system/update-check` surfaces newer releases to the dashboard/CLI
 - **systemd watchdog** — `Type=notify` + `WatchdogSec=90`; the server pings over the sd_notify datagram socket every 30 s (dependency-free, no-op without `NOTIFY_SOCKET`) so a hung event loop is restarted automatically
 - **Forward-only, additive migrations** — drizzle-kit emits no down-SQL; every migration is additive, so a bad one leaves an unused object rather than data loss. To revert: drop the objects it created
-- **100% coverage, no ratchets** — every package's test suite enforces 100% statements/branches/functions/lines in CI; integration tests (testcontainers) are opt-in via `RUN_INTEGRATION=1`
+- **100% coverage, no ratchets** — every package's test suite enforces 100% statements/branches/functions/lines in CI (152 test files across the monorepo); integration tests (testcontainers) are opt-in via `RUN_INTEGRATION=1`
 - **TypeScript strict** — noUncheckedIndexedAccess, verbatimModuleSyntax, isolatedModules; Node ≥ 22.13 (pnpm 11 requires `node:sqlite`)
