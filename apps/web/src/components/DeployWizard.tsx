@@ -4,6 +4,7 @@ import { ArrowLeft, ArrowRight, Check, Plus, Rocket, X } from 'lucide-react';
 import { useNavigate } from 'react-router';
 import type { Template } from '@ninedeploy/sdk';
 import { api } from '../lib/api.js';
+import { useProjectScope } from '../lib/projects.js';
 import { useToast } from './Toast.js';
 import { Button, Input, Select, cn } from './ui.js';
 
@@ -22,6 +23,7 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
   const navigate = useNavigate();
   const qc = useQueryClient();
   const { toast } = useToast();
+  const { selectedId: projectId } = useProjectScope();
   const sources = useQuery({ queryKey: ['sources'], queryFn: () => api.sources.list() });
 
   const [step, setStep] = useState(0);
@@ -69,6 +71,7 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
       const svc = await api.services.create({
         name,
         type,
+        projectId: projectId ?? undefined,
         repoUrl: mode === 'repo' ? repoUrl : undefined,
         image: mode === 'image' ? image : undefined,
         branch,

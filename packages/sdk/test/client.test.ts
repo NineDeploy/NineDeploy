@@ -52,6 +52,17 @@ describe('createClient', () => {
     expect(last(calls).url).toBe('/v1/services');
   });
 
+  it('appends optional project scoping queries to list calls', async () => {
+    const { fetchMock, calls } = makeFetch(() => ok([]));
+    const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
+    await client.services.list('?projectId=3');
+    expect(last(calls).url).toBe('/v1/services?projectId=3');
+    await client.databases.list('?projectId=3');
+    expect(last(calls).url).toBe('/v1/databases?projectId=3');
+    await client.databases.list();
+    expect(last(calls).url).toBe('/v1/databases');
+  });
+
   it('sends an Authorization header when getToken returns a token', async () => {
     const { fetchMock, calls } = makeFetch(() => ok([]));
     const client = createClient({ baseUrl: 'http://api.test', getToken: () => 'tok-123', fetch: fetchMock });
@@ -375,6 +386,28 @@ describe('createClient', () => {
       await client.servers.test(1);
       expect(last(calls).url).toBe('/v1/servers/1/test');
       expect(last(calls).init.method).toBe('POST');
+    });
+  });
+
+  describe('projects', () => {
+    it('exercises list, create, update and remove', async () => {
+      const { fetchMock, calls } = makeFetch(() => ok({}));
+      const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
+
+      await client.projects.list();
+      expect(last(calls)).toMatchObject({ url: '/v1/projects', init: { method: 'GET' } });
+
+      await client.projects.create({ name: 'Acme' });
+      expect(last(calls).url).toBe('/v1/projects');
+      expect(last(calls).init.method).toBe('POST');
+      expect(JSON.parse(last(calls).init.body ?? '{}')).toEqual({ name: 'Acme' });
+
+      await client.projects.update(1, { name: 'Renamed' });
+      expect(last(calls)).toMatchObject({ url: '/v1/projects/1', init: { method: 'PATCH' } });
+      expect(JSON.parse(last(calls).init.body ?? '{}')).toEqual({ name: 'Renamed' });
+
+      await client.projects.remove(1);
+      expect(last(calls)).toMatchObject({ url: '/v1/projects/1', init: { method: 'DELETE' } });
     });
   });
 

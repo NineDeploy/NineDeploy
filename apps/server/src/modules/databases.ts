@@ -6,10 +6,8 @@ import type { FastifyPluginAsync } from 'fastify';
 import { createAttachment, createDatabase, setLimits } from '@ninedeploy/schemas';
 import { connectionString, defaultPort, ENGINES, startDatabase, stopDatabase } from '../engine/database.js';
 import { encrypt, randomToken } from '../lib/crypto.js';
-import { badRequest, notFound } from '../lib/errors.js';
+import { badRequest, notFound, parseId as num } from '../lib/errors.js';
 import { slugify } from '../lib/slug.js';
-
-const num = (v: string) => Number(v);
 
 function serialize(d: Database) {
   const cfg = ENGINES[d.engine];
@@ -35,8 +33,14 @@ function serialize(d: Database) {
 export const databasesRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('onRequest', app.authenticate);
 
-  app.get('/', async () => {
-    const rows = await app.db.query.databases.findMany({ orderBy: (d, { desc }) => [desc(d.id)] });
+  app.get('/', async (req) => {
+    // Optional project scoping for the global project switcher (?projectId=).
+    const projectId = Number((req.query as { projectId?: string }).projectId);
+    const scoped = Number.isInteger(projectId) && projectId > 0 ? projectId : null;
+    const rows = await app.db.query.databases.findMany({
+      orderBy: (d, { desc }) => [desc(d.id)],
+      ...(scoped != null && { where: (d, { eq }) => eq(d.projectId, scoped) }),
+    });
     return rows.map(serialize);
   });
 

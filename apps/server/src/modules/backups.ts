@@ -7,9 +7,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { config } from '../config.js';
 import { backupDatabase, databaseSize, readBackupBytes, restoreDatabase } from '../engine/database.js';
 import { deleteRemoteBackup, fetchRemoteBackup, uploadBackup } from '../lib/backupRemote.js';
-import { badRequest, notFound } from '../lib/errors.js';
-
-const num = (v: string) => Number(v);
+import { badRequest, notFound, parseId as num } from '../lib/errors.js';
 
 function serialize(b: typeof backups.$inferSelect) {
   return {

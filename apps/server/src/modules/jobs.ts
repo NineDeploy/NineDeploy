@@ -1,5 +1,6 @@
 import { and, desc, eq } from 'drizzle-orm';
 import { jobRuns, scheduledJobs, services } from '@ninedeploy/db';
+import { jobCreate, jobPatch } from '@ninedeploy/schemas';
 import type { FastifyPluginAsync } from 'fastify';
 import { Cron } from 'croner';
 import { audit } from '../lib/audit.js';
@@ -46,47 +47,39 @@ export const jobRoutes: FastifyPluginAsync = async (app) => {
     const id = parseId((req.params as { id: string }).id);
     const svc = await app.db.query.services.findFirst({ where: eq(services.id, id) });
     if (!svc) throw notFound('Service not found');
-    const input = (
-      req.body ?? {}
-    ) as { name?: unknown; cron?: unknown; kind?: unknown; command?: unknown; enabled?: unknown };
-    const name = String(input.name ?? '').trim();
-    const cron = String(input.cron ?? '').trim();
-    const kind = input.kind === 'exec' ? 'exec' : 'deploy';
-    const command = typeof input.command === 'string' ? input.command.trim() : '';
-    if (!name) throw badRequest('name is required');
-    if (!cron) throw badRequest('cron is required');
-    assertCron(cron);
-    if (kind === 'exec' && !command) throw badRequest('command is required for exec jobs');
+    const input = jobCreate.parse(req.body ?? {});
+    assertCron(input.cron);
+    if (input.kind === 'exec' && !input.command) throw badRequest('command is required for exec jobs');
 
     const [row] = await app.db
       .insert(scheduledJobs)
       .values({
         serviceId: id,
-        name,
-        cron,
-        kind,
-        command: kind === 'exec' ? command : null,
-        enabled: input.enabled === false ? false : true,
+        name: input.name,
+        cron: input.cron,
+        kind: input.kind,
+        command: input.kind === 'exec' ? input.command : null,
+        enabled: input.enabled,
       })
       .returning();
     if (!row) throw badRequest('Could not create job');
-    void audit(app.db, req.user!.id, 'job.create', name);
+    void audit(app.db, req.user!.id, 'job.create', input.name);
     return serializeJob(row);
   });
 
   app.patch('/:id/jobs/:jobId', async (req) => {
     const id = parseId((req.params as { id: string }).id);
     const jobId = parseId((req.params as { jobId: string }).jobId);
-    const input = (req.body ?? {}) as Record<string, unknown>;
+    const input = jobPatch.parse(req.body ?? {});
     const values: Partial<typeof scheduledJobs.$inferInsert> = {};
-    if (typeof input.name === 'string' && input.name.trim()) values.name = input.name.trim();
-    if (typeof input.cron === 'string' && input.cron.trim()) {
+    if (input.name !== undefined && input.name.trim()) values.name = input.name.trim();
+    if (input.cron !== undefined && input.cron.trim()) {
       assertCron(input.cron.trim());
       values.cron = input.cron.trim();
     }
-    if (input.kind === 'deploy' || input.kind === 'exec') values.kind = input.kind;
-    if (typeof input.command === 'string') values.command = input.command.trim() || null;
-    if (typeof input.enabled === 'boolean') values.enabled = input.enabled;
+    if (input.kind !== undefined) values.kind = input.kind;
+    if (input.command !== undefined) values.command = input.command.trim() || null;
+    if (input.enabled !== undefined) values.enabled = input.enabled;
     const [row] = await app.db
       .update(scheduledJobs)
       .set(values)

@@ -71,6 +71,7 @@ describe('backup destinations routes', () => {
       payload: { name: 'x' },
     });
     expect(missing.statusCode).toBe(400);
+    expect(missing.json().error.code).toBe('validation_error');
     const badUrl = await app.inject({
       method: 'POST', url: '/backup-destinations', headers: asAdmin(),
       payload: { name: 'x', endpoint: 'ftp://x', bucket: 'b', accessKeyId: 'ak', secretAccessKey: 'sk' },
@@ -162,6 +163,16 @@ describe('backup destinations routes', () => {
     const app = await appWith({ update: { backup_destinations: [row()] } });
     const res = await app.inject({ method: 'PATCH', url: '/backup-destinations/1', headers: asAdmin() });
     expect(res.statusCode).toBe(200);
+  });
+
+  it('rejects a patch with invalid field types', async () => {
+    const app = await appWith({ update: { backup_destinations: [row()] } });
+    const res = await app.inject({
+      method: 'PATCH', url: '/backup-destinations/1', headers: asAdmin(),
+      payload: { active: 'yes' },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('validation_error');
   });
 
   it('deletes a destination', async () => {

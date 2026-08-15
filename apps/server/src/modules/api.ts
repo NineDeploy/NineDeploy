@@ -16,6 +16,7 @@ import { envRoutes } from './env.js';
 import { hookReceiveRoutes, webhookMgmtRoutes } from './hooks.js';
 import { jobRoutes } from './jobs.js';
 import { serverRoutes } from './servers.js';
+import { projectRoutes } from './projects.js';
 import { notificationRoutes } from './notifications.js';
 import { metricRoutes, statsRoutes } from './stats.js';
 import { servicesRoutes } from './services.js';
@@ -42,6 +43,7 @@ export const apiRoutes: FastifyPluginAsync = async (app) => {
 
   await app.register(authRoutes, { prefix: '/auth' });
   await app.register(userRoutes, { prefix: '/users' });
+  await app.register(projectRoutes, { prefix: '/projects' });
   await app.register(activityRoutes, { prefix: '/activity' });
   await app.register(alertRoutes, { prefix: '/alerts' });
   await app.register(aboutRoutes, { prefix: '/about' });

@@ -1,5 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { servers, type ServerRow } from '@ninedeploy/db';
+import { serverCreate } from '@ninedeploy/schemas';
 import type { FastifyPluginAsync } from 'fastify';
 import { audit } from '../lib/audit.js';
 import { decrypt, encrypt } from '../lib/crypto.js';
@@ -33,15 +34,7 @@ export const serverRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.post('/', async (req) => {
-    const input = (req.body ?? {}) as { name?: unknown; host?: unknown; port?: unknown };
-    const name = String(input.name ?? '').trim();
-    const host = String(input.host ?? '').trim();
-    const port = Number(input.port ?? 4600) || 4600;
-    if (!name) throw badRequest('name is required');
-    if (!host || !/^[A-Za-z0-9][A-Za-z0-9.-]*(:\d+)?$/.test(host)) {
-      throw badRequest('host must be a hostname or host:port');
-    }
-    if (port < 1 || port > 65535) throw badRequest('port out of range');
+    const { name, host, port } = serverCreate.parse(req.body ?? {});
     const token = generateAgentToken();
     const [row] = await app.db
       .insert(servers)

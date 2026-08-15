@@ -5,9 +5,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { audit } from '../lib/audit.js';
 import { logBus } from '../engine/logs.js';
 import { resolveUser } from '../lib/auth.js';
-import { badRequest, notFound } from '../lib/errors.js';
-
-const num = (v: string) => Number(v);
+import { badRequest, notFound, parseId as num } from '../lib/errors.js';
 
 export const deploysRoutes: FastifyPluginAsync = async (app) => {
   // Trigger a new deployment (enqueues a `queued` row the worker picks up).

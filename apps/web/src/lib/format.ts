@@ -1,0 +1,87 @@
+import { useCallback, useState } from 'react';
+
+/**
+ * The single source of truth for human-readable formatting in the web UI.
+ * Replaces the four per-route formatters (ServiceDetail, Backups, Volumes,
+ * Settings/Monitoring) that disagreed on KB vs KiB and locale.
+ */
+
+const BYTE_UNITS = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'] as const;
+
+/** Decimal (1000-based) byte formatting, 1 decimal for KB+, 0 for bytes. */
+export function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+  let v = bytes;
+  let unit = 0;
+  while (v >= 1000 && unit < BYTE_UNITS.length - 1) {
+    v /= 1000;
+    unit++;
+  }
+  return unit === 0 ? `${Math.round(v)} B` : `${v.toFixed(1)} ${BYTE_UNITS[unit]}`;
+}
+
+/**
+ * Fixed-locale timestamp for tables/detail pages. A pinned locale keeps the
+ * UI deterministic across browsers instead of following the visitor's OS.
+ */
+export function formatDateTime(iso: string | number | Date): string {
+  return new Date(iso).toLocaleString('en-GB', {
+    year: 'numeric',
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+/** Compact relative time ("just now", "5m ago", "3h ago", "2d ago"). */
+export function formatRelative(iso: string | number | Date): string {
+  const ms = Date.now() - new Date(iso).getTime();
+  const sec = Math.round(ms / 1000);
+  if (sec < 45) return 'just now';
+  const min = Math.round(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.round(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  return `${Math.round(hr / 24)}d ago`;
+}
+
+/** Duration in seconds → "1m 23s" / "45s" / "2h 04m". */
+export function formatDuration(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return '—';
+  const s = Math.floor(seconds);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${String(s % 60).padStart(2, '0')}s`;
+  const h = Math.floor(m / 60);
+  return `${h}h ${String(m % 60).padStart(2, '0')}m`;
+}
+
+/** Copy-to-clipboard with transient "copied" state; feedback via the caller's toast or the hook state. */
+export function useCopy(timeoutMs = 1500): { copied: boolean; copy: (text: string) => Promise<boolean> } {
+  const [copied, setCopied] = useState(false);
+  const copy = useCallback(
+    async (text: string) => {
+      try {
+        await navigator.clipboard.writeText(text);
+        setCopied(true);
+        setTimeout(() => setCopied(false), timeoutMs);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    [timeoutMs],
+  );
+  return { copied, copy };
+}
+
+/** Trigger a browser download for generated content (exports, backups manifest). */
+export function downloadBlob(data: BlobPart, filename: string, type = 'application/octet-stream'): void {
+  const url = URL.createObjectURL(new Blob([data], { type }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}

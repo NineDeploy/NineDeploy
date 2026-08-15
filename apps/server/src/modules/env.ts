@@ -3,9 +3,7 @@ import { envVars } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { upsertEnvVar } from '@ninedeploy/schemas';
 import { decrypt, encrypt } from '../lib/crypto.js';
-import { badRequest, notFound } from '../lib/errors.js';
-
-const num = (v: string) => Number(v);
+import { badRequest, notFound, parseId as num } from '../lib/errors.js';
 
 function serialize(e: typeof envVars.$inferSelect) {
   return {

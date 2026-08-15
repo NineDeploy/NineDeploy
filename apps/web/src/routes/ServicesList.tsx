@@ -3,24 +3,30 @@ import { useState } from 'react';
 import { GitBranch, Plus, Server } from 'lucide-react';
 import { Link } from 'react-router';
 import { api } from '../lib/api.js';
-import { Button, Card, EmptyState, Skeleton, StatusBadge } from '../components/ui.js';
+import { useProjectScope } from '../lib/projects.js';
+import { Button, Card, EmptyState, PageHeader, Skeleton, StatusBadge } from '../components/ui.js';
 import { DeployWizard } from '../components/DeployWizard.js';
 
 export function ServicesList() {
   const [wizard, setWizard] = useState(false);
-  const { data: services, isLoading } = useQuery({ queryKey: ['services'], queryFn: () => api.services.list() });
+  const { selectedId } = useProjectScope();
+  const { data: services, isLoading } = useQuery({
+    queryKey: ['services', selectedId],
+    queryFn: () => api.services.list(selectedId != null ? `?projectId=${selectedId}` : ''),
+  });
 
   return (
     <div>
-      <div className="mb-7 flex items-end justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Services</h1>
-          <p className="mt-1 text-sm text-slate-400">Deploy and manage your applications.</p>
-        </div>
-        <Button onClick={() => setWizard(true)}>
-          <Plus size={16} /> New service
-        </Button>
-      </div>
+      <PageHeader
+        icon={<Server size={18} />}
+        title="Services"
+        subtitle="Deploy and manage your applications."
+        actions={
+          <Button onClick={() => setWizard(true)}>
+            <Plus size={16} /> New service
+          </Button>
+        }
+      />
 
       {wizard && <DeployWizard onClose={() => setWizard(false)} />}
 

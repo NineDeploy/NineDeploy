@@ -47,6 +47,11 @@ describe('databases routes', () => {
     const rows = res.json();
     expect(rows[0]).toMatchObject({ id: 1, host: 'nd-db-pg', port: 5432, username: 'nine', database: 'app', connectionString: 'postgres://conn' });
     expect(rows[1]).toMatchObject({ id: 2, status: 'stopped', connectionString: null, username: null, database: null });
+    // Optional project scoping (?projectId=) and its invalid-value fallback.
+    const scoped = await app.inject({ method: 'GET', url: '/?projectId=2', headers: asUser() });
+    expect(scoped.statusCode).toBe(200);
+    const unscoped = await app.inject({ method: 'GET', url: '/?projectId=abc', headers: asUser() });
+    expect(unscoped.statusCode).toBe(200);
   });
 
   it('creates and starts a database', async () => {

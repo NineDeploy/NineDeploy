@@ -77,8 +77,10 @@ describe('servers routes', () => {
     const app = await appWith({});
     const noName = await app.inject({ method: 'POST', url: '/servers', headers: asUser(), payload: { host: 'h' } });
     expect(noName.statusCode).toBe(400);
+    expect(noName.json().error.code).toBe('validation_error');
     const badHost = await app.inject({ method: 'POST', url: '/servers', headers: asUser(), payload: { name: 'x', host: 'bad host!' } });
     expect(badHost.statusCode).toBe(400);
+    expect(badHost.json().error.code).toBe('validation_error');
   });
 
   it('rejects an out-of-range port, an empty body and a failed insert', async () => {

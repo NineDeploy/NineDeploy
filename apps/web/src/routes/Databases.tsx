@@ -2,7 +2,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Check, Copy, Database, HardDriveDownload, Plus, Trash2 } from 'lucide-react';
 import { api } from '../lib/api.js';
-import { Button, Card, EmptyState, Skeleton, StatusBadge, cn } from '../components/ui.js';
+import { useProjectScope } from '../lib/projects.js';
+import { Button, Card, EmptyState, PageHeader, Skeleton, StatusBadge, cn } from '../components/ui.js';
 import { StorageGauge } from '../components/StorageGauge.js';
 import { DatabaseWizard } from '../components/DatabaseWizard.js';
 
@@ -12,8 +13,12 @@ export function Databases() {
   const qc = useQueryClient();
   const [wizard, setWizard] = useState(false);
   const [copied, setCopied] = useState<number | null>(null);
+  const { selectedId } = useProjectScope();
 
-  const list = useQuery({ queryKey: ['databases'], queryFn: () => api.databases.list() });
+  const list = useQuery({
+    queryKey: ['databases', selectedId],
+    queryFn: () => api.databases.list(selectedId != null ? `?projectId=${selectedId}` : ''),
+  });
   const remove = useMutation({
     mutationFn: (id: number) => api.databases.remove(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['databases'] }),
@@ -35,15 +40,16 @@ export function Databases() {
 
   return (
     <div>
-      <div className="mb-7 flex items-end justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Databases</h1>
-          <p className="mt-1 text-sm text-slate-400">Managed databases with persistent storage.</p>
-        </div>
-        <Button onClick={() => setWizard(true)}>
-          <Plus size={16} /> New database
-        </Button>
-      </div>
+      <PageHeader
+        icon={<Database size={18} />}
+        title="Databases"
+        subtitle="Managed databases with persistent storage."
+        actions={
+          <Button onClick={() => setWizard(true)}>
+            <Plus size={16} /> New database
+          </Button>
+        }
+      />
 
       {wizard && <DatabaseWizard onClose={() => setWizard(false)} />}
 

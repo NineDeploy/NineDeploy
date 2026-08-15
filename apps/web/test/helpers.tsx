@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { type ReactNode } from 'react';
 import { ToastProvider } from '../src/components/Toast.js';
+import { ProjectScopeProvider } from '../src/lib/projects.js';
 
 /** jsdom does not implement ResizeObserver — some rendered components touch it. */
 if (typeof globalThis.ResizeObserver === 'undefined') {
@@ -73,6 +74,7 @@ export function createFakeApiModule() {
       log: vi.fn(),
     },
     sources: { list: vi.fn(), create: vi.fn(), update: vi.fn(), remove: vi.fn() },
+    projects: { list: vi.fn(), create: vi.fn(), update: vi.fn(), remove: vi.fn() },
     webhooks: { list: vi.fn(), create: vi.fn(), remove: vi.fn() },
     databases: { list: vi.fn(), create: vi.fn(), get: vi.fn(), remove: vi.fn() },
     attachments: { list: vi.fn(), create: vi.fn(), remove: vi.fn() },
@@ -155,9 +157,11 @@ export function renderWithProviders(ui: ReactNode, opts: RenderOptions = {}) {
   const initialEntries = opts.initialEntries ?? [opts.route ?? '/'];
   const utils = render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={initialEntries}>
-        <ToastProvider>{ui}</ToastProvider>
-      </MemoryRouter>
+      <ProjectScopeProvider>
+        <MemoryRouter initialEntries={initialEntries}>
+          <ToastProvider>{ui}</ToastProvider>
+        </MemoryRouter>
+      </ProjectScopeProvider>
     </QueryClientProvider>,
   );
   return { ...utils, queryClient };

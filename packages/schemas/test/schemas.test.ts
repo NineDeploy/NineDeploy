@@ -5,6 +5,12 @@ import {
   apiToken,
   attachment,
   backup,
+  backupDestinationCreate,
+  backupDestinationPatch,
+  jobCreate,
+  jobPatch,
+  metricQuery,
+  serverCreate,
   backupWithDb,
   notificationChannelCreate,
   containerStat,
@@ -12,6 +18,7 @@ import {
   createAttachment,
   createDatabase,
   createDomain,
+  createProject,
   createService,
   createSource,
   createTunnel,
@@ -31,6 +38,7 @@ import {
   metricSeries,
   page,
   pagination,
+  projectPatch,
   publicUser,
   refresh,
   register,
@@ -669,6 +677,94 @@ describe('service', () => {
     });
   });
 
+  describe('management (backup destinations/servers/jobs/metrics)', () => {
+    const dest = {
+      name: 'minio', endpoint: 'https://s3.example.com', bucket: 'b',
+      accessKeyId: 'ak', secretAccessKey: 'sk',
+    };
+
+    it('backupDestinationCreate applies region/prefix defaults', () => {
+      const data = ok(backupDestinationCreate, dest);
+      expect(data).toMatchObject({ region: 'us-east-1', prefix: 'ninedeploy' });
+      const blanks = ok(backupDestinationCreate, { ...dest, region: ' ', prefix: '' });
+      expect(blanks).toMatchObject({ region: 'us-east-1', prefix: 'ninedeploy' });
+      const explicit = ok(backupDestinationCreate, { ...dest, region: 'eu-central-1', prefix: 'nd' });
+      expect(explicit).toMatchObject({ region: 'eu-central-1', prefix: 'nd' });
+    });
+
+    it('backupDestinationCreate rejects missing fields and non-http endpoints', () => {
+      bad(backupDestinationCreate, { name: 'x' });
+      bad(backupDestinationCreate, { ...dest, name: ' ' });
+      bad(backupDestinationCreate, { ...dest, endpoint: 'ftp://x' });
+      bad(backupDestinationCreate, { ...dest, bucket: '' });
+      bad(backupDestinationCreate, { ...dest, accessKeyId: '' });
+      bad(backupDestinationCreate, { ...dest, secretAccessKey: '' });
+    });
+
+    it('backupDestinationPatch accepts partial and empty input', () => {
+      const data = ok(backupDestinationPatch, { name: 'renamed', active: false });
+      expect(data).toEqual({ name: 'renamed', active: false });
+      ok(backupDestinationPatch, {});
+      ok(backupDestinationPatch, { name: '  ', endpoint: '' });
+      bad(backupDestinationPatch, { active: 'yes' });
+      bad(backupDestinationPatch, { name: 5 });
+    });
+
+    it('serverCreate coerces the port with a fallback', () => {
+      const data = ok(serverCreate, { name: 'edge', host: 'h.example' });
+      expect(data?.port).toBe(4600);
+      expect(ok(serverCreate, { name: 'e', host: 'h', port: '4601' })?.port).toBe(4601);
+      // A non-numeric port falls back to the default rather than failing.
+      expect(ok(serverCreate, { name: 'e', host: 'h', port: 'abc' })?.port).toBe(4600);
+      ok(serverCreate, { name: 'e', host: 'h.example:4601' });
+    });
+
+    it('serverCreate rejects bad names, hosts and ports', () => {
+      bad(serverCreate, { host: 'h' });
+      bad(serverCreate, { name: ' ', host: 'h' });
+      bad(serverCreate, { name: 'x', host: 'bad host!' });
+      bad(serverCreate, { name: 'x', host: 'h', port: 99999 });
+    });
+
+    it('jobCreate applies defaults and normalizes command/enabled', () => {
+      const data = ok(jobCreate, { name: 'nightly', cron: '0 3 * * *' });
+      expect(data).toMatchObject({ kind: 'deploy', command: '', enabled: true });
+      expect(ok(jobCreate, { name: 'n', cron: '@daily', command: 42 })?.command).toBe('');
+      expect(ok(jobCreate, { name: 'n', cron: '@daily', command: ' echo ' })?.command).toBe('echo');
+      expect(ok(jobCreate, { name: 'n', cron: '@daily', enabled: false })?.enabled).toBe(false);
+      ok(jobCreate, { name: 'n', cron: '@daily', enabled: 'yes' });
+      ok(jobCreate, { name: 'n', cron: '@daily', kind: 'exec', command: 'true' });
+    });
+
+    it('jobCreate rejects missing name/cron and bad kinds', () => {
+      bad(jobCreate, { cron: '* * * * *' });
+      bad(jobCreate, { name: 'x' });
+      bad(jobCreate, { name: ' ', cron: '* * * * *' });
+      bad(jobCreate, { name: 'x', cron: '' });
+      bad(jobCreate, { name: 'x', cron: '@daily', kind: 'once' });
+    });
+
+    it('jobPatch accepts partial and blank input', () => {
+      const data = ok(jobPatch, { name: 'renamed', cron: '30 4 * * *', kind: 'exec', command: '', enabled: false });
+      expect(data).toEqual({ name: 'renamed', cron: '30 4 * * *', kind: 'exec', command: '', enabled: false });
+      ok(jobPatch, {});
+      bad(jobPatch, { kind: 'once' });
+      bad(jobPatch, { enabled: 'yes' });
+      bad(jobPatch, { name: 5 });
+    });
+
+    it('metricQuery normalizes kind and clamps minutes', () => {
+      expect(ok(metricQuery, {})?.kind).toBe('cpu');
+      expect(ok(metricQuery, { kind: 'memory' })?.kind).toBe('memory');
+      expect(ok(metricQuery, { kind: 'bogus' })?.kind).toBe('cpu');
+      expect(ok(metricQuery, {})?.minutes).toBe(60);
+      expect(ok(metricQuery, { minutes: '10' })?.minutes).toBe(10);
+      expect(ok(metricQuery, { minutes: '0' })?.minutes).toBe(60);
+      expect(ok(metricQuery, { minutes: '99999' })?.minutes).toBe(1440);
+      expect(ok(metricQuery, { minutes: 'abc' })?.minutes).toBe(60);
+    });
+  });
+
   describe('tunnels', () => {
     it('createTunnel accepts input', () => {
       expect(createTunnel.safeParse({ name: 't', token: 'tok' }).success).toBe(true);
@@ -680,6 +776,24 @@ describe('service', () => {
       const data = ok(tunnelEntry, { id: 1, name: 't', slug: 't', status: 'running', containerName: 'c', createdAt: '2026-01-01T00:00:00Z' });
       expect(data?.containerName).toBe('c');
       bad(tunnelEntry, { id: 1, name: 't', slug: 't', status: 'running', containerName: 'c', createdAt: 'x' });
+    });
+  });
+
+  describe('projects', () => {
+    it('createProject accepts names and optional slug/description', () => {
+      const data = ok(createProject, { name: 'Acme' });
+      expect(data?.name).toBe('Acme');
+      ok(createProject, { name: 'Acme', slug: 'acme', description: 'main workloads' });
+      bad(createProject, { name: 'a' });
+      bad(createProject, { name: 'x'.repeat(64) });
+      bad(createProject, { name: 'Acme', slug: 'NOT A SLUG' });
+    });
+
+    it('projectPatch accepts partial updates and rejects empty bodies', () => {
+      ok(projectPatch, { name: 'Renamed' });
+      ok(projectPatch, { description: null });
+      ok(projectPatch, { description: 'd', name: 'N' + 'ame' });
+      bad(projectPatch, {});
     });
   });
 });

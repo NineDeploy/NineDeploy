@@ -63,6 +63,19 @@ describe('services routes', () => {
     expect(res.json()[0]).toMatchObject({ id: 1, name: 'web', autoUrl: null });
   });
 
+  it('scopes the list to a project when ?projectId= is a positive integer', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({ findMany: { services: [svcRow({ id: 1, name: 'web' })] } }),
+    });
+    await app.register(servicesRoutes);
+    const res = await app.inject({ method: 'GET', url: '/?projectId=2', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()[0]).toMatchObject({ id: 1, name: 'web' });
+    // A non-numeric projectId is ignored (no scoping).
+    const bad = await app.inject({ method: 'GET', url: '/?projectId=abc', headers: asUser() });
+    expect(bad.statusCode).toBe(200);
+  });
+
   it('creates a service and its build config', async () => {
     const app = await buildTestApp({
       db: createFakeDb({

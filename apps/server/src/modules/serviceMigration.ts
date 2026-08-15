@@ -4,10 +4,8 @@ import {
 } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { decrypt, encrypt } from '../lib/crypto.js';
-import { badRequest, notFound } from '../lib/errors.js';
+import { badRequest, notFound, parseId as num } from '../lib/errors.js';
 import { slugify } from '../lib/slug.js';
-
-const num = (v: string) => Number(v);
 
 interface ServiceBundle {
   version: string;

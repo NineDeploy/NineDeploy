@@ -1,4 +1,14 @@
-import { type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes, forwardRef } from 'react';
+import {
+  type ButtonHTMLAttributes,
+  type InputHTMLAttributes,
+  type ReactNode,
+  type SelectHTMLAttributes,
+  type TextareaHTMLAttributes,
+  forwardRef,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 
 export const cn = (...parts: Array<string | false | null | undefined>) => parts.filter(Boolean).join(' ');
 
@@ -201,5 +211,282 @@ export function EmptyState({ icon, title, hint, action }: { icon?: ReactNode; ti
       {hint && <p className="mt-1 max-w-xs text-sm text-slate-500">{hint}</p>}
       {action && <div className="mt-5">{action}</div>}
     </div>
+  );
+}
+
+// ── Error state ───────────────────────────────────────────────────────────
+export function ErrorCard({ title = 'Something went wrong', error, onRetry }: { title?: string; error?: unknown; onRetry?: () => void }) {
+  return (
+    <Card className="border-rose-500/20 bg-rose-500/[0.04]">
+      <CardBody className="flex flex-col items-start gap-3">
+        <div>
+          <p className="text-sm font-medium text-rose-200">{title}</p>
+          <p className="mt-1 text-xs text-rose-300/70">{error instanceof Error ? error.message : 'Unexpected error'}</p>
+        </div>
+        {onRetry && (
+          <Button variant="secondary" size="sm" onClick={onRetry}>
+            Try again
+          </Button>
+        )}
+      </CardBody>
+    </Card>
+  );
+}
+
+// ── Modal ─────────────────────────────────────────────────────────────────
+/**
+ * Shared modal chrome: backdrop click + Escape close, scroll lock, focus
+ * trap and initial focus on the first focusable element (or `initialFocusRef`).
+ * Extracted from the DeployWizard's hand-rolled implementation so every
+ * dialog in the app gets the same accessibility guarantees.
+ */
+export function Modal({
+  title,
+  onClose,
+  children,
+  footer,
+  wide,
+  initialFocusRef,
+}: {
+  title: ReactNode;
+  onClose: () => void;
+  children: ReactNode;
+  footer?: ReactNode;
+  wide?: boolean;
+  initialFocusRef?: React.RefObject<HTMLElement | null>;
+}) {
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    // The panel ref is always attached before this effect runs (refs bind
+    // during commit, effects after), so the element is safe to assert.
+    const panel = panelRef.current!;
+    const focusables = () =>
+      Array.from(panel.querySelectorAll<HTMLElement>('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')).filter(
+        (el) => !(el as HTMLButtonElement).disabled,
+      );
+
+    const target = initialFocusRef?.current ?? focusables()[0];
+    target?.focus();
+
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        onClose();
+      } else if (e.key === 'Tab') {
+        // The header close button is always focusable, so the list is never empty.
+        const els = focusables();
+        const first = els[0]!;
+        const last = els[els.length - 1]!;
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [onClose, initialFocusRef]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm sm:items-center sm:p-6" onClick={onClose}>
+      <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={typeof title === 'string' ? title : undefined}
+        className={cn(
+          'nd-fade flex max-h-[92vh] w-full flex-col overflow-hidden rounded-t-2xl border border-white/10 bg-slate-950 shadow-2xl sm:rounded-2xl',
+          wide ? 'max-w-3xl' : 'max-w-xl',
+        )}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-white/5 px-5 py-4">
+          <h2 className="text-lg font-semibold">{title}</h2>
+          <button onClick={onClose} aria-label="Close dialog" className="rounded-lg p-1.5 text-slate-500 hover:bg-white/5 hover:text-slate-300">
+            ✕
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto p-5">{children}</div>
+        {footer && <div className="flex items-center justify-end gap-2 border-t border-white/5 px-5 py-4">{footer}</div>}
+      </div>
+    </div>
+  );
+}
+
+// ── Confirm dialog ────────────────────────────────────────────────────────
+/**
+ * The single destructive-action pattern for the whole app:
+ * - confirm = 'dialog' (default): small danger modal with a Cancel/Confirm pair.
+ * - confirm = 'type': type-the-name confirmation for irreversible damage
+ *   (deleting services, volumes).
+ */
+export function ConfirmDialog({
+  open,
+  title,
+  message,
+  confirmLabel = 'Delete',
+  confirmWord,
+  onConfirm,
+  onClose,
+}: {
+  open: boolean;
+  title: string;
+  message: ReactNode;
+  confirmLabel?: string;
+  confirmWord?: string;
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
+  const [word, setWord] = useState('');
+  // Reset the typed confirmation whenever the dialog reopens.
+  useEffect(() => {
+    if (open) setWord('');
+  }, [open]);
+  if (!open) return null;
+
+  return (
+    <Modal
+      title={title}
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="danger" disabled={confirmWord != null && word !== confirmWord} onClick={() => { onConfirm(); onClose(); }}>
+            {confirmLabel}
+          </Button>
+        </>
+      }
+    >
+      <div className="text-sm text-slate-300">{message}</div>
+      {confirmWord != null && (
+        <div className="mt-4">
+          <Field label={`Type "${confirmWord}" to confirm`}>
+            <Input value={word} onChange={(e) => setWord(e.target.value)} placeholder={confirmWord} autoComplete="off" />
+          </Field>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+// ── Switch ────────────────────────────────────────────────────────────────
+export function Switch({ checked, onChange, disabled, label }: { checked: boolean; onChange: (v: boolean) => void; disabled?: boolean; label?: string }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      disabled={disabled}
+      onClick={() => onChange(!checked)}
+      className={cn(
+        'inline-flex h-6 w-11 shrink-0 items-center rounded-full p-0.5 transition-colors',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70 focus-visible:ring-offset-1 focus-visible:ring-offset-slate-950',
+        'disabled:opacity-50 disabled:pointer-events-none',
+        checked ? 'bg-indigo-500' : 'bg-white/15',
+      )}
+    >
+      <span className={cn('h-5 w-5 rounded-full bg-white shadow transition-transform', checked && 'translate-x-5')} />
+    </button>
+  );
+}
+
+// ── Page header ───────────────────────────────────────────────────────────
+/**
+ * Standard page chrome: icon + title + subtitle on the left, primary action
+ * on the right. Every route uses this so margins and rhythm stay identical.
+ */
+export function PageHeader({ icon, title, subtitle, actions }: { icon?: ReactNode; title: string; subtitle?: string; actions?: ReactNode }) {
+  return (
+    <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
+      <div className="flex items-center gap-3">
+        {icon && (
+          <div className="grid h-10 w-10 place-items-center rounded-xl bg-white/[0.05] text-indigo-300 ring-1 ring-inset ring-white/10">{icon}</div>
+        )}
+        <div>
+          <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
+          {subtitle && <p className="text-sm text-slate-500">{subtitle}</p>}
+        </div>
+      </div>
+      {actions && <div className="flex items-center gap-2">{actions}</div>}
+    </div>
+  );
+}
+
+// ── Table ─────────────────────────────────────────────────────────────────
+export function Table({ columns, children, className }: { columns: string[]; children: ReactNode; className?: string }) {
+  return (
+    <div className={cn('overflow-x-auto rounded-xl border border-white/[0.08]', className)}>
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-white/[0.08] bg-white/[0.03]">
+            {columns.map((c) => (
+              <th key={c} className="px-4 py-2.5 text-left text-xs font-medium uppercase tracking-wide text-slate-400">
+                {c}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-white/[0.05]">{children}</tbody>
+      </table>
+    </div>
+  );
+}
+
+// ── Badge ─────────────────────────────────────────────────────────────────
+const TONES = {
+  neutral: 'bg-white/[0.07] text-slate-300 ring-white/10',
+  indigo: 'bg-indigo-500/15 text-indigo-300 ring-indigo-500/20',
+  emerald: 'bg-emerald-500/15 text-emerald-300 ring-emerald-500/20',
+  amber: 'bg-amber-500/15 text-amber-300 ring-amber-500/20',
+  rose: 'bg-rose-500/15 text-rose-300 ring-rose-500/20',
+  sky: 'bg-sky-500/15 text-sky-300 ring-sky-500/20',
+} as const;
+
+export function Badge({ tone = 'neutral', children }: { tone?: keyof typeof TONES; children: ReactNode }) {
+  return <span className={cn('inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset', TONES[tone])}>{children}</span>;
+}
+
+// ── Stat card ─────────────────────────────────────────────────────────────
+export function StatCard({ icon, label, value, hint }: { icon?: ReactNode; label: string; value: ReactNode; hint?: ReactNode }) {
+  return (
+    <Card>
+      <CardBody className="p-4">
+        <div className="flex items-center gap-2 text-slate-400">
+          {icon}
+          <span className="text-xs font-medium uppercase tracking-wide">{label}</span>
+        </div>
+        <p className="mt-2 text-2xl font-semibold tabular-nums tracking-tight">{value}</p>
+        {hint && <p className="mt-1 text-xs text-slate-500">{hint}</p>}
+      </CardBody>
+    </Card>
+  );
+}
+
+// ── Tooltip ───────────────────────────────────────────────────────────────
+/** Minimal CSS-only tooltip: wraps children, shows `content` on hover/focus. */
+export function Tooltip({ content, children }: { content: string; children: ReactNode }) {
+  return (
+    <span className="group relative inline-flex">
+      {children}
+      <span
+        role="tooltip"
+        className="pointer-events-none absolute -top-2 left-1/2 z-40 -translate-x-1/2 -translate-y-full whitespace-nowrap rounded-md bg-slate-900 px-2 py-1 text-xs text-slate-200 opacity-0 shadow-lg ring-1 ring-white/10 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+      >
+        {content}
+      </span>
+    </span>
   );
 }

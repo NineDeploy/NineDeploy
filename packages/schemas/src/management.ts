@@ -93,6 +93,97 @@ export const alertRulePatch = z
   });
 export type AlertRulePatch = z.infer<typeof alertRulePatch>;
 
+// ── Backup destinations (admin) ────────────────────────────────────────────
+/**
+ * Blank region/prefix fall back to the documented defaults (pre-schema
+ * behaviour); the endpoint must be an http(s) URL.
+ */
+export const backupDestinationCreate = z.object({
+  name: z.string().trim().min(1).max(100),
+  endpoint: z.string().trim().regex(/^https?:\/\//, 'endpoint must be an http(s) URL'),
+  region: z.string().trim().optional().transform((v) => v || 'us-east-1'),
+  bucket: z.string().trim().min(1).max(255),
+  prefix: z.string().trim().optional().transform((v) => v || 'ninedeploy'),
+  accessKeyId: z.string().trim().min(1).max(255),
+  secretAccessKey: z.string().min(1).max(4096),
+});
+export type BackupDestinationCreate = z.infer<typeof backupDestinationCreate>;
+
+/**
+ * All fields optional; blank strings are accepted here and skipped by the
+ * route (patching e.g. `name: " "` is a no-op, not an error).
+ */
+export const backupDestinationPatch = z.object({
+  name: z.string().max(100).optional(),
+  endpoint: z.string().max(2048).optional(),
+  region: z.string().max(100).optional(),
+  bucket: z.string().max(255).optional(),
+  prefix: z.string().max(255).optional(),
+  accessKeyId: z.string().max(255).optional(),
+  secretAccessKey: z.string().max(4096).optional(),
+  active: z.boolean().optional(),
+});
+export type BackupDestinationPatch = z.infer<typeof backupDestinationPatch>;
+
+// ── Remote servers (admin) ─────────────────────────────────────────────────
+/**
+ * `host` is a bare hostname (or IP) or host:port. A non-numeric port falls
+ * back to the default 4600 (pre-schema behaviour); an out-of-range one is
+ * rejected.
+ */
+export const serverCreate = z.object({
+  name: z.string().trim().min(1).max(100),
+  host: z
+    .string()
+    .trim()
+    .regex(/^[A-Za-z0-9][A-Za-z0-9.-]*(:\d+)?$/, 'host must be a hostname or host:port'),
+  port: z
+    .unknown()
+    .optional()
+    .transform((v) => Number(v ?? 4600) || 4600)
+    .pipe(z.number().int().min(1).max(65535)),
+});
+export type ServerCreate = z.infer<typeof serverCreate>;
+
+// ── Scheduled jobs ─────────────────────────────────────────────────────────
+/**
+ * The cron expression itself is validated with croner at the route (the
+ * schema package has no cron dependency); a non-string `command` is ignored
+ * (empty string) as before.
+ */
+export const jobCreate = z.object({
+  name: z.string().trim().min(1).max(100),
+  cron: z.string().trim().min(1).max(120),
+  kind: z.enum(['deploy', 'exec']).default('deploy'),
+  command: z.unknown().optional().transform((v) => (typeof v === 'string' ? v.trim() : '')),
+  enabled: z.unknown().optional().transform((v) => v !== false),
+});
+export type JobCreate = z.infer<typeof jobCreate>;
+
+/** Blank strings are accepted and treated as "no change"/cleared by the route. */
+export const jobPatch = z.object({
+  name: z.string().optional(),
+  cron: z.string().optional(),
+  kind: z.enum(['deploy', 'exec']).optional(),
+  command: z.string().optional(),
+  enabled: z.boolean().optional(),
+});
+export type JobPatch = z.infer<typeof jobPatch>;
+
+// ── Metrics query ──────────────────────────────────────────────────────────
+/**
+ * Query params arrive as strings: any `kind` other than "memory" reads as
+ * "cpu", and an unusable `minutes` falls back to 60 (clamped to 1..1440).
+ */
+export const metricQuery = z.object({
+  kind: z.string().optional().transform((k) => (k === 'memory' ? 'memory' : 'cpu')),
+  minutes: z
+    .unknown()
+    .optional()
+    .transform((v) => Math.min(Math.max(Number(v ?? 60) || 60, 1), 1440)),
+});
+export type MetricQuery = z.infer<typeof metricQuery>;
+
 /** Serialized alert rule as returned by GET/PATCH /v1/alerts. */
 export interface AlertRule {
   id: number;

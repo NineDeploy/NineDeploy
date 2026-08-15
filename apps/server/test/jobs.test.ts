@@ -99,6 +99,7 @@ describe('jobs routes', () => {
       payload: { cron: '* * * * *' },
     });
     expect(noName.statusCode).toBe(400);
+    expect(noName.json().error.code).toBe('validation_error');
     const noCron = await app.inject({
       method: 'POST', url: '/services/1/jobs', headers: asUser(),
       payload: { name: 'x' },
@@ -152,6 +153,16 @@ describe('jobs routes', () => {
     const app = await appWith({ update: { scheduled_jobs: [jobRow()] } });
     const res = await app.inject({ method: 'PATCH', url: '/services/1/jobs/3', headers: asUser() });
     expect(res.statusCode).toBe(200);
+  });
+
+  it('rejects a patch with invalid field types', async () => {
+    const app = await appWith({ update: { scheduled_jobs: [jobRow()] } });
+    const badKind = await app.inject({
+      method: 'PATCH', url: '/services/1/jobs/3', headers: asUser(),
+      payload: { kind: 'once' },
+    });
+    expect(badKind.statusCode).toBe(400);
+    expect(badKind.json().error.code).toBe('validation_error');
   });
 
   it('404s when patching a missing job', async () => {

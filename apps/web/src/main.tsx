@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter } from 'react-router';
 import App from './App.js';
 import { AuthProvider } from './lib/auth.js';
+import { ProjectScopeProvider } from './lib/projects.js';
 import { ThemeProvider } from './lib/theme.js';
 import { ToastProvider } from './components/Toast.js';
 import './index.css';
@@ -24,7 +25,9 @@ createRoot(rootEl).render(
         <ToastProvider>
           <BrowserRouter>
             <AuthProvider>
-              <App />
+              <ProjectScopeProvider>
+                <App />
+              </ProjectScopeProvider>
             </AuthProvider>
           </BrowserRouter>
         </ToastProvider>

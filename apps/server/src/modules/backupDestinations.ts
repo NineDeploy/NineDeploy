@@ -1,6 +1,7 @@
 import { eq } from 'drizzle-orm';
 import { backupDestinations } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
+import { backupDestinationCreate, backupDestinationPatch } from '@ninedeploy/schemas';
 import { audit } from '../lib/audit.js';
 import { decrypt, encrypt } from '../lib/crypto.js';
 import { badRequest, notFound, parseId } from '../lib/errors.js';
@@ -29,48 +30,36 @@ export const backupDestinationRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.post('/', async (req) => {
-    const input = (
-      req.body ?? {}
-    ) as {
-      name?: unknown; endpoint?: unknown; region?: unknown; bucket?: unknown; prefix?: unknown; accessKeyId?: unknown; secretAccessKey?: unknown;
-    };
-    const name = String(input.name ?? '').trim();
-    const endpoint = String(input.endpoint ?? '').trim();
-    const bucket = String(input.bucket ?? '').trim();
-    const accessKeyId = String(input.accessKeyId ?? '').trim();
-    const secretAccessKey = String(input.secretAccessKey ?? '');
-    if (!name || !endpoint || !bucket || !accessKeyId || !secretAccessKey) {
-      throw badRequest('name, endpoint, bucket, accessKeyId and secretAccessKey are required');
-    }
-    if (!/^https?:\/\//.test(endpoint)) throw badRequest('endpoint must be an http(s) URL');
+    const input = backupDestinationCreate.parse(req.body ?? {});
     const [row] = await app.db
       .insert(backupDestinations)
       .values({
-        name,
-        endpoint,
-        region: String(input.region ?? 'us-east-1').trim() || 'us-east-1',
-        bucket,
-        prefix: String(input.prefix ?? 'ninedeploy').trim() || 'ninedeploy',
-        accessKeyId,
-        secretKeyEncrypted: encrypt(secretAccessKey),
+        name: input.name,
+        endpoint: input.endpoint,
+        region: input.region,
+        bucket: input.bucket,
+        prefix: input.prefix,
+        accessKeyId: input.accessKeyId,
+        secretKeyEncrypted: encrypt(input.secretAccessKey),
         active: true,
       })
       .returning();
     if (!row) throw badRequest('Could not create destination');
-    void audit(app.db, req.user!.id, 'backup.destination.create', name);
+    void audit(app.db, req.user!.id, 'backup.destination.create', input.name);
     return { id: row.id };
   });
 
   app.patch('/:id', async (req) => {
     const id = parseId((req.params as { id: string }).id);
-    const input = (req.body ?? {}) as Record<string, unknown>;
+    const input = backupDestinationPatch.parse(req.body ?? {});
     const values: Partial<typeof backupDestinations.$inferInsert> = {};
     for (const key of ['name', 'endpoint', 'region', 'bucket', 'prefix'] as const) {
-      if (typeof input[key] === 'string' && (input[key] as string).trim()) values[key] = (input[key] as string).trim();
+      const v = input[key];
+      if (typeof v === 'string' && v.trim()) values[key] = v.trim();
     }
-    if (typeof input.active === 'boolean') values.active = input.active;
-    if (typeof input.accessKeyId === 'string' && input.accessKeyId.trim()) values.accessKeyId = input.accessKeyId.trim();
-    if (typeof input.secretAccessKey === 'string' && input.secretAccessKey) {
+    if (input.active !== undefined) values.active = input.active;
+    if (input.accessKeyId !== undefined && input.accessKeyId.trim()) values.accessKeyId = input.accessKeyId.trim();
+    if (input.secretAccessKey) {
       values.secretKeyEncrypted = encrypt(input.secretAccessKey);
     }
     const [row] = await app.db

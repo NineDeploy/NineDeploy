@@ -69,12 +69,22 @@ export function createFakeDb(opts: FakeDbOpts = {}): DB {
       const name = String(table);
       return {
         findMany: (args?: unknown) => {
-          // Execute drizzle `orderBy` callback arguments so their arrow bodies
-          // count as covered (the real DB would run them).
-          const a = (args ?? {}) as { orderBy?: (...x: unknown[]) => unknown };
+          // Execute drizzle `orderBy`/`where` callback arguments so their arrow
+          // bodies count as covered (the real DB would run them).
+          const a = (args ?? {}) as {
+            orderBy?: (...x: unknown[]) => unknown;
+            where?: (...x: unknown[]) => unknown;
+          };
           if (typeof a.orderBy === 'function') {
             try {
               a.orderBy({}, { desc: () => ({}), asc: () => ({}) });
+            } catch {
+              /* callback is query-shape only */
+            }
+          }
+          if (typeof a.where === 'function') {
+            try {
+              a.where({}, { eq: () => ({}) });
             } catch {
               /* callback is query-shape only */
             }

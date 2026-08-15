@@ -5,7 +5,7 @@ import { createService, setLimits, updateService } from '@ninedeploy/schemas';
 import { capture, run } from '../lib/exec.js';
 import { audit } from '../lib/audit.js';
 import { config } from '../config.js';
-import { badRequest, notFound } from '../lib/errors.js';
+import { badRequest, notFound, parseId as num } from '../lib/errors.js';
 import { slugify } from '../lib/slug.js';
 import { composeBuilder } from '../engine/builders/compose.js';
 import { dockerBuilder } from '../engine/builders/docker.js';
@@ -50,14 +50,18 @@ function serializeBuild(b: typeof buildConfigs.$inferSelect) {
   };
 }
 
-const num = (v: string) => Number(v);
-
 export const servicesRoutes: FastifyPluginAsync = async (app) => {
   // Every route here requires authentication.
   app.addHook('onRequest', app.authenticate);
 
-  app.get('/', async () => {
-    const rows = await app.db.query.services.findMany({ orderBy: (s, { desc }) => [desc(s.id)] });
+  app.get('/', async (req) => {
+    // Optional project scoping for the global project switcher (?projectId=).
+    const projectId = Number((req.query as { projectId?: string }).projectId);
+    const scoped = Number.isInteger(projectId) && projectId > 0 ? projectId : null;
+    const rows = await app.db.query.services.findMany({
+      orderBy: (s, { desc }) => [desc(s.id)],
+      ...(scoped != null && { where: (s, { eq }) => eq(s.projectId, scoped) }),
+    });
     // List view omits the build config (detail endpoint joins it); keep the shape stable.
     return rows.map((s) => ({ ...serialize(s), build: null }));
   });

@@ -4,9 +4,7 @@ import { domains, services, type Domain } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { createDomain, domainPatch } from '@ninedeploy/schemas';
 import { parseHeaders, writeDynamicConfig } from '../engine/proxy.js';
-import { conflict, notFound } from '../lib/errors.js';
-
-const num = (v: string) => Number(v);
+import { conflict, notFound, parseId as num } from '../lib/errors.js';
 
 function serialize(d: Domain) {
   return {

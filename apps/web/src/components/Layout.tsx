@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
 import {
-  Activity, ChevronLeft, Cloud, Database, Globe, HardDrive,
+  Activity, ChevronLeft, Cloud, Database, FolderKanban, Globe, HardDrive,
   Info, KeyRound, Layers, LayoutDashboard, Moon, Network, type LucideIcon,
   Rocket, Search, Server, Settings as SettingsIcon, Sparkles, Sun, Users, X,
 } from 'lucide-react';
 import { Link, Outlet, useLocation } from 'react-router';
 import { useAuth } from '../lib/auth.js';
 import { getToken } from '../lib/api.js';
+import { useProjectScope } from '../lib/projects.js';
 import { useTheme } from '../lib/theme.js';
 import { cn } from './ui.js';
 import { CommandPalette } from './CommandPalette.js';
@@ -190,6 +191,7 @@ export function Layout() {
         {/* Top bar */}
         <header className="flex h-12 shrink-0 items-center justify-between border-b border-white/[0.06] px-5">
           <div className="flex items-center gap-2 text-sm">
+            <ProjectSwitcher />
             <span className="font-medium text-slate-300">{currentGroup?.label ?? 'NineDeploy'}</span>
             {currentItem && (
               <>
@@ -237,6 +239,29 @@ export function Layout() {
       {drawerOpen && <ActivityDrawer onClose={() => setDrawerOpen(false)} />}
       {paletteOpen && <CommandPalette onClose={() => setPaletteOpen(false)} />}
     </div>
+  );
+}
+
+// ── Global project switcher (top bar) ─────────────────────────────────────
+function ProjectSwitcher() {
+  const { projects, selectedId, select } = useProjectScope();
+  return (
+    <label className="relative flex items-center" title="Scope pages to a project">
+      <FolderKanban size={13} className="pointer-events-none absolute left-2 text-slate-500" />
+      <select
+        aria-label="Project scope"
+        value={selectedId ?? ''}
+        onChange={(e) => select(e.target.value === '' ? null : Number(e.target.value))}
+        className="h-7 appearance-none rounded-lg bg-white/[0.04] pl-7 pr-6 text-xs font-medium text-slate-300 ring-1 ring-inset ring-white/10 transition hover:bg-white/[0.08] focus:outline-none focus:ring-2 focus:ring-indigo-400/60"
+      >
+        <option value="">All projects</option>
+        {projects.map((p) => (
+          <option key={p.id} value={p.id}>
+            {p.name}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 

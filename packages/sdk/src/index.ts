@@ -8,6 +8,7 @@ import type {
   CreateApiToken,
   CreateDatabaseInput,
   CreateDomainInput,
+  CreateProjectInput,
   CreateServiceInput,
   CreateSourceInput,
   CreateTunnelInput,
@@ -24,6 +25,8 @@ import type {
   PasswordChange,
   PasswordReset,
   MetricSeries,
+  ProjectEntry,
+  ProjectPatchInput,
   PublicUser,
   Refresh,
   Register,
@@ -105,7 +108,8 @@ export interface NineDeployClient {
     };
   };
   services: {
-    list: () => Promise<Service[]>;
+    /** `query` is appended verbatim, e.g. `?projectId=3` (project scoping). */
+    list: (query?: string) => Promise<Service[]>;
     get: (id: number) => Promise<Service>;
     create: (input: CreateServiceInput) => Promise<Service>;
     update: (id: number, input: UpdateServiceInput) => Promise<Service>;
@@ -175,6 +179,12 @@ export interface NineDeployClient {
     /** Mint a one-time reset link for a user (returned exactly once). */
     resetLink: (id: number) => Promise<{ url: string; expiresAt: string }>;
   };
+  projects: {
+    list: () => Promise<ProjectEntry[]>;
+    create: (input: CreateProjectInput) => Promise<ProjectEntry>;
+    update: (id: number, input: ProjectPatchInput) => Promise<ProjectEntry>;
+    remove: (id: number) => Promise<{ ok: boolean }>;
+  };
   about: {
     get: () => Promise<{
       name: string; version: string; description: string; license: string; repo: string; docs: string;
@@ -204,7 +214,8 @@ export interface NineDeployClient {
     remove: (serviceId: number, hookId: number) => Promise<void>;
   };
   databases: {
-    list: () => Promise<ManagedDatabase[]>;
+    /** `query` is appended verbatim, e.g. `?projectId=3` (project scoping). */
+    list: (query?: string) => Promise<ManagedDatabase[]>;
     create: (input: CreateDatabaseInput) => Promise<ManagedDatabase>;
     get: (id: number) => Promise<ManagedDatabase>;
     remove: (id: number) => Promise<void>;
@@ -363,7 +374,7 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
       },
     },
     services: {
-      list: () => get<Service[]>('/v1/services'),
+      list: (query) => get<Service[]>(`/v1/services${query ?? ''}`),
       get: (id) => get<Service>(`/v1/services/${id}`),
       create: (input) => send<Service>('POST', '/v1/services', input),
       update: (id, input) => send<Service>('PATCH', `/v1/services/${id}`, input),
@@ -447,6 +458,12 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
         await request(`/v1/users/${id}`, { method: 'DELETE' });
       },
     },
+    projects: {
+      list: () => get<ProjectEntry[]>('/v1/projects'),
+      create: (input) => send<ProjectEntry>('POST', '/v1/projects', input),
+      update: (id, input) => send<ProjectEntry>('PATCH', `/v1/projects/${id}`, input),
+      remove: (id) => send<{ ok: boolean }>('DELETE', `/v1/projects/${id}`),
+    },
     about: {
       get: () => get('/v1/about'),
     },
@@ -474,7 +491,7 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
       },
     },
     databases: {
-      list: () => get<ManagedDatabase[]>('/v1/databases'),
+      list: (query) => get<ManagedDatabase[]>(`/v1/databases${query ?? ''}`),
       create: (input) => send<ManagedDatabase>('POST', '/v1/databases', input),
       get: (id) => get<ManagedDatabase>(`/v1/databases/${id}`),
       remove: async (id) => {
