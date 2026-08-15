@@ -31,11 +31,16 @@ export function createDb(opts: CreateDbOptions): CreateDbResult {
   // `onDelete cascade` / `set null` rule declared in the schema. Enable it per
   // connection. Fired without awaiting — execute calls on a single libSQL client
   // are serialized, so this runs before any subsequent query on this connection.
-  // Also: WAL allows the API/worker/collector to read while the deploy worker
-  // writes (busy_timeout 0 would fail readers immediately during a write).
+  // busy_timeout: without it a reader/writer that collides with the deploy
+  // worker's write fails immediately with SQLITE_BUSY; 5s lets it wait.
+  // journal_mode=WAL is DELIBERATELY not enabled: the system export handler and
+  // install.sh's pre-update backup tar only the single ninedeploy.db file, so
+  // WAL would leave recent committed state in ninedeploy.db-wal and silently
+  // drop it from those archives. If WAL is ever wanted, the export/import
+  // handlers and install.sh backup must first wal_checkpoint(TRUNCATE) or
+  // include the sidecar files.
   void client
     .execute('PRAGMA foreign_keys = ON;')
-    .then(() => client.execute('PRAGMA journal_mode = WAL;'))
     .then(() => client.execute('PRAGMA busy_timeout = 5000;'))
     .catch(() => undefined);
   const db = drizzle(client, { schema });
