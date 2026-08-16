@@ -62,7 +62,7 @@ beforeEach(() => {
   errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
   exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
   h.prompt.mockResolvedValue('');
-  fetchMock = vi.fn().mockResolvedValue({ text: vi.fn().mockResolvedValue('{"data":1}') });
+  fetchMock = vi.fn().mockResolvedValue({ ok: true, text: vi.fn().mockResolvedValue('{"data":1}') });
   vi.stubGlobal('fetch', fetchMock);
 });
 
@@ -464,6 +464,19 @@ describe('servicesExport', () => {
     expect(fetchMock).toHaveBeenCalledWith('http://srv:3000/v1/services/7/export', {
       headers: { Authorization: 'Bearer tok' },
     });
+  });
+
+  it('reports an HTTP error instead of writing the error body as the export', async () => {
+    h.loadConfig.mockReturnValue({ baseUrl: 'http://srv:3000', token: 'tok' });
+    const client = makeClient({
+      services: { get: vi.fn().mockResolvedValue({ slug: 'api' }) },
+    });
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 404, text: vi.fn().mockResolvedValue('{"error":{}}') });
+
+    await servicesExport(client, '7');
+
+    expect(h.writeFileSync).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('HTTP 404'));
   });
 
   it('reports a fetch failure', async () => {

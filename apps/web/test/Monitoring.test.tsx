@@ -248,6 +248,21 @@ describe('Monitoring', () => {
     );
   });
 
+  it('submits a zero threshold when the field holds a non-numeric value', async () => {
+    mockOf(api.stats.snapshot).mockResolvedValue(snapshot as never);
+    mockOf(api.alerts.list).mockResolvedValue([] as never);
+    mockOf(api.alerts.create).mockResolvedValue({ id: 6 } as never);
+    renderWithProviders(<Monitoring />);
+    await screen.findByPlaceholderText('rule name');
+    await userEvent.type(screen.getByPlaceholderText('rule name'), 'any-threshold');
+    await userEvent.clear(screen.getByPlaceholderText('threshold'));
+    await userEvent.type(screen.getByPlaceholderText('threshold'), 'lots');
+    fireEvent.submit(screen.getByPlaceholderText('rule name').closest('form')!);
+    await waitFor(() =>
+      expect(api.alerts.create).toHaveBeenCalledWith(expect.objectContaining({ threshold: 0 })),
+    );
+  });
+
   it('falls back to one window for a non-numeric window count', async () => {
     mockOf(api.stats.snapshot).mockResolvedValue(snapshot as never);
     mockOf(api.alerts.list).mockResolvedValue([] as never);

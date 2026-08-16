@@ -4,6 +4,7 @@ import { ArrowLeft, ArrowRight, Check, Plus, Rocket, X } from 'lucide-react';
 import { useNavigate } from 'react-router';
 import type { Template } from '@ninedeploy/sdk';
 import { api } from '../lib/api.js';
+import { toInt } from '../lib/format.js';
 import { useProjectScope } from '../lib/projects.js';
 import { useToast } from './Toast.js';
 import { Button, Input, Select, cn } from './ui.js';
@@ -34,11 +35,12 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
   // Modal hygiene: focus the first field on open so keyboard/screen-reader
   // users land IN the dialog (not the page behind it), close on Escape, and
   // lock background scrolling while the wizard is up.
+  const busyRef = useRef(false);
   useEffect(() => {
     nameInputRef.current?.focus();
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !busyRef.current) onClose(); };
     window.addEventListener('keydown', onKey);
     return () => {
       document.body.style.overflow = prevOverflow;
@@ -67,6 +69,15 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
   const [dbStatus, setDbStatus] = useState<string | null>(null);
 
   const deploy = useMutation({
+    onMutate: () => {
+      // While the deploy mutation is in flight (service+env+db+trigger),
+      // closing the dialog must not run: the flow would keep going against
+      // an unmounted wizard and the final navigate would fire anyway.
+      busyRef.current = true;
+    },
+    onSettled: () => {
+      busyRef.current = false;
+    },
     mutationFn: async () => {
       const svc = await api.services.create({
         name,
@@ -75,12 +86,12 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
         repoUrl: mode === 'repo' ? repoUrl : undefined,
         image: mode === 'image' ? image : undefined,
         branch,
-        sourceId: sourceId ? Number(sourceId) : undefined,
-        port: port ? Number(port) : undefined,
+        sourceId: toInt(sourceId),
+        port: toInt(port),
         volumeMount: volumeMount || undefined,
         healthPath: healthPath || undefined,
-        cpuShares: cpuShares ? Number(cpuShares) : undefined,
-        memLimitMb: memLimitMb ? Number(memLimitMb) : undefined,
+        cpuShares: toInt(cpuShares),
+        memLimitMb: toInt(memLimitMb),
       });
       for (const e of envRows) {
         if (e.key.trim()) await api.env.create(svc.id, { key: e.key, value: e.value, isSecret: e.secret });
@@ -136,7 +147,7 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-6">
-      <button type="button" aria-label="Close dialog" tabIndex={-1} aria-hidden="true" onClick={onClose} className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+      <button type="button" aria-label="Close dialog" tabIndex={-1} aria-hidden="true" onClick={() => !busyRef.current && onClose()} className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
       <div
         ref={dialogRef}
         role="dialog"
@@ -150,7 +161,7 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
             <h2 className="flex items-center gap-2 text-lg font-semibold">
               <Rocket size={18} className="text-indigo-400" /> {template ? `Deploy ${template.name}` : 'New service'}
             </h2>
-            <button type="button" onClick={onClose} className="rounded-lg p-1.5 text-slate-500 hover:bg-white/5 hover:text-slate-300"><X size={16} /></button>
+            <button type="button" onClick={() => !busyRef.current && onClose()} className="rounded-lg p-1.5 text-slate-500 hover:bg-white/5 hover:text-slate-300"><X size={16} /></button>
           </div>
           <div className="flex items-center gap-2">
             {STEPS.map((label, i) => (

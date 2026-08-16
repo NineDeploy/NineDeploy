@@ -16,6 +16,14 @@ export function isManagedVolume(name: string): boolean {
   return /^nd-(svc|db)-[a-z0-9-]+$/.test(name);
 }
 
+/** Choke-point guard: every volume operation below must go through this. */
+function assertManagedVolume(volume: string): void {
+  if (!isManagedVolume(volume)) {
+    // An unvalidated name here (e.g. `/`) would make `-v /:/v` catastrophic.
+    throw new Error(`Refusing to operate on non-managed volume: ${volume}`);
+  }
+}
+
 /** Normalise a user-supplied path into a safe relative path ('' = root). */
 export function safeRelPath(input: string): string | null {
   if (input.includes('\0') || input.includes('\n')) return null;
@@ -56,6 +64,7 @@ export async function listVolumeDir(
   volume: string,
   rel: string,
 ): Promise<VolumeEntry[]> {
+  assertManagedVolume(volume);
   const out = await capture('docker', [
     'run', '--rm', '-v', `${volume}:${VOL_ROOT}`, 'alpine:latest',
     'sh', '-c',
@@ -85,6 +94,7 @@ export async function readVolumeFile(
   volume: string,
   rel: string,
 ): Promise<{ content: string; encoding: 'utf8' | 'base64' }> {
+  assertManagedVolume(volume);
   const out = await capture('docker', [
     'run', '--rm', '-v', `${volume}:${VOL_ROOT}`, 'alpine:latest',
     'sh', '-c',
@@ -101,6 +111,7 @@ export async function writeVolumeFile(
   base64: string,
   sink: (line: string) => void,
 ): Promise<void> {
+  assertManagedVolume(volume);
   // base64 is validated upstream (schemas); it rides through stdin so the
   // content never touches argv or a shell string.
   await run(
@@ -117,6 +128,7 @@ export async function writeVolumeFile(
 
 /** Create a directory (mkdir -p semantics). */
 export async function makeVolumeDir(volume: string, rel: string): Promise<void> {
+  assertManagedVolume(volume);
   await capture('docker', [
     'run', '--rm', '-v', `${volume}:${VOL_ROOT}`, 'alpine:latest',
     'mkdir', '-p', '--', volPath(rel),
@@ -129,6 +141,7 @@ export async function deleteVolumePath(
   rel: string,
   sink: (line: string) => void,
 ): Promise<void> {
+  assertManagedVolume(volume);
   await run(
     'docker',
     ['run', '--rm', '-v', `${volume}:${VOL_ROOT}`, 'alpine:latest', 'rm', '-rf', '--', volPath(rel)],

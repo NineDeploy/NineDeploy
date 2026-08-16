@@ -35,6 +35,8 @@ export interface FakeDbOpts {
   insert?: Record<string, RowsResolver>;
   /** Rows returned by db.update(table).set(s).where(...).returning(). */
   update?: Record<string, RowsResolver>;
+  /** Rows returned by db.delete(table).where(...).returning(). */
+  delete?: Record<string, RowsResolver>;
   /** When set, db.select().from(table) rejects with this error (drives catch branches). */
   selectError?: Record<string, Error>;
   /** When true, db.run() rejects (drives health degraded branch). */
@@ -164,15 +166,26 @@ export function createFakeDb(opts: FakeDbOpts = {}): DB {
     };
   };
 
-  const del = (_table: unknown) => ({
-    where: () => ({
-      // biome-ignore lint/suspicious/noThenProperty: intentional thenable — the fake DB delete result must be awaitable by the code under test.
-      then: (ok: (v?: unknown) => unknown, _rej?: (e: Error) => unknown) => {
-        ok(undefined);
-        return undefined;
+  const del = (table: unknown) => {
+    const name = tableName(table);
+    return {
+      where: () => {
+        const rows = () => resolveRows(opts.delete?.[name], [{ id: 1 }]);
+        const builder: {
+          returning: () => Promise<Row[]>;
+          then: (ok: (v?: unknown) => unknown, _rej?: (e: Error) => unknown) => unknown;
+        } = {
+          returning: () => rows(),
+          // biome-ignore lint/suspicious/noThenProperty: intentional thenable — the fake DB delete result must be awaitable by the code under test.
+          then: (ok) => {
+            rows().then(() => ok(undefined));
+            return undefined;
+          },
+        };
+        return builder;
       },
-    }),
-  });
+    };
+  };
 
   const run = () => ({
     // biome-ignore lint/suspicious/noThenProperty: intentional thenable — the fake DB run result must be awaitable by the code under test.
@@ -296,6 +309,7 @@ export const userRow = (over: Record<string, unknown> = {}) => ({
   passwordHash: 'hash',
   name: 'Admin',
   role: 'admin',
+  tokenVersion: 0,
   createdAt: NOW,
   updatedAt: NOW,
   ...over,

@@ -23,6 +23,10 @@ export type Login = z.infer<typeof login>;
 export const twoFactorCode = z.object({ code: z.string().regex(/^\d{6}$/) });
 export type TwoFactorCode = z.infer<typeof twoFactorCode>;
 
+/** Regenerating the 2FA secret: password required when 2FA is already enabled. */
+export const twoFactorSetup = z.object({ password: z.string().min(1) });
+export type TwoFactorSetup = z.infer<typeof twoFactorSetup>;
+
 export const twoFactorDisable = z.object({
   password: z.string().min(1),
   code: z.string().regex(/^\d{6}$/),

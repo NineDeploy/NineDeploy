@@ -220,7 +220,7 @@ describe('auth routes', () => {
   });
 
   it('refreshes tokens with a valid refresh token', async () => {
-    jwtMocks.verifyJwt.mockResolvedValueOnce({ type: 'refresh', sub: '1', jti: 'jti-1' });
+    jwtMocks.verifyJwt.mockResolvedValueOnce({ type: 'refresh', sub: '1', jti: 'jti-1', ver: 0 });
     const app = await buildTestApp({
       db: createFakeDb({ findFirst: { users: userRow({ id: 1 }), sessions: sessionRow({ jti: 'jti-1', userId: 1 }) } }),
     });
@@ -258,18 +258,18 @@ describe('auth routes', () => {
     expect(res.json().error.message).toBe('Invalid refresh token');
   });
 
-  it('accepts a refresh token without a ver claim', async () => {
+  it('rejects a refresh token without a ver claim (revocation bypass guard)', async () => {
     jwtMocks.verifyJwt.mockResolvedValueOnce({ type: 'refresh', sub: '1', jti: 'jti-1' });
     const app = await buildTestApp({
       db: createFakeDb({ findFirst: { users: userRow({ id: 1, tokenVersion: 0 }), sessions: sessionRow({ jti: 'jti-1' }) } }),
     });
     await app.register(authRoutes);
     const res = await app.inject({ method: 'POST', url: '/refresh', payload: { refreshToken: 'v' } });
-    expect(res.statusCode).toBe(200);
+    expect(res.statusCode).toBe(401);
   });
 
   it('rejects a refresh whose user vanished but session lives on', async () => {
-    jwtMocks.verifyJwt.mockResolvedValueOnce({ type: 'refresh', sub: '1', jti: 'jti-1' });
+    jwtMocks.verifyJwt.mockResolvedValueOnce({ type: 'refresh', sub: '1', jti: 'jti-1', ver: 0 });
     const app = await buildTestApp({
       db: createFakeDb({ findFirst: { users: undefined, sessions: sessionRow({ jti: 'jti-1' }) } }),
     });

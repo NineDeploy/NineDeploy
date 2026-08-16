@@ -2,7 +2,7 @@ import { mkdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { Builder } from '../types.js';
-import { capture, run, sleep } from '../../lib/exec.js';
+import { capture, buildEnv, run, sleep } from '../../lib/exec.js';
 import { NETWORK } from '../proxy.js';
 
 const swallow = () => {};
@@ -68,7 +68,9 @@ export const dockerBuilder: Builder = {
       log(`Authenticating to registry ${server || '(default)'} …`);
       const { spawn } = await import('node:child_process');
       await new Promise<void>((resolve, reject) => {
-        const child = spawn('docker', loginArgs, {});
+        // Isolated env (same allowlist as every other exec) so host secrets
+        // like the master key never leak into the login child.
+        const child = spawn('docker', loginArgs, { env: buildEnv() });
         const swallow = swallowErr; // child gone / EPIPE on stdin
         child.stdin.on('error', swallow);
         child.stdin.write(`${registryAuth.password}\n`);
@@ -86,10 +88,22 @@ export const dockerBuilder: Builder = {
       // On rollback, pin the exact image by digest instead of the mutable tag.
       target = imageDigest ?? service.image;
       log(`Pulling image ${target} …`);
-      await run('docker', ['pull', target], {}, log).catch((err) =>
-        // Pull may fail if the image is only available locally — surface but tolerate.
-        log(`pull warning: ${err instanceof Error ? err.message : String(err)}`),
-      );
+      try {
+        await run('docker', ['pull', target], {}, log);
+      } catch (pullErr) {
+        // A failed pull is only tolerable when the image exists locally
+        // (local-only images). Otherwise a stale tag must NOT silently deploy
+        // old code — and a missing image can never start anyway.
+        let local = false;
+        try {
+          await capture('docker', ['image', 'inspect', target, '--format', '{{.Id}}']);
+          local = true;
+        } catch {
+          local = false;
+        }
+        if (!local) throw pullErr;
+        log(`pull failed, using local image ${target} (${pullErr instanceof Error ? pullErr.message : String(pullErr)})`);
+      }
     } else {
       target = `ninedeploy/${service.slug}:${commitSha.slice(0, 7) || 'latest'}`;
       const baseDir = !buildConfig?.baseDir || buildConfig.baseDir === '/' ? '.' : buildConfig.baseDir;
@@ -187,6 +201,13 @@ export const dockerBuilder: Builder = {
             const res = await fetch(`http://${ip}:${runtime.port}${healthPath}`, {
               signal: AbortSignal.timeout(3000),
             });
+            // Always drain/cancel the body so the undici connection is released
+            // instead of leaking one socket per probe iteration.
+            try {
+              await res.body?.cancel();
+            } catch {
+              /* body already consumed */
+            }
             if (res.status < 500) return true;
           } catch {
             /* not up yet — retry until the grace period ends */

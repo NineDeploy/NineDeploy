@@ -154,7 +154,7 @@ describe('EnvCard', () => {
     );
   });
 
-  it('keeps the save button disabled when the draft is unchanged or cleared', async () => {
+  it('treats a cleared draft as a real edit (value can be blanked)', async () => {
     const user = userEvent.setup();
     renderCard();
     await waitFor(() => expect(screen.getByText('PORT')).toBeInTheDocument());
@@ -162,10 +162,9 @@ describe('EnvCard', () => {
     const row = input.closest('div.flex.items-center') as HTMLElement;
     expect(within(row).getByTitle('Save')).toBeDisabled();
     await user.clear(input);
-    // Clearing sets the draft to '', which the component treats as "not dirty",
-    // so the controlled input snaps back to the stored value and Save stays disabled.
-    expect(within(row).getByTitle('Save')).toBeDisabled();
-    expect(input).toHaveValue('3000');
+    // Clearing is a legitimate edit now — Save enables and the field stays empty.
+    expect(within(row).getByTitle('Save')).toBeEnabled();
+    expect(input).toHaveValue('');
   });
 
   it('deletes a variable with the delete button', async () => {
@@ -176,5 +175,21 @@ describe('EnvCard', () => {
     const row = input.closest('div.flex.items-center') as HTMLElement;
     await user.click(within(row).getByTitle('Delete'));
     await waitFor(() => expect(apiMock.api.env.remove).toHaveBeenCalledWith(7, 1));
+  });
+
+  it('filters the variable list once there are more than five rows', async () => {
+    apiMock.api.env.list.mockResolvedValue(
+      Array.from({ length: 7 }, (_, i) => ({ id: i + 1, key: `VAR_${i}`, value: String(i), isSecret: false })),
+    );
+    const user = userEvent.setup();
+    renderCard();
+    // With >5 variables the filter input appears and every row renders.
+    const filter = await screen.findByPlaceholderText('Filter keys…');
+    expect(screen.getByText('VAR_0')).toBeInTheDocument();
+    expect(screen.getByText('VAR_6')).toBeInTheDocument();
+    await user.type(filter, 'var_3');
+    // Case-insensitive substring match keeps only VAR_3.
+    expect(screen.queryByText('VAR_0')).not.toBeInTheDocument();
+    expect(screen.getByText('VAR_3')).toBeInTheDocument();
   });
 });

@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { Cable, Network, Plus, Trash2, Unplug } from 'lucide-react';
 import { api } from '../lib/api.js';
 import { useToast } from '../components/Toast.js';
-import { Button, Card, EmptyState, ErrorCard, PageHeader, Skeleton } from '../components/ui.js';
+import { Button, Card, ConfirmDialog, EmptyState, ErrorCard, PageHeader, Skeleton } from '../components/ui.js';
 
 /** Docker network management: list, create, delete, attach/detach containers. */
 export function Networks() {
@@ -16,6 +16,7 @@ export function Networks() {
   const [newDriver, setNewDriver] = useState<'bridge' | 'overlay'>('bridge');
   const [attachTo, setAttachTo] = useState<string | null>(null);
   const [container, setContainer] = useState('');
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ['networks'] });
 
@@ -40,7 +41,8 @@ export function Networks() {
   });
 
   const attach = useMutation({
-    mutationFn: () => api.networks.attach({ network: attachTo ?? '', container }),
+    // The attach card only renders while attachTo is set, so it is non-null here.
+    mutationFn: () => api.networks.attach({ network: attachTo!, container }),
     onSuccess: () => {
       setAttachTo(null);
       setContainer('');
@@ -163,7 +165,7 @@ export function Networks() {
                     <Cable size={13} /> Attach
                   </Button>
                   {n.name !== 'ninedeploy' && (
-                    <Button size="sm" variant="danger" onClick={() => remove.mutate(n.name)} disabled={remove.isPending}>
+                    <Button size="sm" variant="danger" onClick={() => setPendingDelete(n.name)} disabled={remove.isPending}>
                       <Trash2 size={13} /> Delete
                     </Button>
                   )}
@@ -193,6 +195,17 @@ export function Networks() {
           ))}
         </div>
       )}
+
+      <ConfirmDialog
+        open={pendingDelete != null}
+        title="Delete network"
+        message={pendingDelete
+          ? <>Network <code className="rounded bg-black/30 px-1.5 py-0.5 font-mono text-[11px]">{pendingDelete}</code> will be removed and every attached container disconnected.</>
+          : ''}
+        confirmLabel="Delete"
+        onConfirm={() => pendingDelete && remove.mutate(pendingDelete)}
+        onClose={() => setPendingDelete(null)}
+      />
     </div>
   );
 }

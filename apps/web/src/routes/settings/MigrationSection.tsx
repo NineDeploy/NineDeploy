@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { Download, GitBranch, Upload } from 'lucide-react';
 import { Link } from 'react-router';
-import { getToken } from '../../lib/api.js';
+import { authedFetch } from '../../lib/api.js';
 import { useToast } from '../../components/Toast.js';
 import { downloadBlob } from '../../lib/format.js';
 import { Card, CardBody } from '../../components/ui.js';
@@ -15,7 +15,7 @@ export function MigrationSection() {
   const doExport = async () => {
     try {
       toast('Preparing export…', 'info');
-      const res = await fetch('/v1/system/export', { headers: { Authorization: `Bearer ${getToken() ?? ''}` } });
+      const res = await authedFetch('/v1/system/export');
       if (!res.ok) throw new Error('Export failed');
       downloadBlob(await res.blob(), `ninedeploy-backup-${new Date().toISOString().slice(0, 10)}.tar.gz`);
       toast('Export downloaded', 'success');
@@ -29,15 +29,19 @@ export function MigrationSection() {
     try {
       toast('Importing… this may take a moment', 'info');
       const buf = await file.arrayBuffer();
-      const res = await fetch('/v1/system/import', {
+      const res = await authedFetch('/v1/system/import', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/octet-stream', Authorization: `Bearer ${getToken() ?? ''}` },
+        headers: { 'Content-Type': 'application/octet-stream' },
         body: buf,
       });
-      const json = await res.json();
-      toast(json.message || 'Import complete — restart NineDeploy', 'success');
-    } catch {
-      toast('Import failed', 'error');
+      // A JSON error body must not be reported as a successful import.
+      const json = (await res.json().catch(() => null)) as { message?: string; error?: { message?: string } } | null;
+      if (!res.ok) {
+        throw new Error(json?.error?.message || json?.message || 'Import failed');
+      }
+      toast(json?.message || 'Import complete — restart NineDeploy', 'success');
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Import failed', 'error');
     } finally {
       setImporting(false);
     }

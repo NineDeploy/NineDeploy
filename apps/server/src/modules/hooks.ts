@@ -5,7 +5,7 @@ import { webhookCreate } from '@ninedeploy/schemas';
 import { config } from '../config.js';
 import { decrypt, encrypt, randomToken } from '../lib/crypto.js';
 import { matchesAny, parseWatchPaths } from '../lib/glob.js';
-import { parseId, unauthorized } from '../lib/errors.js';
+import { notFound, parseId, unauthorized } from '../lib/errors.js';
 import { isPing, parsePush, verifyWebhook } from '../lib/webhooks.js';
 
 /** Public webhook receiver — auto-deploys on verified provider push events. */
@@ -71,6 +71,24 @@ export const hookReceiveRoutes: FastifyPluginAsync = async (app) => {
         author: push.author || null,
       })
       .returning();
+    // The check-then-insert above races under concurrent duplicate deliveries
+    // (no unique index covers service+sha+status). Post-hoc guard: if another
+    // active deployment for the same commit won, drop ours.
+    if (dep && push.sha) {
+      const dups = await app.db.query.deployments.findMany({
+        where: and(
+          eq(deployments.serviceId, hook.serviceId),
+          eq(deployments.commitSha, push.sha),
+          inArray(deployments.status, ['queued', 'building', 'running']),
+        ),
+      });
+      const other = dups.filter((d) => d.id !== dep.id).sort((a, b) => a.id - b.id)[0];
+      // Keep the lowest id (both racers converge on the same winner).
+      if (other && other.id < dep.id) {
+        await app.db.delete(deployments).where(eq(deployments.id, dep.id));
+        return { ok: 'skipped', reason: 'duplicate', deploymentId: other.id };
+      }
+    }
     return { ok: true, provider, deploymentId: dep!.id };
   });
 };
@@ -96,7 +114,7 @@ export const webhookMgmtRoutes: FastifyPluginAsync = async (app) => {
     const id = parseId((req.params as { id: string }).id);
     const input = webhookCreate.parse(req.body ?? {});
     const svc = await app.db.query.services.findFirst({ where: eq(services.id, id) });
-    if (!svc) throw unauthorized('Service not found');
+    if (!svc) throw notFound('Service not found');
     const branch = input.branch?.trim() || svc.branch;
     const secret = randomToken(24);
     const [w] = await app.db

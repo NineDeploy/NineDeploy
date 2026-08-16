@@ -12,7 +12,7 @@ const h = vi.hoisted(() => {
   return { run, sleep, capture, config };
 });
 
-vi.mock('../../src/lib/exec.js', () => ({ run: h.run, sleep: h.sleep, capture: h.capture }));
+vi.mock('../../src/lib/exec.js', () => ({ run: h.run, sleep: h.sleep, capture: h.capture, buildEnv: () => ({}) }));
 vi.mock('../../src/config.js', () => ({ config: h.config }));
 
 const spawnMocks = vi.hoisted(() => {
@@ -101,7 +101,8 @@ describe('dockerBuilder.buildAndRun', () => {
 
     const log = ctx.log;
     expect(h.run).toHaveBeenCalledWith('docker', ['pull', 'nginx:1.25'], {}, log);
-    expect(log).toHaveBeenCalledWith(expect.stringContaining('pull warning: pull failed'));
+    // Pull failed but a local image exists → tolerated with a clear warning.
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('pull failed, using local image'));
     const runArgs = h.run.mock.calls.at(-1)![1] as unknown[];
     expect(runArgs).toEqual(
       [
@@ -124,7 +125,16 @@ describe('dockerBuilder.buildAndRun', () => {
 
     await dockerBuilder.buildAndRun(ctx as never);
 
-    expect(ctx.log).toHaveBeenCalledWith('pull warning: network down');
+    expect(ctx.log).toHaveBeenCalledWith(expect.stringContaining('pull failed, using local image nginx:1.25 (network down)'));
+  });
+
+  it('fails the deploy when the pull fails and no local image exists', async () => {
+    h.run.mockRejectedValueOnce(new Error('manifest unknown'));
+    // The local-image probe also fails → nothing to fall back to.
+    h.capture.mockRejectedValueOnce(new Error('No such image'));
+    const ctx = makeCtx({ service: { slug: 'web', image: 'nginx:1.25', port: 3000, cpuShares: 0, memLimitMb: 0, volumeMount: null, healthPath: '/' } });
+
+    await expect(dockerBuilder.buildAndRun(ctx as never)).rejects.toThrow('manifest unknown');
   });
 
   it('writes env vars to a temp env-file (0600) and deletes it after start', async () => {
@@ -474,7 +484,9 @@ describe('dockerBuilder registry auth', () => {
       }) as never,
     );
 
-    expect(spawnMocks.spawn).toHaveBeenCalledWith('docker', ['login', '--username', 'u', '--password-stdin', 'ghcr.io'], {});
+    // Env is isolated (same allowlist as the exec layer) so host secrets
+    // never leak into the login child.
+    expect(spawnMocks.spawn).toHaveBeenCalledWith('docker', ['login', '--username', 'u', '--password-stdin', 'ghcr.io'], { env: expect.any(Object) });
     // The password traveled over stdin, never argv.
     expect(spawnMocks.child.stdin.write).toHaveBeenCalledWith('p\n');
     // Logout after the pull.

@@ -70,11 +70,17 @@ export async function testCloudflareToken(token: string): Promise<string> {
   return result.status;
 }
 
-/** Resolve a hostname's zone: prefer exact match, then the longest suffix match. */
+/** Resolve a hostname's zone: prefer exact match, then the longest suffix match
+ *  (with nested zones like example.com + dev.example.com, the most specific
+ *  zone must win or records land in the wrong one). */
 export async function findZoneId(token: string, hostname: string): Promise<string | null> {
   const zones = await cf<Array<{ id: string; name: string }>>('/zones?per_page=50', token);
-  const exact = zones.find((z) => hostname === z.name || hostname.endsWith(`.${z.name}`));
-  return exact?.id ?? null;
+  const exact = zones.find((z) => hostname === z.name);
+  if (exact) return exact.id;
+  const matches = zones
+    .filter((z) => hostname.endsWith(`.${z.name}`))
+    .sort((a, b) => b.name.length - a.name.length);
+  return matches[0]?.id ?? null;
 }
 
 /** Detect this host's public IPv4 (used when no explicit record content is set). */

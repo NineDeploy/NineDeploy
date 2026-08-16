@@ -158,7 +158,9 @@ export type Deployment = z.infer<typeof deployment>;
 export const createDomain = z.object({
   hostname: z.string().min(3).max(253),
   path: z.string().default('/'),
-  ssl: z.boolean().default(false),
+  // Default matches the DB column default and the CLI (`ssl !== false`):
+  // HTTPS everywhere unless explicitly disabled.
+  ssl: z.boolean().default(true),
   redirectWww: z.boolean().optional(),
   /** JSON array [{name, value}] of custom response headers. */
   headers: z.string().max(8000).optional(),

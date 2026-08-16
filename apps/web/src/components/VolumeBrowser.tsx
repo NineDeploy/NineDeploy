@@ -51,7 +51,13 @@ export function VolumeBrowser({ volume, onClose }: { volume: string; onClose: ()
   const open = useMutation({
     mutationFn: (path: string) => api.volumes.readFile(volume, path),
     onSuccess: (res, path) => {
-      const text = res.encoding === 'base64' ? atob(res.content) : res.content;
+      // Decode base64 as UTF-8 (matching the save path's encoder): plain
+      // atob() would mojibake every multi-byte char and re-saving would
+      // corrupt the file permanently.
+      const text =
+        res.encoding === 'base64'
+          ? new TextDecoder().decode(Uint8Array.from(atob(res.content), (c) => c.charCodeAt(0)))
+          : res.content;
       setEditing({ path, text, dirty: false });
     },
     onError: () => toast('Could not read the file (binary or >1 MB?)', 'error'),

@@ -48,11 +48,13 @@ services:
       # Vite proxies /v1 requests to the API service.
       VITE_API_URL: http://server:3000
     volumes:
-      - ./apps/web:/app/apps/web:ro
-      - ./packages:/app/packages:ro
-      - ./package.json:/app/package.json:ro
-      - ./pnpm-workspace.yaml:/app/pnpm-workspace.yaml:ro
-      - ./pnpm-lock.yaml:/app/pnpm-lock.yaml:ro
+      # Writable (no :ro): `pnpm install` creates node_modules inside each
+      # workspace package — read-only mounts would make it fail with EROFS.
+      - ./apps/web:/app/apps/web
+      - ./packages:/app/packages
+      - ./package.json:/app/package.json
+      - ./pnpm-workspace.yaml:/app/pnpm-workspace.yaml
+      - ./pnpm-lock.yaml:/app/pnpm-lock.yaml
     depends_on:
       - server
 

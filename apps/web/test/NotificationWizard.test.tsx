@@ -141,6 +141,56 @@ describe('NotificationWizard', () => {
     expect(screen.getByText('Notification channel created!')).toBeInTheDocument();
   });
 
+  it('toasts when saving the channel on the final step fails', async () => {
+    // Test succeeds, but the final PATCH (sync of post-test edits) rejects.
+    apiMock.api.notifications.updateChannel.mockRejectedValue(new Error('save blew up'));
+    const { onClose } = renderWizard();
+    const user = userEvent.setup();
+    await user.click(screen.getByText('Telegram'));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.type(screen.getByPlaceholderText('789123456:AAEx…:987654321'), 'tok:chat');
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /send test/i }));
+    await waitFor(() => expect(screen.getByText('Test message sent!')).toBeInTheDocument());
+    await user.click(screen.getByRole('button', { name: /create channel/i }));
+    await waitFor(() => expect(screen.getByText('Could not save the channel')).toBeInTheDocument());
+    // The wizard stays open so the user can retry.
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('patches the existing channel when retrying the test after a delivery failure', async () => {
+    // First delivery fails AFTER the channel row was created…
+    apiMock.api.notifications.testChannel.mockRejectedValueOnce(new Error('no route'));
+    const { onClose } = renderWizard();
+    const user = userEvent.setup();
+    await user.click(screen.getByText('Telegram'));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.type(screen.getByPlaceholderText('789123456:AAEx…:987654321'), 'tok:chat');
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /send test/i }));
+    await waitFor(() => expect(screen.getByText('Test failed — check your settings')).toBeInTheDocument());
+    expect(apiMock.api.notifications.createChannel).toHaveBeenCalledTimes(1);
+
+    // …retrying syncs the (possibly edited) settings via PATCH instead of
+    // creating a duplicate channel.
+    await user.click(screen.getByRole('button', { name: /send test/i }));
+    await waitFor(() =>
+      expect(apiMock.api.notifications.updateChannel).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({ target: 'tok:chat' }),
+      ),
+    );
+    await waitFor(() => expect(apiMock.api.notifications.testChannel).toHaveBeenCalledTimes(2));
+    expect(apiMock.api.notifications.createChannel).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(screen.getByText('Test message sent!')).toBeInTheDocument());
+
+    // Finishing PATCHes the final state and closes.
+    await user.click(screen.getByRole('button', { name: /create channel/i }));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+  });
+
   it('shows a failure state when the test fails', async () => {
     apiMock.api.notifications.testChannel.mockRejectedValue(new Error('nope'));
     const user = userEvent.setup();

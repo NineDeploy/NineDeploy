@@ -306,7 +306,7 @@ describe('whoami action', () => {
     expect(h.exit).not.toHaveBeenCalled();
   });
 
-  it('reports an expired token when auth fails', async () => {
+  it('surfaces the underlying error when auth fails', async () => {
     h.loadConfig.mockReturnValue({ baseUrl: 'http://srv:3000', token: 'tok' });
     h.getClient.mockReturnValue({
       auth: { me: vi.fn().mockRejectedValue(new Error('401')) },
@@ -316,7 +316,10 @@ describe('whoami action', () => {
     await loadIndex();
     await findCommand('whoami').actionFn!();
 
-    expect(logSpy).toHaveBeenCalledWith('  Token expired. Run `ninedeploy login`.');
+    // The failure is no longer misreported as a pure "token expired" — the
+    // real error travels with guidance to re-login if it was an expiry.
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('401'));
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('ninedeploy login'));
     expect(h.exit).toHaveBeenCalledWith(1);
   });
 });
@@ -414,8 +417,23 @@ describe('config action', () => {
 });
 
 describe('logout action', () => {
-  it('clears stored credentials', async () => {
+  it('revokes server-side (best-effort) and clears stored credentials', async () => {
     h.loadConfig.mockReturnValue({ baseUrl: 'http://srv:3000', token: 'tok' });
+    const logout = vi.fn().mockResolvedValue(undefined);
+    h.getClient.mockReturnValue({ auth: { logout } });
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await loadIndex();
+    await findCommand('logout').actionFn!();
+
+    expect(logout).toHaveBeenCalled();
+    expect(h.saveConfig).toHaveBeenCalledWith({ baseUrl: 'http://srv:3000' });
+    expect(logSpy).toHaveBeenCalledWith('  ✓ Signed out.');
+  });
+
+  it('still signs out locally when the server is unreachable', async () => {
+    h.loadConfig.mockReturnValue({ baseUrl: 'http://srv:3000', token: 'tok' });
+    h.getClient.mockReturnValue({ auth: { logout: vi.fn().mockRejectedValue(new Error('down')) } });
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
     await loadIndex();
@@ -423,6 +441,29 @@ describe('logout action', () => {
 
     expect(h.saveConfig).toHaveBeenCalledWith({ baseUrl: 'http://srv:3000' });
     expect(logSpy).toHaveBeenCalledWith('  ✓ Signed out.');
+  });
+
+  it('skips the server revoke when no token is stored', async () => {
+    h.loadConfig.mockReturnValue({ baseUrl: 'http://srv:3000' });
+    const getClient = h.getClient;
+    await loadIndex();
+    await findCommand('logout').actionFn!();
+    expect(getClient).not.toHaveBeenCalled();
+    expect(h.saveConfig).toHaveBeenCalledWith({ baseUrl: 'http://srv:3000' });
+  });
+
+  it('stringifies non-Error whoami failures', async () => {
+    h.loadConfig.mockReturnValue({ baseUrl: 'http://srv:3000', token: 'tok' });
+    h.getClient.mockReturnValue({
+      auth: { me: vi.fn().mockRejectedValue('plain failure') },
+    });
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await loadIndex();
+    await findCommand('whoami').actionFn!();
+
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('plain failure'));
+    expect(h.exit).toHaveBeenCalledWith(1);
   });
 });
 

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
@@ -26,4 +26,12 @@ export function loadConfig(): CliConfig {
 export function saveConfig(config: CliConfig): void {
   mkdirSync(CONFIG_DIR, { recursive: true });
   writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), { mode: 0o600 });
+  // writeFileSync's mode only applies at CREATION — re-assert 0600 so a file
+  // that ever ended up group/world-readable (restore, copy, old version)
+  // holding the bearer token is tightened on every save.
+  try {
+    chmodSync(CONFIG_FILE, 0o600);
+  } catch {
+    /* best-effort on exotic filesystems */
+  }
 }

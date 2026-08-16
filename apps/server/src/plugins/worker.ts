@@ -1,4 +1,4 @@
-import { and, asc, eq, notInArray } from 'drizzle-orm';
+import { and, asc, eq, inArray, notInArray } from 'drizzle-orm';
 import { deployments, services } from '@ninedeploy/db';
 import fp from 'fastify-plugin';
 import { config } from '../config.js';
@@ -33,14 +33,30 @@ export default fp(
     const timers: NodeJS.Timeout[] = [];
 
     // Crash recovery: a deploy interrupted by a restart is left stranded in
-    // `building`. Mark it failed so it can never hang forever. `queued` rows are
-    // deliberately left alone — they have not started yet and will resume on the
-    // next poll, so a restart does not silently drop pending work.
+    // `building`. Only sweep rows that can no longer be genuinely running —
+    // a second process sharing this DB may have live in-flight deploys, and
+    // failing those out from under it would break the multi-process story.
+    // 45 min comfortably covers the 30-min exec timeout + 5-min healthcheck.
+    const STALE_BUILDING_MS = 45 * 60 * 1000;
+    const staleCutoff = new Date(Date.now() - STALE_BUILDING_MS);
     try {
-      await fastify.db
-        .update(deployments)
-        .set({ status: 'failed', finishedAt: new Date() })
-        .where(eq(deployments.status, 'building'));
+      const buildingRows = (await fastify.db.select().from(deployments).where(eq(deployments.status, 'building'))) as Array<{
+        id: number;
+        startedAt: Date | null;
+        createdAt: Date | null;
+      }>;
+      const stale = buildingRows
+        .filter((r) => {
+          const ts = r.startedAt ?? r.createdAt;
+          return !!ts && ts.getTime() < staleCutoff.getTime();
+        })
+        .map((r) => r.id);
+      if (stale.length) {
+        await fastify.db
+          .update(deployments)
+          .set({ status: 'failed', finishedAt: new Date() })
+          .where(inArray(deployments.id, stale));
+      }
     } catch (err) {
       fastify.log.warn({ err }, 'could not sweep stale building deployments');
     }

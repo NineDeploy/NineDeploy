@@ -3,6 +3,7 @@ import {
   buildConfigs, databaseAttachments, databases, domains, envVars, services, webhooks,
 } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
+import { envVarName } from '@ninedeploy/schemas';
 import { decrypt, encrypt } from '../lib/crypto.js';
 import { badRequest, notFound, parseId as num } from '../lib/errors.js';
 import { slugify } from '../lib/slug.js';
@@ -151,8 +152,16 @@ export const serviceMigrationRoutes: FastifyPluginAsync = async (app) => {
       });
     }
 
-    // Env vars (re-encrypt with this instance's master key)
+    // Env vars (re-encrypt with this instance's master key). Keys are
+    // validated with the same charset the normal env API enforces — a key
+    // containing `=` or a newline would inject into the deploy env-file.
     for (const e of bundle.envVars) {
+      if (typeof e.key !== 'string' || !envVarName.safeParse(e.key).success) {
+        throw badRequest(`Invalid bundle: bad env var key ${JSON.stringify(e.key)}`);
+      }
+      if (typeof e.value !== 'string') {
+        throw badRequest(`Invalid bundle: env var ${e.key} has no value`);
+      }
       await app.db.insert(envVars).values({
         serviceId: svc.id,
         key: e.key,

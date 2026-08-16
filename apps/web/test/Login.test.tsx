@@ -27,6 +27,7 @@ function authValue(overrides: Record<string, unknown> = {}) {
     loading: false,
     login: vi.fn().mockResolvedValue(undefined),
     setup: vi.fn().mockResolvedValue(undefined),
+    loginWithPasskey: vi.fn().mockResolvedValue(undefined),
     logout: vi.fn(),
     ...overrides,
   };
@@ -197,6 +198,43 @@ describe('Login', () => {
     renderWithProviders(<Login />);
     await screen.findByRole('heading', { name: 'Create admin account' });
     expect(screen.queryByRole('link', { name: /Forgot your password\?/ })).not.toBeInTheDocument();
+  });
+
+  it('signs in with a passkey and navigates to the from location', async () => {
+    const user = userEvent.setup();
+    const loginWithPasskey = vi.fn().mockResolvedValue(undefined);
+    mockOf(api.auth.status).mockResolvedValue({ initialized: true } as never);
+    mockOf(useAuth).mockReturnValue(authValue({ loginWithPasskey }) as never);
+    renderWithProviders(
+      <>
+        <Login />
+        <LocationProbe />
+      </>,
+      { initialEntries: [{ pathname: '/login', state: { from: '/networks' } }] },
+    );
+    await user.click(await screen.findByRole('button', { name: /Use a passkey/ }));
+    await waitFor(() => expect(loginWithPasskey).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/networks'));
+  });
+
+  it('shows the passkey error message when passkey sign-in fails', async () => {
+    const user = userEvent.setup();
+    const loginWithPasskey = vi.fn().mockRejectedValue(new Error('Passkey challenge expired'));
+    mockOf(api.auth.status).mockResolvedValue({ initialized: true } as never);
+    mockOf(useAuth).mockReturnValue(authValue({ loginWithPasskey }) as never);
+    renderWithProviders(<Login />);
+    await user.click(await screen.findByRole('button', { name: /Use a passkey/ }));
+    expect(await screen.findByText('Passkey challenge expired')).toBeInTheDocument();
+  });
+
+  it('shows a generic passkey error for non-Error rejections', async () => {
+    const user = userEvent.setup();
+    const loginWithPasskey = vi.fn().mockRejectedValue(undefined);
+    mockOf(api.auth.status).mockResolvedValue({ initialized: true } as never);
+    mockOf(useAuth).mockReturnValue(authValue({ loginWithPasskey }) as never);
+    renderWithProviders(<Login />);
+    await user.click(await screen.findByRole('button', { name: /Use a passkey/ }));
+    expect(await screen.findByText('Passkey sign-in cancelled')).toBeInTheDocument();
   });
 
   it('shows the password-reset success banner after a completed reset', async () => {

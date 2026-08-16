@@ -52,6 +52,14 @@ export async function consumeResetToken(db: DB, token: string, newPassword: stri
     await db.delete(passwordResetTokens).where(eq(passwordResetTokens.id, row.id));
     throw badRequest('Invalid or expired reset token');
   }
+  // Atomically claim the token BEFORE doing any work: the conditional update
+  // guarantees single-use even under concurrent requests with the same token.
+  const claimed = await db
+    .update(passwordResetTokens)
+    .set({ usedAt: new Date() })
+    .where(and(eq(passwordResetTokens.id, row.id), isNull(passwordResetTokens.usedAt)))
+    .returning();
+  if (!claimed.length) throw badRequest('Invalid or expired reset token');
   const user = await db.query.users.findFirst({ where: eq(users.id, row.userId) });
   if (!user) throw unauthorized();
   const passwordHash = await hashPassword(newPassword);
@@ -61,11 +69,6 @@ export async function consumeResetToken(db: DB, token: string, newPassword: stri
     .where(eq(users.id, user.id))
     .returning();
   if (!updated) throw unauthorized();
-  // Single-use: mark consumed (keep the row for audit until pruned).
-  await db
-    .update(passwordResetTokens)
-    .set({ usedAt: new Date() })
-    .where(eq(passwordResetTokens.id, row.id));
   return updated;
 }
 

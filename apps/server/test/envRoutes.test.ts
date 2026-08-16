@@ -26,7 +26,7 @@ describe('env routes (src/modules/env.ts)', () => {
 
   it('creates an env var', async () => {
     const app = await buildTestApp({
-      db: createFakeDb({ insert: { env_vars: [envVarRow({ id: 3, key: 'NODE_ENV', isSecret: false, valueEncrypted: encrypt('production') })] } }),
+      db: createFakeDb({ findFirst: { services: { id: 1 } }, insert: { env_vars: [envVarRow({ id: 3, key: 'NODE_ENV', isSecret: false, valueEncrypted: encrypt('production') })] } }),
     });
     await app.register(envRoutes);
     const res = await app.inject({
@@ -41,7 +41,7 @@ describe('env routes (src/modules/env.ts)', () => {
 
   it('returns 400 when the key already exists', async () => {
     const app = await buildTestApp({
-      db: createFakeDb({ insert: { env_vars: () => { throw new Error('UNIQUE constraint'); } } }),
+      db: createFakeDb({ findFirst: { services: { id: 1 } }, insert: { env_vars: () => { throw new Error('UNIQUE constraint'); } } }),
     });
     await app.register(envRoutes);
     const res = await app.inject({
@@ -78,6 +78,17 @@ describe('env routes (src/modules/env.ts)', () => {
       payload: { key: 'PORT', value: '1' },
     });
     expect(res.statusCode).toBe(404);
+  });
+
+  it('returns 404 when creating an env var for a missing service', async () => {
+    const app = await buildTestApp({ db: createFakeDb() });
+    await app.register(envRoutes);
+    const res = await app.inject({
+      method: 'POST', url: '/99/env', headers: asUser(),
+      payload: { key: 'PORT', value: '1' },
+    });
+    expect(res.statusCode).toBe(404);
+    expect(res.json().error.message).toBe('Service not found');
   });
 
   it('deletes an env var', async () => {
@@ -119,6 +130,7 @@ describe('env routes (src/modules/env.ts)', () => {
   it('trims surrounding whitespace from env keys', async () => {
     const app = await buildTestApp({
       db: createFakeDb({
+        findFirst: { services: { id: 1 } },
         insert: { env_vars: [envVarRow({ id: 3, key: 'PORT', isSecret: false, valueEncrypted: encrypt('3000') })] },
       }),
     });

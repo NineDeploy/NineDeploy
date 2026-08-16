@@ -60,7 +60,10 @@ export default fp(
       } catch (err) {
         fastify.log.error({ err }, 'backup scheduler tick failed');
       } finally {
-        if (running) timer = setTimeout(() => void tick(), DAY_MS);
+        if (running) {
+          timer = setTimeout(() => void tick(), DAY_MS);
+          timer.unref?.();
+        }
       }
     };
 
@@ -70,6 +73,7 @@ export default fp(
     });
     // First run in 24h (manual backups cover immediate needs); then daily.
     timer = setTimeout(() => void tick(), DAY_MS);
+    timer.unref?.();
     fastify.log.info('backup scheduler armed (daily)');
   },
   { name: 'ninedeploy-backups' },

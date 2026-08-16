@@ -14,6 +14,7 @@ vi.mock('@ninedeploy/sdk', () => ({ createClient: sdkMock.createClient }));
 
 import {
   api,
+  authedFetch,
   clearTokens,
   deployLogsWsUrl,
   getToken,
@@ -295,6 +296,64 @@ describe('fetchWithRefresh (401 → refresh → retry)', () => {
     });
     await expect(refreshAccessToken()).resolves.toBe(true);
     expect(localStorage.getItem(TOKEN_KEY)).toBe('a2');
+  });
+});
+
+describe('authedFetch', () => {
+  const client = sdkMock.createClient.mock.results[0]!.value as {
+    auth: { refresh: ReturnType<typeof vi.fn> };
+  };
+  const status = (code: number) => ({ ok: code < 300, status: code, text: async () => '' }) as Response;
+
+  beforeEach(() => {
+    localStorage.clear();
+    vi.restoreAllMocks();
+    client.auth.refresh.mockReset();
+  });
+
+  it('sends the stored access token as a bearer header', async () => {
+    setToken('tok-9');
+    const fetchMock = vi.fn(async () => status(200));
+    vi.stubGlobal('fetch', fetchMock);
+    const res = await authedFetch('/v1/services/1/export');
+    expect(res.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(new Headers(fetchMock.mock.calls[0]![1]!.headers).get('Authorization')).toBe('Bearer tok-9');
+    vi.unstubAllGlobals();
+  });
+
+  it('omits the authorization header when no token is stored', async () => {
+    const fetchMock = vi.fn(async () => status(200));
+    vi.stubGlobal('fetch', fetchMock);
+    const res = await authedFetch('/v1/services/1/export', { headers: { Accept: 'application/json' } });
+    expect(res.status).toBe(200);
+    // Existing headers are preserved; no Authorization is added.
+    const headers = new Headers(fetchMock.mock.calls[0]![1]!.headers);
+    expect(headers.get('Authorization')).toBeNull();
+    expect(headers.get('Accept')).toBe('application/json');
+    vi.unstubAllGlobals();
+  });
+
+  it('delegates to fetchWithRefresh: a 401 triggers a refresh and retry', async () => {
+    setSessionTokens('stale-acc', 'refresh-1');
+    client.auth.refresh.mockResolvedValue({
+      user: { id: 1 },
+      tokens: { accessToken: 'fresh-acc', refreshToken: 'refresh-2', expiresIn: 900 },
+    });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(status(401)) // original call with the stale token
+      .mockResolvedValueOnce(status(200)); // retry with the refreshed token
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await authedFetch('/v1/services/1/export');
+
+    expect(res.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(client.auth.refresh).toHaveBeenCalledWith({ refreshToken: 'refresh-1' });
+    const retryHeaders = new Headers(fetchMock.mock.calls[1]![1]!.headers);
+    expect(retryHeaders.get('Authorization')).toBe('Bearer fresh-acc');
+    vi.unstubAllGlobals();
   });
 });
 

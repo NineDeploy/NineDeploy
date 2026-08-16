@@ -15,6 +15,17 @@ export const deploysRoutes: FastifyPluginAsync = async (app) => {
     const id = num((req.params as { id: string }).id);
     const svc = await app.db.query.services.findFirst({ where: eq(services.id, id) });
     if (!svc) throw notFound('Service not found');
+    // In-progress dedup: a service with a queued/building deploy gets that
+    // deployment returned instead of another queue entry (button-hammering
+    // must not flood unbounded queued rows for one service).
+    const existing = await app.db.query.deployments.findFirst({
+      where: and(
+        eq(deployments.serviceId, id),
+        inArray(deployments.status, ['queued', 'building']),
+      ),
+      orderBy: desc(deployments.id),
+    });
+    if (existing) return { deploymentId: existing.id, alreadyInProgress: true };
     void audit(app.db, req.user!.id, 'deploy.trigger', svc.name);
     const [dep] = await app.db
       .insert(deployments)

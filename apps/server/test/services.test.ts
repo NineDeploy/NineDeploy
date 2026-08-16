@@ -88,6 +88,16 @@ describe('services routes', () => {
     expect(res.json()).toMatchObject({ id: 4, slug: 'my-app' });
   });
 
+  it('returns 409-style 400 for a duplicate slug (including project-less rows)', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({ findFirst: { services: svcRow({ id: 9, slug: 'my-app' }) } }),
+    });
+    await app.register(servicesRoutes);
+    const res = await app.inject({ method: 'POST', url: '/', headers: asUser(), payload: validCreate });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('slug_taken');
+  });
+
   it('creates a service without a port', async () => {
     const app = await buildTestApp({
       db: createFakeDb({ insert: { services: [svcRow({ id: 4, port: null })] } }),
@@ -286,12 +296,15 @@ describe('services routes', () => {
         findFirst: { services: svcRow({ id: 1, name: 'stack', type: 'compose', runtimeId: 'ndcmp-stack-api-1' }) },
       }),
     });
+    // The compose stop path resolves the project from the container's own
+    // compose labels (project + config file, tab-separated).
+    execMocks.capture.mockResolvedValueOnce('ndcmp-stack\t/app/compose.yaml');
     await app.register(servicesRoutes);
     const res = await app.inject({ method: 'DELETE', url: '/1', headers: asUser() });
     expect(res.statusCode).toBe(204);
     const composeCall = execMocks.run.mock.calls.find((c) => (c[1] as string[])[0] === 'compose');
     expect(composeCall).toBeTruthy();
-    expect((composeCall![1] as string[])).toEqual(['compose', '-p', 'ndcmp-stack', 'down', '--remove-orphans']);
+    expect((composeCall![1] as string[])).toEqual(['compose', '-p', 'ndcmp-stack', '-f', '/app/compose.yaml', 'down', '--remove-orphans']);
   });
 
   it('stops and removes the docker container and rewrites traefik config on delete', async () => {

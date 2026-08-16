@@ -264,12 +264,10 @@ export async function runDeployment(db: DB, deploymentId: number): Promise<void>
   // here propagates to the worker tick, which is correct — but the container is
   // already running. Only the post-success side-effects are best-effort. ──────
   const newRuntimeId = runtime!.runtimeId;
-  await db
-    .update(services)
-    .set({ status: 'running', runtimeId: newRuntimeId, port: runtime!.port ?? null, commitSha: sha })
-    .where(eq(services.id, service.id));
   // Conditional on still being `building`: a cancel that landed between the
-  // last checkpoint and this write must not be overwritten with `running`.
+  // last checkpoint and the finalize must not be overwritten with `running`.
+  // This runs FIRST — otherwise the service row below could end up pointing
+  // at a container that a late cancel then retires.
   const finalized = await db
     .update(deployments)
     .set({ status: 'running', finishedAt: new Date(), imageDigest: runtime!.imageDigest ?? null })
@@ -280,9 +278,16 @@ export async function runDeployment(db: DB, deploymentId: number): Promise<void>
     await builder.stop(newRuntimeId).catch(() => undefined);
     if (previous) {
       await db.update(services).set({ status: 'running', runtimeId: previous.runtimeId }).where(eq(services.id, service.id));
+    } else {
+      // First-ever deploy cancelled at the wire: nothing is running.
+      await db.update(services).set({ status: 'idle' }).where(eq(services.id, service.id));
     }
     return;
   }
+  await db
+    .update(services)
+    .set({ status: 'running', runtimeId: newRuntimeId, port: runtime!.port ?? null, commitSha: sha })
+    .where(eq(services.id, service.id));
 
   // Auto-provision wildcard domain if configured and not already present.
   // Isolated: a failure here must not affect the already-running container.

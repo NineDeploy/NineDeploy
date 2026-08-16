@@ -7,7 +7,7 @@ import { useAuth } from '../lib/auth.js';
 import { useToast } from '../components/Toast.js';
 import { Button, Card, ErrorCard, Input, PageHeader, Select, Skeleton, StatusBadge, cn } from '../components/ui.js';
 import { Sparkline } from '../components/Sparkline.js';
-import { formatBytes } from '../lib/format.js';
+import { formatBytes, toInt } from '../lib/format.js';
 
 export function Monitoring() {
   const { user: me } = useAuth();
@@ -77,9 +77,9 @@ function AlertRulesCard({ isAdmin }: { isAdmin: boolean }) {
         name: name.trim(),
         metric,
         operator,
-        threshold: Number(threshold),
+        threshold: toInt(threshold) ?? 0,
         serviceId: metric === 'cert-expiry' ? null : serviceId ? Number(serviceId) : null,
-        durationWindows: Number(windows) || 1,
+        durationWindows: toInt(windows, 1)!,
       }),
     onSuccess: () => {
       setName('');
@@ -279,7 +279,7 @@ function LimitsRow({ kind, id, memLimitMb }: { kind: 'service' | 'database'; id:
 
   const save = useMutation({
     mutationFn: () => {
-      const input = { cpuShares: cpu ? Number(cpu) : 0, memLimitMb: mem ? Number(mem) : 0 };
+      const input = { cpuShares: toInt(cpu, 0)!, memLimitMb: toInt(mem, 0)! };
       return kind === 'service' ? api.limits.setService(id, input) : api.limits.setDatabase(id, input);
     },
     onSuccess: () => {

@@ -4,7 +4,7 @@ import { jobCreate, jobPatch } from '@ninedeploy/schemas';
 import type { FastifyPluginAsync } from 'fastify';
 import { Cron } from 'croner';
 import { audit } from '../lib/audit.js';
-import { badRequest, notFound, parseId } from '../lib/errors.js';
+import { badRequest, forbidden, notFound, parseId } from '../lib/errors.js';
 import { runJob } from '../lib/jobRunner.js';
 
 /** Validate a 5-field cron expression up front (croner is the runtime parser). */
@@ -50,6 +50,11 @@ export const jobRoutes: FastifyPluginAsync = async (app) => {
     const input = jobCreate.parse(req.body ?? {});
     assertCron(input.cron);
     if (input.kind === 'exec' && !input.command) throw badRequest('command is required for exec jobs');
+    // Exec jobs run arbitrary commands inside the container — admin-only,
+    // consistent with the exec WS route and the volume file manager.
+    if (input.kind === 'exec' && req.user?.role !== 'admin') {
+      throw forbidden('Admin access required');
+    }
 
     const [row] = await app.db
       .insert(scheduledJobs)
@@ -80,6 +85,10 @@ export const jobRoutes: FastifyPluginAsync = async (app) => {
     if (input.kind !== undefined) values.kind = input.kind;
     if (input.command !== undefined) values.command = input.command.trim() || null;
     if (input.enabled !== undefined) values.enabled = input.enabled;
+    // Switching to (or editing) an exec job means arbitrary container commands — admin-only.
+    if (values.kind === 'exec' && req.user?.role !== 'admin') {
+      throw forbidden('Admin access required');
+    }
     const [row] = await app.db
       .update(scheduledJobs)
       .set(values)
@@ -106,6 +115,9 @@ export const jobRoutes: FastifyPluginAsync = async (app) => {
       where: and(eq(scheduledJobs.id, jobId), eq(scheduledJobs.serviceId, id)),
     });
     if (!job) throw notFound('Job not found');
+    if (job.kind === 'exec' && req.user?.role !== 'admin') {
+      throw forbidden('Admin access required');
+    }
     await runJob(app.db, jobId);
     void audit(app.db, req.user!.id, 'job.run', job.name);
     return { ok: true };

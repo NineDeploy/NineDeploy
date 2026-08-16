@@ -97,6 +97,26 @@ describe('service migration routes', () => {
       expect(res.json().error.message).toContain('service.type');
     });
 
+    it('rejects a bundle with an env var key that would inject into the env-file', async () => {
+      const app = await buildApp(createFakeDb());
+      const res = await app.inject({
+        method: 'POST', url: '/services/import', headers: asUser(),
+        payload: { ...bundle, envVars: [{ key: 'EV=IL\nNEW=1', value: 'x', isSecret: false }] },
+      });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error.message).toContain('bad env var key');
+    });
+
+    it('rejects a bundle with a non-string env var value', async () => {
+      const app = await buildApp(createFakeDb());
+      const res = await app.inject({
+        method: 'POST', url: '/services/import', headers: asUser(),
+        payload: { ...bundle, envVars: [{ key: 'OK', value: 42, isSecret: false }] },
+      });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error.message).toContain('has no value');
+    });
+
     it('imports a bundle whose optional arrays are missing (defaults to empty)', async () => {
       const { envVars: _e, domains: _d, webhooks: _w, attachments: _a, buildConfig: _b, ...bare } = bundle;
       const app = await buildApp(createFakeDb({ insert: { services: () => [svcRow({ id: 9 })] } }));

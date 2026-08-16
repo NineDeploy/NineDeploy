@@ -73,6 +73,16 @@ describe('jobs routes', () => {
     expect(res.json()).toMatchObject({ kind: 'exec', command: 'rm -rf /tmp/*' });
   });
 
+  it('forbids exec job creation for members (container command execution)', async () => {
+    const app = await appWith({ findFirst: { services: svcRow() } });
+    const res = await app.inject({
+      method: 'POST', url: '/services/1/jobs',
+      headers: { ...asUser(), 'x-test-role': 'member' },
+      payload: { name: 'evil', cron: '* * * * *', kind: 'exec', command: 'cat /proc/1/environ' },
+    });
+    expect(res.statusCode).toBe(403);
+  });
+
   it('rejects an invalid cron expression', async () => {
     const app = await appWith({ findFirst: { services: svcRow() } });
     const res = await app.inject({
@@ -90,6 +100,29 @@ describe('jobs routes', () => {
       payload: { name: 'x', cron: '* * * * *', kind: 'exec' },
     });
     expect(res.statusCode).toBe(400);
+  });
+
+  it('forbids exec jobs (create, patch, run) for members', async () => {
+    const member = { ...asUser(), 'x-test-role': 'member' };
+    const harmless = 'uptime';
+
+    const createApp = await appWith({ findFirst: { services: svcRow() } });
+    const create = await createApp.inject({
+      method: 'POST', url: '/services/1/jobs', headers: member,
+      payload: { name: 'x', cron: '* * * * *', kind: 'exec', command: harmless },
+    });
+    expect(create.statusCode).toBe(403);
+
+    const patchApp = await appWith({ findFirst: { scheduledJobs: jobRow({ id: 3, kind: 'deploy' }) } });
+    const patch = await patchApp.inject({
+      method: 'PATCH', url: '/services/1/jobs/3', headers: member,
+      payload: { kind: 'exec', command: harmless },
+    });
+    expect(patch.statusCode).toBe(403);
+
+    const runApp = await appWith({ findFirst: { scheduledJobs: jobRow({ id: 3, kind: 'exec', command: harmless }) } });
+    const run = await runApp.inject({ method: 'POST', url: '/services/1/jobs/3/run', headers: member });
+    expect(run.statusCode).toBe(403);
   });
 
   it('rejects missing name or cron on create and reports failed inserts', async () => {
@@ -256,7 +289,7 @@ describe('runJob', () => {
     });
     await runJob(db, 4);
     expect(execMocks.run).toHaveBeenCalledWith(
-      'docker', ['exec', 'nd-api', 'sh', '-lc', 'echo hi'], {}, expect.any(Function),
+      'docker', ['exec', '--', 'nd-api', 'sh', '-lc', 'echo hi'], {}, expect.any(Function),
     );
   });
 

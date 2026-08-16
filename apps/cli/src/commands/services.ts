@@ -157,6 +157,7 @@ export async function servicesExport(client: NineDeployClient, idStr: string): P
         const res = await fetch(`${cfg.baseUrl}/v1/services/${id}/export`, {
           headers: { Authorization: `Bearer ${cfg.token ?? ''}` },
         });
+        if (!res.ok) throw new Error(`Export failed (HTTP ${res.status})`);
         return res.text();
       })(),
     );

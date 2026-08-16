@@ -210,3 +210,24 @@ describe('collector plugin', () => {
     await app.close();
   });
 });
+
+describe('cpuDeltaPct', () => {
+  it('returns null without a previous sample or with mismatched cores', async () => {
+    const { cpuDeltaPct } = await import('../../src/plugins/collector.js');
+    const cpu = (idle: number, total: number) => ({
+      model: '',
+      speed: 0,
+      times: { idle, irq: 0, nice: 0, sys: 0, user: total - idle },
+    });
+    expect(cpuDeltaPct(null, [cpu(1, 10)])).toBeNull();
+    expect(cpuDeltaPct([cpu(1, 10)], [cpu(1, 10), cpu(1, 10)])).toBeNull();
+    // Zero deltas (sampled too fast) are not a measurement.
+    expect(cpuDeltaPct([cpu(5, 10)], [cpu(5, 10)])).toBeNull();
+    // 10 total ticks elapsed, 3 idle → 70% busy.
+    expect(cpuDeltaPct([cpu(10, 20)], [cpu(13, 30)])).toBe(70);
+    // A malformed sample missing the idle counter is tolerated as 0.
+    const partial = [{ model: '', speed: 0, times: { user: 5 } }] as never;
+    const partialPrev = [{ model: '', speed: 0, times: { user: 3 } }] as never;
+    expect(cpuDeltaPct(partialPrev, partial)).toBe(100);
+  });
+});

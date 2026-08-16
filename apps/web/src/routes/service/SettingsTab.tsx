@@ -3,6 +3,7 @@ import { Cpu, Settings } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import type { Service } from '@ninedeploy/sdk';
 import { api } from '../../lib/api.js';
+import { toInt } from '../../lib/format.js';
 import { useToast } from '../../components/Toast.js';
 import { Button, Card, CardBody, Field, Input, Select, Skeleton } from '../../components/ui.js';
 
@@ -60,7 +61,7 @@ function SettingsCard({ serviceId }: { serviceId: number }) {
         branch: f.branch,
         repoUrl: orUndef(f.repoUrl),
         image: orUndef(f.image),
-        port: orUndef(f.port) ? Number(f.port) : undefined,
+        port: orUndef(f.port) ? toInt(f.port) : undefined,
         healthPath: orUndef(f.healthPath),
         volumeMount: orUndef(f.volumeMount),
         build: {
@@ -71,7 +72,7 @@ function SettingsCard({ serviceId }: { serviceId: number }) {
           startCmd: orUndef(f.startCmd),
           dockerfilePath: orUndef(f.dockerfilePath),
           restartPolicy: f.restartPolicy,
-          stopGraceSeconds: Number(f.stopGraceSeconds) || 5,
+          stopGraceSeconds: toInt(f.stopGraceSeconds, 5)!,
         },
       });
     },
@@ -158,8 +159,8 @@ function LimitsCard({ svc }: { svc: Service }) {
   const save = useMutation({
     mutationFn: () =>
       api.limits.setService(svc.id, {
-        cpuShares: Number(cpu) || 0,
-        memLimitMb: Number(mem) || 0,
+        cpuShares: toInt(cpu, 0)!,
+        memLimitMb: toInt(mem, 0)!,
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['service', svc.id] });

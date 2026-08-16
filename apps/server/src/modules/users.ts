@@ -1,4 +1,4 @@
-import { and, count, eq, ne, sql } from 'drizzle-orm';
+import { and, eq, ne, or, sql } from 'drizzle-orm';
 import { audit } from "../lib/audit.js";
 import { users } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
@@ -51,20 +51,30 @@ export const userRoutes: FastifyPluginAsync = async (app) => {
     const id = parseId((req.params as { id: string }).id);
     const { role } = rolePatch.parse(req.body);
 
-    // Prevent demoting the last admin.
-    if (role === 'member') {
-      const [row] = await app.db.select({ n: count() }).from(users).where(eq(users.role, 'admin'));
-      if ((row?.n ?? 0) <= 1) throw badRequest('Cannot demote the last admin');
-    }
-
+    // Prevent demoting the last admin. The guard lives INSIDE the UPDATE's
+    // WHERE clause (not a check-then-write) so two concurrent demotions of
+    // the last two admins cannot both succeed and leave zero admins.
     const [updated] = await app.db
       .update(users)
       // Bump tokenVersion so the role change takes effect immediately and the
       // user's outstanding sessions are re-issued with the new role.
       .set({ role, tokenVersion: sql`${users.tokenVersion} + 1` })
-      .where(eq(users.id, id))
+      .where(
+        and(
+          eq(users.id, id),
+          or(
+            ne(users.role, 'admin'),
+            sql`(select count(*) from ${users} where role = 'admin' and id != ${id}) > 0`,
+          ),
+        ),
+      )
       .returning();
-    if (!updated) throw notFound('User not found');
+    if (!updated) {
+      // Either the user vanished, or the last-admin guard rejected it.
+      const target = await app.db.query.users.findFirst({ where: eq(users.id, id) });
+      if (!target) throw notFound('User not found');
+      throw badRequest('Cannot demote the last admin');
+    }
     void audit(app.db, req.user!.id, 'user.role', `${String(id)} → ${role}`);
     return serialize(updated);
   });
@@ -73,14 +83,25 @@ export const userRoutes: FastifyPluginAsync = async (app) => {
     const id = parseId((req.params as { id: string }).id);
     if (id === req.user!.id) throw badRequest('Cannot delete yourself');
 
-    // Prevent deleting the last admin.
-    const target = await app.db.query.users.findFirst({ where: eq(users.id, id) });
-    if (target?.role === 'admin') {
-      const [row] = await app.db.select({ n: count() }).from(users).where(and(eq(users.role, 'admin'), ne(users.id, id)));
-      if ((row?.n ?? 0) === 0) throw badRequest('Cannot delete the last admin');
+    // Prevent deleting the last admin — again guarded inside the DELETE
+    // itself so concurrent deletes cannot both pass a pre-check.
+    const deleted = await app.db
+      .delete(users)
+      .where(
+        and(
+          eq(users.id, id),
+          or(
+            ne(users.role, 'admin'),
+            sql`(select count(*) from ${users} where role = 'admin' and id != ${id}) > 0`,
+          ),
+        ),
+      )
+      .returning({ id: users.id });
+    if (deleted.length === 0) {
+      const target = await app.db.query.users.findFirst({ where: eq(users.id, id) });
+      if (!target) throw notFound('User not found');
+      throw badRequest('Cannot delete the last admin');
     }
-
-    await app.db.delete(users).where(eq(users.id, id));
     void audit(app.db, req.user!.id, 'user.delete', String(id));
     return { ok: true };
   });

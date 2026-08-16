@@ -1,6 +1,6 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Activity, Download } from 'lucide-react';
-import { api, getToken } from '../../lib/api.js';
+import { api, authedFetch } from '../../lib/api.js';
 import { downloadBlob, formatDateTime } from '../../lib/format.js';
 import { useToast } from '../../components/Toast.js';
 import { Button, Card, CardBody, Skeleton } from '../../components/ui.js';
@@ -18,7 +18,7 @@ export function ActivityTab({ serviceId, name }: { serviceId: number; name: stri
 
   const exportBundle = useMutation({
     mutationFn: async () => {
-      const res = await fetch(api.services.exportUrl(serviceId), { headers: { Authorization: `Bearer ${getToken() ?? ''}` } });
+      const res = await authedFetch(api.services.exportUrl(serviceId));
       if (!res.ok) throw new Error('Export failed');
       downloadBlob(await res.blob(), `${name}-export.json`);
     },

@@ -97,6 +97,19 @@ const fetchWithRefresh: typeof fetch = async (input, init) => {
 };
 
 /**
+ * Authenticated fetch WITH automatic token refresh — for raw downloads/uploads
+ * that bypass the SDK client (export/import endpoints, blob fetches). These
+ * otherwise 401 mid-session once the 15-minute access token expires.
+ */
+export async function authedFetch(url: string, init?: RequestInit): Promise<Response> {
+  const headers = new Headers(init?.headers);
+  const token = getToken();
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  // fetchWithRefresh transparently refreshes + retries on a 401.
+  return fetchWithRefresh(url, { ...init, headers });
+}
+
+/**
  * Pre-configured SDK client. In development the Vite dev server proxies
  * /health and /v1 to the backend, so same-origin requests "just work".
  */

@@ -131,6 +131,18 @@ describe('deploys routes', () => {
     expect(res.json()).toEqual({ deploymentId: 9 });
   });
 
+  it('returns the in-progress deployment instead of queueing a duplicate', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { services: svcRow({ id: 1 }), deployments: depRow({ id: 42, status: 'building' }) },
+      }),
+    });
+    await app.register(deploysRoutes, { prefix: '/services' });
+    const res = await app.inject({ method: 'POST', url: '/services/1/deploys', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ deploymentId: 42, alreadyInProgress: true });
+  });
+
   it('returns 404 when deploying a missing service', async () => {
     const app = await buildTestApp({ db: createFakeDb() });
     await app.register(deploysRoutes, { prefix: '/services' });

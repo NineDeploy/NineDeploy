@@ -8,10 +8,10 @@ const authPlugin = (await import('../../src/plugins/auth.js')).default;
 
 function makeDb(
   rows: Array<{ userId: number; expiresAt: Date | null } | undefined>,
-  user?: { id: number; role: 'admin' | 'member' },
+  user?: { id: number; role: 'admin' | 'member'; tokenVersion?: number },
 ) {
   const findFirst = vi.fn(async () => (rows.length ? rows[0] : undefined));
-  const userFindFirst = vi.fn(async () => user);
+  const userFindFirst = vi.fn(async () => (user ? { tokenVersion: 0, ...user } : undefined));
   const update = vi.fn(() => ({
     set: vi.fn(() => ({ where: vi.fn(async () => undefined) })),
   }));
@@ -54,7 +54,7 @@ describe('auth plugin', () => {
   it('sets req.user for a valid access JWT and skips the token stamp', async () => {
     const db = makeDb([], { id: 42, role: 'admin' });
     const app = await buildApp(db);
-    const token = await signAccessToken(42);
+    const token = await signAccessToken(42, 0);
     const res = await app.inject({
       method: 'GET',
       url: '/me',
@@ -137,7 +137,7 @@ describe('auth plugin', () => {
   it('requireAdmin allows an admin through', async () => {
     const db = makeDb([], { id: 1, role: 'admin' });
     const app = await buildApp(db);
-    const token = await signAccessToken(1);
+    const token = await signAccessToken(1, 0);
     const res = await app.inject({ method: 'DELETE', url: '/admin', headers: { authorization: `Bearer ${token}` } });
     expect(res.statusCode).toBe(200);
     await app.close();
@@ -146,7 +146,7 @@ describe('auth plugin', () => {
   it('requireAdmin rejects a member with 403', async () => {
     const db = makeDb([], { id: 2, role: 'member' });
     const app = await buildApp(db);
-    const token = await signAccessToken(2);
+    const token = await signAccessToken(2, 0);
     const res = await app.inject({ method: 'DELETE', url: '/admin', headers: { authorization: `Bearer ${token}` } });
     expect(res.statusCode).toBe(403);
     await app.close();

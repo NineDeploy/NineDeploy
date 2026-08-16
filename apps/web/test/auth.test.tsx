@@ -11,6 +11,7 @@ const apiMock = vi.hoisted(() => ({
       login: vi.fn(),
       setup: vi.fn(),
       logout: vi.fn(),
+      passkeys: { loginOptions: vi.fn(), loginVerify: vi.fn() },
     },
   },
   getToken: vi.fn(),
@@ -18,7 +19,10 @@ const apiMock = vi.hoisted(() => ({
   clearTokens: vi.fn(),
 }));
 
+const webauthnMock = vi.hoisted(() => ({ startAuthentication: vi.fn() }));
+
 vi.mock('../src/lib/api.js', () => apiMock);
+vi.mock('@simplewebauthn/browser', () => webauthnMock);
 
 import { AuthProvider, useAuth } from '../src/lib/auth.js';
 
@@ -29,7 +33,7 @@ const SESSION = {
 };
 
 function Probe() {
-  const { user, loading, login, setup, logout } = useAuth();
+  const { user, loading, login, setup, logout, loginWithPasskey } = useAuth();
   return (
     <div>
       <span data-testid="loading">{String(loading)}</span>
@@ -38,6 +42,7 @@ function Probe() {
       <button type="button" onClick={() => void login('a@b.c', 'pw', '123456')}>login-2fa</button>
       <button type="button" onClick={() => void setup('a@b.c', 'pw', 'Ann')}>setup</button>
       <button type="button" onClick={logout}>logout</button>
+      <button type="button" onClick={() => void loginWithPasskey().catch(() => undefined)}>login-passkey</button>
     </div>
   );
 }
@@ -136,6 +141,34 @@ describe('AuthProvider', () => {
     expect(apiMock.api.auth.setup).toHaveBeenCalledWith({ email: 'a@b.c', password: 'pw', name: 'Ann' });
     await waitFor(() => expect(apiMock.setSessionTokens).toHaveBeenCalledWith('access-1', 'refresh-1'));
     expect(screen.getByTestId('email')).toHaveTextContent('a@b.c');
+  });
+
+  it('signs in with a passkey end to end', async () => {
+    apiMock.api.auth.passkeys.loginOptions.mockResolvedValue({ options: JSON.stringify({ challenge: 'abc', rpId: 'nd.local' }) });
+    webauthnMock.startAuthentication.mockResolvedValue({ id: 'assertion-1' });
+    apiMock.api.auth.passkeys.loginVerify.mockResolvedValue(SESSION);
+    const user = userEvent.setup();
+    renderAuth();
+    await user.click(screen.getByText('login-passkey'));
+    // The browser assertion flow receives the server-generated options…
+    expect(apiMock.api.auth.passkeys.loginOptions).toHaveBeenCalled();
+    expect(webauthnMock.startAuthentication).toHaveBeenCalledWith({ challenge: 'abc', rpId: 'nd.local' });
+    // …and the assertion is verified server-side for a fresh session.
+    expect(apiMock.api.auth.passkeys.loginVerify).toHaveBeenCalledWith({ id: 'assertion-1' });
+    await waitFor(() => expect(apiMock.setSessionTokens).toHaveBeenCalledWith('access-1', 'refresh-1'));
+    expect(screen.getByTestId('email')).toHaveTextContent('a@b.c');
+  });
+
+  it('propagates passkey failures without storing tokens', async () => {
+    apiMock.api.auth.passkeys.loginOptions.mockResolvedValue({ options: '{}' });
+    webauthnMock.startAuthentication.mockResolvedValue({ id: 'a' });
+    apiMock.api.auth.passkeys.loginVerify.mockRejectedValue(new Error('bad assertion'));
+    const user = userEvent.setup();
+    renderAuth();
+    await user.click(screen.getByText('login-passkey'));
+    await waitFor(() => expect(apiMock.api.auth.passkeys.loginVerify).toHaveBeenCalled());
+    expect(apiMock.setSessionTokens).not.toHaveBeenCalled();
+    expect(screen.getByTestId('email')).toHaveTextContent('none');
   });
 
   it('logs out by revoking server-side and clearing token and user', async () => {

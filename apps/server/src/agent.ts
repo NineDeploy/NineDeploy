@@ -16,7 +16,9 @@ import { notifyReady, startWatchdog } from './lib/sdNotify.js';
 // ── operand validators ────────────────────────────────────────────────────
 const RE_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/; // container/volume/project names, slugs
 const RE_IMAGE = /^[A-Za-z0-9][A-Za-z0-9@:/._-]*$/; // image refs incl. digests, registries
-const RE_PATH = /^[A-Za-z0-9@._][A-Za-z0-9@._/-]*$|^\/[A-Za-z0-9@._/-]*$/; // relative or absolute, no traversal up
+const RE_PATH_RAW = /^[A-Za-z0-9@._][A-Za-z0-9@._/-]*$|^\/[A-Za-z0-9@._/-]*$/; // relative or absolute
+/** Path validator: rejects any `..` segment so operands can never traverse up. */
+const RE_PATH = (value: string): boolean => RE_PATH_RAW.test(value) && !value.split('/').includes('..');
 const RE_SHA = /^(HEAD|[0-9a-f]{6,64})$/;
 const RE_REF = /^[A-Za-z0-9@:/._-]+$/; // branches, tags, URLs
 
@@ -24,8 +26,8 @@ type Params = Record<string, unknown>;
 
 const str = (p: Params, k: string): string | undefined => (typeof p[k] === 'string' ? (p[k] as string) : undefined);
 
-function validated(value: string | undefined, re: RegExp, what: string): string {
-  if (value === undefined || !re.test(value)) throw new Error(`Invalid ${what}`);
+function validated(value: string | undefined, check: RegExp | ((v: string) => boolean), what: string): string {
+  if (value === undefined || !(typeof check === 'function' ? check(value) : check.test(value))) throw new Error(`Invalid ${what}`);
   return value;
 }
 
@@ -226,6 +228,10 @@ async function main(): Promise<void> {
   const stopWatchdog = startWatchdog(30_000);
   const shutdown = () => {
     stopWatchdog();
+    // Hard-exit backstop: a close() that never settles (open sockets) must
+    // not keep a SIGTERM'd agent alive indefinitely.
+    const force = setTimeout(process.exit, 10_000);
+    force.unref();
     void app.close().finally(() => process.exit(0));
   };
   process.on('SIGINT', shutdown);

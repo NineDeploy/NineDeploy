@@ -94,13 +94,22 @@ afterEach(() => {
 
 describe('worker plugin', () => {
   it('sweeps stale `building` deployments to failed on startup (crash recovery)', async () => {
-    const { db, updates } = makeDb({ queued: [] });
+    // Older than the 45-minute stale threshold → swept; a fresh one is left alone.
+    const old = new Date(Date.now() - 60 * 60 * 1000);
+    const { db, updates } = makeDb({ queued: [], building: [{ id: 7, startedAt: old }, { id: 8, startedAt: new Date() }] });
     const app = await buildApp(db);
     await app.close();
 
     const sweep = updates.find((u) => u.status === 'failed');
     expect(sweep).toBeDefined();
     expect(sweep!.table).toBe(deployments);
+  });
+
+  it('keeps an in-flight `building` deployment of another live worker', async () => {
+    const { db, updates } = makeDb({ queued: [], building: [{ id: 9, startedAt: new Date() }] });
+    const app = await buildApp(db);
+    await app.close();
+    expect(updates.find((u) => u.status === 'failed')).toBeUndefined();
   });
 
   it('starts anyway and warns when the startup sweep query fails', async () => {
@@ -115,7 +124,11 @@ describe('worker plugin', () => {
     }));
     const select = vi.fn(() => ({
       from: vi.fn(() => ({
-        where: vi.fn(() => ({ orderBy: vi.fn(() => ({ limit: vi.fn(async () => []) })) })),
+        where: vi.fn(() =>
+          // A col-less select (the sweep) is awaited directly and rejects.
+          Promise.reject(new Error('db locked')),
+        ),
+        orderBy: vi.fn(() => ({ limit: vi.fn(async () => []) })),
       })),
     }));
     const app = Fastify({ logger: false });

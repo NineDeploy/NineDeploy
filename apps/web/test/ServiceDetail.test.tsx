@@ -1,9 +1,10 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { screen, waitFor, fireEvent, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { Route, Routes } from 'react-router';
 import { ServiceDetail } from '../src/routes/service/index.js';
 import { api, getToken } from '../src/lib/api.js';
-import { renderRoute, mockOf } from './helpers.js';
+import { renderRoute, renderWithProviders, mockOf } from './helpers.js';
 
 vi.mock('../src/lib/api.js', async () => {
   const { createFakeApiModule } = await import('./helpers.js');
@@ -252,7 +253,7 @@ describe('ServiceDetail', () => {
     renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
     fireEvent.click(await screen.findByRole('button', { name: /Export/ }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/v1/services/1/export', expect.anything()));
-    expect(fetchMock.mock.calls[0]?.[1]?.headers).toEqual({ Authorization: `Bearer ${getToken()}` });
+    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get('Authorization')).toBe(`Bearer ${getToken()}`);
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Service exported', 'success'));
 
     fetchMock.mockResolvedValueOnce({ ok: false } as Response);
@@ -268,7 +269,7 @@ describe('ServiceDetail', () => {
     renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
     fireEvent.click(await screen.findByRole('button', { name: /Export/ }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
-    expect(fetchMock.mock.calls[0]?.[1]?.headers).toEqual({ Authorization: 'Bearer ' });
+    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get('Authorization')).toBe(null);
   });
 
   it('adds and removes domains on the service', async () => {
@@ -859,6 +860,67 @@ describe('ServiceDetail', () => {
     renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
     await openTab('Activity');
     expect(document.querySelector('.animate-pulse')).not.toBeNull();
+  });
+
+  it('redirects /services/abc to /services when the id is not a positive integer', async () => {
+    renderWithProviders(
+      <>
+        <Routes>
+          <Route path="/services/:id" element={<ServiceDetail />} />
+          <Route path="/services" element={<div data-testid="services-list">list</div>} />
+        </Routes>
+      </>,
+      { initialEntries: ['/services/abc'] },
+    );
+    expect(await screen.findByTestId('services-list')).toBeInTheDocument();
+  });
+
+  it('shows the config diff card states for the active deployment', async () => {
+    // Loading state: the diff query never settles while the card is open.
+    mockOf(api.deploys.configDiff).mockReturnValueOnce(new Promise(() => {}) as never);
+    const first = renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+    await openTab('Deploys');
+    fireEvent.click(await screen.findByText('Config diff vs previous deploy'));
+    expect(document.querySelector('.animate-pulse')).not.toBeNull();
+    first.unmount();
+
+    // First recorded deployment — nothing to compare against.
+    mockOf(api.deploys.configDiff).mockResolvedValueOnce({ previousDeploymentId: null, changed: false, diff: '' } as never);
+    renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+    await openTab('Deploys');
+    fireEvent.click(await screen.findByText('Config diff vs previous deploy'));
+    expect(await screen.findByText('First recorded deployment — nothing to compare against.')).toBeInTheDocument();
+  });
+
+  it('renders an unchanged and a changed config diff', async () => {
+    // Unchanged vs previous deploy.
+    mockOf(api.deploys.configDiff).mockResolvedValueOnce({ previousDeploymentId: 4, changed: false, diff: '' } as never);
+    const first = renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+    await openTab('Deploys');
+    fireEvent.click(await screen.findByText('Config diff vs previous deploy'));
+    expect(await screen.findByText('No changes against #4 — same build config and env keys.')).toBeInTheDocument();
+    first.unmount();
+
+    // Changed: the diff lines render with add/remove colouring.
+    mockOf(api.deploys.configDiff).mockResolvedValueOnce({
+      previousDeploymentId: 4,
+      changed: true,
+      diff: '+ startCmd: npm start\n- startCmd: node index.js\n  builder: nixpacks',
+    } as never);
+    renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+    await openTab('Deploys');
+    fireEvent.click(await screen.findByText('Config diff vs previous deploy'));
+    expect(await screen.findByText('+ startCmd: npm start')).toBeInTheDocument();
+    expect(screen.getByText('- startCmd: node index.js')).toBeInTheDocument();
+    expect(screen.getByText((_, el) => el?.textContent === '  builder: nixpacks')).toBeInTheDocument();
+  });
+
+  it('shows the config diff no-snapshot state', async () => {
+    mockOf(api.deploys.configDiff).mockResolvedValueOnce(null as never);
+    renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+    await openTab('Deploys');
+    fireEvent.click(await screen.findByText('Config diff vs previous deploy'));
+    expect(await screen.findByText('No snapshot.')).toBeInTheDocument();
   });
 
   it('formats data volume sizes and in-use states across unit ranges', async () => {

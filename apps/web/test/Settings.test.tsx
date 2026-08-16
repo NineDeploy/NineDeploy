@@ -31,6 +31,9 @@ vi.mock('../src/components/NotificationWizard.js', () => ({
   ),
 }));
 
+const webauthnMock = vi.hoisted(() => ({ startRegistration: vi.fn() }));
+vi.mock('@simplewebauthn/browser', () => webauthnMock);
+
 const host = {
   cpuCores: 8,
   load1: 1.25,
@@ -64,6 +67,15 @@ describe('Settings', () => {
     } as never);
     mockOf(api.system.updateCheck).mockResolvedValue(upToDate as never);
     mockOf(api.notifications.listChannels).mockResolvedValue(channels as never);
+    mockOf(api.auth.passkeys.list).mockResolvedValue([
+      { id: 3, name: 'MacBook Touch ID', createdAt: '2026-01-01T00:00:00Z' },
+    ] as never);
+    mockOf(api.auth.sessions.list).mockResolvedValue([
+      { id: 11, current: true, ip: '10.0.0.2', userAgent: 'Mozilla/5.0', lastUsedAt: '2026-01-02T00:00:00Z', createdAt: '2026-01-01T00:00:00Z' },
+      { id: 12, current: false, ip: null, userAgent: null, lastUsedAt: null, createdAt: '2026-01-01T00:00:00Z' },
+    ] as never);
+    mockOf(api.settings.vault.get).mockResolvedValue({ provider: '', hasToken: false } as never);
+    mockOf(api.settings.dnsRecords.get).mockResolvedValue({ enabled: false, hasToken: false } as never);
   });
 
   const openSection = async (label: string) => {
@@ -177,7 +189,8 @@ describe('Settings', () => {
     fireEvent.click(await screen.findByRole('button', { name: /Export backup/ }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/v1/system/export');
-    expect(fetchMock.mock.calls[0]?.[1]?.headers).toEqual({ Authorization: `Bearer ${getToken()}` });
+    // authedFetch sends a Headers instance with the bearer token.
+    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get('Authorization')).toBe(`Bearer ${getToken()}`);
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Export downloaded', 'success'));
 
     fetchMock.mockResolvedValueOnce({ ok: false } as Response);
@@ -185,7 +198,7 @@ describe('Settings', () => {
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Export failed', 'error'));
   });
 
-  it('exports with an empty bearer when no token is set', async () => {
+  it('exports without an authorization header when no token is set', async () => {
     mockOf(getToken).mockReturnValue(null);
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockResolvedValueOnce({ ok: true, blob: async () => new Blob(['x']) } as Response);
@@ -193,7 +206,7 @@ describe('Settings', () => {
     await openSection('Migration');
     fireEvent.click(await screen.findByRole('button', { name: /Export backup/ }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
-    expect(fetchMock.mock.calls[0]?.[1]?.headers).toEqual({ Authorization: 'Bearer ' });
+    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get('Authorization')).toBe(null);
   });
 
   it('imports a backup file', async () => {
@@ -221,7 +234,7 @@ describe('Settings', () => {
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Import complete — restart NineDeploy', 'success'));
   });
 
-  it('imports with an empty bearer when no token is set', async () => {
+  it('imports without an authorization header when no token is set', async () => {
     mockOf(getToken).mockReturnValue(null);
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ message: 'ok' }) } as Response);
@@ -231,7 +244,7 @@ describe('Settings', () => {
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;
     fireEvent.change(input, { target: { files: [new File(['x'], 'b.tar.gz')] } });
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
-    expect(fetchMock.mock.calls[0]?.[1]?.headers).toMatchObject({ Authorization: 'Bearer ' });
+    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get('Authorization')).toBe(null);
   });
 
   it('ignores a change event without a selected file', async () => {
@@ -286,13 +299,27 @@ describe('Settings', () => {
 
   it('handles import failure', async () => {
     const fetchMock = vi.mocked(fetch);
+    // An HTTP error with a JSON error body must surface as a failure toast
+    // carrying the server's message — never a success toast.
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 400, json: async () => ({ error: { message: 'Invalid bundle' } }) } as Response);
+    renderWithProviders(<Settings />);
+    await openSection('Migration');
+    await screen.findByRole('button', { name: /Export backup/ });
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [new File(['data'], 'b.tar.gz')] } });
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Invalid bundle', 'error'));
+    expect(toastSpy.toast).not.toHaveBeenCalledWith(expect.stringContaining('Import complete'), 'success');
+  });
+
+  it('reports a network-level import failure', async () => {
+    const fetchMock = vi.mocked(fetch);
     fetchMock.mockRejectedValueOnce(new Error('boom'));
     renderWithProviders(<Settings />);
     await openSection('Migration');
     await screen.findByRole('button', { name: /Export backup/ });
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;
     fireEvent.change(input, { target: { files: [new File(['data'], 'b.tar.gz')] } });
-    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Import failed', 'error'));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('boom', 'error'));
   });
 
   it('tests and removes notification channels', async () => {
@@ -711,6 +738,9 @@ describe('Settings', () => {
     renderWithProviders(<Settings />);
 
     fireEvent.click(await screen.findByRole('button', { name: 'Set up 2FA' }));
+    // New flow: confirm the account password first (required when 2FA is enabled).
+    fireEvent.change(await screen.findByPlaceholderText('Password'), { target: { value: PW } });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
     expect(await screen.findByText('GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ')).toBeInTheDocument();
 
     fireEvent.click(screen.getByText('Copy'));
@@ -730,6 +760,9 @@ describe('Settings', () => {
     renderWithProviders(<Settings />);
 
     fireEvent.click(await screen.findByRole('button', { name: 'Set up 2FA' }));
+    // New flow: confirm the account password first (required when 2FA is enabled).
+    fireEvent.change(await screen.findByPlaceholderText('Password'), { target: { value: PW } });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
     const input = await screen.findByPlaceholderText('123456');
     fireEvent.change(input, { target: { value: '000000' } });
     fireEvent.click(screen.getByRole('button', { name: 'Enable' }));
@@ -740,8 +773,14 @@ describe('Settings', () => {
     mockOf(api.auth.twoFactor.setup).mockResolvedValue({ secret: 'S', otpauthUri: 'otpauth://totp/x' } as never);
     renderWithProviders(<Settings />);
     fireEvent.click(await screen.findByRole('button', { name: 'Set up 2FA' }));
-    fireEvent.click(await screen.findByText('Cancel'));
-    expect(screen.queryByText('otpauth://totp/x')).not.toBeInTheDocument();
+    // New flow: confirm the account password first (required when 2FA is enabled).
+    fireEvent.change(await screen.findByPlaceholderText('Password'), { target: { value: PW } });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    // Wait for the setup panel first — otherwise the password form's own
+    // Cancel is the one that gets clicked.
+    await screen.findByText('otpauth://totp/x');
+    fireEvent.click(screen.getByText('Cancel'));
+    await waitFor(() => expect(screen.queryByText('otpauth://totp/x')).not.toBeInTheDocument());
   });
 
   it('submits the setup form via form submit and shows the enable pending label', async () => {
@@ -750,6 +789,9 @@ describe('Settings', () => {
     renderWithProviders(<Settings />);
 
     fireEvent.click(await screen.findByRole('button', { name: 'Set up 2FA' }));
+    // New flow: confirm the account password first (required when 2FA is enabled).
+    fireEvent.change(await screen.findByPlaceholderText('Password'), { target: { value: PW } });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
     const codeInput = await screen.findByPlaceholderText('123456');
     fireEvent.change(codeInput, { target: { value: '123456' } });
     fireEvent.submit(codeInput.closest('form')!);
@@ -760,6 +802,9 @@ describe('Settings', () => {
     mockOf(api.auth.twoFactor.setup).mockReturnValue(new Promise(() => {}) as never);
     renderWithProviders(<Settings />);
     fireEvent.click(await screen.findByRole('button', { name: 'Set up 2FA' }));
+    // New flow: confirm the account password first (required when 2FA is enabled).
+    fireEvent.change(await screen.findByPlaceholderText('Password'), { target: { value: PW } });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
     expect(await screen.findByText('Generating…')).toBeInTheDocument();
   });
 
@@ -767,6 +812,9 @@ describe('Settings', () => {
     mockOf(api.auth.twoFactor.setup).mockResolvedValue({ secret: 'S', otpauthUri: 'otpauth://totp/x' } as never);
     renderWithProviders(<Settings />);
     fireEvent.click(await screen.findByRole('button', { name: 'Set up 2FA' }));
+    // New flow: confirm the account password first (required when 2FA is enabled).
+    fireEvent.change(await screen.findByPlaceholderText('Password'), { target: { value: PW } });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
     // Enable with a too-short code: no call.
     const codeInput = await screen.findByPlaceholderText('123456');
     fireEvent.change(codeInput, { target: { value: '123' } });
@@ -798,6 +846,9 @@ describe('Settings', () => {
     mockOf(api.auth.twoFactor.enable).mockReturnValue(new Promise(() => {}) as never);
     renderWithProviders(<Settings />);
     fireEvent.click(await screen.findByRole('button', { name: 'Set up 2FA' }));
+    // New flow: confirm the account password first (required when 2FA is enabled).
+    fireEvent.change(await screen.findByPlaceholderText('Password'), { target: { value: PW } });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
     const codeInput = await screen.findByPlaceholderText('123456');
     fireEvent.change(codeInput, { target: { value: '123456' } });
     fireEvent.click(screen.getByRole('button', { name: 'Enable' }));
@@ -812,6 +863,9 @@ describe('Settings', () => {
     });
     renderWithProviders(<Settings />);
     fireEvent.click(await screen.findByRole('button', { name: 'Set up 2FA' }));
+    // New flow: confirm the account password first (required when 2FA is enabled).
+    fireEvent.change(await screen.findByPlaceholderText('Password'), { target: { value: PW } });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
     fireEvent.click(await screen.findByText('Copy'));
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Copy failed', 'error'));
   });
@@ -820,7 +874,10 @@ describe('Settings', () => {
     mockOf(api.auth.twoFactor.setup).mockRejectedValue(new Error('nope') as never);
     renderWithProviders(<Settings />);
     fireEvent.click(await screen.findByRole('button', { name: 'Set up 2FA' }));
-    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Could not start 2FA setup', 'error'));
+    // New flow: confirm the account password first (required when 2FA is enabled).
+    fireEvent.change(await screen.findByPlaceholderText('Password'), { target: { value: PW } });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Could not start 2FA setup — check your password', 'error'));
   });
 
   it('disables 2FA with password + code and signs out', async () => {
@@ -854,5 +911,167 @@ describe('Settings', () => {
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith(expect.stringContaining('Could not disable'), 'error'));
     fireEvent.click(screen.getByText('Cancel'));
     expect(screen.queryByPlaceholderText('Password')).not.toBeInTheDocument();
+  });
+
+  it('reports the default import failure when the error body has no message', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValueOnce({ ok: false, json: async () => ({}) } as Response);
+    renderWithProviders(<Settings />);
+    await openSection('Migration');
+    await screen.findByRole('button', { name: /Export backup/ });
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [new File(['data'], 'b.tar.gz')] } });
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Import failed', 'error'));
+  });
+
+  it('reports the default import failure for non-Error fetch rejections', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockRejectedValueOnce('boom' as never);
+    renderWithProviders(<Settings />);
+    await openSection('Migration');
+    await screen.findByRole('button', { name: /Export backup/ });
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [new File(['data'], 'b.tar.gz')] } });
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Import failed', 'error'));
+  });
+
+  it('reports the default import failure when the response body is not JSON', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValueOnce({ ok: false, json: async () => { throw new Error('not json'); } } as unknown as Response);
+    renderWithProviders(<Settings />);
+    await openSection('Migration');
+    await screen.findByRole('button', { name: /Export backup/ });
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [new File(['data'], 'b.tar.gz')] } });
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Import failed', 'error'));
+  });
+
+  it('cancels the 2FA password form and ignores an empty password submit', async () => {
+    renderWithProviders(<Settings />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Set up 2FA' }));
+    // Cancel hides the password form again without calling setup.
+    fireEvent.click(await screen.findByText('Cancel'));
+    await waitFor(() => expect(screen.queryByPlaceholderText('Password')).not.toBeInTheDocument());
+    expect(api.auth.twoFactor.setup).not.toHaveBeenCalled();
+
+    // Reopen and submit with an empty password: the form does not mutate.
+    fireEvent.click(screen.getByRole('button', { name: 'Set up 2FA' }));
+    fireEvent.submit((await screen.findByPlaceholderText('Password')).closest('form')!);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(api.auth.twoFactor.setup).not.toHaveBeenCalled();
+  });
+
+  it('reports the generic setup error when the password form is dismissed mid-flight', async () => {
+    let rejectSetup!: (v: unknown) => void;
+    mockOf(api.auth.twoFactor.setup).mockReturnValue(new Promise((_, rej) => { rejectSetup = rej; }) as never);
+    renderWithProviders(<Settings />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Set up 2FA' }));
+    fireEvent.change(await screen.findByPlaceholderText('Password'), { target: { value: PW } });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    // Dismiss the form while the request is in flight — the error lands after
+    // showSetupPassword has been reset, so the generic message is used.
+    fireEvent.click(screen.getByText('Cancel'));
+    rejectSetup(new Error('late failure'));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Could not start 2FA setup', 'error'));
+  });
+
+  it('registers, lists and removes passkeys', async () => {
+    mockOf(api.auth.passkeys.registerOptions).mockResolvedValue({ options: JSON.stringify({ challenge: 'c', rp: { name: 'nd' } }) } as never);
+    webauthnMock.startRegistration.mockResolvedValue({ id: 'att-1' });
+    mockOf(api.auth.passkeys.registerVerify).mockResolvedValue({ id: 4, name: 'YubiKey' } as never);
+    mockOf(api.auth.passkeys.remove).mockResolvedValue(undefined as never);
+    renderWithProviders(<Settings />);
+
+    // The registered passkey is listed.
+    expect(await screen.findByText('MacBook Touch ID')).toBeInTheDocument();
+    // Add a passkey with a custom label.
+    await userEvent.type(screen.getByPlaceholderText('MacBook Touch ID'), 'YubiKey 5');
+    fireEvent.click(screen.getByRole('button', { name: /Add passkey/ }));
+    await waitFor(() =>
+      expect(api.auth.passkeys.registerVerify).toHaveBeenCalledWith({ name: 'YubiKey 5', response: { id: 'att-1' } }));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Passkey added', 'success'));
+
+    // Remove it.
+    fireEvent.click(screen.getByText('Remove'));
+    await waitFor(() => expect(api.auth.passkeys.remove).toHaveBeenCalledWith(3));
+  });
+
+  it('registers a passkey without a custom label and shows the pending state', async () => {
+    // No label typed → the server receives the default name "Passkey".
+    mockOf(api.auth.passkeys.registerOptions).mockResolvedValue({ options: '{}' } as never);
+    webauthnMock.startRegistration.mockResolvedValue({ id: 'att-2' });
+    mockOf(api.auth.passkeys.registerVerify).mockResolvedValue({ id: 5, name: 'Passkey' } as never);
+    const first = renderWithProviders(<Settings />);
+    expect(await screen.findByText('MacBook Touch ID')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Add passkey/ }));
+    await waitFor(() =>
+      expect(api.auth.passkeys.registerVerify).toHaveBeenCalledWith({ name: 'Passkey', response: { id: 'att-2' } }));
+    first.unmount();
+
+    // While the authenticator prompt is open, the button shows its pending label.
+    mockOf(api.auth.passkeys.registerOptions).mockReturnValue(new Promise(() => {}) as never);
+    renderWithProviders(<Settings />);
+    fireEvent.click(await screen.findByRole('button', { name: /Add passkey/ }));
+    expect(await screen.findByText('Waiting for authenticator…')).toBeInTheDocument();
+  });
+
+  it('reports passkey setup failures with and without a message', async () => {
+    mockOf(api.auth.passkeys.registerOptions).mockResolvedValue({ options: '{}' } as never);
+    webauthnMock.startRegistration.mockRejectedValueOnce(new Error('NotAllowedError: cancelled'));
+    const first = renderWithProviders(<Settings />);
+    fireEvent.click(await screen.findByRole('button', { name: /Add passkey/ }));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Passkey setup failed: NotAllowedError: cancelled', 'error'));
+    first.unmount();
+
+    webauthnMock.startRegistration.mockRejectedValueOnce('boom');
+    renderWithProviders(<Settings />);
+    fireEvent.click(await screen.findByRole('button', { name: /Add passkey/ }));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Passkey setup failed or cancelled', 'error'));
+  });
+
+  it('reports passkey removal failures and shows the empty state', async () => {
+    mockOf(api.auth.passkeys.remove).mockRejectedValueOnce(new Error('500') as never);
+    const first = renderWithProviders(<Settings />);
+    fireEvent.click(await screen.findByText('Remove'));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Could not remove passkey', 'error'));
+    first.unmount();
+
+    mockOf(api.auth.passkeys.list).mockResolvedValue([] as never);
+    renderWithProviders(<Settings />);
+    expect(await screen.findByText('No passkeys registered yet.')).toBeInTheDocument();
+  });
+
+  it('lists active sessions and revokes non-current ones', async () => {
+    mockOf(api.auth.sessions.revoke).mockResolvedValue(undefined as never);
+    renderWithProviders(<Settings />);
+    // Both sessions render; the current one is marked and has no Revoke button.
+    expect(await screen.findByText('this device')).toBeInTheDocument();
+    expect(screen.getByText('10.0.0.2')).toBeInTheDocument();
+    expect(screen.getAllByText('unknown ip').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('unknown client').length).toBeGreaterThan(0);
+    const revokeButtons = screen.getAllByText('Revoke');
+    expect(revokeButtons).toHaveLength(1);
+    fireEvent.click(revokeButtons[0]!);
+    await waitFor(() => expect(api.auth.sessions.revoke).toHaveBeenCalledWith(12));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Session revoked', 'success'));
+  });
+
+  it('reports session revocation failures and shows the empty state', async () => {
+    mockOf(api.auth.sessions.revoke).mockRejectedValueOnce(new Error('x') as never);
+    const first = renderWithProviders(<Settings />);
+    fireEvent.click(await screen.findByText('Revoke'));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Could not revoke session', 'error'));
+    first.unmount();
+
+    mockOf(api.auth.sessions.list).mockResolvedValue([] as never);
+    renderWithProviders(<Settings />);
+    expect(await screen.findByText('No active sessions.')).toBeInTheDocument();
+  });
+
+  it('opens the integrations section from the settings tabs', async () => {
+    renderWithProviders(<Settings />);
+    await openSection('Integrations');
+    expect(await screen.findByText('Vault provider')).toBeInTheDocument();
+    expect(screen.getByText('Cloudflare DNS records')).toBeInTheDocument();
   });
 });

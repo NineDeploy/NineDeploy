@@ -248,17 +248,23 @@ function TwoFactorCard() {
   const { toast } = useToast();
   const [setup, setSetup] = useState<{ secret: string; otpauthUri: string } | null>(null);
   const [code, setCode] = useState('');
+  const [setupPassword, setSetupPassword] = useState('');
+  const [showSetupPassword, setShowSetupPassword] = useState(false);
   const [disablePassword, setDisablePassword] = useState('');
   const [disableCode, setDisableCode] = useState('');
   const [showDisable, setShowDisable] = useState(false);
 
+  // The server requires the account password when regenerating the secret of
+  // an already-enabled 2FA — always offer the field.
   const doSetup = useMutation({
-    mutationFn: () => api.auth.twoFactor.setup(),
+    mutationFn: () => api.auth.twoFactor.setup(setupPassword ? { password: setupPassword } : undefined),
     onSuccess: (res) => {
       setSetup(res);
       setCode('');
+      setSetupPassword('');
+      setShowSetupPassword(false);
     },
-    onError: () => toast('Could not start 2FA setup', 'error'),
+    onError: () => toast(showSetupPassword ? 'Could not start 2FA setup — check your password' : 'Could not start 2FA setup', 'error'),
   });
   const enable = useMutation({
     mutationFn: () => api.auth.twoFactor.enable(code),
@@ -299,15 +305,43 @@ function TwoFactorCard() {
           Require a time-based one-time code (TOTP) from an authenticator app in addition to your password.
         </p>
 
-        {!setup && !showDisable && (
+        {!setup && !showDisable && !showSetupPassword && (
           <div className="flex gap-2">
-            <Button size="sm" onClick={() => doSetup.mutate()} disabled={doSetup.isPending}>
+            <Button size="sm" onClick={() => setShowSetupPassword(true)} disabled={doSetup.isPending}>
               {doSetup.isPending ? 'Generating…' : 'Set up 2FA'}
             </Button>
             <Button size="sm" variant="secondary" onClick={() => setShowDisable(true)}>
               Disable 2FA
             </Button>
           </div>
+        )}
+
+        {showSetupPassword && !setup && (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (setupPassword) doSetup.mutate();
+            }}
+            className="flex max-w-md items-end gap-2 rounded-lg border border-slate-700 bg-white/[0.02] p-4"
+          >
+            <label className="flex-1">
+              <span className="mb-1 block text-xs text-slate-400">Confirm your password (required when 2FA is already enabled)</span>
+              <input
+                type="password"
+                value={setupPassword}
+                onChange={(e) => setSetupPassword(e.target.value)}
+                placeholder="Password"
+                autoComplete="current-password"
+                className="w-full rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-2 text-sm outline-none focus:border-indigo-500"
+              />
+            </label>
+            <Button type="submit" size="sm" disabled={!setupPassword || doSetup.isPending}>
+              {doSetup.isPending ? 'Generating…' : 'Continue'}
+            </Button>
+            <button type="button" onClick={() => { setShowSetupPassword(false); setSetupPassword(''); }} className="text-xs text-slate-400 hover:underline">
+              Cancel
+            </button>
+          </form>
         )}
 
         {setup && (

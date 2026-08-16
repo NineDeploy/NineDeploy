@@ -40,7 +40,9 @@ export const databaseBackupRoutes: FastifyPluginAsync = async (app) => {
     return rows.map(serialize);
   });
 
-  app.post('/:id/backups', async (req) => {
+  // Creating a backup means acquiring a full plaintext dump of the database —
+  // admin-only, consistent with exec/volume-file access.
+  app.post('/:id/backups', { preHandler: [app.requireAdmin] }, async (req) => {
     const id = num((req.params as { id: string }).id);
     const d = await getDb(app, id);
     const ts = new Date().toISOString().replace(/[:.]/g, '-');
@@ -64,7 +66,7 @@ export const databaseBackupRoutes: FastifyPluginAsync = async (app) => {
     return serialize(updated!);
   });
 
-  app.post('/:id/backups/:bid/restore', async (req) => {
+  app.post('/:id/backups/:bid/restore', { preHandler: [app.requireAdmin] }, async (req) => {
     const id = num((req.params as { id: string }).id);
     const bid = num((req.params as { bid: string }).bid);
     const d = await getDb(app, id);
@@ -75,7 +77,8 @@ export const databaseBackupRoutes: FastifyPluginAsync = async (app) => {
     const log = (line: string) => app.log.info({ component: 'backup' }, line);
     // Remote-only backups are fetched to a local temp path first.
     let restorePath = b.path;
-    if (!existsSync(b.path)) {
+    const isRemoteTemp = !existsSync(b.path);
+    if (isRemoteTemp) {
       if (!b.remoteKey) throw notFound('Backup not found');
       restorePath = path.join(config.paths.backupsDir, `${path.basename(b.path)}.remote`);
       log(`Fetching remote object ${b.remoteKey}`);
@@ -86,6 +89,15 @@ export const databaseBackupRoutes: FastifyPluginAsync = async (app) => {
       await restoreDatabase(d, restorePath, log);
     } catch (err) {
       throw badRequest(`Restore failed: ${err instanceof Error ? err.message : err}`);
+    } finally {
+      // The fetched temp copy is not tracked in the DB — always remove it.
+      if (isRemoteTemp) {
+        try {
+          unlinkSync(restorePath);
+        } catch {
+          /* best-effort */
+        }
+      }
     }
     void audit(app.db, req.user!.id, 'backup.restore', path.basename(restorePath));
     return { ok: true };
@@ -103,7 +115,7 @@ export const backupRoutes: FastifyPluginAsync = async (app) => {
     return rows.map((b) => ({ ...serialize(b), databaseName: b.databaseId ? (name.get(b.databaseId) ?? null) : null }));
   });
 
-  app.delete('/:bid', async (req) => {
+  app.delete('/:bid', { preHandler: [app.requireAdmin] }, async (req) => {
     const bid = num((req.params as { bid: string }).bid);
     const b = await app.db.query.backups.findFirst({ where: eq(backups.id, bid) });
     if (b && existsSync(b.path)) unlinkSync(b.path);
@@ -113,7 +125,8 @@ export const backupRoutes: FastifyPluginAsync = async (app) => {
     return { ok: true };
   });
 
-  app.get('/:bid/download', async (req, reply) => {
+  // Downloading returns the decrypted plaintext dump — admin-only.
+  app.get('/:bid/download', { preHandler: [app.requireAdmin] }, async (req, reply) => {
     const bid = num((req.params as { bid: string }).bid);
     const b = await app.db.query.backups.findFirst({ where: eq(backups.id, bid) });
     if (!b || !existsSync(b.path)) throw notFound('Backup not found');

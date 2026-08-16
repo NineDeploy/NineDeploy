@@ -1,4 +1,5 @@
 import { lt } from 'drizzle-orm';
+import { cpus } from 'node:os';
 import { metrics, services } from '@ninedeploy/db';
 import fp from 'fastify-plugin';
 import { collectContainerStats, collectHostStats, type ContainerStat, type HostStat } from '../lib/stats.js';
@@ -7,6 +8,23 @@ import { readCertificates } from '../engine/proxy.js';
 
 const INTERVAL_MS = 30_000;
 const RETENTION_MS = 24 * 60 * 60 * 1000;
+
+/** Host CPU % between two os.cpus() samples (null on the first tick — no delta yet). */
+export function cpuDeltaPct(prev: ReturnType<typeof cpus> | null, now: ReturnType<typeof cpus>): number | null {
+  if (!prev || prev.length !== now.length) return null;
+  let idle = 0;
+  let total = 0;
+  for (let i = 0; i < now.length; i++) {
+    const nowTimes = now[i]!.times as Record<string, number>;
+    const prevTimes = prev[i]!.times as Record<string, number>;
+    const nowTotal = Object.values(nowTimes).reduce((a, b) => a + b, 0);
+    const prevTotal = Object.values(prevTimes).reduce((a, b) => a + b, 0);
+    idle += (nowTimes.idle ?? 0) - (prevTimes.idle ?? 0);
+    total += nowTotal - prevTotal;
+  }
+  if (total <= 0) return null;
+  return Math.round(((total - idle) / total) * 100);
+}
 
 export interface StatsCache {
   containers: Map<string, ContainerStat>;
@@ -25,6 +43,7 @@ export default fp(
     let cache: StatsCache = { containers: new Map(), host: null };
     let running = true;
     let timer: NodeJS.Timeout | undefined;
+    let prevCpu: ReturnType<typeof cpus> | null = null;
 
     const tick = async () => {
       try {
@@ -51,8 +70,12 @@ export default fp(
         }));
         if (cache.host) {
           const h = cache.host;
-          const memUsedPct = h.memTotalBytes > 0 ? Math.round((h.memUsedBytes / h.memTotalBytes) * 100) : 0;
-          snapshots.push({ serviceId: null, kind: 'cpu', value: memUsedPct || Math.round(h.load1 * 10) });
+          // Host CPU: real utilisation from os.cpus() deltas (not memory % or a
+          // made-up load heuristic — alerts on host cpu must mean host cpu).
+          const cpuNow = cpus();
+          const hostCpu = cpuDeltaPct(prevCpu, cpuNow) ?? Math.round((h.load1 / Math.max(h.cpuCores, 1)) * 100);
+          prevCpu = cpuNow;
+          snapshots.push({ serviceId: null, kind: 'cpu', value: Math.min(hostCpu, 100) });
           snapshots.push({ serviceId: null, kind: 'memory', value: Math.round(h.memUsedBytes / (1024 * 1024)) });
         }
 

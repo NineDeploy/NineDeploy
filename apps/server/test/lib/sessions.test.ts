@@ -53,6 +53,17 @@ describe('lib/sessions', () => {
     expect(jwtMocks.signRefreshToken).toHaveBeenCalledWith(2, 0, 'jti-x');
   });
 
+  it('refresh refuses to mint tokens for a session revoked mid-flight', async () => {
+    // The conditional rotate matches 0 rows (the session was revoked between
+    // the caller's check and the write) — no token pair may be issued.
+    jwtMocks.signAccessToken.mockClear();
+    jwtMocks.signRefreshToken.mockClear();
+    const db = createFakeDb({ update: { sessions: [] } });
+    await expect(refreshSessionTokens(db, userRow(), 'jti-x')).rejects.toThrow('session_revoked');
+    expect(jwtMocks.signAccessToken).not.toHaveBeenCalled();
+    expect(jwtMocks.signRefreshToken).not.toHaveBeenCalled();
+  });
+
   it('findLiveSession rejects missing, revoked and expired rows', async () => {
     expect(await findLiveSession(createFakeDb(), 'nope')).toBeNull();
     expect(

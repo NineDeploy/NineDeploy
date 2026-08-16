@@ -82,8 +82,10 @@ export function EnvCard({ serviceId }: { serviceId: number }) {
             env.data
               .filter((v) => !filter || v.key.toLowerCase().includes(filter.toLowerCase()))
               .map((v) => {
-              const draft = drafts[v.id] ?? v.value;
-              const dirty = draft !== v.value && draft !== '';
+                const draft = drafts[v.id] ?? v.value;
+                // An emptied field is a real edit (clearing a value) — only
+                // an untouched field is not dirty.
+                const dirty = drafts[v.id] !== undefined && draft !== v.value;
               return (
                 <div key={v.id} className="flex items-center gap-2 rounded-lg bg-white/[0.02] px-2 py-1.5 ring-1 ring-inset ring-white/5">
                   <div className="w-28 shrink-0">

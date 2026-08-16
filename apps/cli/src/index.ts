@@ -45,8 +45,14 @@ program
 program
   .command('logout')
   .description('Clear stored credentials')
-  .action(() => {
-    saveConfig({ baseUrl: loadConfig().baseUrl });
+  .action(async () => {
+    const cfg = loadConfig();
+    // Best-effort server-side revoke of the token before dropping it — a
+    // network failure must not block the local sign-out.
+    if (cfg.token) {
+      await getClient().auth.logout().catch(() => undefined);
+    }
+    saveConfig({ baseUrl: cfg.baseUrl });
     console.log('  ✓ Signed out.');
   });
 
@@ -59,7 +65,11 @@ program
     try {
       const user = await getClient().auth.me();
       console.log(`  ${user.email}  (${user.role})  @  ${cfg.baseUrl}`);
-    } catch { console.log('  Token expired. Run `ninedeploy login`.'); process.exit(1); }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.log(`  Could not reach the server (${msg}). Check the URL/network, or run \`ninedeploy login\` if the token expired.`);
+      process.exit(1);
+    }
   });
 
 program

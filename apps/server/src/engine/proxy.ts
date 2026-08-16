@@ -24,7 +24,10 @@ const PATH_RE = /[^A-Za-z0-9.\-/_]/g;
 
 /** Atomically replace `file`'s contents: write to a sibling temp file then rename. */
 function writeAtomic(file: string, content: string): void {
-  const tmp = `${file}.tmp`;
+  // Unique temp name per write: both writes are fully synchronous (no yield
+  // point in Node), but a second process — or a stale `.tmp` from a crashed
+  // run — must never collide with this write.
+  const tmp = `${file}.${process.pid}.tmp`;
   writeFileSync(tmp, content);
   renameSync(tmp, file);
 }

@@ -82,6 +82,22 @@ describe('lib/cloudflare', () => {
     await expect(findZoneId('t', 'other.org')).resolves.toBeNull();
   });
 
+  it('prefers an exact zone match over any suffix match', async () => {
+    fetchMock.mockResolvedValueOnce(cfOk([
+      { id: 'parent', name: 'example.com' },
+      { id: 'exact', name: 'dev.example.com' },
+    ]));
+    await expect(findZoneId('t', 'dev.example.com')).resolves.toBe('exact');
+  });
+
+  it('resolves nested hostnames into the most specific (longest) zone', async () => {
+    fetchMock.mockResolvedValueOnce(cfOk([
+      { id: 'parent', name: 'example.com' },
+      { id: 'nested', name: 'dev.example.com' },
+    ]));
+    await expect(findZoneId('t', 'app.dev.example.com')).resolves.toBe('nested');
+  });
+
   it('creates an A record for IP content', async () => {
     fetchMock.mockResolvedValueOnce(cfOk([{ id: 'z1', name: 'example.com' }]));
     fetchMock.mockResolvedValueOnce(cfOk({ id: 'rec-1' }));

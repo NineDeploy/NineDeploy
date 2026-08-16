@@ -72,6 +72,11 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
   app.post('/', async (req) => {
     const input = createService.parse(req.body);
     const slug = input.slug ?? slugify(input.name);
+    // Explicit duplicate-slug check → a clean 409 instead of an uncaught
+    // unique-index error (500). Covers the NULL-project case too, where
+    // SQLite's unique index treats NULLs as distinct.
+    const dup = await app.db.query.services.findFirst({ where: eq(services.slug, slug) });
+    if (dup) throw badRequest(`A service with slug '${slug}' already exists`, 'slug_taken');
     const [svc] = await app.db
       .insert(services)
       .values({

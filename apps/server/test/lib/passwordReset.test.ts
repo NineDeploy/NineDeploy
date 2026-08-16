@@ -77,9 +77,20 @@ describe('passwordReset tokens', () => {
   it('throws unauthorized when the update returns no row', async () => {
     const db = createFakeDb({
       findFirst: { passwordResetTokens: row(), users: { ...user } },
-      update: { users: [], password_reset_tokens: [] },
+      // The token claim succeeds, but the password write matches nothing.
+      update: { users: [], password_reset_tokens: [{}] },
     });
     await expect(consumeResetToken(db, 'tok', 'fresh-password')).rejects.toThrow();
+  });
+
+  it('rejects when the token was already claimed by a concurrent request', async () => {
+    const db = createFakeDb({
+      findFirst: { passwordResetTokens: row(), users: { ...user } },
+      update: { password_reset_tokens: [] },
+    });
+    await expect(consumeResetToken(db, 'tok', 'fresh-password')).rejects.toThrow(
+      'Invalid or expired reset token',
+    );
   });
 
   it('prunes expired tokens', async () => {

@@ -31,7 +31,7 @@ function mockDb(opts: {
 
 describe('resolveUser', () => {
   it('resolves a valid JWT access token to id + role (fresh from DB)', async () => {
-    const token = await signAccessToken(42);
+    const token = await signAccessToken(42, 0);
     const db = mockDb({ user: { id: 42, role: 'admin' } });
     await expect(resolveUser(db as never, token)).resolves.toEqual({ id: 42, role: 'admin' });
     expect(db.query.apiTokens.findFirst).not.toHaveBeenCalled();
@@ -39,8 +39,14 @@ describe('resolveUser', () => {
   });
 
   it('returns null when the JWT refers to a user that no longer exists', async () => {
-    const token = await signAccessToken(42);
+    const token = await signAccessToken(42, 0);
     const db = mockDb({ user: undefined });
+    await expect(resolveUser(db as never, token)).resolves.toBeNull();
+  });
+
+  it('rejects a JWT with no ver claim at all (revocation bypass guard)', async () => {
+    const token = await signAccessToken(42);
+    const db = mockDb({ user: { id: 42, role: 'admin' } });
     await expect(resolveUser(db as never, token)).resolves.toBeNull();
   });
 

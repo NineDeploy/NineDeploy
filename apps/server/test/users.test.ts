@@ -155,32 +155,29 @@ describe('users routes', () => {
     expect(res.json()).toMatchObject({ id: 2, role: 'member' });
   });
 
-  it('blocks demoting the last admin', async () => {
+  it('blocks demoting the last admin (guard rejects the update)', async () => {
+    // The last-admin guard lives inside the UPDATE's WHERE clause: an empty
+    // returning() simulates the guard rejecting the demotion.
     const app = await appWith({
       findFirst: { users: admin() },
-      counts: { users: [{ n: 1 }] },
+      update: { users: [] },
     });
     const res = await app.inject({
       method: 'PATCH', url: '/2/role', headers: asUser(), payload: { role: 'member' },
     });
     expect(res.statusCode).toBe(400);
-  });
-
-  it('blocks demoting when the admin count is unknown', async () => {
-    const app = await appWith({
-      findFirst: { users: admin() },
-      counts: { users: [] },
-    });
-    const res = await app.inject({
-      method: 'PATCH', url: '/2/role', headers: asUser(), payload: { role: 'member' },
-    });
-    expect(res.statusCode).toBe(400);
+    expect(res.json().error.message).toBe('Cannot demote the last admin');
   });
 
   it('returns 404 when the target user is missing', async () => {
+    // First lookup = acting user (preHandler), second = the gone target.
     const app = await appWith({
-      findFirst: { users: admin() },
-      counts: { users: [{ n: 2 }] },
+      findFirst: {
+        users: (() => {
+          let n = 0;
+          return () => (n++ === 0 ? admin() : undefined);
+        })(),
+      },
       update: { users: [] },
     });
     const res = await app.inject({
@@ -195,34 +192,47 @@ describe('users routes', () => {
     expect(res.statusCode).toBe(400);
   });
 
-  it('blocks deleting the last admin', async () => {
-    const app = await appWith({
-      findFirst: { users: admin() }, // acting user (id 1) is admin
-      counts: { users: [{ n: 0 }] },
-    });
-    // findFirst must return admin for the acting user AND the target (id 2).
+  it('blocks deleting the last admin (guard rejects the delete)', async () => {
+    // Guard inside the DELETE's WHERE: empty returning() simulates rejection,
+    // and the follow-up lookup shows the target still exists as an admin.
     const db = createFakeDb({
       findFirst: { users: (args?: unknown) => ((args as { where?: unknown } | undefined)?.where ? userRow({ id: 2, role: 'admin' }) : admin()) },
-      counts: { users: [{ n: 0 }] },
-    });
-    const app2 = await buildTestApp({ db });
-    await app2.register(userRoutes);
-    const res = await app2.inject({ method: 'DELETE', url: '/2', headers: asUser(1) });
-    expect(res.statusCode).toBe(400);
-    void app;
-  });
-
-  it('blocks deleting the last admin when the count row is missing', async () => {
-    const db = createFakeDb({
-      findFirst: {
-        users: (args?: unknown) => ((args as { where?: unknown } | undefined)?.where ? userRow({ id: 2, role: 'admin' }) : admin()),
-      },
-      counts: { users: [] },
+      delete: { users: [] },
     });
     const app = await buildTestApp({ db });
     await app.register(userRoutes);
     const res = await app.inject({ method: 'DELETE', url: '/2', headers: asUser(1) });
     expect(res.statusCode).toBe(400);
+    expect(res.json().error.message).toBe('Cannot delete the last admin');
+  });
+
+  it('blocks deleting the last admin when the guard rejects and the row vanishes', async () => {
+    const db = createFakeDb({
+      findFirst: {
+        users: (args?: unknown) => ((args as { where?: unknown } | undefined)?.where ? userRow({ id: 2, role: 'admin' }) : admin()),
+      },
+      delete: { users: [] },
+    });
+    const app = await buildTestApp({ db });
+    await app.register(userRoutes);
+    const res = await app.inject({ method: 'DELETE', url: '/2', headers: asUser(1) });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('returns 404 when deleting a user that vanished mid-check', async () => {
+    const db = createFakeDb({
+      findFirst: {
+        users: (() => {
+          let n = 0;
+          return () => (n++ === 0 ? admin() : undefined);
+        })(),
+      },
+      delete: { users: [] },
+    });
+    const app = await buildTestApp({ db });
+    await app.register(userRoutes);
+    const res = await app.inject({ method: 'DELETE', url: '/2', headers: asUser(1) });
+    expect(res.statusCode).toBe(404);
   });
 
   it('deletes an admin when another admin remains', async () => {

@@ -4,7 +4,7 @@ import {
   ArrowLeft, Download, ExternalLink, GitBranch, Play, Rocket, RotateCcw, Square, Terminal,
 } from 'lucide-react';
 import { Link, useNavigate, useParams } from 'react-router';
-import { api, getToken } from '../../lib/api.js';
+import { api, authedFetch } from '../../lib/api.js';
 import { ContainerTerminal } from '../../components/ContainerTerminal.js';
 import { useToast } from '../../components/Toast.js';
 import { Button, Card, CardBody, Skeleton, StatusBadge, Tabs } from '../../components/ui.js';
@@ -27,6 +27,12 @@ export function ServiceDetail() {
   const [activeDeploy, setActiveDeploy] = useState<number | null>(null);
   const [tab, setTab] = useState<TabId>('overview');
   const navigate = useNavigate();
+
+  // A non-numeric :id (e.g. /services/abc) must not leak NaN into every
+  // query/mutation — treat it as "not found" and bounce to the list.
+  useEffect(() => {
+    if (!Number.isInteger(id) || id <= 0) navigate('/services', { replace: true });
+  }, [id, navigate]);
 
   const service = useQuery({
     queryKey: ['service', id],
@@ -83,7 +89,7 @@ export function ServiceDetail() {
   const doExportService = async () => {
     try {
       toast('Exporting service…', 'info');
-      const res = await fetch(api.services.exportUrl(id), { headers: { Authorization: `Bearer ${getToken() ?? ''}` } });
+      const res = await authedFetch(api.services.exportUrl(id));
       if (!res.ok) throw new Error('Export failed');
       downloadBlob(await res.blob(), `${svc?.slug ?? 'service'}-export.json`);
       toast('Service exported', 'success');

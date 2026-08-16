@@ -93,6 +93,25 @@ describe('auth two-factor routes', () => {
     expect(cryptoMocks.encrypt).toHaveBeenCalledWith('GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ');
   });
 
+  it('regenerating with 2FA enabled requires the account password', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({ findFirst: { users: twoFactorUser({ totpEnabled: true }) }, update: { users: [userRow({ id: 1 })] } }),
+    });
+    await app.register(authRoutes);
+    // No password → rejected; a bare stolen token must not be able to
+    // regenerate the secret (which also flips 2FA off).
+    const bare = await app.inject({ method: 'POST', url: '/2fa/setup', headers: asUser() });
+    expect(bare.statusCode).toBe(400);
+    // Wrong password → 401.
+    cryptoMocks.verifyPassword.mockResolvedValueOnce(false);
+    const wrong = await app.inject({ method: 'POST', url: '/2fa/setup', headers: asUser(), payload: { password: 'nope' } });
+    expect(wrong.statusCode).toBe(401);
+    // Correct password → a fresh pending secret.
+    const ok = await app.inject({ method: 'POST', url: '/2fa/setup', headers: asUser(), payload: { password: GOOD } });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json()).toHaveProperty('secret');
+  });
+
   it('enable verifies the code and flips the flag', async () => {
     const app = await buildTestApp({
       db: createFakeDb({

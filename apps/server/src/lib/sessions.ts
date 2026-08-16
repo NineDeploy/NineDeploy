@@ -53,15 +53,20 @@ export async function refreshSessionTokens(
   user: Pick<User, 'id' | 'tokenVersion'>,
   jti: string,
 ): Promise<TokenPair> {
+  // Rotate the row FIRST, conditioned on it still being live: if a concurrent
+  // revoke (logout / session delete) lands between the caller's check and
+  // here, no token pair is issued for the revoked session.
   const refreshTtl = ttlSeconds(config.jwt.refreshTtl);
+  const rotated = await db
+    .update(sessions)
+    .set({ lastUsedAt: new Date(), expiresAt: new Date(Date.now() + refreshTtl * 1000) })
+    .where(and(eq(sessions.jti, jti), isNull(sessions.revokedAt)))
+    .returning();
+  if (!rotated.length) throw new Error('session_revoked');
   const [accessToken, refreshToken] = await Promise.all([
     signAccessToken(user.id, user.tokenVersion, jti),
     signRefreshToken(user.id, user.tokenVersion, jti),
   ]);
-  await db
-    .update(sessions)
-    .set({ lastUsedAt: new Date(), expiresAt: new Date(Date.now() + refreshTtl * 1000) })
-    .where(and(eq(sessions.jti, jti), isNull(sessions.revokedAt)));
   return { accessToken, refreshToken, expiresIn: ttlSeconds(config.jwt.accessTtl) };
 }
 

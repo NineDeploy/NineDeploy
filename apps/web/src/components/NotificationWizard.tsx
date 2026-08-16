@@ -57,11 +57,11 @@ export function NotificationWizard({ onClose }: { onClose: () => void }) {
     // The channel already exists from the test — just sync any edits the user
     // made after testing (back-navigation) and close.
     mutationFn: async () => {
-      if (createdId != null) {
-        const { type: _type, ...patchable } = payload();
-        void _type;
-        await api.notifications.updateChannel(createdId, patchable);
-      }
+      // finish is only reachable after a successful test (tested === 'ok'),
+      // which always sets createdId — so it is guaranteed non-null here.
+      const { type: _type, ...patchable } = payload();
+      void _type;
+      await api.notifications.updateChannel(createdId!, patchable);
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['notif-channels'] });

@@ -194,6 +194,13 @@ fi
 mkdir -p .data
 
 info "Running database migrations…"
+# Export .env first: drizzle.config reads NINEDEPLOY_DB_PATH/NINEDEPLOY_DATA_DIR
+# from the environment, so without this the migrate step could target a
+# different database file than the one the service actually runs on.
+set -a
+# shellcheck disable=SC1091
+. ./.env
+set +a
 pnpm db:migrate
 
 # ── 5. Systemd (Linux) ────────────────────────────────────────────────────

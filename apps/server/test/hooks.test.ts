@@ -119,6 +119,32 @@ describe('webhook receiver', () => {
     expect(res.json()).toEqual({ ok: 'skipped', reason: 'duplicate', deploymentId: 42 });
   });
 
+  it('drops its own insert when a concurrent duplicate won the race (post-hoc dedup)', async () => {
+    // Pre-check sees nothing, the insert lands — then the post-hoc guard finds
+    // older active deployments for the same commit and deletes ours.
+    const mine = depRow({ id: 99, trigger: 'webhook', commitSha: 'deadbeef', status: 'queued' });
+    const winner = depRow({ id: 42, trigger: 'webhook', commitSha: 'deadbeef', status: 'running' });
+    const olderStill = depRow({ id: 50, trigger: 'webhook', commitSha: 'deadbeef', status: 'running' });
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { webhooks: hook() },
+        insert: { deployments: [mine] },
+        findMany: { deployments: [mine, winner, olderStill] },
+      }),
+      rawBody: true,
+    });
+    await app.register(hookReceiveRoutes);
+    const body = JSON.stringify(pushPayload('main'));
+    const res = await app.inject({
+      method: 'POST',
+      url: '/1',
+      headers: { 'content-type': 'application/json', 'x-github-event': 'push', 'x-hub-signature-256': sig(body) },
+      payload: body,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: 'skipped', reason: 'duplicate', deploymentId: 42 });
+  });
+
   it('queues a push with missing commit metadata', async () => {
     const app = await buildTestApp({
       db: createFakeDb({
@@ -345,11 +371,11 @@ describe('webhook management routes', () => {
     expect(res.json()).toMatchObject({ id: 4, branch: 'prod' });
   });
 
-  it('returns 401 when the service is missing', async () => {
+  it('returns 404 when the service is missing', async () => {
     const app = await buildTestApp({ db: createFakeDb() });
     await app.register(webhookMgmtRoutes);
     const res = await app.inject({ method: 'POST', url: '/99/webhooks', headers: asUser(), payload: {} });
-    expect(res.statusCode).toBe(401);
+    expect(res.statusCode).toBe(404);
     expect(res.json().error.message).toBe('Service not found');
   });
 

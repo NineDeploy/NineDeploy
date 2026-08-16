@@ -8,6 +8,17 @@ import { useCallback, useState } from 'react';
 
 const BYTE_UNITS = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'] as const;
 
+/**
+ * Numeric form-field parsing: `Number('abc')` is NaN, and JSON.stringify
+ * silently turns NaN into null — a garbage field must become undefined (or
+ * the given fallback), never null/NaN shipped to the API.
+ */
+export function toInt(raw: string | undefined | null, fallback?: number): number | undefined {
+  if (raw === undefined || raw === null || raw.trim() === '') return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) ? Math.trunc(n) : fallback;
+}
+
 /** Decimal (1000-based) byte formatting, 1 decimal for KB+, 0 for bytes. */
 export function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';

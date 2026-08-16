@@ -79,11 +79,18 @@ export const DEFAULT_IO = {
   connect: async (server: McpServer) => void (await server.connect(new StdioServerTransport())),
 };
 
-// Only run when executed directly (not under the test importer).
-export function isDirectRun(argv1: string | undefined): boolean {
-  return argv1 != null && (argv1.endsWith('index.js') || argv1.endsWith('index.ts'));
+// Only run when executed directly (not under the test importer). Compares
+// argv[1] against this module's own URL — matching by filename suffix alone
+// would also fire for any other package's index.js entry.
+export function isDirectRun(argv1: string | undefined, selfUrl: string): boolean {
+  if (argv1 == null) return false;
+  try {
+    return new URL(`file://${argv1}`).href === selfUrl;
+  } catch {
+    return false;
+  }
 }
 
-if (isDirectRun(process.argv[1])) {
+if (isDirectRun(process.argv[1], import.meta.url)) {
   void main();
 }

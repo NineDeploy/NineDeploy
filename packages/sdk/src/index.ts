@@ -101,7 +101,7 @@ export interface NineDeployClient {
     resetPasswordWithToken: (input: { token: string; newPassword: string }) => Promise<{ ok: boolean }>;
     twoFactor: {
       /** Generate a pending secret + otpauth URI (auth required). */
-      setup: () => Promise<{ secret: string; otpauthUri: string }>;
+      setup: (input?: { password: string }) => Promise<{ secret: string; otpauthUri: string }>;
       enable: (code: string) => Promise<{ ok: boolean; totpEnabled: boolean }>;
       disable: (input: { password: string; code: string }) => Promise<{ ok: boolean; totpEnabled: boolean }>;
     };
@@ -426,7 +426,7 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
       forgotPassword: (email) => send<{ ok: boolean }>('POST', '/v1/auth/forgot-password', { email }),
       resetPasswordWithToken: (input) => send<{ ok: boolean }>('POST', '/v1/auth/reset-password', input),
       twoFactor: {
-        setup: () => send<{ secret: string; otpauthUri: string }>('POST', '/v1/auth/2fa/setup'),
+        setup: (input?: { password: string }) => send<{ secret: string; otpauthUri: string }>('POST', '/v1/auth/2fa/setup', input ?? {}),
         enable: (code) => send<{ ok: boolean; totpEnabled: boolean }>('POST', '/v1/auth/2fa/enable', { code }),
         disable: (input) => send<{ ok: boolean; totpEnabled: boolean }>('POST', '/v1/auth/2fa/disable', input),
       },

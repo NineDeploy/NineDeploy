@@ -39,7 +39,8 @@ export async function resolveUser(db: DB, token: string): Promise<AuthUser | nul
     const user = await loadUser(db, Number(payload.sub));
     if (!user) return null;
     // Reject tokens minted before the current tokenVersion (revoked sessions).
-    if (payload.ver !== undefined && payload.ver !== user.tokenVersion) return null;
+    // ver is mandatory: a token without it skips revocation entirely.
+    if (payload.ver === undefined || payload.ver !== user.tokenVersion) return null;
     return { id: user.id, role: user.role };
   }
 

@@ -1,4 +1,6 @@
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import type { Database } from '@ninedeploy/db';
 import { decrypt, encrypt } from '../lib/crypto.js';
 import { capture, run } from '../lib/exec.js';
@@ -54,6 +56,11 @@ interface EngineConfig {
   connectionString: (host: string, port: number, user: string, password: string, dbName: string | undefined) => string;
 }
 
+/** RFC-3986-encode a userinfo/password segment so special chars can't break (or inject into) the URI. */
+function enc(segment: string): string {
+  return encodeURIComponent(segment);
+}
+
 export const ENGINES: Record<string, EngineConfig> = {
   postgres: {
     image: (v) => `postgres:${v || '16'}`,
@@ -62,7 +69,7 @@ export const ENGINES: Record<string, EngineConfig> = {
     env: (p) => ({ POSTGRES_USER: 'nine', POSTGRES_PASSWORD: p, POSTGRES_DB: 'app' }),
     username: () => 'nine',
     dbName: () => 'app',
-    connectionString: (h, prt, u, p, d) => `postgres://${u}:${p}@${h}:${prt}/${d}`,
+    connectionString: (h, prt, u, p, d) => `postgres://${enc(u)}:${enc(p)}@${h}:${prt}/${d}`,
   },
   mysql: {
     image: (v) => `mysql:${v || '8'}`,
@@ -71,7 +78,7 @@ export const ENGINES: Record<string, EngineConfig> = {
     env: (p) => ({ MYSQL_ROOT_PASSWORD: p }),
     username: () => 'root',
     dbName: () => undefined,
-    connectionString: (h, prt, u, p) => `mysql://${u}:${p}@${h}:${prt}/`,
+    connectionString: (h, prt, u, p) => `mysql://${enc(u)}:${enc(p)}@${h}:${prt}/`,
   },
   mariadb: {
     image: (v) => `mariadb:${v || '11'}`,
@@ -80,7 +87,7 @@ export const ENGINES: Record<string, EngineConfig> = {
     env: (p) => ({ MARIADB_ROOT_PASSWORD: p }),
     username: () => 'root',
     dbName: () => undefined,
-    connectionString: (h, prt, u, p) => `mariadb://${u}:${p}@${h}:${prt}/`,
+    connectionString: (h, prt, u, p) => `mariadb://${enc(u)}:${enc(p)}@${h}:${prt}/`,
   },
   redis: {
     image: (v) => `redis:${v || '7'}`,
@@ -98,7 +105,7 @@ export const ENGINES: Record<string, EngineConfig> = {
     env: (p) => ({ MONGO_INITDB_ROOT_USERNAME: 'nine', MONGO_INITDB_ROOT_PASSWORD: p }),
     username: () => 'nine',
     dbName: () => undefined,
-    connectionString: (h, prt, u, p) => `mongodb://${u}:${p}@${h}:${prt}`,
+    connectionString: (h, prt, u, p) => `mongodb://${enc(u)}:${enc(p)}@${h}:${prt}`,
   },
 };
 
@@ -140,11 +147,31 @@ export async function startDatabase(d: Database, log: (line: string) => void): P
   if (d.cpuShares > 0) args.push('--cpu-shares', String(d.cpuShares));
   if (d.memLimitMb > 0) args.push('--memory', `${d.memLimitMb}m`);
   args.push('-v', `${d.volumeName}:${cfg.volumePath}`);
-  for (const [k, v] of Object.entries(cfg.env(password))) args.push('-e', `${k}=${v}`);
+  // Pass secrets via a 0600 env-file instead of `-e KEY=value` on the argv —
+  // argv is visible to every local user via `ps`.
+  const vars = cfg.env(password);
+  const envFile = path.join(tmpdir(), `nd-db-${d.id}-${Date.now()}.env`);
+  try {
+    unlinkSync(envFile); // best-effort: clear any stale copy
+  } catch {
+    /* not present */
+  }
+  if (Object.keys(vars).length > 0) {
+    writeFileSync(envFile, `${Object.entries(vars).map(([k, v]) => `${k}=${v}`).join('\n')}\n`, { mode: 0o600 });
+    args.push('--env-file', envFile);
+  }
   args.push(cfg.image(d.version ?? undefined));
 
   log(`Starting ${d.engine} database ${d.name} (${d.containerName}) …`);
-  await run('docker', args, {}, log);
+  try {
+    await run('docker', args, {}, log);
+  } finally {
+    try {
+      if (Object.keys(vars).length > 0) unlinkSync(envFile);
+    } catch {
+      /* best-effort */
+    }
+  }
 }
 
 /** Whether a named Docker volume exists. */
@@ -229,13 +256,18 @@ export async function backupDatabase(d: Database, file: string, log: (line: stri
   if (!cfg || !d.containerName) throw new Error('database not runnable');
   const cn = d.containerName;
   if (d.engine === 'postgres') {
-    const dump = await capture('docker', ['exec', cn, 'pg_dump', '-U', cfg.username()!, '-d', cfg.dbName()!]);
-    writeFileSync(file, dump);
+    // Dump to a file INSIDE the container, then `docker cp` it out — the
+    // whole dump never sits in this process's memory (a `capture`d stdout
+    // string would OOM the server on large databases).
+    await run('docker', ['exec', cn, 'pg_dump', '-U', cfg.username()!, '-d', cfg.dbName()!, `--file=${DUMP_TMP}`], {}, log);
+    await run('docker', ['cp', `${cn}:${DUMP_TMP}`, file], {}, log);
+    await run('docker', ['exec', cn, 'rm', '-f', DUMP_TMP], {}, swallow);
   } else if (d.engine === 'mysql' || d.engine === 'mariadb') {
     const pass = decrypt(d.passwordEncrypted);
     const dumper = d.engine === 'mysql' ? 'mysqldump' : 'mariadb-dump';
-    const dump = await capture('docker', ['exec', cn, dumper, '-uroot', `--password=${pass}`, '--all-databases']);
-    writeFileSync(file, dump);
+    await run('docker', ['exec', cn, dumper, '-uroot', `--password=${pass}`, '--all-databases', `--result-file=${DUMP_TMP}`], {}, log);
+    await run('docker', ['cp', `${cn}:${DUMP_TMP}`, file], {}, log);
+    await run('docker', ['exec', cn, 'rm', '-f', DUMP_TMP], {}, swallow);
   } else if (d.engine === 'redis') {
     await run('docker', ['exec', cn, 'redis-cli', 'SAVE'], {}, log);
     await run('docker', ['cp', `${cn}:/data/dump.rdb`, file], {}, log);

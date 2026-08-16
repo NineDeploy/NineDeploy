@@ -27,6 +27,10 @@ export const envRoutes: FastifyPluginAsync = async (app) => {
   app.post('/:id/env', async (req) => {
     const id = num((req.params as { id: string }).id);
     const input = upsertEnvVar.parse(req.body);
+    // Existence check first: otherwise a bad service id surfaces as a
+    // misleading "key already exists" (the FK violation is swallowed below).
+    const svc = await app.db.query.services.findFirst({ where: eq(services.id, id) });
+    if (!svc) throw notFound('Service not found');
     const [created] = await app.db
       .insert(envVars)
       .values({

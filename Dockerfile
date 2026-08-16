@@ -6,6 +6,7 @@
 #
 #   docker run -d --name ninedeploy \
 #     -v /var/run/docker.sock:/var/run/docker.sock \
+#     --group-add $(getent group docker | cut -d: -f3) \
 #     -v ninedeploy-data:/data \
 #     -p 3000:3000 \
 #     -e NINEDEPLOY_DATA_DIR=/data \
@@ -13,6 +14,10 @@
 #     -e NINEDEPLOY_JWT_SECRET=<strong-secret> \
 #     -e NINEDEPLOY_PUBLIC_URL=https://your-host \
 #     ghcr.io/ninedeploy/ninedeploy
+#
+# The --group-add is REQUIRED when running as the non-root `ninedeploy` user:
+# the host socket is typically root:docker mode 0660, and without the host
+# docker group's GID every `docker` call fails with permission denied.
 #
 # PM2-based services are not available in this mode (the daemon runs in the
 # host PID space); Docker-based services and templates work normally.

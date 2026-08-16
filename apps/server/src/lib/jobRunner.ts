@@ -45,8 +45,12 @@ export async function runJob(db: DB, jobId: number): Promise<void> {
   };
   let exitOk = true;
   try {
-    await run('docker', ['exec', svc.runtimeId, 'sh', '-lc', job.command], {}, sink);
+    // `--` before the container name: a runtimeId starting with `-` must be
+    // treated as an operand, not a flag (same hardening as the exec WS route).
+    await run('docker', ['exec', '--', svc.runtimeId, 'sh', '-lc', job.command], {}, sink);
   } catch {
+    // The exec layer reports success/failure only (not the command's exit
+    // status) — recorded coarsely as 0/1.
     exitOk = false;
   }
   await db

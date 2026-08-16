@@ -444,7 +444,7 @@ describe('service', () => {
   describe('domains', () => {
     it('createDomain applies defaults', () => {
       const data = ok(createDomain, { hostname: 'app.example.com' });
-      expect(data).toEqual({ hostname: 'app.example.com', path: '/', ssl: false });
+      expect(data).toEqual({ hostname: 'app.example.com', path: '/', ssl: true });
     });
 
     it('rejects short hostnames and accepts full input', () => {

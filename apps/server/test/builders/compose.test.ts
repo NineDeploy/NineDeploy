@@ -40,10 +40,11 @@ describe('composeBuilder.buildAndRun', () => {
   it('brings the project up with env vars in a temporary .env', async () => {
     const runtime = await composeBuilder.buildAndRun(makeCtx() as never);
 
-    // Previous revision torn down first, then up --build.
-    const downCall = h.run.mock.calls.find((c) => (c[1] as string[])[3] === 'down');
+    // Previous revision torn down first — with -f so a non-default compose
+    // file is honored — then up --build.
+    const downCall = h.run.mock.calls.find((c) => (c[1] as string[])[5] === 'down');
     expect(downCall).toBeTruthy();
-    expect((downCall![1] as string[])).toContain('ndcmp-stack');
+    expect((downCall![1] as string[])).toEqual(['compose', '-p', 'ndcmp-stack', '-f', 'compose.yaml', 'down', '--remove-orphans']);
     const upCall = h.run.mock.calls.find((c) => (c[1] as string[])[5] === 'up');
     expect((upCall![1] as string[])).toEqual(['compose', '-p', 'ndcmp-stack', '-f', 'compose.yaml', 'up', '-d', '--build', '--remove-orphans']);
     expect(upCall![2]).toMatchObject({ cwd: tmp });
@@ -92,7 +93,7 @@ describe('composeBuilder.buildAndRun', () => {
   it('tolerates a failing previous-revision teardown', async () => {
     h.run.mockImplementation(async (_c, a, _o, sink) => {
       sink?.('');
-      if ((a as string[])[3] === 'down') throw new Error('no such project');
+      if ((a as string[])[5] === 'down') throw new Error('no such project');
     });
     const runtime = await composeBuilder.buildAndRun(makeCtx() as never);
     expect(runtime.runtimeId).toBe('ndcmp-stack-api-1');
@@ -128,15 +129,59 @@ describe('composeBuilder.isHealthy', () => {
 });
 
 describe('composeBuilder.stop', () => {
-  it('tears the project down from the container name', async () => {
+  it('tears the project down using the container\'s own compose labels', async () => {
     h.run.mockClear();
+    // The label inspect yields project + config file(s), tab-separated.
+    h.capture.mockResolvedValueOnce('ndcmp-stack\t/opt/app/compose.yaml');
     await composeBuilder.stop('ndcmp-stack-api-1');
     const downCall = h.run.mock.calls[0];
-    expect((downCall![1] as string[])).toEqual(['compose', '-p', 'ndcmp-stack', 'down', '--remove-orphans']);
+    expect(h.capture).toHaveBeenCalledWith(
+      'docker',
+      ['inspect', 'ndcmp-stack-api-1', '--format', expect.stringContaining('com.docker.compose.project')],
+    );
+    expect((downCall![1] as string[])).toEqual(['compose', '-p', 'ndcmp-stack', '-f', '/opt/app/compose.yaml', 'down', '--remove-orphans']);
+  });
+
+  it('works for hyphenated project/service names (no string surgery)', async () => {
+    h.run.mockClear();
+    h.capture.mockResolvedValueOnce('ndcmp-my-app\t/app/docker-compose.yml');
+    await composeBuilder.stop('ndcmp-my-app-web-api-1');
+    expect((h.run.mock.calls[0]![1] as string[])).toEqual(['compose', '-p', 'ndcmp-my-app', '-f', '/app/docker-compose.yml', 'down', '--remove-orphans']);
+  });
+
+  it('does nothing when the container (and its labels) are already gone', async () => {
+    h.run.mockClear();
+    h.capture.mockRejectedValueOnce(new Error('No such object'));
+    await expect(composeBuilder.stop('gone-1')).resolves.toBeUndefined();
+    expect(h.run).not.toHaveBeenCalled();
+  });
+
+  it('does nothing when the container has no compose project label', async () => {
+    h.run.mockClear();
+    h.capture.mockResolvedValueOnce('\t');
+    await expect(composeBuilder.stop('some-container-1')).resolves.toBeUndefined();
+    expect(h.run).not.toHaveBeenCalled();
+  });
+
+  it('stops without -f when the container reports no config files', async () => {
+    h.run.mockClear();
+    h.capture.mockResolvedValueOnce('ndcmp-stack');
+    await composeBuilder.stop('ndcmp-stack-api-1');
+    expect((h.run.mock.calls[0]![1] as string[])).toEqual(['compose', '-p', 'ndcmp-stack', 'down', '--remove-orphans']);
+  });
+
+  it('passes every comma-separated config file', async () => {
+    h.run.mockClear();
+    h.capture.mockResolvedValueOnce('p\t/base.yml, /override.yml');
+    await composeBuilder.stop('p-api-1');
+    expect((h.run.mock.calls[0]![1] as string[])).toEqual([
+      'compose', '-p', 'p', '-f', '/base.yml', '-f', '/override.yml', 'down', '--remove-orphans',
+    ]);
   });
 
   it('swallows failures', async () => {
     h.run.mockClear();
+    h.capture.mockResolvedValueOnce('p\t/c.yml');
     h.run.mockRejectedValueOnce(new Error('compose not installed'));
     await expect(composeBuilder.stop('ndcmp-stack-api-1')).resolves.toBeUndefined();
   });

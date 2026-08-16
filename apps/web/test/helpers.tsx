@@ -39,6 +39,15 @@ export function createFakeApiModule() {
       forgotPassword: vi.fn(),
       resetPasswordWithToken: vi.fn(),
       twoFactor: { setup: vi.fn(), enable: vi.fn(), disable: vi.fn() },
+      passkeys: {
+        list: vi.fn(),
+        registerOptions: vi.fn(),
+        registerVerify: vi.fn(),
+        remove: vi.fn(),
+        loginOptions: vi.fn(),
+        loginVerify: vi.fn(),
+      },
+      sessions: { list: vi.fn(), revoke: vi.fn() },
       me: vi.fn(),
       tokens: { create: vi.fn(), list: vi.fn(), remove: vi.fn() },
     },
@@ -55,15 +64,24 @@ export function createFakeApiModule() {
       exportUrl: vi.fn(),
       importBundle: vi.fn(),
     },
-    deploys: { trigger: vi.fn(), list: vi.fn(), rollback: vi.fn(), cancel: vi.fn() },
+    deploys: { trigger: vi.fn(), list: vi.fn(), rollback: vi.fn(), cancel: vi.fn(), configDiff: vi.fn() },
     domains: { list: vi.fn(), create: vi.fn(), remove: vi.fn(), all: vi.fn(), setSsl: vi.fn(), update: vi.fn() },
     volumes: { list: vi.fn(), remove: vi.fn(), listFiles: vi.fn(), readFile: vi.fn(), writeFile: vi.fn(), mkdir: vi.fn(), deleteFile: vi.fn() },
-    system: { resources: vi.fn(), pruneImages: vi.fn(), exportUrl: vi.fn(), updateCheck: vi.fn() },
+    system: { resources: vi.fn(), pruneImages: vi.fn(), exportUrl: vi.fn(), updateCheck: vi.fn(), dockerEvents: vi.fn() },
+    networks: { list: vi.fn(), create: vi.fn(), remove: vi.fn(), attach: vi.fn(), detach: vi.fn() },
     tunnels: { list: vi.fn(), create: vi.fn(), remove: vi.fn() },
     activity: { list: vi.fn() },
     alerts: { list: vi.fn(), create: vi.fn(), update: vi.fn(), remove: vi.fn() },
     users: { list: vi.fn(), create: vi.fn(), setRole: vi.fn(), remove: vi.fn(), resetPassword: vi.fn(), resetLink: vi.fn() },
-    settings: { get: vi.fn(), setAllowRegistration: vi.fn(), setAcmeEmail: vi.fn(), setTemplatesSource: vi.fn(), setDns: vi.fn() },
+    settings: {
+      get: vi.fn(),
+      setAllowRegistration: vi.fn(),
+      setAcmeEmail: vi.fn(),
+      setTemplatesSource: vi.fn(),
+      setDns: vi.fn(),
+      dnsRecords: { get: vi.fn(), set: vi.fn(), test: vi.fn() },
+      vault: { get: vi.fn(), set: vi.fn(), test: vi.fn() },
+    },
     about: { get: vi.fn() },
     notifications: {
       listChannels: vi.fn(),
@@ -98,13 +116,21 @@ export function createFakeApiModule() {
     servers: { list: vi.fn(), create: vi.fn(), remove: vi.fn(), test: vi.fn() },
     health: vi.fn(),
   };
+  const getToken = vi.fn(() => 'test-token');
   return {
     api,
-    getToken: vi.fn(() => 'test-token'),
+    getToken,
     setToken: vi.fn(),
     setSessionTokens: vi.fn(),
     clearTokens: vi.fn(),
     deployLogsWsUrl: vi.fn(() => 'ws://localhost/v1/logs'),
+    // Mirrors the real authedFetch: bearer header from getToken + plain fetch.
+    authedFetch: (url: string, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      const token = getToken();
+      if (token) headers.set('Authorization', `Bearer ${token}`);
+      return fetch(url, { ...init, headers });
+    },
   };
 }
 

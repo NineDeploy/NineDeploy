@@ -2,7 +2,7 @@ import { and, count, eq, sql } from 'drizzle-orm';
 import type { FastifyPluginAsync } from 'fastify';
 import { apiTokens, type DB, sessions as sessionsTable, users, webauthnCredentials, type User } from '@ninedeploy/db';
 import type { PublicUser, Register } from '@ninedeploy/schemas';
-import { forgotPassword, login, passkeyLoginVerify, passkeyRegisterVerify, passwordChange, passwordResetWithToken, refresh, register, twoFactorCode, twoFactorDisable } from '@ninedeploy/schemas';
+import { forgotPassword, login, passkeyLoginVerify, passkeyRegisterVerify, passwordChange, passwordResetWithToken, refresh, register, twoFactorCode, twoFactorDisable, twoFactorSetup } from '@ninedeploy/schemas';
 import { config } from '../config.js';
 import { decrypt, encrypt, hashPassword, randomToken, sha256, verifyPassword } from '../lib/crypto.js';
 import { badRequest, conflict, forbidden, unauthorized } from '../lib/errors.js';
@@ -252,9 +252,15 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
   // verifies a code from the user's authenticator and flips the flag; disable
   // requires the password AND a valid code, then bumps tokenVersion.
   app.post('/2fa/setup', { onRequest: [app.authenticate], config: { rateLimit: AUTH_LIMIT } }, async (req) => {
-    const secret = generateSecret();
     const user = await app.db.query.users.findFirst({ where: eq(users.id, req.user!.id) });
     if (!user) throw unauthorized();
+    // Regenerating the secret also flips totpEnabled off — when 2FA is active
+    // this must not be reachable with a bare token: require the password.
+    if (user.totpEnabled) {
+      const input = twoFactorSetup.parse(req.body ?? {});
+      if (!(await verifyPassword(user.passwordHash, input.password))) throw unauthorized('Invalid password');
+    }
+    const secret = generateSecret();
     await app.db
       .update(users)
       .set({ totpSecretEncrypted: encrypt(secret), totpEnabled: false })
@@ -340,8 +346,8 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     if (!user) throw unauthorized();
     // Reject refresh tokens minted before the user's tokenVersion was bumped
     // (logout / role change / password change) — otherwise a revoked session
-    // could simply mint fresh tokens here.
-    if (payload.ver !== undefined && payload.ver !== user.tokenVersion) {
+    // could simply mint fresh tokens here. ver is mandatory.
+    if (payload.ver === undefined || payload.ver !== user.tokenVersion) {
       throw unauthorized('Invalid refresh token');
     }
     if (session.userId !== user.id) throw unauthorized('Invalid refresh token');

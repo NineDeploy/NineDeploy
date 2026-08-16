@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Download, HardDrive, RotateCcw, Trash2 } from 'lucide-react';
-import { api, getToken } from '../lib/api.js';
+import { api, authedFetch } from '../lib/api.js';
 import { useToast } from '../components/Toast.js';
 import { Button, Card, ConfirmDialog, EmptyState, ErrorCard, Field, Input, PageHeader, Skeleton, StatusBadge, cn } from '../components/ui.js';
 import { downloadBlob, formatBytes, formatDateTime } from '../lib/format.js';
@@ -42,12 +42,16 @@ export function Backups() {
   });
 
   const download = async (id: number) => {
-    const res = await fetch(`/v1/backups/${id}/download`, { headers: { Authorization: `Bearer ${getToken() ?? ''}` } });
-    if (!res.ok) {
+    try {
+      const res = await authedFetch(`/v1/backups/${id}/download`);
+      if (!res.ok) {
+        toast('Download failed', 'error');
+        return;
+      }
+      downloadBlob(await res.blob(), `backup-${id}.dump`);
+    } catch {
       toast('Download failed', 'error');
-      return;
     }
-    downloadBlob(await res.blob(), `backup-${id}.dump`);
   };
 
   return (

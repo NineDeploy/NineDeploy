@@ -122,7 +122,8 @@ describe('startDatabase', () => {
       [
         'run', '-d', '--name', 'c', '--network', 'ninedeploy', '--restart', 'unless-stopped',
         '-v', 'v:/var/lib/postgresql/data',
-        '-e', 'POSTGRES_USER=nine', '-e', 'POSTGRES_PASSWORD=pw:enc', '-e', 'POSTGRES_DB=app',
+        // Secrets ride in a 0600 env-file, not on the argv.
+        '--env-file', expect.any(String),
         'postgres:16',
       ],
       {},
@@ -179,7 +180,7 @@ describe('startDatabase', () => {
         'run', '-d', '--name', 'cm', '--network', 'ninedeploy', '--restart', 'unless-stopped',
         '--cpu-shares', '512', '--memory', '256m',
         '-v', 'vm:/var/lib/mysql',
-        '-e', 'MYSQL_ROOT_PASSWORD=pw:enc',
+        '--env-file', expect.any(String),
         'mysql:8',
       ],
       {},
@@ -195,6 +196,7 @@ describe('startDatabase', () => {
 
     expect(h.run).toHaveBeenCalledWith(
       'docker',
+      // Redis has no env vars → no --env-file at all.
       ['run', '-d', '--name', 'c', '--network', 'ninedeploy', '--restart', 'unless-stopped', '-v', 'v:/data', 'redis:8'],
       {},
       log,
@@ -212,7 +214,7 @@ describe('startDatabase', () => {
       [
         'run', '-d', '--name', 'c', '--network', 'ninedeploy', '--restart', 'unless-stopped',
         '-v', 'v:/data/db',
-        '-e', 'MONGO_INITDB_ROOT_USERNAME=nine', '-e', 'MONGO_INITDB_ROOT_PASSWORD=pw:enc',
+        '--env-file', expect.any(String),
         'mongo:7',
       ],
       {},
@@ -289,13 +291,13 @@ describe('removeVolume', () => {
 describe('connectionString', () => {
   it('builds a postgres connection string with internal host/port', () => {
     const d = dbRow({ engine: 'postgres', internalHost: 'pg.internal', internalPort: 15432 });
-    expect(connectionString(d)).toBe('postgres://nine:pw:enc@pg.internal:15432/app');
+    expect(connectionString(d)).toBe('postgres://nine:pw%3Aenc@pg.internal:15432/app');
     expect(h.decrypt).toHaveBeenCalledWith('enc');
   });
 
   it('falls back to the container name and engine port', () => {
     const d = dbRow({ engine: 'mysql' });
-    expect(connectionString(d)).toBe('mysql://root:pw:enc@c:3306/');
+    expect(connectionString(d)).toBe('mysql://root:pw%3Aenc@c:3306/');
   });
 
   it('handles missing host/port and an empty user (redis)', () => {
@@ -304,7 +306,7 @@ describe('connectionString', () => {
   });
 
   it('builds a mongo connection string', () => {
-    expect(connectionString(dbRow({ engine: 'mongo' }))).toBe('mongodb://nine:pw:enc@c:27017');
+    expect(connectionString(dbRow({ engine: 'mongo' }))).toBe('mongodb://nine:pw%3Aenc@c:27017');
   });
 
   it('throws for an unknown engine', () => {
@@ -376,28 +378,30 @@ describe('backupDatabase', () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), 'nd-backup-'));
   afterAll(() => rmSync(tmp, { recursive: true, force: true }));
 
-  it('backs up postgres via arg-array capture and encrypts the file at rest', async () => {
+  it('backs up postgres via a container-side dump file + docker cp (no in-memory dump)', async () => {
     const file = path.join(tmp, 'pg.sql');
-    writeFileSync(file, '');
-    h.capture.mockResolvedValueOnce('PG_DUMP');
-    await backupDatabase(dbRow({ engine: 'postgres' }), file, vi.fn());
-    expect(h.capture).toHaveBeenCalledWith('docker', ['exec', 'c', 'pg_dump', '-U', 'nine', '-d', 'app']);
-    expect(h.run).not.toHaveBeenCalled();
-    // The dump never rests in plaintext: the file holds the master-key envelope.
-    expect(readFileSync(file, 'utf8')).toBe(`v0:${Buffer.from('PG_DUMP').toString('base64')}`);
+    writeFileSync(file, ''); // the (mocked) docker cp would land here
+    const log = vi.fn();
+    await backupDatabase(dbRow({ engine: 'postgres' }), file, log);
+    expect(h.run).toHaveBeenCalledWith('docker', ['exec', 'c', 'pg_dump', '-U', 'nine', '-d', 'app', '--file=/tmp/ninedeploy-dump'], {}, log);
+    expect(h.run).toHaveBeenCalledWith('docker', ['cp', 'c:/tmp/ninedeploy-dump', file], {}, log);
+    expect(h.run).toHaveBeenCalledWith('docker', ['exec', 'c', 'rm', '-f', '/tmp/ninedeploy-dump'], {}, expect.any(Function));
+    expect(h.capture).not.toHaveBeenCalled();
+    expect(readFileSync(file, 'utf8')).toBe(`v0:${Buffer.from('').toString('base64')}`);
   });
 
-  it('backs up mysql with the decrypted password and encrypts the file at rest', async () => {
+  it('backs up mysql with the decrypted password via result-file + docker cp', async () => {
     const file = path.join(tmp, 'mysql.sql');
     writeFileSync(file, '');
-    h.capture.mockResolvedValueOnce('MYSQL_DUMP');
-    await backupDatabase(dbRow({ engine: 'mysql' }), file, vi.fn());
-    expect(h.capture).toHaveBeenCalledWith('docker', [
-      'exec', 'c', 'mysqldump', '-uroot', '--password=pw:enc', '--all-databases',
-    ]);
+    const log = vi.fn();
+    await backupDatabase(dbRow({ engine: 'mysql' }), file, log);
+    expect(h.run).toHaveBeenCalledWith('docker', [
+      'exec', 'c', 'mysqldump', '-uroot', '--password=pw:enc', '--all-databases', '--result-file=/tmp/ninedeploy-dump',
+    ], {}, log);
+    expect(h.run).toHaveBeenCalledWith('docker', ['cp', 'c:/tmp/ninedeploy-dump', file], {}, log);
     expect(h.decrypt).toHaveBeenCalledWith('enc');
-    expect(h.run).not.toHaveBeenCalled();
-    expect(readFileSync(file, 'utf8')).toBe(`v0:${Buffer.from('MYSQL_DUMP').toString('base64')}`);
+    expect(h.capture).not.toHaveBeenCalled();
+    expect(readFileSync(file, 'utf8')).toBe(`v0:${Buffer.from('').toString('base64')}`);
   });
 
   it('backs up redis via docker exec SAVE + docker cp, then encrypts', async () => {
@@ -496,12 +500,14 @@ describe('restoreDatabase', () => {
   it('backs up mariadb via mariadb-dump', async () => {
     const file = path.join(tmp, 'mariadb.sql');
     writeFileSync(file, '');
-    h.capture.mockResolvedValueOnce('MARIADB_DUMP');
-    await backupDatabase(dbRow({ engine: 'mariadb' }), file, vi.fn());
-    expect(h.capture).toHaveBeenCalledWith('docker', [
-      'exec', 'c', 'mariadb-dump', '-uroot', '--password=pw:enc', '--all-databases',
-    ]);
-    expect(readFileSync(file, 'utf8')).toBe(`v0:${Buffer.from('MARIADB_DUMP').toString('base64')}`);
+    const log = vi.fn();
+    await backupDatabase(dbRow({ engine: 'mariadb' }), file, log);
+    expect(h.run).toHaveBeenCalledWith('docker', [
+      'exec', 'c', 'mariadb-dump', '-uroot', '--password=pw:enc', '--all-databases', '--result-file=/tmp/ninedeploy-dump',
+    ], {}, log);
+    expect(h.run).toHaveBeenCalledWith('docker', ['cp', 'c:/tmp/ninedeploy-dump', file], {}, log);
+    expect(h.capture).not.toHaveBeenCalled();
+    expect(readFileSync(file, 'utf8')).toBe(`v0:${Buffer.from('').toString('base64')}`);
   });
 
   it('restores mariadb via the mariadb client', async () => {

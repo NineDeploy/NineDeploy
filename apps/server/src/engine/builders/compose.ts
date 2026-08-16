@@ -33,7 +33,9 @@ export const composeBuilder: Builder = {
     log(`Bringing up compose project ${project} (${composeFile}) …`);
 
     // Stop the previous project revision first — no blue-green for compose.
-    await run('docker', ['compose', '-p', project, 'down', '--remove-orphans'], { cwd: workDir }, log).catch(() => undefined);
+    // Always pass -f: with a non-default compose file, plain `down` would look
+    // at docker-compose.yml and miss the real project.
+    await run('docker', ['compose', '-p', project, '-f', composeFile, 'down', '--remove-orphans'], { cwd: workDir }, log).catch(() => undefined);
 
     const args = ['compose', '-p', project, '-f', composeFile, 'up', '-d', '--build', '--remove-orphans'];
     // Compose reads project env vars from the working directory's .env — we
@@ -77,8 +79,25 @@ export const composeBuilder: Builder = {
   },
 
   async stop(runtimeId): Promise<void> {
-    // runtimeId is <project>-<service>-1; the project is <project>.
-    const project = runtimeId.replace(/-[^-]+-1$/, '');
-    await run('docker', ['compose', '-p', project, 'down', '--remove-orphans'], {}, () => {}).catch(() => undefined);
+    // runtimeId is <project>-<service>-1, but both project (ndcmp-<slug>) and
+    // service names contain hyphens, so the project cannot be recovered by
+    // string surgery. Ask the container itself via compose's own labels —
+    // that also yields the config file so `down` targets the right project.
+    try {
+      const labels = await capture('docker', [
+        'inspect',
+        runtimeId,
+        '--format',
+        '{{ index .Config.Labels "com.docker.compose.project" }}\t{{ index .Config.Labels "com.docker.compose.project.config_files" }}',
+      ]);
+      const [project, configFiles] = labels.trim().split('\t');
+      if (!project) throw new Error('no compose project label');
+      const args = ['compose', '-p', project];
+      if (configFiles) for (const f of configFiles.split(',')) args.push('-f', f.trim());
+      args.push('down', '--remove-orphans');
+      await run('docker', args, {}, () => {});
+    } catch {
+      // Container already gone — nothing to stop.
+    }
   },
 };
