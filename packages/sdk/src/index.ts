@@ -254,7 +254,7 @@ export interface NineDeployClient {
   notifications: {
     listChannels: () => Promise<Array<{ id: number; name: string; type: string; eventFilter: string; active: boolean; createdAt: string }>>;
     createChannel: (input: { name: string; type: string; target: string; eventFilter?: string }) => Promise<{ id: number; name: string; type: string }>;
-    updateChannel: (id: number, input: { eventFilter?: string; active?: boolean }) => Promise<{ id: number; active: boolean }>;
+    updateChannel: (id: number, input: { name?: string; target?: string; eventFilter?: string; active?: boolean }) => Promise<{ id: number; active: boolean }>;
     removeChannel: (id: number) => Promise<void>;
     testChannel: (id: number) => Promise<{ ok: boolean }>;
     log: () => Promise<Array<{ id: number; channelId: number | null; event: string; entity: string | null; status: string; error: string | null; ts: string }>>;

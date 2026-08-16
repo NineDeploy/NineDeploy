@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import { api } from '../lib/api.js';
 import { useToast } from './Toast.js';
-import { Button, Input, cn } from './ui.js';
+import { Button, Input, Modal, cn } from './ui.js';
 
 const STEPS = ['Channel', 'Connect', 'Events', 'Test'];
 const TYPES = [
@@ -28,6 +28,8 @@ const EVENT_GROUPS = [
   { id: 'user', label: 'Users', emoji: '👤', desc: 'Register, role change' },
 ];
 
+const WIZARD_FORM_ID = 'notification-wizard-form';
+
 export function NotificationWizard({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient();
   const { toast } = useToast();
@@ -40,20 +42,33 @@ export function NotificationWizard({ onClose }: { onClose: () => void }) {
   const [selectedEvents, setSelectedEvents] = useState<Set<string>>(new Set(['deploy', 'service', 'alert']));
   const [testing, setTesting] = useState(false);
   const [tested, setTested] = useState<'ok' | 'fail' | null>(null);
+  // The test step needs a persisted channel to deliver through; remember its id
+  // so finishing never creates a SECOND channel.
+  const [createdId, setCreatedId] = useState<number | null>(null);
 
-  const create = useMutation({
-    mutationFn: () =>
-      api.notifications.createChannel({
-        name: name || `${type} channel`,
-        type: type!,
-        target,
-        eventFilter: Array.from(selectedEvents).join(','),
-      }),
+  const payload = () => ({
+    name: name || `${type} channel`,
+    type: type!,
+    target,
+    eventFilter: Array.from(selectedEvents).join(','),
+  });
+
+  const finish = useMutation({
+    // The channel already exists from the test — just sync any edits the user
+    // made after testing (back-navigation) and close.
+    mutationFn: async () => {
+      if (createdId != null) {
+        const { type: _type, ...patchable } = payload();
+        void _type;
+        await api.notifications.updateChannel(createdId, patchable);
+      }
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['notif-channels'] });
       toast('Notification channel created!', 'success');
       onClose();
     },
+    onError: () => toast('Could not save the channel', 'error'),
   });
 
   const canNext = step === 0 ? !!type : step === 1 ? !!target.trim() : true;
@@ -70,16 +85,19 @@ export function NotificationWizard({ onClose }: { onClose: () => void }) {
   const doTest = async () => {
     setTesting(true);
     setTested(null);
-    // Create the channel first, then test it
     try {
-      const ch = await api.notifications.createChannel({
-        name: name || `${type} channel`,
-        type: type!,
-        target,
-        eventFilter: Array.from(selectedEvents).join(','),
-      });
+      // Create the channel (once) and deliver a test through it. A re-test
+      // after back-navigation PATCHes the existing row instead of duplicating.
+      const { type: _type, ...patchable } = payload();
+      void _type;
+      const ch = createdId != null
+        ? { id: createdId }
+        : await api.notifications.createChannel(payload());
+      if (createdId != null) await api.notifications.updateChannel(createdId, patchable);
+      setCreatedId(ch.id);
       await api.notifications.testChannel(ch.id);
       setTested('ok');
+      qc.invalidateQueries({ queryKey: ['notif-channels'] });
     } catch {
       setTested('fail');
     } finally {
@@ -87,227 +105,30 @@ export function NotificationWizard({ onClose }: { onClose: () => void }) {
     }
   };
 
+  // Single submit path: the footer button is type="submit" + form=… — Enter and
+  // click both arrive here exactly once (no separate onClick).
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
     if (step < STEPS.length - 1) { if (canNext) next(); }
-    else if (tested === 'ok') { create.mutate(); }
-    else { doTest(); }
+    else if (tested === 'ok') { finish.mutate(); }
+    else { void doTest(); }
   };
 
   const selectedType = TYPES.find((t) => t.id === type);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-6">
-      <button type="button" aria-label="Close dialog" tabIndex={-1} aria-hidden="true" onClick={onClose} className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
-      <div className="nd-fade relative flex max-h-[92vh] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl border border-white/10 bg-slate-950 shadow-2xl sm:rounded-2xl">
-        {/* Header + stepper */}
-        <div className="border-b border-white/5 p-5">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="flex items-center gap-2 text-lg font-semibold">
-              <Bell size={18} className="text-indigo-400" /> New Notification
-            </h2>
-            <button type="button" onClick={onClose} className="rounded-lg p-1.5 text-slate-500 hover:bg-white/5 hover:text-slate-300"><X size={16} /></button>
-          </div>
-          {/* Stepper */}
-          <div className="flex items-center gap-2">
-            {STEPS.map((label, i) => (
-              <div key={label} className="flex flex-1 items-center gap-2">
-                <div className={cn('grid h-6 w-6 shrink-0 place-items-center rounded-full text-[11px] font-semibold transition', i < step ? 'bg-emerald-500 text-white' : i === step ? 'bg-indigo-500 text-white' : 'bg-white/10 text-slate-500')}>
-                  {i < step ? <Check size={12} /> : i + 1}
-                </div>
-                <span className={cn('truncate text-[11px]', i === step ? 'text-slate-200' : 'text-slate-500')}>{label}</span>
-                {i < STEPS.length - 1 && <div className={cn('h-px flex-1 transition', i < step ? 'bg-emerald-500/50' : 'bg-white/10')} />}
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <form onSubmit={onSubmit} className="flex-1 overflow-auto p-5">
-          {/* Step 1: Choose type — big visual cards */}
-          {step === 0 && (
-            <div>
-              <p className="mb-4 text-sm text-slate-400">Where do you want to receive notifications?</p>
-              <div className="space-y-2.5">
-                {TYPES.map((t) => {
-                  const Icon = t.icon;
-                  const active = type === t.id;
-                  return (
-                    <button key={t.id} type="button" onClick={() => { setType(t.id); setName(''); setTarget(''); }}
-                      className={cn('group flex w-full items-center gap-4 rounded-xl border p-4 text-left transition', active ? 'border-indigo-500/60 bg-indigo-500/[0.06]' : 'border-white/10 hover:border-white/20 hover:bg-white/[0.02]')}>
-                      <div className={cn('grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-gradient-to-br text-white shadow-lg', t.color)}>
-                        <Icon size={22} />
-                      </div>
-                      <div className="flex-1">
-                        <div className="font-semibold text-slate-100">{t.label}</div>
-                        <div className="text-xs text-slate-500">
-                          {t.id === 'telegram' ? 'Get messages via Telegram bot'
-                            : t.id === 'discord' ? 'Send to a Discord channel'
-                            : t.id === 'webhook' ? 'POST to any URL'
-                            : t.id === 'slack' ? 'Send to a Slack channel'
-                            : t.id === 'ntfy' ? 'Push notifications via ntfy'
-                            : 'Send via your SMTP server'}
-                        </div>
-                      </div>
-                      {active && <Check size={18} className="text-indigo-400" />}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* Step 2: Connect — type-specific guided setup */}
-          {step === 1 && type && (
-            <div className="space-y-4">
-              {type === 'telegram' && (
-                <>
-                  <div className="rounded-xl bg-sky-500/[0.06] p-4 ring-1 ring-inset ring-sky-500/20">
-                    <p className="mb-2 text-sm font-medium text-sky-200">Step 1: Create a Telegram bot</p>
-                    <p className="text-xs text-slate-400">Open <a href="https://t.me/BotFather" target="_blank" rel="noreferrer" className="text-sky-400 hover:underline">@BotFather</a> in Telegram and send:</p>
-                    <code className="mt-1.5 block rounded bg-black/30 px-2 py-1 font-mono text-xs text-sky-300">/newbot</code>
-                    <p className="mt-2 text-xs text-slate-400">Follow the prompts, then copy the <strong className="text-slate-300">bot token</strong>.</p>
-                  </div>
-                  <div className="rounded-xl bg-sky-500/[0.06] p-4 ring-1 ring-inset ring-sky-500/20">
-                    <p className="mb-2 text-sm font-medium text-sky-200">Step 2: Get your Chat ID</p>
-                    <p className="text-xs text-slate-400">Send any message to your new bot, then visit:</p>
-                    <a href="https://api.telegram.org/bot<TOKEN>/getUpdates" target="_blank" rel="noreferrer" className="mt-1.5 flex items-center gap-1 text-xs text-sky-400 hover:underline">
-                      api.telegram.org/bot&lt;TOKEN&gt;/getUpdates <ExternalLink size={10} />
-                    </a>
-                    <p className="mt-1.5 text-xs text-slate-400">Find <code className="text-sky-300">"chat":{"{"}"id": 123456789{"}"}</code></p>
-                  </div>
-                  <div>
-                    <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-slate-400">Bot token : Chat ID</span>
-                    <Input value={target} onChange={(e) => setTarget(e.target.value)} placeholder="789123456:AAEx…:987654321" className="font-mono text-xs" autoFocus />
-                  </div>
-                </>
-              )}
-              {type === 'discord' && (
-                <>
-                  <div className="rounded-xl bg-indigo-500/[0.06] p-4 ring-1 ring-inset ring-indigo-500/20">
-                    <p className="mb-2 text-sm font-medium text-indigo-200">Create a Discord Webhook</p>
-                    <p className="text-xs text-slate-400">In your Discord server:</p>
-                    <ol className="mt-1.5 list-inside list-decimal space-y-0.5 text-xs text-slate-400">
-                      <li>Channel settings → <strong className="text-slate-300">Integrations</strong></li>
-                      <li>Click <strong className="text-slate-300">Create Webhook</strong></li>
-                      <li>Copy the <strong className="text-slate-300">webhook URL</strong></li>
-                    </ol>
-                  </div>
-                  <div>
-                    <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-slate-400">Discord Webhook URL</span>
-                    <Input value={target} onChange={(e) => setTarget(e.target.value)} placeholder="https://discord.com/api/webhooks/…" className="font-mono text-xs" autoFocus />
-                  </div>
-                </>
-              )}
-              {type === 'slack' && (
-                <>
-                  <div className="rounded-xl bg-emerald-500/[0.06] p-4 ring-1 ring-inset ring-emerald-500/20">
-                    <p className="mb-2 text-sm font-medium text-emerald-200">Create a Slack Incoming Webhook</p>
-                    <ol className="mt-1.5 list-inside list-decimal space-y-0.5 text-xs text-slate-400">
-                      <li>api.slack.com/messaging/webhooks → <strong className="text-slate-300">Create your webhook</strong></li>
-                      <li>Pick a channel and copy the <strong className="text-slate-300">webhook URL</strong></li>
-                    </ol>
-                  </div>
-                  <div>
-                    <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-slate-400">Slack Webhook URL</span>
-                    <Input value={target} onChange={(e) => setTarget(e.target.value)} placeholder="https://hooks.slack.com/services/…" className="font-mono text-xs" autoFocus />
-                  </div>
-                </>
-              )}
-              {type === 'ntfy' && (
-                <>
-                  <div className="rounded-xl bg-rose-500/[0.06] p-4 ring-1 ring-inset ring-rose-500/20">
-                    <p className="mb-2 text-sm font-medium text-rose-200">ntfy topic</p>
-                    <p className="text-xs text-slate-400">Subscribe to a topic in the ntfy app, then use its URL here (self-hosted servers work too).</p>
-                  </div>
-                  <div>
-                    <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-slate-400">Topic URL</span>
-                    <Input value={target} onChange={(e) => setTarget(e.target.value)} placeholder="https://ntfy.sh/my-ninedeploy-alerts" className="font-mono text-xs" autoFocus />
-                  </div>
-                </>
-              )}
-              {type === 'email' && <EmailFields value={target} onChange={setTarget} />}
-              {type === 'webhook' && (
-                <>
-                  <div className="rounded-xl bg-amber-500/[0.06] p-4 ring-1 ring-inset ring-amber-500/20">
-                    <p className="mb-2 text-sm font-medium text-amber-200">Generic Webhook</p>
-                    <p className="text-xs text-slate-400">NineDeploy will POST JSON to your URL for every matching event:</p>
-                    <pre className="mt-2 overflow-auto rounded bg-black/30 p-2 font-mono text-[10px] text-amber-200/80">{`{
-  "event": "deploy.trigger",
-  "entity": "my-api",
-  "message": "🚀 deploy trigger: my-api",
-  "ts": "2026-01-01T12:00:00Z"
-}`}</pre>
-                  </div>
-                  <div>
-                    <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-slate-400">Webhook URL</span>
-                    <Input value={target} onChange={(e) => setTarget(e.target.value)} placeholder="https://your-app.com/webhook" className="font-mono text-xs" autoFocus />
-                  </div>
-                </>
-              )}
-              <div>
-                <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-slate-400">Name (optional)</span>
-                <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={`${selectedType!.label} alerts`} />
-              </div>
-            </div>
-          )}
-
-          {/* Step 3: Event selection — visual toggle cards */}
-          {step === 2 && (
-            <div>
-              <p className="mb-4 text-sm text-slate-400">Which events should trigger a notification?</p>
-              <div className="grid grid-cols-2 gap-2.5">
-                {EVENT_GROUPS.map((g) => {
-                  const active = selectedEvents.has(g.id);
-                  return (
-                    <button key={g.id} type="button" onClick={() => toggleEvent(g.id)}
-                      className={cn('flex flex-col gap-1 rounded-xl border p-3 text-left transition', active ? 'border-indigo-500/60 bg-indigo-500/[0.06]' : 'border-white/10 hover:border-white/20')}>
-                      <div className="flex items-center gap-2">
-                        <span className="text-lg">{g.emoji}</span>
-                        <span className={cn('text-sm font-medium', active ? 'text-slate-100' : 'text-slate-400')}>{g.label}</span>
-                        {active && <Check size={14} className="ml-auto text-indigo-400" />}
-                      </div>
-                      <span className="text-[10px] text-slate-500">{g.desc}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* Step 4: Test */}
-          {step === 3 && (
-            <div className="flex flex-col items-center py-6 text-center">
-              <div className={cn('grid h-16 w-16 place-items-center rounded-2xl transition', tested === 'ok' ? 'bg-emerald-500/15 text-emerald-300' : tested === 'fail' ? 'bg-rose-500/15 text-rose-300' : 'bg-indigo-500/15 text-indigo-300')}>
-                {tested === 'ok' ? <Check size={28} /> : tested === 'fail' ? <X size={28} /> : <Zap size={28} />}
-              </div>
-              <p className="mt-4 text-sm font-medium text-slate-200">
-                {tested === 'ok' ? 'Test message sent!' : tested === 'fail' ? 'Test failed — check your settings' : 'Ready to test?'}
-              </p>
-              <p className="mt-1 text-xs text-slate-500">
-                {tested === 'ok'
-                  ? `Check your ${type === 'email' ? 'inbox' : selectedType!.label} for a test message.`
-                  : 'We\'ll send a test notification to verify your setup.'}
-              </p>
-
-              {/* Summary */}
-              <div className="mt-5 w-full space-y-1.5 rounded-xl bg-white/[0.02] p-3 text-left">
-                <SummaryRow label="Channel" value={selectedType!.label} />
-                <SummaryRow label="Events" value={selectedEvents.size > 0 ? Array.from(selectedEvents).join(', ') : 'all'} />
-                <SummaryRow label="Target" value={target.slice(0, 40) + (target.length > 40 ? '…' : '')} />
-              </div>
-            </div>
-          )}
-        </form>
-
-        {/* Footer */}
-        <div className="flex items-center justify-between border-t border-white/5 p-4">
-          <Button type="button" variant="ghost" size="sm" onClick={back} className={cn(step === 0 && 'invisible')}>
+    <Modal
+      title={<span className="flex items-center gap-2"><Bell size={18} className="text-indigo-400" /> New Notification</span>}
+      onClose={onClose}
+      footer={
+        <>
+          <Button type="button" variant="ghost" size="sm" form={WIZARD_FORM_ID} onClick={back} className={cn('mr-auto', step === 0 && 'invisible')}>
             <ArrowLeft size={14} /> Back
           </Button>
-          <Button type="submit" onClick={onSubmit} disabled={!canNext || testing || create.isPending}>
-            {step === 3 ? (
+          <Button type="submit" form={WIZARD_FORM_ID} disabled={!canNext || testing || finish.isPending}>
+            {step === STEPS.length - 1 ? (
               tested === 'ok' ? (
-                create.isPending ? 'Creating…' : <><Check size={15} /> Create channel</>
+                finish.isPending ? 'Saving…' : <><Check size={15} /> Create channel</>
               ) : testing ? (
                 'Testing…'
               ) : (
@@ -317,9 +138,199 @@ export function NotificationWizard({ onClose }: { onClose: () => void }) {
               <>Continue <ArrowRight size={14} /></>
             )}
           </Button>
+        </>
+      }
+    >
+      <form id={WIZARD_FORM_ID} onSubmit={onSubmit} className="space-y-5">
+        {/* Stepper */}
+        <div className="flex items-center gap-2">
+          {STEPS.map((label, i) => (
+            <div key={label} className="flex flex-1 items-center gap-2">
+              <div className={cn('grid h-6 w-6 shrink-0 place-items-center rounded-full text-[11px] font-semibold transition', i < step ? 'bg-emerald-500 text-white' : i === step ? 'bg-indigo-500 text-white' : 'bg-white/10 text-slate-500')}>
+                {i < step ? <Check size={12} /> : i + 1}
+              </div>
+              <span className={cn('truncate text-[11px]', i === step ? 'text-slate-200' : 'text-slate-500')}>{label}</span>
+              {i < STEPS.length - 1 && <div className={cn('h-px flex-1 transition', i < step ? 'bg-emerald-500/50' : 'bg-white/10')} />}
+            </div>
+          ))}
         </div>
-      </div>
-    </div>
+
+        {/* Step 1: Choose type — big visual cards */}
+        {step === 0 && (
+          <div>
+            <p className="mb-4 text-sm text-slate-400">Where do you want to receive notifications?</p>
+            <div className="space-y-2.5">
+              {TYPES.map((t) => {
+                const Icon = t.icon;
+                const active = type === t.id;
+                return (
+                  <button key={t.id} type="button" onClick={() => { setType(t.id); setName(''); setTarget(''); }}
+                    className={cn('group flex w-full items-center gap-4 rounded-xl border p-4 text-left transition', active ? 'border-indigo-500/60 bg-indigo-500/[0.06]' : 'border-white/10 hover:border-white/20 hover:bg-white/[0.02]')}>
+                    <div className={cn('grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-gradient-to-br text-white shadow-lg', t.color)}>
+                      <Icon size={22} />
+                    </div>
+                    <div className="flex-1">
+                      <div className="font-semibold text-slate-100">{t.label}</div>
+                      <div className="text-xs text-slate-500">
+                        {t.id === 'telegram' ? 'Get messages via Telegram bot'
+                          : t.id === 'discord' ? 'Send to a Discord channel'
+                          : t.id === 'webhook' ? 'POST to any URL'
+                          : t.id === 'slack' ? 'Send to a Slack channel'
+                          : t.id === 'ntfy' ? 'Push notifications via ntfy'
+                          : 'Send via your SMTP server'}
+                      </div>
+                    </div>
+                    {active && <Check size={18} className="text-indigo-400" />}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Step 2: Connect — type-specific guided setup */}
+        {step === 1 && type && (
+          <div className="space-y-4">
+            {type === 'telegram' && (
+              <>
+                <div className="rounded-xl bg-sky-500/[0.06] p-4 ring-1 ring-inset ring-sky-500/20">
+                  <p className="mb-2 text-sm font-medium text-sky-200">Step 1: Create a Telegram bot</p>
+                  <p className="text-xs text-slate-400">Open <a href="https://t.me/BotFather" target="_blank" rel="noreferrer" className="text-sky-400 hover:underline">@BotFather</a> in Telegram and send:</p>
+                  <code className="mt-1.5 block rounded bg-black/30 px-2 py-1 font-mono text-xs text-sky-300">/newbot</code>
+                  <p className="mt-2 text-xs text-slate-400">Follow the prompts, then copy the <strong className="text-slate-300">bot token</strong>.</p>
+                </div>
+                <div className="rounded-xl bg-sky-500/[0.06] p-4 ring-1 ring-inset ring-sky-500/20">
+                  <p className="mb-2 text-sm font-medium text-sky-200">Step 2: Get your Chat ID</p>
+                  <p className="text-xs text-slate-400">Send any message to your new bot, then visit:</p>
+                  <a href="https://api.telegram.org/bot<TOKEN>/getUpdates" target="_blank" rel="noreferrer" className="mt-1.5 flex items-center gap-1 text-xs text-sky-400 hover:underline">
+                    api.telegram.org/bot&lt;TOKEN&gt;/getUpdates <ExternalLink size={10} />
+                  </a>
+                  <p className="mt-1.5 text-xs text-slate-400">Find <code className="text-sky-300">"chat":{"{"}"id": 123456789{"}"}</code></p>
+                </div>
+                <div>
+                  <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-slate-400">Bot token : Chat ID</span>
+                  <Input value={target} onChange={(e) => setTarget(e.target.value)} placeholder="789123456:AAEx…:987654321" className="font-mono text-xs" autoFocus />
+                </div>
+              </>
+            )}
+            {type === 'discord' && (
+              <>
+                <div className="rounded-xl bg-indigo-500/[0.06] p-4 ring-1 ring-inset ring-indigo-500/20">
+                  <p className="mb-2 text-sm font-medium text-indigo-200">Create a Discord Webhook</p>
+                  <p className="text-xs text-slate-400">In your Discord server:</p>
+                  <ol className="mt-1.5 list-inside list-decimal space-y-0.5 text-xs text-slate-400">
+                    <li>Channel settings → <strong className="text-slate-300">Integrations</strong></li>
+                    <li>Click <strong className="text-slate-300">Create Webhook</strong></li>
+                    <li>Copy the <strong className="text-slate-300">webhook URL</strong></li>
+                  </ol>
+                </div>
+                <div>
+                  <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-slate-400">Discord Webhook URL</span>
+                  <Input value={target} onChange={(e) => setTarget(e.target.value)} placeholder="https://discord.com/api/webhooks/…" className="font-mono text-xs" autoFocus />
+                </div>
+              </>
+            )}
+            {type === 'slack' && (
+              <>
+                <div className="rounded-xl bg-emerald-500/[0.06] p-4 ring-1 ring-inset ring-emerald-500/20">
+                  <p className="mb-2 text-sm font-medium text-emerald-200">Create a Slack Incoming Webhook</p>
+                  <ol className="mt-1.5 list-inside list-decimal space-y-0.5 text-xs text-slate-400">
+                    <li>api.slack.com/messaging/webhooks → <strong className="text-slate-300">Create your webhook</strong></li>
+                    <li>Pick a channel and copy the <strong className="text-slate-300">webhook URL</strong></li>
+                  </ol>
+                </div>
+                <div>
+                  <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-slate-400">Slack Webhook URL</span>
+                  <Input value={target} onChange={(e) => setTarget(e.target.value)} placeholder="https://hooks.slack.com/services/…" className="font-mono text-xs" autoFocus />
+                </div>
+              </>
+            )}
+            {type === 'ntfy' && (
+              <>
+                <div className="rounded-xl bg-rose-500/[0.06] p-4 ring-1 ring-inset ring-rose-500/20">
+                  <p className="mb-2 text-sm font-medium text-rose-200">ntfy topic</p>
+                  <p className="text-xs text-slate-400">Subscribe to a topic in the ntfy app, then use its URL here (self-hosted servers work too).</p>
+                </div>
+                <div>
+                  <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-slate-400">Topic URL</span>
+                  <Input value={target} onChange={(e) => setTarget(e.target.value)} placeholder="https://ntfy.sh/my-ninedeploy-alerts" className="font-mono text-xs" autoFocus />
+                </div>
+              </>
+            )}
+            {type === 'email' && <EmailFields value={target} onChange={setTarget} />}
+            {type === 'webhook' && (
+              <>
+                <div className="rounded-xl bg-amber-500/[0.06] p-4 ring-1 ring-inset ring-amber-500/20">
+                  <p className="mb-2 text-sm font-medium text-amber-200">Generic Webhook</p>
+                  <p className="text-xs text-slate-400">NineDeploy will POST JSON to your URL for every matching event:</p>
+                  <pre className="mt-2 overflow-auto rounded bg-black/30 p-2 font-mono text-[10px] text-amber-200/80">{`{
+  "event": "deploy.trigger",
+  "entity": "my-api",
+  "message": "🚀 deploy trigger: my-api",
+  "ts": "2026-01-01T12:00:00Z"
+}`}</pre>
+                </div>
+                <div>
+                  <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-slate-400">Webhook URL</span>
+                  <Input value={target} onChange={(e) => setTarget(e.target.value)} placeholder="https://your-app.com/webhook" className="font-mono text-xs" autoFocus />
+                </div>
+              </>
+            )}
+            <div>
+              <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-slate-400">Name (optional)</span>
+              <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={`${selectedType!.label} alerts`} />
+            </div>
+          </div>
+        )}
+
+        {/* Step 3: Event selection — visual toggle cards */}
+        {step === 2 && (
+          <div>
+            <p className="mb-4 text-sm text-slate-400">Which events should trigger a notification?</p>
+            <div className="grid grid-cols-2 gap-2.5">
+              {EVENT_GROUPS.map((g) => {
+                const active = selectedEvents.has(g.id);
+                return (
+                  <button key={g.id} type="button" onClick={() => toggleEvent(g.id)}
+                    className={cn('flex flex-col gap-1 rounded-xl border p-3 text-left transition', active ? 'border-indigo-500/60 bg-indigo-500/[0.06]' : 'border-white/10 hover:border-white/20')}>
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg">{g.emoji}</span>
+                      <span className={cn('text-sm font-medium', active ? 'text-slate-100' : 'text-slate-400')}>{g.label}</span>
+                      {active && <Check size={14} className="ml-auto text-indigo-400" />}
+                    </div>
+                    <span className="text-[10px] text-slate-500">{g.desc}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Step 4: Test */}
+        {step === 3 && (
+          <div className="flex flex-col items-center py-6 text-center">
+            <div className={cn('grid h-16 w-16 place-items-center rounded-2xl transition', tested === 'ok' ? 'bg-emerald-500/15 text-emerald-300' : tested === 'fail' ? 'bg-rose-500/15 text-rose-300' : 'bg-indigo-500/15 text-indigo-300')}>
+              {tested === 'ok' ? <Check size={28} /> : tested === 'fail' ? <X size={28} /> : <Zap size={28} />}
+            </div>
+            <p className="mt-4 text-sm font-medium text-slate-200">
+              {tested === 'ok' ? 'Test message sent!' : tested === 'fail' ? 'Test failed — check your settings' : 'Ready to test?'}
+            </p>
+            <p className="mt-1 text-xs text-slate-500">
+              {tested === 'ok'
+                ? `Check your ${type === 'email' ? 'inbox' : selectedType!.label} for a test message.`
+                : 'We\'ll send a test notification to verify your setup.'}
+            </p>
+
+            {/* Summary */}
+            <div className="mt-5 w-full space-y-1.5 rounded-xl bg-white/[0.02] p-3 text-left">
+              <SummaryRow label="Channel" value={selectedType!.label} />
+              <SummaryRow label="Events" value={selectedEvents.size > 0 ? Array.from(selectedEvents).join(', ') : 'all'} />
+              <SummaryRow label="Target" value={target.slice(0, 40) + (target.length > 40 ? '…' : '')} />
+            </div>
+          </div>
+        )}
+      </form>
+    </Modal>
   );
 }
 

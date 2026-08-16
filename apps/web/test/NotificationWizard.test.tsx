@@ -9,6 +9,7 @@ const apiMock = vi.hoisted(() => ({
   api: {
     notifications: {
       createChannel: vi.fn(),
+      updateChannel: vi.fn(),
       testChannel: vi.fn(),
     },
   },
@@ -34,6 +35,7 @@ describe('NotificationWizard', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     apiMock.api.notifications.createChannel.mockResolvedValue({ id: 1, name: 'ch', type: 'telegram' });
+    apiMock.api.notifications.updateChannel.mockResolvedValue({ id: 1, active: true });
     apiMock.api.notifications.testChannel.mockResolvedValue({ ok: true });
   });
 
@@ -124,8 +126,17 @@ describe('NotificationWizard', () => {
     await waitFor(() => expect(apiMock.api.notifications.testChannel).toHaveBeenCalledWith(1));
     expect(screen.getByText('Test message sent!')).toBeInTheDocument();
 
-    // Create
+    // Finish: the channel already exists from the test, so the final step
+    // PATCHes it (no second create) and closes.
     await user.click(screen.getByRole('button', { name: /create channel/i }));
+    await waitFor(() =>
+      expect(apiMock.api.notifications.updateChannel).toHaveBeenCalledWith(1, {
+        name: 'telegram channel',
+        target: 'tok:chat',
+        eventFilter: 'deploy,service,alert',
+      }),
+    );
+    expect(apiMock.api.notifications.createChannel).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(onClose).toHaveBeenCalled());
     expect(screen.getByText('Notification channel created!')).toBeInTheDocument();
   });
@@ -187,9 +198,14 @@ describe('NotificationWizard', () => {
       ),
     );
     await user.click(screen.getByRole('button', { name: /create channel/i }));
+    // Exactly one create ever; the finish step syncs via PATCH.
     await waitFor(() =>
-      expect(apiMock.api.notifications.createChannel).toHaveBeenCalledTimes(2),
+      expect(apiMock.api.notifications.updateChannel).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({ name: 'My Alerts' }),
+      ),
     );
+    expect(apiMock.api.notifications.createChannel).toHaveBeenCalledTimes(1);
   });
 
   it('submitting the form without a target does not advance', async () => {
@@ -301,12 +317,12 @@ describe('NotificationWizard', () => {
     // The create-button copy flips from "Send test" to "Create channel"
     // (covers the tested === 'ok' branch of the footer button label).
     expect(screen.getByRole('button', { name: /create channel/i })).toBeInTheDocument();
-    // Submit create: mock createChannel with a fresh deferred so we can
-    // assert the 'Creating…' label appears while the mutation is pending.
-    const create2Promise = new Promise<{ id: number; name: string; type: string }>(() => {});
-    apiMock.api.notifications.createChannel.mockReturnValueOnce(create2Promise);
+    // Submit create: mock updateChannel with a fresh deferred so we can
+    // assert the 'Saving…' label appears while the mutation is pending.
+    const savePromise = new Promise<{ id: number; active: boolean }>(() => {});
+    apiMock.api.notifications.updateChannel.mockReturnValueOnce(savePromise);
     await user.click(screen.getByRole('button', { name: /create channel/i }));
-    expect(screen.getByText('Creating…')).toBeInTheDocument();
+    expect(screen.getByText('Saving…')).toBeInTheDocument();
   });
 
   it('shows the slack connect form and creates a slack channel', async () => {
