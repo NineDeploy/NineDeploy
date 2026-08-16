@@ -67,6 +67,53 @@ html {
   scroll-behavior: smooth;
 }
 
+/* respect users who prefer less motion */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  .animate-marquee,
+  .animate-scan,
+  .animate-blink,
+  .animate-pulse {
+    /* biome-ignore lint/complexity/noImportantStyles: required to override utilities */
+    animation: none !important;
+  }
+  .scanline::after {
+    display: none;
+  }
+  *,
+  *::before,
+  *::after {
+    /* biome-ignore lint/complexity/noImportantStyles: required to override utilities */
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* keyboard focus ring in the brand accent */
+:focus-visible {
+  outline: 2px solid var(--color-phosphor);
+  outline-offset: 2px;
+}
+
+/* skip-to-content link */
+.skip-link {
+  position: absolute;
+  left: 1rem;
+  top: -3rem;
+  z-index: 100;
+  transition: top 150ms;
+}
+.skip-link:focus {
+  top: 1rem;
+}
+
+/* anchor jumps land below the sticky header */
+h2[id],
+h3[id] {
+  scroll-margin-top: 5.5rem;
+}
+
 body {
   background: var(--nd-bg);
   @apply text-[#16202e] dark:text-zinc-200 antialiased;
@@ -133,6 +180,19 @@ body {
 }
 .link-underline:hover {
   background-size: 100% 2px;
+}
+
+/* route transition — opacity only (see App.tsx PageFade) */
+@keyframes page-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.page-fade {
+  animation: page-in 0.35s ease-out both;
 }
 
 /* thin custom scrollbar for docs */

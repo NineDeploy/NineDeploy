@@ -354,6 +354,7 @@ describe('service', () => {
       sourceId: null,
       image: null,
       volumeMount: null,
+      composeService: null,
       commitSha: null,
       runtimeId: 'abc',
       healthPath: '/',
@@ -575,13 +576,17 @@ describe('service', () => {
   describe('topologyGraph', () => {
     it('accepts a graph', () => {
       const data = ok(topologyGraph, {
-        services: [{ id: 1, name: 'web', slug: 'web', type: 'docker', status: 'running' }],
-        databases: [{ id: 1, name: 'db', engine: 'postgres', status: 'running' }],
+        services: [{ id: 1, name: 'web', slug: 'web', type: 'docker', status: 'running', image: null, port: 3000, runtimeId: 'web-1', volumeMount: null }],
+        databases: [{ id: 1, name: 'db', engine: 'postgres', status: 'running', host: 'nd-db-db' }],
         attachments: [{ id: 1, serviceId: 1, databaseId: 1, envAlias: 'DB' }],
-        domains: [{ id: 1, serviceId: 1, hostname: 'a.example.com' }],
+        domains: [{ id: 1, serviceId: 1, hostname: 'a.example.com', ssl: true }],
+        volumes: [{ name: 'nd-svc-web-data', owner: { kind: 'service', refId: 1, name: 'web' } }, { name: 'nd-svc-ghost-data', owner: null }],
+        networks: [{ name: 'ninedeploy', driver: 'bridge', containers: ['web-1'] }],
+        gateway: { name: 'ninedeploy-traefik', network: 'ninedeploy', running: true },
       });
       expect(data?.services).toHaveLength(1);
-      bad(topologyGraph, { services: [{ id: 1, name: 'web' }], databases: [], attachments: [], domains: [] });
+      expect(data?.volumes).toHaveLength(2);
+      bad(topologyGraph, { services: [{ id: 1, name: 'web' }], databases: [], attachments: [], domains: [{ id: 1, serviceId: 1, hostname: 'x', ssl: 'yes' }], volumes: [], networks: [], gateway: { name: 'g', network: 'n', running: false } });
     });
   });
 

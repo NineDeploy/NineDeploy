@@ -1,7 +1,10 @@
 import { Link } from "react-router";
+import { useState } from "react";
 import {
   ArrowRight,
   Boxes,
+  Check,
+  Copy,
   Database,
   GitBranch,
   Globe,
@@ -17,18 +20,20 @@ import {
 } from "lucide-react";
 import { Terminal, type TermLine } from "../components/Terminal";
 import { Marquee } from "../components/Marquee";
+import { CountUp } from "../components/CountUp";
+import { Reveal } from "../components/Reveal";
 
 const heroLines: TermLine[] = [
-  { text: "$ git push origin main", tone: "dim" },
-  { text: "→ webhook verified (hmac-sha256) · branch=main · paths=[src/**]", tone: "accent" },
-  { text: "→ deployment #47 queued", tone: "dim" },
-  { text: "→ worker slot-1 claimed · building", tone: "warn" },
-  { text: "→ clone ok · checkout 9f3c1ab · creds scrubbed", tone: "dim" },
-  { text: "→ docker build ✓  · image nd-svc-api:9f3c1ab", tone: "ok" },
-  { text: "→ blue-green: new container up on net ninedeploy", tone: "dim" },
-  { text: "→ healthcheck 200 OK (container ip, 3/3)", tone: "ok" },
-  { text: "→ traefik router flipped · old container retired", tone: "ok" },
-  { text: "✓ live at https://api.acme.dev — 0s downtime", tone: "ok" },
+  { text: "$ git push origin main", tone: "dim", ts: "12:01:02" },
+  { text: "→ webhook verified (hmac-sha256) · branch=main · paths=[src/**]", tone: "accent", ts: "12:01:02" },
+  { text: "→ deployment #47 queued", tone: "dim", ts: "12:01:03" },
+  { text: "→ worker slot-1 claimed · building", tone: "warn", ts: "12:01:04" },
+  { text: "→ clone ok · checkout 9f3c1ab · creds scrubbed", tone: "dim", ts: "12:01:09" },
+  { text: "→ docker build ✓  · image nd-svc-api:9f3c1ab", tone: "ok", ts: "12:02:41" },
+  { text: "→ blue-green: new container up on net ninedeploy", tone: "dim", ts: "12:02:44" },
+  { text: "→ healthcheck 200 OK (container ip, 3/3)", tone: "ok", ts: "12:02:52" },
+  { text: "→ traefik router flipped · old container retired", tone: "ok", ts: "12:02:52" },
+  { text: "✓ live at https://api.acme.dev — 0s downtime", tone: "ok", ts: "12:02:53" },
 ];
 
 const templates = [
@@ -74,6 +79,20 @@ const bento = [
     body: "Live CPU/mem per container, alert rules with sustained-breach windows, topology graph, WebSocket deploy logs, exec terminal.",
     tag: "ops",
   },
+];
+
+const compare: Array<{
+  label: string;
+  us: string;
+  rawDocker: string;
+  managedPaaS: string;
+}> = [
+  { label: "your data stays on your server", us: "✓ always", rawDocker: "✓ yes", managedPaaS: "✗ vendor cloud" },
+  { label: "zero-downtime deploys out of the box", us: "✓ blue-green", rawDocker: "✗ DIY scripts", managedPaaS: "✓ yes" },
+  { label: "managed databases + backups", us: "✓ 5 engines, S3", rawDocker: "✗ manual", managedPaaS: "✓ metered" },
+  { label: "automatic HTTPS + wildcard domains", us: "✓ ACME DNS-01", rawDocker: "✗ manual proxy", managedPaaS: "✓ yes" },
+  { label: "price at 50 services", us: "$0 · your hardware", rawDocker: "$0 · your weekends", managedPaaS: "$$$ per seat" },
+  { label: "lock-in", us: "✗ none · MIT", rawDocker: "✗ none", managedPaaS: "✓ proprietary" },
 ];
 
 const steps = [
@@ -144,7 +163,17 @@ export function Home() {
               <span>✦ MIT licensed</span>
             </div>
           </div>
-          <Terminal lines={heroLines} />
+          <div className="relative">
+            <div
+              aria-hidden="true"
+              className="absolute -inset-8 -z-10 rounded-full opacity-60 blur-3xl"
+              style={{
+                background:
+                  "radial-gradient(closest-side, rgb(78 205 196 / 0.25), transparent)",
+              }}
+            />
+            <Terminal lines={heroLines} />
+          </div>
         </div>
       </section>
 
@@ -164,25 +193,72 @@ export function Home() {
           </Link>
         </div>
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-5">
-          {bento.map((b) => (
-            <article
-              key={b.title}
-              className="panel panel-hard p-6 hover:-translate-y-1 transition-transform group"
-            >
-              <div className="flex items-start justify-between">
-                <b.icon
-                  size={26}
-                  className="text-ink dark:text-phosphor"
-                  strokeWidth={1.75}
+          {bento.map((b, i) => (
+            <Reveal key={b.title} delay={i * 70} className="h-full">
+              <article className="panel panel-hard h-full p-6 hover:-translate-y-1 transition-transform group relative overflow-hidden">
+                {/* hover glow — brand teal wash in the corner */}
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none absolute -right-10 -top-10 h-28 w-28 rounded-full opacity-0 blur-2xl transition-opacity duration-500 group-hover:opacity-100"
+                  style={{ background: "rgb(78 205 196 / 0.22)" }}
                 />
-                <span className="tag text-zinc-500">{b.tag}</span>
-              </div>
-              <h3 className="mt-4 text-lg font-bold">{b.title}</h3>
-              <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400 leading-relaxed">
-                {b.body}
-              </p>
-            </article>
+                <div className="flex items-start justify-between">
+                  <b.icon
+                    size={26}
+                    className="text-ink dark:text-phosphor transition-transform duration-300 group-hover:scale-110 group-hover:-rotate-6"
+                    strokeWidth={1.75}
+                  />
+                  <span className="tag text-zinc-500">{b.tag}</span>
+                </div>
+                <h3 className="mt-4 text-lg font-bold">{b.title}</h3>
+                <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400 leading-relaxed">
+                  {b.body}
+                </p>
+              </article>
+            </Reveal>
           ))}
+        </div>
+      </section>
+
+      {/* ---------------- comparison ---------------- */}
+      <section className="border-y-2 border-edge dark:border-line bg-[var(--nd-panel)]">
+        <div className="mx-auto max-w-7xl px-4 py-20 md:py-24">
+          <Reveal>
+            <div className="tag mb-3">the honest pitch</div>
+            <h2 className="text-3xl md:text-5xl font-bold tracking-tight">
+              Raw Docker, a managed PaaS, or NineDeploy?
+            </h2>
+          </Reveal>
+          <Reveal delay={120}>
+            <div className="panel panel-hard mt-10 overflow-x-auto">
+              <table className="w-full min-w-[40rem] border-collapse font-mono text-sm">
+                <thead>
+                  <tr className="border-b-2 border-edge dark:border-line text-left">
+                    <th className="p-4 font-sans font-bold"> </th>
+                    <th className="p-4 bg-ink text-white dark:bg-line dark:text-phosphor font-bold">
+                      NineDeploy
+                    </th>
+                    <th className="p-4 font-bold text-zinc-500">raw docker</th>
+                    <th className="p-4 font-bold text-zinc-500">managed PaaS</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {compare.map((row) => (
+                    <tr key={row.label} className="border-b border-[#dbe4ee] dark:border-line/60 last:border-0">
+                      <td className="p-4 font-sans">{row.label}</td>
+                      <td className="p-4 bg-ink/5 dark:bg-line/30">
+                        <span className="inline-flex items-center gap-1.5 font-bold text-phosphor-dim">
+                          <Check size={14} className="-mt-0.5" /> {row.us}
+                        </span>
+                      </td>
+                      <td className="p-4 text-zinc-500">{row.rawDocker}</td>
+                      <td className="p-4 text-zinc-500">{row.managedPaaS}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Reveal>
         </div>
       </section>
 
@@ -194,15 +270,15 @@ export function Home() {
             From curl to production.
           </h2>
           <div className="mt-12 grid md:grid-cols-3 gap-8">
-            {steps.map((s) => (
-              <div key={s.n} className="relative border-l-2 border-line pl-6">
+            {steps.map((s, i) => (
+              <Reveal key={s.n} delay={i * 100} className="relative border-l-2 border-line pl-6">
                 <span className="absolute -left-[13px] top-0 grid place-items-center w-6 h-6 border-2 border-phosphor bg-ink font-mono text-[10px] text-phosphor">
                   {s.n.slice(1)}
                 </span>
                 <s.icon size={24} className="text-phosphor" strokeWidth={1.75} />
                 <h3 className="mt-3 text-lg font-bold text-white">{s.title}</h3>
                 <p className="mt-2 text-sm text-zinc-400 leading-relaxed">{s.body}</p>
-              </div>
+              </Reveal>
             ))}
           </div>
         </div>
@@ -211,18 +287,22 @@ export function Home() {
       {/* ---------------- stats ---------------- */}
       <section className="mx-auto max-w-7xl px-4 py-16 grid grid-cols-2 md:grid-cols-4 gap-5">
         {[
-          { icon: LayoutGrid, k: "48", v: "verified templates" },
-          { icon: Boxes, k: "26", v: "tables, one SQLite file" },
-          { icon: RotateCcw, k: "0s", v: "downtime per release" },
-          { icon: KeyRound, k: "AES-256", v: "sealed secrets + rotation" },
-        ].map((s) => (
-          <div key={s.v} className="panel p-5 text-center">
-            <s.icon size={20} className="mx-auto text-phosphor-dim" />
-            <div className="mt-2 text-3xl font-bold font-mono">{s.k}</div>
-            <div className="text-xs font-mono uppercase tracking-widest text-zinc-500 mt-1">
-              {s.v}
+          { icon: LayoutGrid, k: 48, suffix: "", v: "verified templates" },
+          { icon: Boxes, k: 26, suffix: "", v: "tables, one SQLite file" },
+          { icon: RotateCcw, k: 2100, suffix: "+", v: "tests in CI" },
+          { icon: KeyRound, k: 100, suffix: "%", v: "coverage, no ratchets" },
+        ].map((s, i) => (
+          <Reveal key={s.v} delay={i * 60}>
+            <div className="panel p-5 text-center hover:-translate-y-1 transition-transform">
+              <s.icon size={20} className="mx-auto text-phosphor-dim" />
+              <div className="mt-2 text-3xl font-bold font-mono">
+                <CountUp value={s.k} suffix={s.suffix} />
+              </div>
+              <div className="text-xs font-mono uppercase tracking-widest text-zinc-500 mt-1">
+                {s.v}
+              </div>
             </div>
-          </div>
+          </Reveal>
         ))}
       </section>
 
@@ -243,9 +323,32 @@ export function Home() {
 }
 
 function CodeBlockImpl() {
+  const [copied, setCopied] = useState(false);
+  const cmd =
+    "curl -fsSL https://raw.githubusercontent.com/NineDeploy/NineDeploy/main/install.sh | bash";
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(cmd);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    } catch {
+      /* clipboard denied — the text is selectable anyway */
+    }
+  };
   return (
     <div className="panel panel-hard mx-auto mt-8 max-w-2xl text-left overflow-x-auto px-5 py-4 font-mono text-sm">
-      <div className="text-zinc-500">$</div>
+      <div className="flex items-center justify-between gap-4">
+        <span className="text-zinc-500">$</span>
+        <button
+          type="button"
+          onClick={copy}
+          className="flex items-center gap-1.5 border border-edge dark:border-line px-2 py-0.5 text-xs text-zinc-500 hover:text-phosphor-dim hover:border-phosphor-dim transition-colors"
+          aria-label="Copy install command"
+        >
+          {copied ? <Check size={12} /> : <Copy size={12} />}
+          {copied ? "copied ✓" : "copy"}
+        </button>
+      </div>
       <div>
         <span className="text-phosphor-dim">curl</span> -fsSL https://raw.githubusercontent.com/NineDeploy/NineDeploy/main/install.sh{" "}
         <span className="text-amber-term">|</span> bash

@@ -6,7 +6,7 @@ import { capture, run, sleep } from '../lib/exec.js';
 import { getSettingString } from '../lib/settings.js';
 import { decrypt, encrypt } from '../lib/crypto.js';
 
-const TRAEFIK_CONTAINER = 'ninedeploy-traefik';
+export const TRAEFIK_CONTAINER = 'ninedeploy-traefik';
 const TRAEFIK_IMAGE = 'traefik:v3.3';
 
 /** Shared Docker network that app + database containers join to reach each other. */
@@ -359,7 +359,7 @@ export async function writeDynamicConfig(db: DB): Promise<void> {
       middlewares.push(
         `    ${mw}:\n` +
           '      redirectRegex:\n' +
-          `        regex: "^https?://(?:www\\.)?${escapeRegexp(apexHost)}(.*)"\n` +
+          `        regex: "${yamlDoubleQuoted(`^https?://(?:www\\.)?${escapeRegexp(apexHost)}(.*)`)}"\n` +
           `        replacement: "https://${apexHost}$1"\n`,
       );
     }
@@ -373,9 +373,12 @@ export async function writeDynamicConfig(db: DB): Promise<void> {
       middlewares.push(`    ${mw}:\n      headers:\n        customResponseHeaders:\n${lines}\n`);
     }
 
+    const fullRule =
+      hostMatcher + (cleanPath && cleanPath !== '/' ? ` && PathPrefix(\`${cleanPath}\`)` : '');
+
     routers.push(
       `    ${key}:\n` +
-        `      rule: "${hostMatcher}${cleanPath && cleanPath !== '/' ? ` && PathPrefix(\`${cleanPath}\`)` : ''}"\n` +
+        `      rule: "${yamlDoubleQuoted(fullRule)}"\n` +
         `      service: svc_${key}\n` +
         (mwList.length ? `      middlewares:\n${mwList.map((m) => `        - ${m}`).join('\n')}\n` : '') +
         `      entryPoints:\n        - ${entry}` +
@@ -407,15 +410,18 @@ export async function writeDynamicConfig(db: DB): Promise<void> {
       `          sans:\n            - "${apex}"\n`;
   }
 
+  // Traefik v3's file provider rejects empty sections (`middlewares: {}`
+  // fails with "cannot be a standalone element"), so emit each section only
+  // when it has content. A bare `http:\n` is a valid empty config.
+  const section = (name: string, blocks: string[]): string =>
+    blocks.length ? `  ${name}:\n${blocks.join('\n')}\n` : '';
+
   const yaml =
     '# Managed by NineDeploy — regenerated on deploy/domain changes.\n' +
     'http:\n' +
-    '  routers:\n' +
-    (routers.length ? `${routers.join('\n')}\n` : '    {}\n') +
-    '  middlewares:\n' +
-    (middlewares.length ? `${middlewares.join('\n')}\n` : '    {}\n') +
-    '  services:\n' +
-    (svcBlocks.length ? `${svcBlocks.join('\n')}\n` : '    {}\n') +
+    section('routers', routers) +
+    section('middlewares', middlewares) +
+    section('services', svcBlocks) +
     tlsCerts;
 
   writeAtomic(dynamicPath(), yaml);
@@ -455,4 +461,9 @@ function yamlValue(value: string): string {
 /** Escape regex metacharacters in a (already sanitized) domain suffix. */
 function escapeRegexp(s: string): string {
   return s.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** Escape a value for a double-quoted YAML scalar (backslash + quote). */
+function yamlDoubleQuoted(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }

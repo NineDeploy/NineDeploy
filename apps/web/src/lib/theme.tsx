@@ -1,7 +1,7 @@
 import { type ReactNode, createContext, useContext, useEffect, useState } from 'react';
 
 type Theme = 'dark' | 'light';
-type Accent = 'indigo' | 'blue' | 'emerald' | 'rose' | 'amber' | 'violet';
+type Accent = 'phosphor' | 'indigo' | 'blue' | 'emerald' | 'rose' | 'amber' | 'violet';
 
 interface ThemeContextValue {
   theme: Theme;
@@ -17,6 +17,8 @@ const THEME_KEY = 'ninedeploy.theme';
 const ACCENT_KEY = 'ninedeploy.accent';
 
 export const ACCENTS: Array<{ id: Accent; label: string; color: string }> = [
+  // Brand accent — the logo teal used across the marketing website.
+  { id: 'phosphor', label: 'Phosphor', color: '#4ecdc4' },
   { id: 'indigo', label: 'Indigo', color: '#6366f1' },
   { id: 'blue', label: 'Blue', color: '#3b82f6' },
   { id: 'emerald', label: 'Emerald', color: '#10b981' },
@@ -30,7 +32,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     try { return (localStorage.getItem(THEME_KEY) as Theme) ?? 'dark'; } catch { return 'dark'; }
   });
   const [accent, setAccentState] = useState<Accent>(() => {
-    try { return (localStorage.getItem(ACCENT_KEY) as Accent) ?? 'indigo'; } catch { return 'indigo'; }
+    try { return (localStorage.getItem(ACCENT_KEY) as Accent) ?? 'phosphor'; } catch { return 'phosphor'; }
   });
 
   useEffect(() => {

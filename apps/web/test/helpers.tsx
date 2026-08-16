@@ -120,12 +120,13 @@ export function createAuthMock() {
 export function createThemeMock() {
   const theme = {
     theme: 'dark' as const,
-    accent: 'indigo' as const,
+    accent: 'phosphor' as const,
     setTheme: vi.fn(),
     setAccent: vi.fn(),
     toggleTheme: vi.fn(),
   };
   const ACCENTS = [
+    { id: 'phosphor', label: 'Phosphor', color: '#4ecdc4' },
     { id: 'indigo', label: 'Indigo', color: '#6366f1' },
     { id: 'blue', label: 'Blue', color: '#3b82f6' },
     { id: 'emerald', label: 'Emerald', color: '#10b981' },

@@ -3,6 +3,7 @@ import { databases, services } from '@ninedeploy/db';
 import { audit } from '../lib/audit.js';
 import { removeVolume } from '../engine/database.js';
 import { capture } from '../lib/exec.js';
+import { containerRunning, resolveVolumeOwner } from '../lib/inventory.js';
 import { badRequest, conflict } from '../lib/errors.js';
 
 interface VolumeOwner {
@@ -19,27 +20,9 @@ interface VolumeOwner {
  */
 async function volumeOwner(db: FastifyInstance['db'], name: string): Promise<VolumeOwner | null> {
   const [svcs, dbs] = await Promise.all([db.select().from(services), db.select().from(databases)]);
-  if (name.startsWith('nd-svc-')) {
-    const slug = name.replace('nd-svc-', '').replace(/-data$/, '');
-    const s = svcs.find((x) => x.slug === slug);
-    return s ? { kind: 'service', name: s.name, containerName: s.runtimeId } : null;
-  }
-  // Callers guarantee an nd-db- prefix here; anything else simply finds no
-  // owner below and reads as orphaned.
-  const slug = name.replace('nd-db-', '').replace(/-data$/, '');
-  const d = dbs.find((x) => x.slug === slug);
-  return d ? { kind: 'database', name: d.name, engine: d.engine, containerName: d.containerName } : null;
-}
-
-/** Whether a container with this exact name is running right now. */
-async function containerRunning(containerName: string | null): Promise<boolean> {
-  if (!containerName) return false;
-  try {
-    const out = await capture('docker', ['ps', '--filter', `name=^${containerName}$`, '-q']);
-    return out.trim().length > 0;
-  } catch {
-    return false;
-  }
+  const owner = resolveVolumeOwner(svcs, dbs, name);
+  if (!owner) return null;
+  return { kind: owner.kind, name: owner.name, engine: owner.engine, containerName: owner.containerName };
 }
 
 /** Volume size for a named Docker volume (bytes), via a throwaway alpine container. */

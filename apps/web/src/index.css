@@ -25,14 +25,26 @@
    Dark surface utilities are mapped to light equivalents per data-theme
    further down so components never hardcode theme colors either.          */
 :root {
-  --nd-accent: #6366f1;
-  --nd-accent-strong: #4f46e5;
-  --nd-accent-bright: #818cf8;
-  --nd-accent-soft: #a5b4fc;
+  /* Brand default — the logo teal from the marketing website
+     (website/src/index.css --color-phosphor / --color-phosphor-dim). */
+  --nd-accent: #4ecdc4;
+  --nd-accent-strong: #17948a;
+  --nd-accent-bright: #7ce4dc;
+  --nd-accent-soft: #a9efe9;
+  --nd-accent-ring: rgba(78, 205, 196, 0.7);
+  --nd-accent-soft-bg: rgba(78, 205, 196, 0.15);
+  --nd-accent-soft-text: #a9efe9;
+  --nd-accent-soft-ring: rgba(78, 205, 196, 0.2);
+}
+[data-accent='phosphor'] {
+  --nd-accent: #4ecdc4; --nd-accent-strong: #17948a; --nd-accent-bright: #7ce4dc; --nd-accent-soft: #a9efe9;
+  --nd-accent-ring: rgba(78, 205, 196, 0.7);
+  --nd-accent-soft-bg: rgba(78, 205, 196, 0.15); --nd-accent-soft-text: #a9efe9; --nd-accent-soft-ring: rgba(78, 205, 196, 0.2);
+}
+[data-accent='indigo'] {
+  --nd-accent: #6366f1; --nd-accent-strong: #4f46e5; --nd-accent-bright: #818cf8; --nd-accent-soft: #a5b4fc;
   --nd-accent-ring: rgba(129, 140, 248, 0.7);
-  --nd-accent-soft-bg: rgba(99, 102, 241, 0.15);
-  --nd-accent-soft-text: #a5b4fc;
-  --nd-accent-soft-ring: rgba(99, 102, 241, 0.2);
+  --nd-accent-soft-bg: rgba(99, 102, 241, 0.15); --nd-accent-soft-text: #a5b4fc; --nd-accent-soft-ring: rgba(99, 102, 241, 0.2);
 }
 [data-accent='blue'] {
   --nd-accent: #3b82f6; --nd-accent-strong: #2563eb; --nd-accent-bright: #60a5fa; --nd-accent-soft: #93c5fd;
@@ -63,7 +75,9 @@
 /* ── Light theme re-toning (per data-theme + data-accent) ────────────────
    On white surfaces the dark accent tints lack contrast, so the soft/bright
    steps shift darker while fills stay readable.                          */
-html[data-theme='light'] { --nd-accent-ring: rgba(67, 56, 204, 0.45); }
+html[data-theme='light'] { --nd-accent-ring: rgba(13, 109, 102, 0.45); }
+html[data-theme='light'][data-accent='phosphor'] { --nd-accent-soft: #0f7a72; --nd-accent-bright: #0c6d66; --nd-accent-soft-text: #0c6d66; --nd-accent-ring: rgba(13, 109, 102, 0.45); }
+html[data-theme='light'][data-accent='indigo']  { --nd-accent-soft: #4f46e5; --nd-accent-bright: #4338ca; --nd-accent-soft-text: #4338ca; --nd-accent-ring: rgba(67, 56, 204, 0.45); }
 html[data-theme='light'][data-accent='indigo']  { --nd-accent-soft: #4f46e5; --nd-accent-bright: #4338ca; --nd-accent-soft-text: #4338ca; }
 html[data-theme='light'][data-accent='blue']    { --nd-accent-soft: #2563eb; --nd-accent-bright: #1d4ed8; --nd-accent-soft-text: #1d4ed8; --nd-accent-ring: rgba(29, 78, 216, 0.45); }
 html[data-theme='light'][data-accent='emerald'] { --nd-accent-soft: #059669; --nd-accent-bright: #047857; --nd-accent-soft-text: #047857; --nd-accent-ring: rgba(4, 120, 87, 0.45); }
@@ -75,7 +89,7 @@ html[data-theme='light'][data-accent='violet']  { --nd-accent-soft: #7c3aed; --n
 @layer base {
   html { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
   body {
-    background-color: #07070b;
+    background-color: #0a101b; /* website --color-void */
     background-image:
       radial-gradient(60rem 60rem at 80% -20%, color-mix(in srgb, var(--nd-accent) 12%, transparent), transparent 60%),
       radial-gradient(50rem 50rem at -10% 10%, color-mix(in srgb, var(--nd-accent-bright) 8%, transparent), transparent 55%);
@@ -96,7 +110,7 @@ html[data-theme='light'][data-accent='violet']  { --nd-accent-soft: #7c3aed; --n
 
 /* ── Light theme overrides ─────────────────────────────────────────────── */
 html[data-theme='light'] body {
-  background-color: #f8fafc;
+  background-color: #f4f7fb; /* website --nd-bg (light) */
   background-image:
     radial-gradient(60rem 60rem at 80% -20%, color-mix(in srgb, var(--nd-accent) 6%, transparent), transparent 60%),
     radial-gradient(50rem 50rem at -10% 10%, color-mix(in srgb, var(--nd-accent-bright) 4%, transparent), transparent 55%);
@@ -105,7 +119,7 @@ html[data-theme='light'] body {
 html[data-theme='light'] ::selection { background: color-mix(in srgb, var(--nd-accent) 20%, transparent); }
 
 /* Map dark surface utilities → light equivalents */
-html[data-theme='light'] .bg-slate-950 { background-color: #f8fafc; }
+html[data-theme='light'] .bg-slate-950 { background-color: #f4f7fb; }
 html[data-theme='light'] .bg-slate-950\/40 { background-color: rgba(248,250,252,.4); }
 html[data-theme='light'] .bg-slate-950\/60 { background-color: rgba(248,250,252,.6); }
 html[data-theme='light'] .bg-slate-950\/70 { background-color: rgba(248,250,252,.7); }

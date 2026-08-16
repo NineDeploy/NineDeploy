@@ -188,14 +188,18 @@ describe('writeDynamicConfig', () => {
     expect(yaml).not.toContain('noruntime.example.com');
   });
 
-  it('writes empty routers/services when there are no domains', async () => {
+  it('omits empty sections entirely when there are no domains', async () => {
     const db = makeDb([], []);
 
     await writeDynamicConfig(db as never);
 
     const yaml = readFileSync(path.join(traefikDir, 'dynamic.yml'), 'utf8');
-    expect(yaml).toContain('routers:\n    {}\n');
-    expect(yaml).toContain('services:\n    {}\n');
+    // Traefik v3 rejects empty maps like `middlewares: {}` ("cannot be a
+    // standalone element"), so empty sections must not be emitted at all.
+    expect(yaml).not.toContain('routers:');
+    expect(yaml).not.toContain('middlewares:');
+    expect(yaml).not.toContain('services:');
+    expect(yaml).toContain('http:\n');
   });
 
   it('dedupes identical service keys', async () => {
@@ -661,7 +665,8 @@ describe('DNS-01 challenge (wildcard SSL)', () => {
     await writeDynamicConfig(db as never);
     const yml = readFileSync(path.join(traefikDir, 'dynamic.yml'), 'utf8');
     // Wildcard host → HostRegexp with an escaped suffix.
-    expect(yml).toContain('HostRegexp(`^[a-zA-Z0-9-]+\\.example\\.com$`)');
+    // Backslashes are doubled: the rule sits in a double-quoted YAML scalar.
+    expect(yml).toContain('HostRegexp(`^[a-zA-Z0-9-]+\\\\.example\\\\.com$`)');
     // Plain host keeps the literal matcher.
     expect(yml).toContain('Host(`plain.example.com`)');
     // One wildcard cert for the apex, apex as SAN.
@@ -696,7 +701,7 @@ describe('DNS-01 challenge (wildcard SSL)', () => {
 
     const yaml = readFileSync(path.join(traefikDir, 'dynamic.yml'), 'utf8');
     expect(yaml).toContain('mw_web_1_www:');
-    expect(yaml).toContain('regex: "^https?://(?:www\\.)?example\\.com(.*)"');
+    expect(yaml).toContain('regex: "^https?://(?:www\\\\.)?example\\\\.com(.*)"');
     expect(yaml).toContain('replacement: "https://example.com$1"');
     expect(yaml).toContain('middlewares:\n        - mw_web_1_www');
     // The empty middlewares section is never emitted when one exists.
@@ -752,7 +757,7 @@ describe('DNS-01 challenge (wildcard SSL)', () => {
 
     const yaml = readFileSync(path.join(traefikDir, 'dynamic.yml'), 'utf8');
     expect(yaml).not.toContain('mw_web_1_headers');
-    expect(yaml).toContain('middlewares:\n    {}');
+    expect(yaml).not.toContain('middlewares:');
   });
 
   it('ignores a non-array headers JSON document', async () => {
@@ -767,7 +772,7 @@ describe('DNS-01 challenge (wildcard SSL)', () => {
     expect(yaml).not.toContain('mw_web_1_headers');
   });
 
-  it('writes an empty middlewares section when no domain needs one', async () => {
+  it('omits the middlewares section when no domain needs one', async () => {
     const db = makeDb(
       [{ id: 1, serviceId: 1, hostname: 'plain.example.com', path: '/', ssl: false }],
       [{ id: 1, slug: 'web', port: 3000, runtimeId: 'web-1' }],
@@ -776,7 +781,6 @@ describe('DNS-01 challenge (wildcard SSL)', () => {
     await writeDynamicConfig(db as never);
 
     const yaml = readFileSync(path.join(traefikDir, 'dynamic.yml'), 'utf8');
-    expect(yaml).toContain('middlewares:\n    {}');
-    expect(yaml).not.toContain('middlewares:\n        -');
+    expect(yaml).not.toContain('middlewares:');
   });
 });

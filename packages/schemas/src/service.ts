@@ -14,6 +14,9 @@ export const createService = z.object({
   sourceId: z.number().int().positive().optional(),
   image: z.string().optional(),
   volumeMount: z.string().optional(),
+  /** Compose deploys: the main service in the compose file (health/routing
+   * target). Defaults to the service slug when omitted. */
+  composeService: z.string().min(1).max(200).optional(),
   cpuShares: z.number().int().min(0).max(262144).optional(),
   memLimitMb: z.number().int().min(0).optional(),
   healthPath: z.string().optional(),
@@ -31,8 +34,25 @@ export const createService = z.object({
 });
 export type CreateService = z.infer<typeof createService>;
 
-/** PATCH shape — every field optional, including individual build-config keys. */
-export const updateService = createService.partial().extend({
+/** PATCH shape — every field optional, including individual build-config keys.
+ * Built explicitly (NOT via createService.partial()): in Zod v4 `partial()`
+ * still applies `.default()` values for absent keys, which would silently
+ * rewrite `type` back to 'docker' and `branch` to 'main' on every PATCH. */
+export const updateService = z.object({
+  projectId: z.number().int().positive().optional(),
+  name: z.string().min(1).max(100).optional(),
+  slug: slug.optional(),
+  type: serviceType.optional(),
+  repoUrl: z.url().optional(),
+  branch: z.string().min(1).max(200).optional(),
+  sourceId: z.number().int().positive().optional(),
+  image: z.string().optional(),
+  volumeMount: z.string().optional(),
+  composeService: z.string().min(1).max(200).optional(),
+  cpuShares: z.number().int().min(0).max(262144).optional(),
+  memLimitMb: z.number().int().min(0).optional(),
+  healthPath: z.string().optional(),
+  port: z.number().int().min(1).max(65535).optional(),
   build: z
     .object({
       buildPack: buildPack.optional(),
@@ -62,6 +82,7 @@ export const service = z.object({
   sourceId: z.number().int().nullable(),
   image: z.string().nullable(),
   volumeMount: z.string().nullable(),
+  composeService: z.string().nullable(),
   commitSha: z.string().nullable(),
   runtimeId: z.string().nullable(),
   healthPath: z.string(),
@@ -284,10 +305,33 @@ export type MetricSeries = z.infer<typeof metricSeries>;
 
 // ── Topology graph ─────────────────────────────────────────────────────────
 export const topologyGraph = z.object({
-  services: z.array(z.object({ id: z.number().int(), name: z.string(), slug: z.string(), type: z.string(), status: z.string() })),
-  databases: z.array(z.object({ id: z.number().int(), name: z.string(), engine: z.string(), status: z.string() })),
+  services: z.array(
+    z.object({
+      id: z.number().int(),
+      name: z.string(),
+      slug: z.string(),
+      type: z.string(),
+      status: z.string(),
+      image: z.string().nullable(),
+      port: z.number().int().nullable(),
+      runtimeId: z.string().nullable(),
+      volumeMount: z.string().nullable(),
+    }),
+  ),
+  databases: z.array(z.object({ id: z.number().int(), name: z.string(), engine: z.string(), status: z.string(), host: z.string().nullable() })),
   attachments: z.array(z.object({ id: z.number().int(), serviceId: z.number().int(), databaseId: z.number().int(), envAlias: z.string() })),
-  domains: z.array(z.object({ id: z.number().int(), serviceId: z.number().int(), hostname: z.string() })),
+  domains: z.array(z.object({ id: z.number().int(), serviceId: z.number().int(), hostname: z.string(), ssl: z.boolean() })),
+  /** Managed docker volumes with their owner link (null = orphaned). */
+  volumes: z.array(
+    z.object({
+      name: z.string(),
+      owner: z.object({ kind: z.string(), refId: z.number().int(), name: z.string(), engine: z.string().optional() }).nullable(),
+    }),
+  ),
+  /** User-defined docker networks; `containers` is filled for the shared mesh only. */
+  networks: z.array(z.object({ name: z.string(), driver: z.string(), containers: z.array(z.string()) })),
+  /** The Traefik gateway fronting every routed service. */
+  gateway: z.object({ name: z.string(), network: z.string(), running: z.boolean() }),
 });
 export type TopologyGraph = z.infer<typeof topologyGraph>;
 

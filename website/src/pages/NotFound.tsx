@@ -1,15 +1,25 @@
 import { Link } from "react-router";
 import { Home } from "lucide-react";
+import { useState } from "react";
+
+const errors = [
+  { cmd: "cd /this/page && ls", out: "ls: no such file or directory" },
+  { cmd: "docker run this/page", out: "Error response from daemon: page not found" },
+  { cmd: "curl -I /this/page", out: "HTTP/1.1 404 Not Found" },
+  { cmd: "git checkout this-page", out: "error: pathspec 'this-page' did not match any file" },
+  { cmd: "ping this.page", out: "Request timeout for icmp_seq 0" },
+];
 
 export function NotFound() {
+  const [err] = useState(() => errors[Math.floor(Math.random() * errors.length)]!);
   return (
     <section className="grid-bg min-h-[70vh] grid place-items-center px-4">
       <div className="text-center">
         <div className="font-mono text-7xl md:text-9xl font-bold text-phosphor-dim">404</div>
         <p className="mt-4 font-mono text-sm text-zinc-500">
-          $ cd /this/page <span className="text-pink-term">&&</span> ls
+          $ {err.cmd}
           <br />
-          ls: no such file or directory
+          <span className="text-pink-term">{err.out}</span>
         </p>
         <Link
           to="/"

@@ -295,4 +295,7 @@ NINEDEPLOY_UPDATE_CHECK_URL=…      # or "disabled" for air-gapped`,
   },
 ];
 
-export const docGroups = [...new Set(docs.map((d) => d.group))];
+export const docGroups = ["Start", "Core", "Interfaces", "Reference"].map((name) => ({
+  name,
+  items: docs.filter((d) => d.group === name),
+}));

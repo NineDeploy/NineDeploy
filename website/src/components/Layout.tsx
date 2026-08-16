@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
-import { useState } from "react";
-import { Link, NavLink } from "react-router";
+import { useEffect, useState } from "react";
+import { Link, NavLink, useLocation } from "react-router";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
   Menu,
@@ -40,6 +40,29 @@ export function Layout({
   onToggleTheme: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  const { pathname } = useLocation();
+  const onDocs = pathname.startsWith("/docs");
+
+  // Scroll state: progress bar fill + a tighter header once the page moves.
+  const [progress, setProgress] = useState(0);
+  const [scrolled, setScrolled] = useState(false);
+  useEffect(() => {
+    let raf = 0;
+    const onScroll = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        const max = document.documentElement.scrollHeight - window.innerHeight;
+        setProgress(max > 0 ? window.scrollY / max : 0);
+        setScrolled(window.scrollY > 24);
+      });
+    };
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      cancelAnimationFrame(raf);
+    };
+  }, []);
 
   const navLinkClass = ({ isActive }: { isActive: boolean }) =>
     `px-3 py-1.5 inline-flex items-center gap-1.5 transition-colors ${
@@ -50,8 +73,23 @@ export function Layout({
 
   return (
     <div className="min-h-screen flex flex-col">
-      <header className="sticky top-0 z-50 border-b-2 border-edge dark:border-line bg-[var(--nd-bg)]/90 backdrop-blur">
-        <div className="mx-auto max-w-7xl px-4 h-16 flex items-center gap-6">
+      <a
+        href="#main"
+        className="skip-link font-mono text-sm font-bold border-2 border-ink bg-ink text-white dark:border-phosphor dark:bg-phosphor dark:text-void px-4 py-2"
+      >
+        skip to content →
+      </a>
+      <header
+        className={`sticky top-0 z-50 border-b-2 border-edge dark:border-line bg-[var(--nd-bg)]/90 backdrop-blur transition-shadow ${
+          scrolled ? "shadow-[0_4px_24px_-8px_rgb(30_42_58/0.25)] dark:shadow-[0_4px_24px_-8px_rgb(0_0_0/0.6)]" : ""
+        }`}
+      >
+        <div
+          aria-hidden="true"
+          className="absolute left-0 bottom-[-2px] h-[2px] w-full origin-left bg-phosphor"
+          style={{ transform: `scaleX(${progress})` }}
+        />
+        <div className={`mx-auto max-w-7xl px-4 flex items-center gap-6 transition-all ${scrolled ? "h-14" : "h-16"}`}>
           <Link to="/" className="flex items-center gap-2.5 font-bold tracking-tight text-lg">
             <Logo className="w-9 h-9" />
             <span>
@@ -69,7 +107,8 @@ export function Layout({
             {/* Docs: mega menu — grouped columns with descriptions + featured card */}
             <DropdownMenu.Root>
               <DropdownMenu.Trigger className="group px-3 py-1.5 inline-flex items-center gap-1.5 outline-none transition-colors hover:bg-ink hover:text-white dark:hover:bg-line dark:hover:text-phosphor data-[state=open]:bg-ink data-[state=open]:text-white dark:data-[state=open]:bg-line dark:data-[state=open]:text-phosphor">
-                <BookOpen size={14} /> Docs{" "}
+                <BookOpen size={14} className={onDocs ? "text-phosphor-dim" : undefined} />{" "}
+                <span className={onDocs ? "text-phosphor-dim" : undefined}>Docs</span>{" "}
                 <ChevronDown size={13} className="transition-transform group-data-[state=open]:rotate-180" />
               </DropdownMenu.Trigger>
               <DropdownMenu.Portal>
@@ -184,7 +223,7 @@ export function Layout({
         )}
       </header>
 
-      <main className="flex-1">{children}</main>
+      <main id="main" className="flex-1">{children}</main>
 
       <footer className="border-t-2 border-edge dark:border-line bg-[var(--nd-panel)]">
         <div className="mx-auto max-w-7xl px-4 py-12 grid gap-10 md:grid-cols-4 font-mono text-sm">
@@ -227,6 +266,28 @@ export function Layout({
               <li>26 tables · SQLite core</li>
               <li>48 verified templates</li>
             </ul>
+          </div>
+        </div>
+        <div className="border-t border-[#dbe4ee] dark:border-line/60">
+          <div className="mx-auto max-w-7xl px-4 py-8">
+            <div className="panel panel-hard flex flex-wrap items-center justify-between gap-4 p-6">
+              <div>
+                <div className="font-bold text-lg">
+                  star the repo, ship your own
+                </div>
+                <p className="mt-1 font-mono text-sm text-[#4a5c73] dark:text-zinc-400">
+                  MIT licensed · self-hosted · no accounts on our side — there is no “our side”.
+                </p>
+              </div>
+              <a
+                href="https://github.com/NineDeploy/NineDeploy"
+                target="_blank"
+                rel="noreferrer"
+                className="font-mono font-bold border-2 border-ink bg-ink text-white dark:border-phosphor dark:bg-phosphor dark:text-void px-6 py-3 hover:-translate-y-0.5 transition-transform"
+              >
+                ★ github /ninedeploy
+              </a>
+            </div>
           </div>
         </div>
         <div className="border-t border-[#dbe4ee] dark:border-line/60 py-4 text-center font-mono text-xs text-[#4a5c73] dark:text-zinc-500">

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Routes, Route, Navigate, useLocation } from "react-router";
+
 import { Layout } from "./components/Layout";
 import { Home } from "./pages/Home";
 import { Features } from "./pages/Features";
@@ -7,6 +8,23 @@ import { DocsLayout, docPages, DocPage } from "./pages/Docs";
 import { Changelog } from "./pages/Changelog";
 import { Faq } from "./pages/Faq";
 import { NotFound } from "./pages/NotFound";
+
+const titles: Record<string, string> = {
+  "/": "NineDeploy — ship like you mean it",
+  "/features": "Features — NineDeploy",
+  "/changelog": "Changelog — NineDeploy",
+  "/faq": "FAQ — NineDeploy",
+};
+
+function usePageTitle() {
+  const { pathname } = useLocation();
+  useEffect(() => {
+    const doc = docPages.find((d) => pathname === `/docs/${d.slug}`);
+    document.title = doc
+      ? `${doc.title} — NineDeploy docs`
+      : (titles[pathname] ?? "Not found — NineDeploy");
+  }, [pathname]);
+}
 
 function ScrollToTop() {
   const { pathname } = useLocation();
@@ -31,10 +49,13 @@ export default function App() {
     }
   }, [theme]);
 
+  usePageTitle();
+
   return (
     <Layout theme={theme} onToggleTheme={() => setTheme(theme === "dark" ? "light" : "dark")}>
       <ScrollToTop />
-      <Routes>
+      <PageFade>
+        <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/features" element={<Features />} />
         <Route path="/changelog" element={<Changelog />} />
@@ -47,6 +68,19 @@ export default function App() {
         </Route>
         <Route path="*" element={<NotFound />} />
       </Routes>
+      </PageFade>
     </Layout>
+  );
+}
+
+/** Fades each route in — keyed by pathname so every navigation restarts it.
+ * Opacity-only (never transform) so `fixed`/`sticky` descendants keep their
+ * positioning context. */
+function PageFade({ children }: { children: React.ReactNode }) {
+  const { pathname } = useLocation();
+  return (
+    <div key={pathname} className="page-fade">
+      {children}
+    </div>
   );
 }

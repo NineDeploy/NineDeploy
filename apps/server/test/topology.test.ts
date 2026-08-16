@@ -1,14 +1,24 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi, beforeEach } from 'vitest';
+
+const execMocks = vi.hoisted(() => ({ capture: vi.fn() }));
+vi.mock('../src/lib/exec.js', () => execMocks);
+
 import { topologyRoutes } from '../src/modules/topology.js';
 import { asUser, attachmentRow, buildTestApp, createFakeDb, dbRow, domainRow, svcRow } from './helpers.js';
 
 describe('topology routes', () => {
+  beforeEach(() => {
+    execMocks.capture.mockReset();
+    // Default: docker daemon present but empty runtime layers.
+    execMocks.capture.mockResolvedValue('');
+  });
+
   it('assembles the workspace graph from all four tables', async () => {
     const app = await buildTestApp({
       db: createFakeDb({
         select: {
-          services: [svcRow({ id: 2, name: 'api', slug: 'api', type: 'pm2', status: 'running' })],
-          databases: [dbRow({ id: 3, name: 'redis', engine: 'redis' })],
+          services: [svcRow({ id: 2, name: 'api', slug: 'api', type: 'pm2', status: 'running', port: null })],
+          databases: [dbRow({ id: 3, name: 'redis', engine: 'redis', internalHost: null })],
           database_attachments: [attachmentRow({ id: 4, serviceId: 2, databaseId: 3, envAlias: 'REDIS_URL' })],
           domains: [domainRow({ id: 5, serviceId: 2, hostname: 'api.example.com' })],
         },
@@ -18,10 +28,25 @@ describe('topology routes', () => {
     const res = await app.inject({ method: 'GET', url: '/', headers: asUser() });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({
-      services: [{ id: 2, name: 'api', slug: 'api', type: 'pm2', status: 'running' }],
-      databases: [{ id: 3, name: 'redis', engine: 'redis', status: 'running' }],
+      services: [
+        {
+          id: 2,
+          name: 'api',
+          slug: 'api',
+          type: 'pm2',
+          status: 'running',
+          image: null,
+          port: null,
+          runtimeId: null,
+          volumeMount: null,
+        },
+      ],
+      databases: [{ id: 3, name: 'redis', engine: 'redis', status: 'running', host: null }],
       attachments: [{ id: 4, serviceId: 2, databaseId: 3, envAlias: 'REDIS_URL' }],
-      domains: [{ id: 5, serviceId: 2, hostname: 'api.example.com' }],
+      domains: [{ id: 5, serviceId: 2, hostname: 'api.example.com', ssl: false }],
+      volumes: [],
+      networks: [],
+      gateway: { name: 'ninedeploy-traefik', network: 'ninedeploy', running: false },
     });
   });
 
@@ -30,6 +55,93 @@ describe('topology routes', () => {
     await app.register(topologyRoutes);
     const res = await app.inject({ method: 'GET', url: '/', headers: asUser() });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ services: [], databases: [], attachments: [], domains: [] });
+    expect(res.json()).toEqual({
+      services: [],
+      databases: [],
+      attachments: [],
+      domains: [],
+      volumes: [],
+      networks: [],
+      gateway: { name: 'ninedeploy-traefik', network: 'ninedeploy', running: false },
+    });
+  });
+
+  it('layers volumes, networks and the gateway from docker probes', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        select: {
+          services: [svcRow({ id: 2, name: 'web', slug: 'web', status: 'running', runtimeId: 'web-2', port: 3000, image: null, volumeMount: '/data' })],
+          databases: [dbRow({ id: 3, name: 'pg', slug: 'pg', engine: 'postgres' })],
+          database_attachments: [],
+          domains: [],
+        },
+      }),
+    });
+    await app.register(topologyRoutes);
+    execMocks.capture.mockImplementation((_cmd: string, args: string[]) => {
+      const joined = args.join(' ');
+      if (joined.startsWith('volume ls')) return 'nd-svc-web-data\nnd-db-pg-data\nnd-svc-ghost-data\n';
+      if (joined.startsWith('network ls')) return 'bridge\tbridge\nhost\thost\nninedeploy\tbridge\nmy-net\toverlay\n';
+      if (joined.startsWith('network inspect ninedeploy')) return 'web-2 ninedeploy-traefik ';
+      if (joined.startsWith('ps --filter name=^ninedeploy-traefik$')) return 'abc123\n';
+      return '';
+    });
+    const res = await app.inject({ method: 'GET', url: '/', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    // Volumes resolved to owners; the ghost slug is orphaned.
+    expect(body.volumes).toEqual([
+      { name: 'nd-svc-web-data', owner: { kind: 'service', refId: 2, name: 'web' } },
+      { name: 'nd-db-pg-data', owner: { kind: 'database', refId: 3, name: 'pg', engine: 'postgres' } },
+      { name: 'nd-svc-ghost-data', owner: null },
+    ]);
+    // Builtin networks filtered; member list only for the shared mesh.
+    expect(body.networks).toEqual([
+      { name: 'ninedeploy', driver: 'bridge', containers: ['web-2', 'ninedeploy-traefik'] },
+      { name: 'my-net', driver: 'overlay', containers: [] },
+    ]);
+    expect(body.gateway).toEqual({ name: 'ninedeploy-traefik', network: 'ninedeploy', running: true });
+    // Service runtime details flow through for the graph.
+    expect(body.services[0]).toMatchObject({ runtimeId: 'web-2', port: 3000, volumeMount: '/data' });
+  });
+
+  it('degrades a failing network inspect to an empty member list', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        select: { services: [], databases: [], database_attachments: [], domains: [] },
+      }),
+    });
+    await app.register(topologyRoutes);
+    execMocks.capture.mockImplementation((_cmd: string, args: string[]) => {
+      const joined = args.join(' ');
+      if (joined.startsWith('network ls')) return 'ninedeploy\tbridge\n';
+      if (joined.startsWith('network inspect')) throw new Error('inspect failed');
+      return '';
+    });
+    const res = await app.inject({ method: 'GET', url: '/', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().networks).toEqual([{ name: 'ninedeploy', driver: 'bridge', containers: [] }]);
+  });
+
+  it('degrades gracefully when docker is unreachable', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        select: {
+          services: [svcRow({ id: 2, name: 'api', slug: 'api' })],
+          databases: [],
+          database_attachments: [],
+          domains: [],
+        },
+      }),
+    });
+    await app.register(topologyRoutes);
+    execMocks.capture.mockRejectedValue(new Error('docker down'));
+    const res = await app.inject({ method: 'GET', url: '/', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.services).toHaveLength(1);
+    expect(body.volumes).toEqual([]);
+    expect(body.networks).toEqual([]);
+    expect(body.gateway.running).toBe(false);
   });
 });

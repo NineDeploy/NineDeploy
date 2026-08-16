@@ -38,14 +38,14 @@ describe('ThemeProvider', () => {
     vi.restoreAllMocks();
   });
 
-  it('defaults to dark theme and indigo accent and applies them to <html>', () => {
+  it('defaults to dark theme and phosphor accent and applies them to <html>', () => {
     renderTheme();
     expect(screen.getByTestId('theme')).toHaveTextContent('dark');
-    expect(screen.getByTestId('accent')).toHaveTextContent('indigo');
+    expect(screen.getByTestId('accent')).toHaveTextContent('phosphor');
     expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
-    expect(document.documentElement.getAttribute('data-accent')).toBe('indigo');
+    expect(document.documentElement.getAttribute('data-accent')).toBe('phosphor');
     expect(localStorage.getItem(THEME_KEY)).toBe('dark');
-    expect(localStorage.getItem(ACCENT_KEY)).toBe('indigo');
+    expect(localStorage.getItem(ACCENT_KEY)).toBe('phosphor');
   });
 
   it('reads persisted theme and accent from localStorage', () => {
@@ -56,13 +56,13 @@ describe('ThemeProvider', () => {
     expect(screen.getByTestId('accent')).toHaveTextContent('amber');
   });
 
-  it('falls back to dark/indigo when localStorage reads throw', () => {
+  it('falls back to dark/phosphor when localStorage reads throw', () => {
     vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
       throw new Error('denied');
     });
     renderTheme();
     expect(screen.getByTestId('theme')).toHaveTextContent('dark');
-    expect(screen.getByTestId('accent')).toHaveTextContent('indigo');
+    expect(screen.getByTestId('accent')).toHaveTextContent('phosphor');
   });
 
   it('toggles between dark and light', async () => {
@@ -107,8 +107,10 @@ describe('ThemeProvider', () => {
   });
 
   it('exposes the accent palette', () => {
-    expect(ACCENTS).toHaveLength(6);
-    expect(ACCENTS[0]).toEqual({ id: 'indigo', label: 'Indigo', color: '#6366f1' });
+    expect(ACCENTS).toHaveLength(7);
+    // brand teal leads the list — same color as the marketing website
+    expect(ACCENTS[0]).toEqual({ id: 'phosphor', label: 'Phosphor', color: '#4ecdc4' });
+    expect(ACCENTS[1]).toEqual({ id: 'indigo', label: 'Indigo', color: '#6366f1' });
   });
 });
 
@@ -129,7 +131,7 @@ describe('useTheme', () => {
 describe('accent tokens (index.css)', () => {
   const css = readFileSync('src/index.css', 'utf8');
 
-  it('defines the full token set for the default (indigo) accent', () => {
+  it('defines the full token set for the default (phosphor) accent', () => {
     for (const token of [
       '--nd-accent',
       '--nd-accent-strong',
@@ -146,7 +148,7 @@ describe('accent tokens (index.css)', () => {
 
   it('defines tokens for every selectable accent', () => {
     for (const a of ACCENTS) {
-      if (a.id === 'indigo') continue; // :root default
+      if (a.id === 'phosphor') continue; // :root default
       const block = css.match(new RegExp(`\\[data-accent='${a.id}'\\] \\{[^}]*\\}`));
       expect(block, `missing [data-accent='${a.id}'] block`).toBeTruthy();
       expect(block![0]).toContain('--nd-accent:');
