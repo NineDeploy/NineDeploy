@@ -11,6 +11,8 @@ describe('schema', () => {
   const tables = [
     'users',
     'apiTokens',
+    'webauthnCredentials',
+    'sessions',
     'projects',
     'services',
     'buildConfigs',
@@ -90,6 +92,8 @@ describe('schema', () => {
     const tables = [
       'users',
       'apiTokens',
+      'webauthnCredentials',
+      'sessions',
       'projects',
       'services',
       'buildConfigs',

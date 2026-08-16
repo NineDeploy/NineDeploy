@@ -88,6 +88,50 @@ export const apiTokens = sqliteTable(
   (t) => ({ userIdx: index('api_tokens_user_idx').on(t.userId) }),
 );
 
+// WebAuthn (passkey) credentials: one row per registered authenticator.
+// publicKey is the COSE public key bytes (base64url); counter tracks the
+// signature counter for clone detection.
+export const webauthnCredentials = sqliteTable(
+  'webauthn_credentials',
+  {
+    id: id(),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    credentialId: text('credential_id').notNull().unique(),
+    publicKey: text('public_key').notNull(),
+    counter: integer('counter').notNull().default(0),
+    transports: text('transports', { mode: 'json' })
+      .$type<string[]>()
+      .notNull()
+      .default(sql`'[]'`),
+    name: text('name').notNull(),
+    createdAt: ts('created_at'),
+  },
+  (t) => ({ userIdx: index('webauthn_credentials_user_idx').on(t.userId) }),
+);
+
+// Per-session rows backing refresh tokens. `jti` matches the JWT claim; a
+// revoked/expired row makes the corresponding refresh token unusable even
+// before password/tokenVersion changes.
+export const sessions = sqliteTable(
+  'sessions',
+  {
+    id: id(),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    jti: text('jti').notNull().unique(),
+    ip: text('ip'),
+    userAgent: text('user_agent'),
+    createdAt: ts('created_at'),
+    lastUsedAt: integer('last_used_at', { mode: 'timestamp' }),
+    expiresAt: integer('expires_at', { mode: 'timestamp' }).notNull(),
+    revokedAt: integer('revoked_at', { mode: 'timestamp' }),
+  },
+  (t) => ({ userIdx: index('sessions_user_idx').on(t.userId) }),
+);
+
 // ─── projects & services ──────────────────────────────────────────────────
 export const projects = sqliteTable('projects', {
   id: id(),
@@ -149,6 +193,11 @@ export const buildConfigs = sqliteTable('build_configs', {
   buildCmd: text('build_cmd'),
   startCmd: text('start_cmd'),
   dockerfilePath: text('dockerfile_path'),
+  // Container restart policy (docker --restart). 'on-failure:N' caps the
+  // restart loop; 'always'/'unless-stopped'/'no' pass through verbatim.
+  restartPolicy: text('restart_policy').notNull().default('unless-stopped'),
+  // Seconds to wait for graceful stop before SIGKILL (docker stop -t).
+  stopGraceSeconds: integer('stop_grace_seconds').notNull().default(5),
   createdAt: ts('created_at'),
   updatedAt: tsUpdatable('updated_at'),
 });
@@ -170,6 +219,9 @@ export const deployments = sqliteTable(
     author: text('author'),
     trigger: text('trigger', { enum: deploymentTrigger }).notNull().default('user'),
     logPath: text('log_path'),
+    // JSON snapshot of the effective build config + env key fingerprint at
+    // deploy start — powers the config diff against the previous deployment.
+    configSnapshot: text('config_snapshot'),
     startedAt: integer('started_at', { mode: 'timestamp' }),
     finishedAt: integer('finished_at', { mode: 'timestamp' }),
     createdAt: ts('created_at'),
@@ -186,20 +238,31 @@ export const deployments = sqliteTable(
 );
 
 // ─── env vars & secrets ───────────────────────────────────────────────────
+// scope='service' (default): per-service, serviceId set.
+// scope='project': shared across every service in a project, serviceId null,
+// scopeKey = projectId. Service-scope values win over project-scope at merge.
+export const envScope = ['service', 'project'] as const;
+
 export const envVars = sqliteTable(
   'env_vars',
   {
     id: id(),
-    serviceId: integer('service_id')
-      .notNull()
-      .references(() => services.id, { onDelete: 'cascade' }),
+    serviceId: integer('service_id').references(() => services.id, { onDelete: 'cascade' }),
+    scope: text('scope', { enum: envScope }).notNull().default('service'),
+    // Disambiguator for the unique index: serviceId for scope='service',
+    // projectId for scope='project'. Both notNull so (scope, scopeKey, key)
+    // stays truly unique across rows.
+    scopeKey: integer('scope_key').notNull().default(0),
     key: text('key').notNull(),
     valueEncrypted: text('value_encrypted').notNull(),
     isSecret: integer('is_secret', { mode: 'boolean' }).notNull().default(true),
     createdAt: ts('created_at'),
     updatedAt: tsUpdatable('updated_at'),
   },
-  (t) => ({ serviceKeyIdx: uniqueIndex('env_vars_service_key_idx').on(t.serviceId, t.key) }),
+  (t) => ({
+    serviceKeyIdx: uniqueIndex('env_vars_service_key_idx').on(t.serviceId, t.key),
+    scopeKeyIdx: uniqueIndex('env_vars_scope_key_idx').on(t.scope, t.scopeKey, t.key),
+  }),
 );
 
 // ─── git sources ──────────────────────────────────────────────────────────
@@ -231,6 +294,9 @@ export const domains = sqliteTable(
     // Custom response headers as a JSON array [{name, value}] → Traefik headers middleware.
     headers: text('headers'),
     status: text('status', { enum: domainStatus }).notNull().default('pending'),
+    // External DNS record id (e.g. Cloudflare) when the provider integration
+    // created the record — null for provider-less/manual DNS.
+    dnsRecordId: text('dns_record_id'),
     createdAt: ts('created_at'),
     updatedAt: tsUpdatable('updated_at'),
   },
@@ -537,6 +603,16 @@ export const passwordResetTokensRelations = relations(passwordResetTokens, ({ on
 
 export const usersRelations = relations(users, ({ many }) => ({
   apiTokens: many(apiTokens),
+  webauthnCredentials: many(webauthnCredentials),
+  sessions: many(sessions),
+}));
+
+export const webauthnCredentialsRelations = relations(webauthnCredentials, ({ one }) => ({
+  user: one(users, { fields: [webauthnCredentials.userId], references: [users.id] }),
+}));
+
+export const sessionsRelations = relations(sessions, ({ one }) => ({
+  user: one(users, { fields: [sessions.userId], references: [users.id] }),
 }));
 
 export const apiTokensRelations = relations(apiTokens, ({ one }) => ({
@@ -632,3 +708,5 @@ export type BackupDestination = typeof backupDestinations.$inferSelect;
 export type ScheduledJob = typeof scheduledJobs.$inferSelect;
 export type JobRun = typeof jobRuns.$inferSelect;
 export type ServerRow = typeof servers.$inferSelect;
+export type WebauthnCredential = typeof webauthnCredentials.$inferSelect;
+export type SessionRow = typeof sessions.$inferSelect;

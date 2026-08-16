@@ -22,6 +22,125 @@ const proxyMocks = vi.hoisted(() => ({
 }));
 vi.mock('../src/engine/proxy.js', () => proxyMocks);
 
+const cfMocks = vi.hoisted(() => ({
+  getDnsRecordsConfig: vi.fn(async () => ({ enabled: false, token: null, content: null })),
+  createDnsRecord: vi.fn(async () => 'rec-1'),
+  deleteDnsRecord: vi.fn(async () => undefined),
+  detectPublicIp: vi.fn(async () => '203.0.113.5'),
+}));
+vi.mock('../src/lib/cloudflare.js', () => cfMocks);
+
+describe('domains routes (Cloudflare integration)', () => {
+  const createPayload = { hostname: 'app.example.com', path: '/', ssl: true };
+
+  it('creates the DNS record when the integration is enabled', async () => {
+    cfMocks.getDnsRecordsConfig.mockResolvedValueOnce({ enabled: true, token: 'tok', content: null });
+    const db = createFakeDb({
+      findFirst: { services: svcRow() },
+      insert: { domains: [domainRow({ hostname: 'app.example.com' })] },
+      update: { domains: [domainRow({ dnsRecordId: 'rec-1' })] },
+    });
+    const app = await buildTestApp({ db });
+    await app.register(domainsRoutes);
+    const res = await app.inject({ method: 'POST', url: '/1/domains', headers: asUser(), payload: createPayload });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().dnsRecordId).toBe('rec-1');
+    expect(res.json().dnsWarning).toBeNull();
+    expect(cfMocks.detectPublicIp).toHaveBeenCalled();
+    expect(cfMocks.createDnsRecord).toHaveBeenCalledWith('tok', 'app.example.com', '203.0.113.5');
+  });
+
+  it('uses the configured record content directly', async () => {
+    cfMocks.getDnsRecordsConfig.mockResolvedValueOnce({ enabled: true, token: 'tok', content: ' cname.example.net ' });
+    const db = createFakeDb({
+      findFirst: { services: svcRow() },
+      insert: { domains: [domainRow()] },
+    });
+    const app = await buildTestApp({ db });
+    await app.register(domainsRoutes);
+    const res = await app.inject({ method: 'POST', url: '/1/domains', headers: asUser(), payload: createPayload });
+    expect(res.statusCode).toBe(200);
+    expect(cfMocks.createDnsRecord).toHaveBeenCalledWith('tok', 'app.example.com', ' cname.example.net ');
+  });
+
+  it('auto-detects the public IP when content is set but empty', async () => {
+    cfMocks.getDnsRecordsConfig.mockResolvedValueOnce({ enabled: true, token: 'tok', content: '' });
+    const db = createFakeDb({
+      findFirst: { services: svcRow() },
+      insert: { domains: [domainRow()] },
+    });
+    const app = await buildTestApp({ db });
+    await app.register(domainsRoutes);
+    const res = await app.inject({ method: 'POST', url: '/1/domains', headers: asUser(), payload: createPayload });
+    expect(res.statusCode).toBe(200);
+    expect(cfMocks.detectPublicIp).toHaveBeenCalled();
+    expect(cfMocks.createDnsRecord).toHaveBeenCalledWith('tok', 'app.example.com', '203.0.113.5');
+  });
+
+  it('skips record deletion when the integration is disabled', async () => {
+    // Default cfMocks state: enabled false.
+    const db = createFakeDb({ findFirst: { domains: domainRow({ dnsRecordId: 'rec-7' }) } });
+    const app = await buildTestApp({ db });
+    await app.register(domainsRoutes);
+    const res = await app.inject({ method: 'DELETE', url: '/1/domains/1', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    expect(cfMocks.deleteDnsRecord).not.toHaveBeenCalled();
+  });
+
+  it('surfaces provider failures as a warning without failing the request', async () => {
+    cfMocks.getDnsRecordsConfig.mockResolvedValueOnce({ enabled: true, token: 'tok', content: '1.2.3.4' });
+    cfMocks.createDnsRecord.mockRejectedValueOnce(new Error('zone missing'));
+    const db = createFakeDb({
+      findFirst: { services: svcRow() },
+      insert: { domains: [domainRow()] },
+    });
+    const app = await buildTestApp({ db });
+    await app.register(domainsRoutes);
+    const res = await app.inject({ method: 'POST', url: '/1/domains', headers: asUser(), payload: createPayload });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().dnsWarning).toBe('zone missing');
+    expect(res.json().dnsRecordId).toBeNull();
+  });
+
+  it('stringifies non-Error provider rejections', async () => {
+    cfMocks.getDnsRecordsConfig.mockResolvedValueOnce({ enabled: true, token: 'tok', content: '1.2.3.4' });
+    cfMocks.createDnsRecord.mockRejectedValueOnce('plain failure');
+    const db = createFakeDb({
+      findFirst: { services: svcRow() },
+      insert: { domains: [domainRow()] },
+    });
+    const app = await buildTestApp({ db });
+    await app.register(domainsRoutes);
+    const res = await app.inject({ method: 'POST', url: '/1/domains', headers: asUser(), payload: createPayload });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().dnsWarning).toBe('plain failure');
+  });
+
+  it('deletes the DNS record alongside the domain', async () => {
+    cfMocks.getDnsRecordsConfig.mockResolvedValueOnce({ enabled: true, token: 'tok', content: null });
+    const db = createFakeDb({
+      findFirst: { domains: domainRow({ dnsRecordId: 'rec-9', hostname: 'app.example.com' }) },
+    });
+    const app = await buildTestApp({ db });
+    await app.register(domainsRoutes);
+    const res = await app.inject({ method: 'DELETE', url: '/1/domains/1', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    expect(cfMocks.deleteDnsRecord).toHaveBeenCalledWith('tok', 'app.example.com', 'rec-9');
+  });
+
+  it('tolerates provider failures on delete', async () => {
+    cfMocks.getDnsRecordsConfig.mockResolvedValueOnce({ enabled: true, token: 'tok', content: null });
+    cfMocks.deleteDnsRecord.mockRejectedValueOnce(new Error('api down'));
+    const db = createFakeDb({
+      findFirst: { domains: domainRow({ dnsRecordId: 'rec-9' }) },
+    });
+    const app = await buildTestApp({ db });
+    await app.register(domainsRoutes);
+    const res = await app.inject({ method: 'DELETE', url: '/1/domains/1', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+  });
+});
+
 describe('domains routes', () => {
   it('lists domains for a service', async () => {
     const app = await buildTestApp({

@@ -103,6 +103,37 @@ const OPS: Record<string, { exe: 'docker' | 'git'; build: Op }> = {
       return argv;
     },
   },
+  // ── user-defined network management (typed, same validation model) ──────
+  'docker.networkCreate': {
+    exe: 'docker',
+    build: (p) => {
+      const argv = ['network', 'create'];
+      const driver = str(p, 'driver');
+      if (driver !== undefined) argv.push('--driver', driver === 'bridge' || driver === 'overlay' ? driver : 'bridge');
+      argv.push(validated(str(p, 'name'), RE_NAME, 'network name'));
+      return argv;
+    },
+  },
+  'docker.networkRm': {
+    exe: 'docker',
+    build: (p) => ['network', 'rm', validated(str(p, 'name'), RE_NAME, 'network name')],
+  },
+  'docker.networkConnect': {
+    exe: 'docker',
+    build: (p) => [
+      'network', 'connect',
+      validated(str(p, 'network'), RE_NAME, 'network name'),
+      validated(str(p, 'container'), RE_NAME, 'container name'),
+    ],
+  },
+  'docker.networkDisconnect': {
+    exe: 'docker',
+    build: (p) => [
+      'network', 'disconnect',
+      validated(str(p, 'network'), RE_NAME, 'network name'),
+      validated(str(p, 'container'), RE_NAME, 'container name'),
+    ],
+  },
   'docker.composeUp': {
     exe: 'docker',
     build: (p) => ['compose', '-p', validated(str(p, 'project'), RE_NAME, 'project'), '-f', validated(str(p, 'file'), RE_PATH, 'compose file'), 'up', '-d', '--build', '--remove-orphans'],

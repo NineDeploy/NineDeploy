@@ -3,7 +3,8 @@ import {
   activityList, alertsCreate, alertsList, alertsRemove,
   backupsCreate, backupsList, backupsRestore,
   deploysWatch, domainsAdd, domainsList, domainsRemove,
-  envList, envRemove, envSet, systemExport, systemImport,
+  envList, envRemove, envSet, networksCreate, networksList, networksRemove,
+  sessionsList, sessionsRevoke, systemExport, systemImport,
   usersList, usersResetLink, volumesList, volumesRemove,
 } from '../src/commands/manage.js';
 
@@ -138,6 +139,106 @@ describe('volumes commands', () => {
     const client = { volumes: { remove: vi.fn() } };
     await volumesRemove(client as never, 'nd-data');
     expect(client.volumes.remove).not.toHaveBeenCalled();
+  });
+});
+
+describe('networks commands', () => {
+  it('lists networks with members', async () => {
+    const client = { networks: { list: vi.fn().mockResolvedValue({
+      networks: [{ name: 'net-a', driver: 'bridge', members: ['c-1', 'c-2'] }],
+      remote: null,
+    }) } };
+    await networksList(client as never);
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('net-a'));
+  });
+
+  it('creates a network', async () => {
+    const client = { networks: { create: vi.fn().mockResolvedValue({ ok: true }) } };
+    await networksCreate(client as never, 'net-b', 'overlay');
+    expect(client.networks.create).toHaveBeenCalledWith({ name: 'net-b', driver: 'overlay' });
+  });
+
+  it('removes a network after typing the name', async () => {
+    h.prompt.mockResolvedValue('net-b');
+    const client = { networks: { remove: vi.fn().mockResolvedValue({ ok: true }) } };
+    await networksRemove(client as never, 'net-b');
+    expect(client.networks.remove).toHaveBeenCalledWith('net-b');
+  });
+
+  it('renders empty members and sparse session rows', async () => {
+    const client = {
+      networks: { list: vi.fn().mockResolvedValue({
+        networks: [{ name: 'lonely', driver: 'bridge', members: [] }],
+        remote: null,
+      }) },
+      auth: { sessions: { list: vi.fn().mockResolvedValue([
+        { id: 2, current: false, ip: null, lastUsedAt: null, createdAt: '2026-02-02T00:00:00Z', userAgent: null },
+      ]) } },
+    };
+    await networksList(client as never);
+    await sessionsList(client as never);
+  });
+
+  it('prints a hint for an empty network listing', async () => {
+    const client = { networks: { list: vi.fn().mockResolvedValue({ networks: [], remote: null }) } };
+    await networksList(client as never);
+  });
+
+  it('prints a hint for empty session listings', async () => {
+    const client = { auth: { sessions: { list: vi.fn().mockResolvedValue([]) } } };
+    await sessionsList(client as never);
+  });
+
+  it('fails gracefully when network operations reject', async () => {
+    const client = {
+      networks: {
+        create: vi.fn().mockRejectedValue(new Error('driver unavailable')),
+        remove: vi.fn().mockRejectedValue(new Error('in use')),
+      },
+    };
+    await networksCreate(client as never, 'net-z', 'bridge');
+    h.prompt.mockResolvedValue('net-z');
+    await networksRemove(client as never, 'net-z');
+  });
+
+  it('fails gracefully when session revocation rejects', async () => {
+    const client = { auth: { sessions: { revoke: vi.fn().mockRejectedValue(new Error('gone')) } } };
+    await sessionsRevoke(client as never, '12');
+  });
+
+  it('prints usage when removing a network without a name', async () => {
+    const client = { networks: { remove: vi.fn() } };
+    await networksRemove(client as never, '');
+    expect(client.networks.remove).not.toHaveBeenCalled();
+  });
+
+  it('prints usage for a bogus session id', async () => {
+    const client = { auth: { sessions: { revoke: vi.fn() } } };
+    await sessionsRevoke(client as never, 'abc');
+    expect(client.auth.sessions.revoke).not.toHaveBeenCalled();
+  });
+
+  it('cancels network removal on a mismatch', async () => {
+    h.prompt.mockResolvedValue('nope');
+    const client = { networks: { remove: vi.fn() } };
+    await networksRemove(client as never, 'net-b');
+    expect(client.networks.remove).not.toHaveBeenCalled();
+  });
+});
+
+describe('sessions commands', () => {
+  it('lists active sessions', async () => {
+    const client = { auth: { sessions: { list: vi.fn().mockResolvedValue([
+      { id: 1, current: true, ip: '10.0.0.1', lastUsedAt: '2026-01-01T00:00:00Z', userAgent: 'cli' },
+    ]) } } };
+    await sessionsList(client as never);
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('10.0.0.1'));
+  });
+
+  it('revokes a session by id', async () => {
+    const client = { auth: { sessions: { revoke: vi.fn().mockResolvedValue({ ok: true }) } } };
+    await sessionsRevoke(client as never, '7');
+    expect(client.auth.sessions.revoke).toHaveBeenCalledWith(7);
   });
 });
 
@@ -458,7 +559,7 @@ describe('users & activity', () => {
 
   it('lists activity capped at 30 rows', async () => {
     const rows = Array.from({ length: 40 }, (_, i) => ({ id: i, userId: 1, action: 'deploy.completed', entity: i === 0 ? null : 'web', ts: '2026-01-01T00:00:00Z' }));
-    const client = { activity: { list: vi.fn().mockResolvedValue(rows) } };
+    const client = { activity: { list: vi.fn().mockResolvedValue({ entries: rows, nextCursor: null }) } };
     await activityList(client as never);
     expect(client.activity.list).toHaveBeenCalled();
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('deploy.completed'));

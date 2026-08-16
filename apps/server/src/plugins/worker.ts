@@ -1,5 +1,5 @@
 import { and, asc, eq, notInArray } from 'drizzle-orm';
-import { deployments } from '@ninedeploy/db';
+import { deployments, services } from '@ninedeploy/db';
 import fp from 'fastify-plugin';
 import { config } from '../config.js';
 import { runDeployment } from '../engine/pipeline.js';
@@ -45,19 +45,39 @@ export default fp(
       fastify.log.warn({ err }, 'could not sweep stale building deployments');
     }
 
-    /** The oldest queued deployment of a service with nothing in `building`. */
+    /** The oldest queued deployment of a service with nothing in `building`,
+     * whose SERVER partition still has a free concurrency slot. Deploys are
+     * partitioned by the service's target server (null = this host): each
+     * partition independently gets `deployConcurrency` build slots, so a long
+     * build on a remote server never starves local deployments. */
     const nextClaimable = async (): Promise<{ id: number } | undefined> => {
-      const building = fastify.db
+      const buildingServices = fastify.db
         .select({ serviceId: deployments.serviceId })
         .from(deployments)
         .where(eq(deployments.status, 'building'));
-      const [row] = await fastify.db
-        .select({ id: deployments.id })
+      // Build counts per partition (serverId; null → 0 = local).
+      const buildingRows = await fastify.db
+        .select({ serverId: services.serverId })
         .from(deployments)
-        .where(and(eq(deployments.status, 'queued'), notInArray(deployments.serviceId, building)))
-        .orderBy(asc(deployments.createdAt))
-        .limit(1);
-      return row;
+        .innerJoin(services, eq(services.id, deployments.serviceId))
+        .where(eq(deployments.status, 'building'));
+      const perPartition = new Map<string, number>();
+      for (const r of buildingRows) {
+        const key = String(r.serverId ?? 0);
+        perPartition.set(key, (perPartition.get(key) ?? 0) + 1);
+      }
+      // Candidate queue, oldest first.
+      const queued = await fastify.db
+        .select({ id: deployments.id, serverId: services.serverId })
+        .from(deployments)
+        .innerJoin(services, eq(services.id, deployments.serviceId))
+        .where(and(eq(deployments.status, 'queued'), notInArray(deployments.serviceId, buildingServices)))
+        .orderBy(asc(deployments.createdAt));
+      for (const row of queued) {
+        const key = String(row.serverId ?? 0);
+        if ((perPartition.get(key) ?? 0) < config.deployConcurrency) return { id: row.id };
+      }
+      return undefined;
     };
 
     const tick = async () => {

@@ -18,6 +18,7 @@ describe('jwt', () => {
   it('signs and verifies an access token', async () => {
     const token = await signAccessToken(42);
     const payload = await verifyJwt(token);
+    expect(payload.jti).toBeUndefined();
     expect(payload.sub).toBe('42');
     expect(payload.type).toBe('access');
   });
@@ -27,6 +28,11 @@ describe('jwt', () => {
     const payload = await verifyJwt(token);
     expect(payload.sub).toBe('7');
     expect(payload.type).toBe('refresh');
+    // Session-carrying variants include both the version and the jti.
+    const sessionToken = await signRefreshToken(7, 3, 'jti-x');
+    expect(await verifyJwt(sessionToken)).toMatchObject({ ver: 3, jti: 'jti-x' });
+    const access = await signAccessToken(7, 3, 'jti-x');
+    expect(await verifyJwt(access)).toMatchObject({ ver: 3, jti: 'jti-x' });
   });
 
   it('rejects an expired token', async () => {

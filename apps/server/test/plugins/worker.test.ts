@@ -41,22 +41,28 @@ function makeDb(opts: {
   claimResult?: unknown;
 }) {
   const updates: RecordedUpdate[] = [];
-  // The claim query runs a notInArray subquery through db.select too; both
-  // paths share this builder and only the outer limit() resolves rows. Only
-  // outer calls (cols = { id }) are counted by `outerSelect`.
+  // The claim query runs notInArray subqueries and per-partition joins
+  // through db.select too; all paths share this builder. Only outer calls
+  // (cols = { id }) are counted by `outerSelect`; both query shapes are
+  // awaitable (thenable) like drizzle builders.
   const outerSelect = vi.fn();
   const select = vi.fn((cols: unknown) => {
     const isOuter = cols !== undefined && 'id' in (cols as Record<string, unknown>);
     if (isOuter) outerSelect();
-    return {
-      from: vi.fn(() => ({
-        where: vi.fn(() => ({
-          orderBy: vi.fn(() => ({
-            limit: vi.fn(opts.selectImpl ?? (async () => opts.queued)),
-          })),
-        })),
-      })),
+    const rows = isOuter ? opts.queued : (opts.building ?? []);
+    const self: Record<string, unknown> = {
+      // biome-ignore lint/suspicious/noThenProperty: intentional thenable — mirrors drizzle query builders.
+      then: (ok: (v: unknown) => unknown, rej?: (e: unknown) => unknown) =>
+        // Outer (candidate) queries resolve via selectImpl so tests can
+        // simulate per-call results and failures; inner queries resolve rows.
+        (isOuter && opts.selectImpl ? Promise.resolve().then(opts.selectImpl) : Promise.resolve(rows)).then(ok, rej),
     };
+    self.from = vi.fn(() => self);
+    self.innerJoin = vi.fn(() => self);
+    self.where = vi.fn(() => self);
+    self.orderBy = vi.fn(() => self);
+    self.limit = vi.fn(opts.selectImpl ?? (async () => rows));
+    return self;
   });
   const update = vi.fn((table: unknown) => ({
     set: (values: Record<string, unknown>) => ({
@@ -121,6 +127,54 @@ describe('worker plugin', () => {
       { err: expect.objectContaining({ message: 'db locked' }) },
       'could not sweep stale building deployments',
     );
+    await app.close();
+  });
+
+  it('counts local builds in the null-server partition', async () => {
+    vi.useFakeTimers();
+    const { db, updates } = makeDb({
+      queued: [],
+      building: [{ serverId: null }],
+    });
+    const app = await buildApp(db);
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    expect(updates.find((u) => u.status === 'building')).toBeUndefined();
+    await app.close();
+  });
+
+  it('partitions concurrency by target server', async () => {
+    vi.useFakeTimers();
+    // Partition "1" already runs its full budget (1 building row on serverId 1);
+    // the local partition (0) still has room, so its queued row is claimed.
+    const { db, updates } = makeDb({
+      queued: [{ id: 5, serverId: null }],
+      building: [{ serverId: 1 }],
+    });
+    pipelineMock.runDeployment.mockResolvedValue(undefined);
+
+    const app = await buildApp(db);
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+
+    const claim = updates.find((u) => u.status === 'building');
+    expect(claim).toBeDefined();
+    expect(pipelineMock.runDeployment).toHaveBeenCalledWith(db, 5);
+    await app.close();
+  });
+
+  it('starves a partition that exhausted its slots', async () => {
+    vi.useFakeTimers();
+    // Server 1 is at capacity AND the only candidate lives on server 1.
+    const { db, updates } = makeDb({
+      queued: [{ id: 5, serverId: 1 }],
+      building: [{ serverId: 1 }],
+    });
+    pipelineMock.runDeployment.mockResolvedValue(undefined);
+
+    const app = await buildApp(db);
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+
+    expect(updates.find((u) => u.status === 'building')).toBeUndefined();
+    expect(pipelineMock.runDeployment).not.toHaveBeenCalled();
     await app.close();
   });
 

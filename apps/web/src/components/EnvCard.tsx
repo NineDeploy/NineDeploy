@@ -4,12 +4,17 @@ import { KeyRound, Lock, Plus, Save, Trash2 } from 'lucide-react';
 import { api } from '../lib/api.js';
 import { Button, Card, CardBody, Input, Skeleton, cn } from './ui.js';
 
+// Vault reference examples (escaped so linters don't read them as template placeholders).
+const REF_INFISICAL = '\u0024\u007B\u007Binfisical:KEY\u007D\u007D';
+const REF_DOPPLER = '\u0024\u007B\u007Bdoppler:KEY\u007D\u007D';
+
 export function EnvCard({ serviceId }: { serviceId: number }) {
   const qc = useQueryClient();
   const [key, setKey] = useState('');
   const [value, setValue] = useState('');
   const [secret, setSecret] = useState(false);
   const [drafts, setDrafts] = useState<Record<number, string>>({});
+  const [filter, setFilter] = useState('');
 
   const env = useQuery({ queryKey: ['env', serviceId], queryFn: () => api.env.list(serviceId) });
   const invalidate = () => qc.invalidateQueries({ queryKey: ['env', serviceId] });
@@ -29,9 +34,24 @@ export function EnvCard({ serviceId }: { serviceId: number }) {
   return (
     <Card>
       <CardBody>
-        <div className="mb-3 flex items-center gap-2 text-sm font-medium text-slate-300">
-          <KeyRound size={15} className="text-slate-500" /> Environment
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 text-sm font-medium text-slate-300">
+            <KeyRound size={15} className="text-slate-500" /> Environment
+          </div>
+          {(env.data?.length ?? 0) > 5 && (
+            <Input
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              placeholder="Filter keys…"
+              className="h-7 w-40 text-xs"
+            />
+          )}
         </div>
+        <p className="mb-2 text-[11px] text-slate-600">
+          Values may reference an external secret store and are resolved at deploy time:{' '}
+          <code className="rounded bg-white/5 px-1 font-mono text-[10px] text-slate-500">{REF_INFISICAL}</code>{' '}
+          / <code className="rounded bg-white/5 px-1 font-mono text-[10px] text-slate-500">{REF_DOPPLER}</code>
+        </p>
 
         <form onSubmit={onAdd} className="space-y-2">
           <div className="flex gap-2">
@@ -59,7 +79,9 @@ export function EnvCard({ serviceId }: { serviceId: number }) {
           ) : !env.data || env.data.length === 0 ? (
             <p className="py-2 text-xs text-slate-600">No environment variables.</p>
           ) : (
-            env.data.map((v) => {
+            env.data
+              .filter((v) => !filter || v.key.toLowerCase().includes(filter.toLowerCase()))
+              .map((v) => {
               const draft = drafts[v.id] ?? v.value;
               const dirty = draft !== v.value && draft !== '';
               return (

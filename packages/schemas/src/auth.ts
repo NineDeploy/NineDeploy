@@ -114,3 +114,36 @@ export const createdApiToken = z.object({
   createdAt: z.string().datetime(),
 });
 export type CreatedApiToken = z.infer<typeof createdApiToken>;
+
+// ── passkeys (WebAuthn) ────────────────────────────────────────────────────
+/** Registration verification: label for the new credential + the browser's response payload. */
+export const passkeyRegisterVerify = z.object({
+  name: z.string().min(1).max(100),
+  response: z.record(z.string(), z.unknown()),
+});
+export type PasskeyRegisterVerify = z.infer<typeof passkeyRegisterVerify>;
+
+/** Login verification: just the browser's authentication response (discoverable credentials). */
+export const passkeyLoginVerify = z.object({
+  response: z.record(z.string(), z.unknown()),
+});
+export type PasskeyLoginVerify = z.infer<typeof passkeyLoginVerify>;
+
+export const passkeyCredential = z.object({
+  id: z.number().int(),
+  name: z.string(),
+  createdAt: z.string().datetime(),
+});
+export type PasskeyCredential = z.infer<typeof passkeyCredential>;
+
+// ── sessions (refresh-token backing store) ─────────────────────────────────
+export const activeSession = z.object({
+  id: z.number().int(),
+  ip: z.string().nullable(),
+  userAgent: z.string().nullable(),
+  createdAt: z.string().datetime(),
+  lastUsedAt: z.string().datetime().nullable(),
+  current: z.boolean(),
+});
+export type ActiveSession = z.infer<typeof activeSession>;
+

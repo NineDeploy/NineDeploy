@@ -11,6 +11,7 @@ import { logBus } from './logs.js';
 import { pm2Builder } from './builders/pm2.js';
 import { writeDynamicConfig } from './proxy.js';
 import { sleep } from '../lib/exec.js';
+import { resolveVaultRefs } from '../lib/vault.js';
 import { agentOp } from '../lib/agentClient.js';
 import type { BuildContext, Builder, DeployRuntime } from './types.js';
 
@@ -32,18 +33,31 @@ async function isCancelled(db: DB, deploymentId: number): Promise<boolean> {
   return row?.status === 'cancelled';
 }
 
-/** Collect runtime env vars: stored env vars + connection strings from attached databases. */
-async function loadRuntimeEnv(db: DB, serviceId: number): Promise<Record<string, string>> {
+/** Collect runtime env vars: shared project env ← service env ← attached-database
+ * connection strings (later wins), then resolve `${{provider:KEY}}` vault refs. */
+async function loadRuntimeEnv(db: DB, service: typeof services.$inferSelect): Promise<Record<string, string>> {
   const env: Record<string, string> = {};
-  const rows = await db.query.envVars.findMany({ where: eq(envVars.serviceId, serviceId) });
+
+  // Project-scope shared env (lowest precedence).
+  if (service.projectId != null) {
+    const shared = await db.query.envVars.findMany({
+      where: and(eq(envVars.scope, 'project'), eq(envVars.scopeKey, service.projectId)),
+    });
+    for (const r of shared) env[r.key] = decrypt(r.valueEncrypted);
+  }
+
+  // Service-scope env overrides shared values.
+  const rows = await db.query.envVars.findMany({ where: eq(envVars.serviceId, service.id) });
   for (const r of rows) env[r.key] = decrypt(r.valueEncrypted);
 
-  const attaches = await db.query.databaseAttachments.findMany({ where: eq(databaseAttachments.serviceId, serviceId) });
+  const attaches = await db.query.databaseAttachments.findMany({ where: eq(databaseAttachments.serviceId, service.id) });
   for (const a of attaches) {
     const d = await db.query.databases.findFirst({ where: eq(databases.id, a.databaseId) });
     if (d && d.status === 'running') env[a.envAlias] = connectionString(d);
   }
-  return env;
+
+  // Vault references resolve last, from the fully-merged map.
+  return resolveVaultRefs(db, env);
 }
 
 /**
@@ -89,6 +103,33 @@ async function safeFail(db: DB, deploymentId: number, serviceId: number, runtime
   }
 }
 
+/**
+ * Snapshot the effective build config + env key fingerprint for this deploy —
+ * stored on the deployment row and diffed against the previous deployment to
+ * answer "what changed between these two deploys?". Values are never included
+ * (secrets); only key names + flags.
+ */
+async function snapshotConfig(
+  db: DB,
+  service: typeof services.$inferSelect,
+  buildConfig: typeof buildConfigs.$inferSelect | undefined,
+): Promise<string> {
+  const envRows = await db.query.envVars.findMany({ where: eq(envVars.serviceId, service.id) });
+  return JSON.stringify({
+    buildPack: buildConfig?.buildPack ?? 'auto',
+    baseDir: buildConfig?.baseDir ?? '/',
+    installCmd: buildConfig?.installCmd ?? null,
+    buildCmd: buildConfig?.buildCmd ?? null,
+    startCmd: buildConfig?.startCmd ?? null,
+    dockerfilePath: buildConfig?.dockerfilePath ?? null,
+    restartPolicy: buildConfig?.restartPolicy ?? 'unless-stopped',
+    stopGraceSeconds: buildConfig?.stopGraceSeconds ?? 5,
+    image: service.image ?? null,
+    port: service.port ?? null,
+    envKeys: envRows.map((r) => `${r.key}${r.isSecret ? '*' : ''}`).sort(),
+  });
+}
+
 /** Run the full deploy pipeline for one deployment row. */
 export async function runDeployment(db: DB, deploymentId: number): Promise<void> {
   const dep = await db.query.deployments.findFirst({ where: eq(deployments.id, deploymentId) });
@@ -96,9 +137,13 @@ export async function runDeployment(db: DB, deploymentId: number): Promise<void>
   const service = await db.query.services.findFirst({ where: eq(services.id, dep.serviceId) });
   if (!service) return;
   const buildConfig = await db.query.buildConfigs.findFirst({ where: eq(buildConfigs.serviceId, service.id) });
+  const configSnapshot = await snapshotConfig(db, service, buildConfig);
 
   const log = (line: string) => logBus.publish(deploymentId, line);
-  await db.update(deployments).set({ status: 'building', startedAt: new Date() }).where(eq(deployments.id, deploymentId));
+  await db
+    .update(deployments)
+    .set({ status: 'building', startedAt: new Date(), configSnapshot })
+    .where(eq(deployments.id, deploymentId));
   await db.update(services).set({ status: 'deploying' }).where(eq(services.id, service.id));
   log(`▶ Deployment #${deploymentId} for "${service.name}" (${service.type})`);
 
@@ -156,7 +201,7 @@ export async function runDeployment(db: DB, deploymentId: number): Promise<void>
       commitSha: sha,
       // For image rollback, pin the exact image by its stored digest.
       imageDigest: dep.imageDigest ?? undefined,
-      env: await loadRuntimeEnv(db, service.id),
+      env: await loadRuntimeEnv(db, service),
       // Registry-type sources provide private-image credentials.
       registryAuth: await loadRegistryAuth(db, service),
       // Remote deploys: route builder operations through the typed agent.
@@ -275,7 +320,9 @@ export async function runDeployment(db: DB, deploymentId: number): Promise<void>
       // retiring the old container — otherwise its reload latency could 502
       // requests still routed to the previous version.
       await sleep(2000);
-      await builder.stop(previous.runtimeId).catch((err) => log(`finalize warning (previous stop): ${msg(err)}`));
+      await builder
+        .stop(previous.runtimeId, { graceSeconds: buildConfig?.stopGraceSeconds })
+        .catch((err) => log(`finalize warning (previous stop): ${msg(err)}`));
     } else {
       log('↩ finalize skipped: routing did not flip, the previous container stays live');
     }

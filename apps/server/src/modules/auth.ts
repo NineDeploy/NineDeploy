@@ -1,30 +1,22 @@
 import { and, count, eq, sql } from 'drizzle-orm';
 import type { FastifyPluginAsync } from 'fastify';
-import { apiTokens, type DB, users, type User } from '@ninedeploy/db';
-import type { PublicUser, Register, TokenPair } from '@ninedeploy/schemas';
-import { forgotPassword, login, passwordChange, passwordResetWithToken, refresh, register, twoFactorCode, twoFactorDisable } from '@ninedeploy/schemas';
+import { apiTokens, type DB, sessions as sessionsTable, users, webauthnCredentials, type User } from '@ninedeploy/db';
+import type { PublicUser, Register } from '@ninedeploy/schemas';
+import { forgotPassword, login, passkeyLoginVerify, passkeyRegisterVerify, passwordChange, passwordResetWithToken, refresh, register, twoFactorCode, twoFactorDisable } from '@ninedeploy/schemas';
 import { config } from '../config.js';
 import { decrypt, encrypt, hashPassword, randomToken, sha256, verifyPassword } from '../lib/crypto.js';
 import { badRequest, conflict, forbidden, unauthorized } from '../lib/errors.js';
-import { signAccessToken, signRefreshToken, ttlSeconds, verifyJwt, type AppJwtPayload } from '../lib/jwt.js';
+import { verifyJwt, type AppJwtPayload } from '../lib/jwt.js';
 import { isLocked, recordFailure, recordSuccess } from '../lib/loginLockout.js';
 import { consumeResetToken, issueResetToken } from '../lib/passwordReset.js';
 import { sendSystemEmail } from '../lib/notifier.js';
 import { generateSecret, otpauthUri, verifyTotp } from '../lib/totp.js';
 import { audit } from '../lib/audit.js';
 import { getSetting } from '../lib/settings.js';
+import { findLiveSession, issueSessionTokens, refreshSessionTokens, revokeAllSessions } from '../lib/sessions.js';
+import { beginAuthentication, beginRegistration, finishAuthentication, finishRegistration } from '../lib/webauthn.js';
 
 const toUser = (u: User): PublicUser => ({ id: u.id, email: u.email, name: u.name, role: u.role });
-
-async function issueTokens(user: User): Promise<TokenPair> {
-  // Bake the user's tokenVersion into the JWT so a later bump (logout / role
-  // change / password change) invalidates these tokens.
-  const [accessToken, refreshToken] = await Promise.all([
-    signAccessToken(user.id, user.tokenVersion),
-    signRefreshToken(user.id, user.tokenVersion),
-  ]);
-  return { accessToken, refreshToken, expiresIn: ttlSeconds(config.jwt.accessTtl) };
-}
 
 /** Count existing users (used to decide first-user-is-admin). */
 async function userCount(db: Pick<DB, 'select'>): Promise<number> {
@@ -46,7 +38,7 @@ export async function createFirstAdmin(db: DB, input: Register) {
       .values({ email: input.email, passwordHash, name: input.name ?? null, role: 'admin' })
       .returning();
     if (!user) throw badRequest('Could not create user');
-    return { user: toUser(user), tokens: await issueTokens(user) };
+    return { user: toUser(user), tokens: await issueSessionTokens(tx, user) };
   });
 }
 
@@ -67,7 +59,7 @@ export async function registerAccount(db: DB, input: Register) {
       throw badRequest('Email is already registered', 'email_taken');
     }
     if (!user) throw badRequest('Could not create user');
-    return { user: toUser(user), tokens: await issueTokens(user) };
+    return { user: toUser(user), tokens: await issueSessionTokens(tx, user) };
   });
 }
 
@@ -118,7 +110,141 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       }
     }
     recordSuccess(input.email);
-    return { user: toUser(user), tokens: await issueTokens(user) };
+    void audit(app.db, user.id, 'auth.login', user.email, undefined, { ip: req.ip, userAgent: req.headers['user-agent'] });
+    return {
+      user: toUser(user),
+      tokens: await issueSessionTokens(app.db, user, {
+        ip: req.ip,
+        userAgent: req.headers['user-agent'],
+      }),
+    };
+  });
+
+  // ── Passkeys (WebAuthn) ──────────────────────────────────────────────────
+  // Registration ceremony: options (challenge) → browser prompt → verify.
+  app.post('/passkey/register/options', { onRequest: [app.authenticate], config: { rateLimit: AUTH_LIMIT } }, async (req) => {
+    const user = await app.db.query.users.findFirst({ where: eq(users.id, req.user!.id) });
+    if (!user) throw unauthorized();
+    const existing = await app.db
+      .select({ credentialId: webauthnCredentials.credentialId, transports: webauthnCredentials.transports })
+      .from(webauthnCredentials)
+      .where(eq(webauthnCredentials.userId, user.id));
+    return { options: await beginRegistration(user, existing) };
+  });
+
+  app.post('/passkey/register/verify', { onRequest: [app.authenticate], config: { rateLimit: AUTH_LIMIT } }, async (req) => {
+    const input = passkeyRegisterVerify.parse(req.body);
+    const user = await app.db.query.users.findFirst({ where: eq(users.id, req.user!.id) });
+    if (!user) throw unauthorized();
+    const existing = await app.db
+      .select({ credentialId: webauthnCredentials.credentialId })
+      .from(webauthnCredentials)
+      .where(eq(webauthnCredentials.userId, user.id));
+    let stored: { credentialId: string; publicKey: string; counter: number; transports: string[] };
+    try {
+      stored = await finishRegistration(user, existing, input.response);
+    } catch (err) {
+      throw badRequest(err instanceof Error ? err.message : 'Passkey verification failed');
+    }
+    const [row] = await app.db
+      .insert(webauthnCredentials)
+      .values({ userId: user.id, ...stored, name: input.name })
+      .returning();
+    if (!row) throw badRequest('Could not store passkey');
+    void audit(app.db, user.id, 'auth.passkey_added', user.email, { name: input.name });
+    return { id: row.id, name: row.name, createdAt: row.createdAt.toISOString() };
+  });
+
+  app.get('/passkey', { onRequest: [app.authenticate] }, async (req) => {
+    const rows = await app.db
+      .select({ id: webauthnCredentials.id, name: webauthnCredentials.name, createdAt: webauthnCredentials.createdAt })
+      .from(webauthnCredentials)
+      .where(eq(webauthnCredentials.userId, req.user!.id));
+    return rows.map((r) => ({ id: r.id, name: r.name, createdAt: r.createdAt.toISOString() }));
+  });
+
+  app.delete('/passkey/:id', { onRequest: [app.authenticate] }, async (req) => {
+    const id = Number((req.params as { id: string }).id);
+    await app.db
+      .delete(webauthnCredentials)
+      .where(and(eq(webauthnCredentials.id, id), eq(webauthnCredentials.userId, req.user!.id)));
+    void audit(app.db, req.user!.id, 'auth.passkey_removed', undefined, { id });
+    return { ok: true };
+  });
+
+  // Authentication ceremony (public — the credential IS the proof of identity;
+  // discoverable credentials let the user pick an account in the browser prompt).
+  app.post('/passkey/login/options', { config: { rateLimit: AUTH_LIMIT } }, async () => {
+    const credentials = await app.db
+      .select({ credentialId: webauthnCredentials.credentialId, transports: webauthnCredentials.transports })
+      .from(webauthnCredentials);
+    return { options: await beginAuthentication(credentials) };
+  });
+
+  app.post('/passkey/login/verify', { config: { rateLimit: AUTH_LIMIT } }, async (req) => {
+    const input = passkeyLoginVerify.parse(req.body);
+    const id = String((input.response as { id?: unknown }).id ?? '');
+    if (!id) throw unauthorized('Invalid passkey response');
+    const cred = await app.db.query.webauthnCredentials.findFirst({
+      where: eq(webauthnCredentials.credentialId, id),
+    });
+    if (!cred) throw unauthorized('Unknown passkey');
+    let newCounter: number;
+    try {
+      newCounter = await finishAuthentication(cred, input.response);
+    } catch (err) {
+      throw unauthorized(err instanceof Error ? err.message : 'Passkey verification failed');
+    }
+    await app.db
+      .update(webauthnCredentials)
+      .set({ counter: newCounter })
+      .where(eq(webauthnCredentials.id, cred.id));
+    const user = await app.db.query.users.findFirst({ where: eq(users.id, cred.userId) });
+    if (!user) throw unauthorized();
+    void audit(app.db, user.id, 'auth.passkey_login', user.email, undefined, { ip: req.ip, userAgent: req.headers['user-agent'] });
+    return {
+      user: toUser(user),
+      tokens: await issueSessionTokens(app.db, user, {
+        ip: req.ip,
+        userAgent: req.headers['user-agent'],
+      }),
+    };
+  });
+
+  // ── Session management ───────────────────────────────────────────────────
+  app.get('/sessions', { onRequest: [app.authenticate] }, async (req) => {
+    const rows = await app.db.query.sessions.findMany({ where: eq(sessionsTable.userId, req.user!.id) });
+    // The current session is flagged by matching the access token's jti
+    // claim (both token types carry it) — failures simply flag no row.
+    const authHeader = req.headers.authorization ?? '';
+    const bearer = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+    let currentJti: string | undefined;
+    try {
+      currentJti = (await verifyJwt(bearer)).jti;
+    } catch {
+      currentJti = undefined;
+    }
+    return rows
+      .filter((r) => !r.revokedAt && r.expiresAt.getTime() > Date.now())
+      .sort((a, b) => (b.lastUsedAt?.getTime() ?? 0) - (a.lastUsedAt?.getTime() ?? 0))
+      .map((r) => ({
+        id: r.id,
+        ip: r.ip,
+        userAgent: r.userAgent,
+        createdAt: r.createdAt.toISOString(),
+        lastUsedAt: r.lastUsedAt ? r.lastUsedAt.toISOString() : null,
+        current: currentJti === r.jti,
+      }));
+  });
+
+  app.delete('/sessions/:id', { onRequest: [app.authenticate] }, async (req) => {
+    const id = Number((req.params as { id: string }).id);
+    await app.db
+      .update(sessionsTable)
+      .set({ revokedAt: new Date() })
+      .where(and(eq(sessionsTable.id, id), eq(sessionsTable.userId, req.user!.id)));
+    void audit(app.db, req.user!.id, 'auth.session_revoked', undefined, { id });
+    return { ok: true };
   });
 
   // ── Two-factor (TOTP) setup / enable / disable ───────────────────────────
@@ -162,6 +288,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       .update(users)
       .set({ totpEnabled: false, totpSecretEncrypted: null, tokenVersion: sql`${users.tokenVersion} + 1` })
       .where(eq(users.id, user.id));
+    await revokeAllSessions(app.db, user.id);
     void audit(app.db, user.id, 'auth.2fa_disabled', user.email);
     return { ok: true, totpEnabled: false };
   });
@@ -192,6 +319,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
   app.post('/reset-password', { config: { rateLimit: AUTH_LIMIT } }, async (req) => {
     const input = passwordResetWithToken.parse(req.body);
     const user = await consumeResetToken(app.db, input.token, input.newPassword);
+    await revokeAllSessions(app.db, user.id);
     void audit(app.db, user.id, 'auth.reset_password', user.email);
     return { ok: true };
   });
@@ -204,7 +332,9 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     } catch {
       throw unauthorized('Invalid refresh token');
     }
-    if (payload.type !== 'refresh') throw unauthorized('Invalid refresh token');
+    if (payload.type !== 'refresh' || !payload.jti) throw unauthorized('Invalid refresh token');
+    const session = await findLiveSession(app.db, payload.jti);
+    if (!session) throw unauthorized('Invalid refresh token');
     const userId = Number(payload.sub);
     const user = await app.db.query.users.findFirst({ where: eq(users.id, userId) });
     if (!user) throw unauthorized();
@@ -214,7 +344,8 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     if (payload.ver !== undefined && payload.ver !== user.tokenVersion) {
       throw unauthorized('Invalid refresh token');
     }
-    return { user: toUser(user), tokens: await issueTokens(user) };
+    if (session.userId !== user.id) throw unauthorized('Invalid refresh token');
+    return { user: toUser(user), tokens: await refreshSessionTokens(app.db, user, payload.jti) };
   });
 
   app.get('/me', { onRequest: [app.authenticate] }, async (req) => {
@@ -224,13 +355,14 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // Logout: bump the user's tokenVersion so every outstanding JWT (access +
-  // refresh) for this user is rejected on its next verification. Stateless
-  // revocation without a server-side blocklist.
+  // refresh) for this user is rejected on its next verification, and mark the
+  // backing session rows revoked so they disappear from the session list.
   app.post('/logout', { onRequest: [app.authenticate] }, async (req) => {
     await app.db
       .update(users)
       .set({ tokenVersion: sql`${users.tokenVersion} + 1` })
       .where(eq(users.id, req.user!.id));
+    await revokeAllSessions(app.db, req.user!.id);
     return { ok: true };
   });
 
@@ -250,7 +382,8 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       .where(eq(users.id, user.id))
       .returning();
     if (!updated) throw unauthorized();
-    return { user: toUser(updated), tokens: await issueTokens(updated) };
+    await revokeAllSessions(app.db, user.id);
+    return { user: toUser(updated), tokens: await issueSessionTokens(app.db, updated, { ip: req.ip, userAgent: req.headers['user-agent'] }) };
   });
 
   // ── API tokens (for the CLI / CI) ────────────────────────────────────────

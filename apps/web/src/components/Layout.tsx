@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
-  Activity, ChevronLeft, Cloud, Database, FolderKanban, Globe, HardDrive,
+  Activity, ChevronLeft, Cloud, Container, Database, FolderKanban, Globe, HardDrive,
   Info, KeyRound, Layers, LayoutDashboard, Moon, Network, type LucideIcon,
   Rocket, Search, Server, Settings as SettingsIcon, Sparkles, Sun, Users, X,
 } from 'lucide-react';
@@ -35,6 +35,7 @@ const GROUPS: NavGroup[] = [
   {
     id: 'network', label: 'Network', icon: Globe, items: [
       { to: '/domains', label: 'Domains', icon: Globe },
+      { to: '/networks', label: 'Networks', icon: Network },
       { to: '/tunnels', label: 'Tunnels', icon: Cloud },
       { to: '/topology', label: 'Topology', icon: Network },
     ],
@@ -42,6 +43,7 @@ const GROUPS: NavGroup[] = [
   {
     id: 'system', label: 'System', icon: SettingsIcon, items: [
       { to: '/monitoring', label: 'Monitoring', icon: Activity },
+      { to: '/docker', label: 'Docker', icon: Container },
       { to: '/sources', label: 'Sources', icon: KeyRound },
       { to: '/servers', label: 'Servers', icon: HardDrive },
       { to: '/users', label: 'Users', icon: Users },

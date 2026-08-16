@@ -73,7 +73,7 @@ export const TOOLS: ToolDef[] = [
     name: 'activity_log',
     description: 'Recent audit activity; optionally filter by entity name.',
     input: entityOpt,
-    handler: (c, input) => c.activity.list((input as { entity?: string }).entity),
+    handler: (c, input) => c.activity.list({ entity: (input as { entity?: string }).entity }),
   },
   {
     name: 'system_stats',

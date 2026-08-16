@@ -30,6 +30,12 @@ export const hookReceiveRoutes: FastifyPluginAsync = async (app) => {
 
     if (push.branch !== hook.branch) return { ok: 'skipped', reason: 'branch', branch: push.branch };
 
+    // Skip markers: `[skip ci]` / `[skip cd]` in the head commit message opts
+    // this push out of an automatic deploy (matches CI convention).
+    if (push.message && /\[skip[ -](ci|cd)\]/i.test(push.message)) {
+      return { ok: 'skipped', reason: 'skip_marker' };
+    }
+
     // Watch paths (monorepos): when the webhook defines globs, deploy only if
     // at least one changed file matches. Payloads without file lists (rare)
     // still deploy — never silently block an unverifiable push.

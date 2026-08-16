@@ -48,6 +48,8 @@ function serializeBuild(b: typeof buildConfigs.$inferSelect) {
     buildCmd: b.buildCmd,
     startCmd: b.startCmd,
     dockerfilePath: b.dockerfilePath,
+    restartPolicy: b.restartPolicy,
+    stopGraceSeconds: b.stopGraceSeconds,
   };
 }
 
@@ -99,6 +101,8 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
         buildCmd: input.build.buildCmd ?? null,
         startCmd: input.build.startCmd ?? null,
         dockerfilePath: input.build.dockerfilePath ?? null,
+        restartPolicy: input.build.restartPolicy ?? 'unless-stopped',
+        stopGraceSeconds: input.build.stopGraceSeconds ?? 5,
       });
     void audit(app.db, req.user!.id, 'service.create', input.name);
     return serialize(svc);
@@ -124,6 +128,8 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
       const values: Partial<typeof buildConfigs.$inferInsert> = {};
       if (build.buildPack !== undefined) values.buildPack = build.buildPack;
       if (build.baseDir !== undefined) values.baseDir = build.baseDir;
+      if (build.restartPolicy !== undefined) values.restartPolicy = build.restartPolicy;
+      if (build.stopGraceSeconds !== undefined) values.stopGraceSeconds = build.stopGraceSeconds;
       for (const key of ['installCmd', 'buildCmd', 'startCmd', 'dockerfilePath'] as const) {
         const v = build[key];
         if (v !== undefined) values[key] = v === '' ? null : v;

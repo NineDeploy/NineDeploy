@@ -382,6 +382,8 @@ describe('service', () => {
             buildCmd: 'npm run build',
             startCmd: null,
             dockerfilePath: './Dockerfile',
+            restartPolicy: 'on-failure:5',
+            stopGraceSeconds: 10,
           },
         }).success,
       ).toBe(true);

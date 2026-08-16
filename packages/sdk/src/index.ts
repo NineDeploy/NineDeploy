@@ -1,7 +1,10 @@
 import type {
+  ActiveSession,
+  ActivityEntry,
   AlertRule,
   CreateAlertRuleInput,
   ApiToken,
+  PasskeyCredential,
   Attachment,
   Backup,
   BackupWithDb,
@@ -108,6 +111,22 @@ export interface NineDeployClient {
       list: () => Promise<ApiToken[]>;
       remove: (id: number) => Promise<void>;
     };
+    passkeys: {
+      /** Start a registration ceremony (returns JSON options for the browser API). */
+      registerOptions: () => Promise<{ options: string }>;
+      /** Complete registration: verify the browser response, store the credential. */
+      registerVerify: (input: { name: string; response: unknown }) => Promise<PasskeyCredential>;
+      list: () => Promise<PasskeyCredential[]>;
+      remove: (id: number) => Promise<void>;
+      /** Start a passwordless login ceremony (discoverable credentials). */
+      loginOptions: () => Promise<{ options: string }>;
+      /** Complete passkey login — returns a full session on success. */
+      loginVerify: (response: unknown) => Promise<Session>;
+    };
+    sessions: {
+      list: () => Promise<ActiveSession[]>;
+      revoke: (id: number) => Promise<{ ok: boolean }>;
+    };
   };
   services: {
     /** `query` is appended verbatim, e.g. `?projectId=3` (project scoping). */
@@ -129,6 +148,8 @@ export interface NineDeployClient {
     rollback: (serviceId: number, deploymentId: number) => Promise<{ deploymentId: number }>;
     /** Cancel a queued/in-flight deployment (checkpoints abort at step boundaries). */
     cancel: (serviceId: number, deploymentId: number) => Promise<{ ok: boolean; status: string }>;
+    /** Build-config + env-key diff against the previous deployment. */
+    configDiff: (serviceId: number, deploymentId: number) => Promise<{ deploymentId: number; previousDeploymentId: number | null; changed: boolean; diff: string }>;
   };
   domains: {
     list: (serviceId: number) => Promise<Domain[]>;
@@ -159,6 +180,15 @@ export interface NineDeployClient {
     exportUrl: () => string;
     /** Latest-release check (admin). updateAvailable is null when offline/disabled. */
     updateCheck: (force?: boolean) => Promise<UpdateCheckResult>;
+    /** Recent docker daemon events (single-shot, for the Docker dashboard feed). */
+    dockerEvents: (minutes?: number) => Promise<{ events: Array<{ time: string; type: string; action: string; name: string }> }>;
+  };
+  networks: {
+    list: () => Promise<{ networks: Array<{ name: string; driver: string; members: string[] }>; remote: number | null }>;
+    create: (input: { name: string; driver?: 'bridge' | 'overlay'; serverId?: number | null }) => Promise<{ ok: boolean; name: string }>;
+    remove: (name: string, serverId?: number) => Promise<{ ok: boolean }>;
+    attach: (input: { network: string; container: string; serverId?: number | null }) => Promise<{ ok: boolean }>;
+    detach: (input: { network: string; container: string; serverId?: number | null }) => Promise<{ ok: boolean }>;
   };
   tunnels: {
     list: () => Promise<TunnelEntry[]>;
@@ -166,8 +196,8 @@ export interface NineDeployClient {
     remove: (id: number) => Promise<void>;
   };
   activity: {
-    /** Optional `entity` filters the audit trail server-side, e.g. `?entity=my-app`. */
-    list: (entity?: string) => Promise<Array<{ id: number; userId: number | null; action: string; entity: string | null; ts: string }>>;
+    /** Filter + paginate the audit trail. Omitted filters return the newest page. */
+    list: (query?: { entity?: string; action?: string; userId?: number; before?: number }) => Promise<{ entries: ActivityEntry[]; nextCursor: number | null }>;
   };
   alerts: {
     list: () => Promise<AlertRule[]>;
@@ -182,6 +212,18 @@ export interface NineDeployClient {
     setTemplatesSource: (source: string) => Promise<{ ok: boolean; templatesSource: string | null }>;
     /** Configure the ACME DNS-01 challenge (wildcard certificates). */
     setDns: (input: { provider: string; token?: string; wildcardApex: string }) => Promise<{ ok: boolean; dnsProvider: string | null; wildcardApex: string | null; applied: string }>;
+    /** Vault provider (deploy-time secret resolution). */
+    vault: {
+      get: () => Promise<{ provider: string | null; hasToken: boolean; projectId: string | null; environment: string | null }>;
+      set: (input: { provider: '' | 'infisical' | 'doppler'; token?: string; projectId?: string; environment?: string }) => Promise<{ ok: boolean; provider: string | null }>;
+      test: () => Promise<{ ok: boolean; secrets: number }>;
+    };
+    /** Cloudflare DNS-record auto-provisioning for added domains. */
+    dnsRecords: {
+      get: () => Promise<{ enabled: boolean; hasToken: boolean; content: string | null }>;
+      set: (input: { enabled: boolean; token?: string; content?: string }) => Promise<{ ok: boolean; enabled: boolean }>;
+      test: () => Promise<{ ok: boolean; status?: string; error?: string }>;
+    };
   };
   users: {
     list: () => Promise<PublicUser[]>;
@@ -245,6 +287,15 @@ export interface NineDeployClient {
     create: (serviceId: number, input: UpsertEnvVarInput) => Promise<EnvVar>;
     update: (serviceId: number, varId: number, input: UpsertEnvVarInput) => Promise<EnvVar>;
     remove: (serviceId: number, varId: number) => Promise<void>;
+    /** Cross-scope key search: where a given env key is defined. */
+    search: (q: string) => Promise<{ results: Array<{ key: string; isSecret: boolean; scope: string; serviceId: number | null; serviceName: string | null }> }>;
+  };
+  projectEnv: {
+    /** Shared env vars applied to every service in a project (service env wins). */
+    list: (projectId: number) => Promise<EnvVar[]>;
+    create: (projectId: number, input: UpsertEnvVarInput) => Promise<EnvVar>;
+    update: (projectId: number, varId: number, input: UpsertEnvVarInput) => Promise<EnvVar>;
+    remove: (projectId: number, varId: number) => Promise<void>;
   };
   stats: {
     snapshot: () => Promise<StatsSnapshot>;
@@ -387,6 +438,25 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
           await request(`/v1/auth/tokens/${id}`, { method: 'DELETE' });
         },
       },
+      passkeys: {
+        registerOptions: () => send<{ options: string }>('POST', '/v1/auth/passkey/register/options'),
+        registerVerify: (input) =>
+          send<PasskeyCredential>('POST', '/v1/auth/passkey/register/verify', {
+            name: input.name,
+            response: input.response as Record<string, unknown>,
+          }),
+        list: () => get<PasskeyCredential[]>('/v1/auth/passkey'),
+        remove: async (id) => {
+          await request(`/v1/auth/passkey/${id}`, { method: 'DELETE' });
+        },
+        loginOptions: () => send<{ options: string }>('POST', '/v1/auth/passkey/login/options'),
+        loginVerify: (response) =>
+          send<Session>('POST', '/v1/auth/passkey/login/verify', { response: response as Record<string, unknown> }),
+      },
+      sessions: {
+        list: () => get<ActiveSession[]>('/v1/auth/sessions'),
+        revoke: (id) => send<{ ok: boolean }>('DELETE', `/v1/auth/sessions/${id}`),
+      },
     },
     services: {
       list: (query) => get<Service[]>(`/v1/services${query ?? ''}`),
@@ -411,6 +481,10 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
         send<{ deploymentId: number }>('POST', `/v1/services/${serviceId}/deploys/${deploymentId}/rollback`),
       cancel: (serviceId, deploymentId) =>
         send<{ ok: boolean; status: string }>('POST', `/v1/services/${serviceId}/deploys/${deploymentId}/cancel`),
+      configDiff: (serviceId, deploymentId) =>
+        get<{ deploymentId: number; previousDeploymentId: number | null; changed: boolean; diff: string }>(
+          `/v1/services/${serviceId}/deploys/${deploymentId}/diff`,
+        ),
     },
     domains: {
       list: (serviceId) => get<Domain[]>(`/v1/services/${serviceId}/domains`),
@@ -443,6 +517,18 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
       pruneImages: () => send<{ ok: boolean }>('POST', '/v1/system/prune-images'),
       updateCheck: (force) => get<UpdateCheckResult>(`/v1/system/update-check${force ? '?force=1' : ''}`),
       exportUrl: () => '/v1/system/export',
+      dockerEvents: (minutes) =>
+        get<{ events: Array<{ time: string; type: string; action: string; name: string }> }>(
+          `/v1/system/docker-events?minutes=${minutes ?? 60}`,
+        ),
+    },
+    networks: {
+      list: () => get<{ networks: Array<{ name: string; driver: string; members: string[] }>; remote: number | null }>('/v1/networks'),
+      create: (input) => send<{ ok: boolean; name: string }>('POST', '/v1/networks', { driver: 'bridge', ...input }),
+      remove: (name, serverId) =>
+        send<{ ok: boolean }>('DELETE', `/v1/networks/${encodeURIComponent(name)}${serverId ? `?serverId=${serverId}` : ''}`),
+      attach: (input) => send<{ ok: boolean }>('POST', '/v1/networks/attach', input),
+      detach: (input) => send<{ ok: boolean }>('POST', '/v1/networks/detach', input),
     },
     tunnels: {
       list: () => get<TunnelEntry[]>('/v1/tunnels'),
@@ -452,7 +538,15 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
       },
     },
   activity: {
-    list: (entity?: string) => get(`/v1/activity${entity ? `?entity=${encodeURIComponent(entity)}` : ''}`),
+    list: (query) => {
+      const parts: string[] = [];
+      if (query?.entity) parts.push(`entity=${encodeURIComponent(query.entity)}`);
+      if (query?.action) parts.push(`action=${encodeURIComponent(query.action)}`);
+      if (query?.userId) parts.push(`userId=${query.userId}`);
+      if (query?.before) parts.push(`before=${query.before}`);
+      const qs = parts.join('&');
+      return get<{ entries: ActivityEntry[]; nextCursor: number | null }>(`/v1/activity${qs ? `?${qs}` : ''}`);
+    },
   },
   alerts: {
     list: () => get('/v1/alerts'),
@@ -472,6 +566,17 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
         send<{ ok: boolean; templatesSource: string | null }>('PUT', '/v1/settings/templates-source', { source }),
       setDns: (input) =>
         send<{ ok: boolean; dnsProvider: string | null; wildcardApex: string | null; applied: string }>('PUT', '/v1/settings/dns', input),
+      vault: {
+        get: () =>
+          get<{ provider: string | null; hasToken: boolean; projectId: string | null; environment: string | null }>('/v1/settings/vault'),
+        set: (input) => send<{ ok: boolean; provider: string | null }>('PUT', '/v1/settings/vault', input),
+        test: () => send<{ ok: boolean; secrets: number }>('POST', '/v1/settings/vault/test'),
+      },
+      dnsRecords: {
+        get: () => get<{ enabled: boolean; hasToken: boolean; content: string | null }>('/v1/settings/dns-records'),
+        set: (input) => send<{ ok: boolean; enabled: boolean }>('PUT', '/v1/settings/dns-records', input),
+        test: () => send<{ ok: boolean; status?: string; error?: string }>('POST', '/v1/settings/dns-records/test'),
+      },
     },
     users: {
       list: () => get<PublicUser[]>('/v1/users'),
@@ -536,6 +641,18 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
       update: (serviceId, varId, input) => send<EnvVar>('PATCH', `/v1/services/${serviceId}/env/${varId}`, input),
       remove: async (serviceId, varId) => {
         await request(`/v1/services/${serviceId}/env/${varId}`, { method: 'DELETE' });
+      },
+      search: (q) =>
+        get<{ results: Array<{ key: string; isSecret: boolean; scope: string; serviceId: number | null; serviceName: string | null }> }>(
+          `/v1/env/search?q=${encodeURIComponent(q)}`,
+        ),
+    },
+    projectEnv: {
+      list: (projectId) => get<EnvVar[]>(`/v1/projects/${projectId}/env`),
+      create: (projectId, input) => send<EnvVar>('POST', `/v1/projects/${projectId}/env`, input),
+      update: (projectId, varId, input) => send<EnvVar>('PATCH', `/v1/projects/${projectId}/env/${varId}`, input),
+      remove: async (projectId, varId) => {
+        await request(`/v1/projects/${projectId}/env/${varId}`, { method: 'DELETE' });
       },
     },
     stats: {

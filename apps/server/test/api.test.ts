@@ -33,7 +33,12 @@ vi.mock('../src/modules/backups.js', () => ({
 vi.mock('../src/modules/deploys.js', () => ({ deploysRoutes: stubs.plugin('deploys') }));
 vi.mock('../src/modules/domainIndex.js', () => ({ domainIndexRoutes: stubs.plugin('domain-index') }));
 vi.mock('../src/modules/domains.js', () => ({ domainsRoutes: stubs.plugin('domains') }));
-vi.mock('../src/modules/env.js', () => ({ envRoutes: stubs.plugin('env') }));
+vi.mock('../src/modules/env.js', () => ({
+  envRoutes: stubs.plugin('env'),
+  projectEnvRoutes: stubs.plugin('project-env'),
+  envSearchRoutes: stubs.plugin('env-search'),
+}));
+vi.mock('../src/modules/networks.js', () => ({ networkRoutes: stubs.plugin('networks') }));
 vi.mock('../src/modules/hooks.js', () => ({
   hookReceiveRoutes: stubs.plugin('hook-receive'),
   webhookMgmtRoutes: stubs.plugin('webhooks'),

@@ -61,8 +61,8 @@ describe('MCP tools', () => {
     const c = fakeClient();
     await byName('activity_log').handler(c, {});
     await byName('activity_log').handler(c, { entity: 'my-api' });
-    expect(c.activity.list).toHaveBeenNthCalledWith(1, undefined);
-    expect(c.activity.list).toHaveBeenNthCalledWith(2, 'my-api');
+    expect(c.activity.list).toHaveBeenNthCalledWith(1, { entity: undefined });
+    expect(c.activity.list).toHaveBeenNthCalledWith(2, { entity: 'my-api' });
   });
 
   it('parameterless tools call their SDK counterpart', async () => {

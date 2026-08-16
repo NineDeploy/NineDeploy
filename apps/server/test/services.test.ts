@@ -189,6 +189,21 @@ describe('services routes', () => {
     expect(res.json()).toMatchObject({ id: 1, name: 'renamed' });
   });
 
+  it('patches restart policy and stop grace into the build config', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { services: svcRow() },
+        update: { services: [svcRow()], build_configs: [{ serviceId: 1 }] },
+      }),
+    });
+    await app.register(servicesRoutes);
+    const res = await app.inject({
+      method: 'PATCH', url: '/1', headers: asUser(),
+      payload: { build: { restartPolicy: 'on-failure:3', stopGraceSeconds: 20 } },
+    });
+    expect(res.statusCode).toBe(200);
+  });
+
   it('skips the build config write when the patch carries no build keys', async () => {
     const app = await buildTestApp({
       db: createFakeDb({

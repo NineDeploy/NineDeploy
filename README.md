@@ -94,7 +94,10 @@ Open `http://localhost:5173` and create the first admin account. Requires Node �
 
 ## Deploy pipeline
 
-- **Cancel & watch paths** — cancel in-flight deployments at every pipeline stage; monorepo-friendly webhooks that trigger only when watched paths change
+- **Cancel & watch paths** — cancel in-flight deployments at every pipeline stage; monorepo-friendly webhooks that trigger only when watched paths change; `[skip ci]` / `[skip cd]` in the head commit message opts a push out of auto-deploy
+- **Per-server build queues** — deploy concurrency is partitioned by target server (local + each remote), so a long remote build never starves local deployments
+- **Config diff** — every deployment snapshots the effective build config + env-key fingerprint; the deploys view diffs it against the previous deployment ("what changed between these two deploys?")
+- **Restart policy & stop grace** — per-service `docker --restart` policy (incl. `on-failure:N` loop caps) and SIGTERM→SIGKILL grace period (Settings → service)
 - **Compose services** — Docker Compose stacks as a first-class service type alongside Docker images and PM2 processes
 - **Private registries** — per-source registry credentials resolved at pull time (rollback pins an exact digest)
 - **Scheduled jobs** — cron-scheduled redeploys and container commands per service (5-field expressions, run history with captured output)
@@ -112,6 +115,8 @@ Open `http://localhost:5173` and create the first admin account. Requires Node �
 ## Security model
 
 - **Auth** — JWT access (15 m) + refresh (7 d) tokens with silent browser refresh; opaque API tokens (sha256-hashed) for CI/CLI
+- **Passkeys (WebAuthn)** — passwordless sign-in with biometrics/security keys (`@simplewebauthn`); credentials are scoped to the instance hostname and revocable per device (Settings → Account)
+- **Session management** — refresh tokens carry a `jti` backed by a `sessions` row: view every active device (IP + user agent) and revoke them individually; logout/password change revokes all
 - **Session revocation** — logout, role change, password change/reset all bump a per-user `tokenVersion`, killing every outstanding JWT statelessly (the refresh endpoint enforces it too)
 - **Password lifecycle** — self-service change (Settings) and admin reset (Users), Argon2id at rest
 - **RBAC** — admin-only for system-wide and destructive actions: exec shell, volumes, sources, tunnels, notifications, system export/import, service bundles, user management, instance settings; members manage services
@@ -135,7 +140,11 @@ Open `http://localhost:5173` and create the first admin account. Requires Node �
 ## Management
 
 - **Dashboard** — live health probes, stats grid, recent activity
-- **Domain management** — routing map + SSL toggle; wildcard auto-assign (`{slug}.your-domain`); **certificate expiry badges** (warning under 14 days) from Traefik's ACME storage
+- **Docker dashboard** — host-level images, disk usage/reclaimable and the live daemon event feed on one screen (System → Docker)
+- **Network management** — create/delete user-defined Docker networks and attach/detach containers from the UI or CLI (`networks` command); remote hosts route through the typed agent protocol
+- **Domain management** — routing map + SSL toggle; wildcard auto-assign (`{slug}.your-domain`); **certificate expiry badges** (warning under 14 days) from Traefik's ACME storage; **Cloudflare record auto-provisioning** — adding a domain creates the matching A/CNAME record (and removes it on delete) via a zero-dep API client (Settings → Integrations)
+- **Vault integration** — env values may reference Infisical or Doppler (`${{provider:KEY}}` syntax, resolved at deploy time and never stored); tokens are encrypted at rest (Settings → Integrations)
+- **Shared project env** — project-scope env vars applied to every service in the project (service-scope wins), plus cross-service env key search (`/v1/env/search`)
 - **Wildcard SSL (DNS-01)** — ACME DNS challenge via Cloudflare/DigitalOcean/Hetzner/Linode/Gandi/DuckDNS API tokens (encrypted at rest, delivered to Traefik via docker `--env-file`); one `*.your-domain` certificate issued up front and routed with `HostRegexp`
 - **Monitoring** — live CPU/memory per container + host overview + **alert rules**
 - **Alerting** — threshold rules on `cpu` (%), `memory` (MiB), and `cert-expiry` (days); sustained-breach duration windows (30 s samples), one-shot firing with cooldown, recovery notifications — delivered through the notification channels
@@ -145,7 +154,7 @@ Open `http://localhost:5173` and create the first admin account. Requires Node �
 - **Multi-user** — roles, audit log, activity feed, registration toggle, ACME email setting
 - **Projects** — optional single-level grouping that scopes services, databases, and domains; the UI filters every list by the active project
 - **Migration** — full system export/import (with rollback) and per-service bundles (admin-only; bundles contain plaintext secrets)
-- **CLI** — `setup · login · logout · whoami · config · token · services · deploys (list/rollback/watch) · databases · templates · env · domains · volumes · backups · alerts · users · activity · system (info/dashboard/export/import)`
+- **CLI** — `setup · login · logout · whoami · config · token · services · deploys (list/rollback/watch) · databases · templates · env · domains · volumes · networks · sessions · backups · alerts · users · activity · system (info/dashboard/export/import)`
 - **UX** — command palette (⌘K), dark/light + 6 accents, toasts
 
 ### CLI

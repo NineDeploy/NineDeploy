@@ -23,6 +23,8 @@ import { Topology } from './routes/Topology.js';
 import { Tunnels } from './routes/Tunnels.js';
 import { Users } from './routes/Users.js';
 import { Volumes } from './routes/Volumes.js';
+import { Networks } from './routes/Networks.js';
+import { DockerDashboard } from './routes/Docker.js';
 
 function RequireAuth({ children }: { children: ReactNode }) {
   const { user } = useAuth();
@@ -70,6 +72,8 @@ export default function App() {
         <Route path="tunnels" element={<Tunnels />} />
         <Route path="users" element={<Users />} />
         <Route path="volumes" element={<Volumes />} />
+        <Route path="networks" element={<Networks />} />
+        <Route path="docker" element={<DockerDashboard />} />
         <Route path="topology" element={<Topology />} />
         <Route path="backups" element={<Backups />} />
         <Route path="sources" element={<Sources />} />

@@ -1,5 +1,6 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { RotateCcw, X } from 'lucide-react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { GitCompare, RotateCcw, X } from 'lucide-react';
+import { useState } from 'react';
 import type { Deployment } from '@ninedeploy/sdk';
 import { api } from '../../lib/api.js';
 import { useToast } from '../../components/Toast.js';
@@ -81,7 +82,65 @@ export function DeploysTab({
           <LogPanel serviceId={serviceId} deploymentId={activeId} />
         </CardBody>
       </Card>
+
+      {activeId && !inFlight && <ConfigDiffCard serviceId={serviceId} deploymentId={activeId} />}
     </div>
+  );
+}
+
+// ── Config diff vs the previous deployment ────────────────────────────────
+function ConfigDiffCard({ serviceId, deploymentId }: { serviceId: number; deploymentId: number }) {
+  const [open, setOpen] = useState(false);
+  const diff = useQuery({
+    queryKey: ['deploy-diff', serviceId, deploymentId],
+    queryFn: () => api.deploys.configDiff(serviceId, deploymentId),
+    enabled: open,
+  });
+
+  return (
+    <Card className="lg:col-span-3">
+      <CardBody>
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="flex w-full items-center justify-between text-sm font-medium text-slate-300"
+        >
+          <span className="flex items-center gap-2">
+            <GitCompare size={15} className="text-slate-500" /> Config diff vs previous deploy
+          </span>
+          <span className="text-xs text-slate-500">{open ? 'hide' : 'show'}</span>
+        </button>
+        {open && (
+          <div className="mt-3">
+            {diff.isLoading ? (
+              <Skeleton className="h-16 w-full" />
+            ) : !diff.data ? (
+              <p className="text-xs text-slate-600">No snapshot.</p>
+            ) : diff.data.previousDeploymentId === null ? (
+              <p className="text-xs text-slate-600">First recorded deployment — nothing to compare against.</p>
+            ) : !diff.data.changed ? (
+              <p className="text-xs text-slate-500">
+                No changes against #{diff.data.previousDeploymentId} — same build config and env keys.
+              </p>
+            ) : (
+              <pre className="overflow-x-auto rounded-lg bg-black/40 p-3 font-mono text-[11px] leading-relaxed">
+                {diff.data.diff.split('\n').map((line) => (
+                  <span
+                    key={line}
+                    className={cn(
+                      'block whitespace-pre',
+                      line.startsWith('+ ') ? 'text-emerald-300' : line.startsWith('- ') ? 'text-rose-300' : 'text-slate-500',
+                    )}
+                  >
+                    {line}
+                  </span>
+                ))}
+              </pre>
+            )}
+          </div>
+        )}
+      </CardBody>
+    </Card>
   );
 }
 

@@ -25,6 +25,20 @@ describe('audit', () => {
     expect(notifyMock).toHaveBeenCalledWith(db, expect.objectContaining({ action: 'service.created' }));
   });
 
+  it('folds request context (ip/ua) into the meta object', async () => {
+    const { db, values } = makeDb();
+    await audit(db, 3, 'auth.login', 'admin@example.com', { extra: 1 }, { ip: '10.0.0.9', userAgent: 'vitest/1.0' });
+    expect(values).toHaveBeenCalledWith({
+      userId: 3,
+      action: 'auth.login',
+      entity: 'admin@example.com',
+      meta: { extra: 1, ip: '10.0.0.9', ua: 'vitest/1.0' },
+    });
+    // A context without ip/ua leaves meta untouched.
+    await audit(db, 3, 'x', undefined, undefined, {});
+    expect(values).toHaveBeenLastCalledWith({ userId: 3, action: 'x', entity: undefined, meta: undefined });
+  });
+
   it('normalizes a missing entity to null and omits meta', async () => {
     const { db, values } = makeDb();
     await audit(db, null, 'user.login');

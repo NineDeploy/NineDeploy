@@ -156,6 +156,41 @@ describe('system resources routes', () => {
     fsMocks.failCopy = null;
   });
 
+  it('returns recent docker events (newest first, capped)', async () => {
+    execMocks.capture.mockResolvedValueOnce(
+      '1755000000|container|start|web-1\n1755000001|image|pull|nginx\n1755000002|network|create\n1755000003\n|attach|c-9\n\n',
+    );
+    const app = await buildTestApp({ db: createFakeDb() });
+    await app.register(systemRoutes);
+    const res = await app.inject({ method: 'GET', url: '/docker-events?minutes=30', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.events).toHaveLength(5);
+    expect(body.events[0]).toEqual({ time: '', type: 'attach', action: 'c-9', name: '' });
+    expect(body.events[1]).toEqual({ time: '1755000003', type: '', action: '', name: '' });
+    expect(body.events[2]).toEqual({ time: '1755000002', type: 'network', action: 'create', name: '' });
+    expect(execMocks.capture).toHaveBeenCalledWith(
+      'docker',
+      ['events', '--since', '30m', '--until', '0s', '--format', '{{.Time}}|{{.Type}}|{{.Action}}|{{.Actor.Attributes.name}}'],
+    );
+  });
+
+  it('clamps the event window and tolerates docker failures', async () => {
+    execMocks.capture.mockRejectedValueOnce(new Error('docker down'));
+    const app = await buildTestApp({ db: createFakeDb() });
+    await app.register(systemRoutes);
+    const huge = await app.inject({ method: 'GET', url: '/docker-events?minutes=99999', headers: asUser() });
+    expect(huge.json()).toEqual({ events: [] });
+    const bogus = await app.inject({ method: 'GET', url: '/docker-events?minutes=abc', headers: asUser() });
+    expect(bogus.json()).toEqual({ events: [] });
+    const zero = await app.inject({ method: 'GET', url: '/docker-events?minutes=0', headers: asUser() });
+    expect(zero.json()).toEqual({ events: [] });
+    expect(execMocks.capture).toHaveBeenCalledWith(
+      'docker',
+      expect.arrayContaining(['events', '--since', '1440m']),
+    );
+  });
+
   afterAll(() => {
     for (const dir of createdDirs) fs.rmSync(dir, { recursive: true, force: true });
   });

@@ -1,7 +1,8 @@
 import { spawn } from 'node:child_process';
-import { and, desc, eq, inArray } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, lt } from 'drizzle-orm';
 import { deployments, services } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
+import { diffLines, renderDiff } from '../lib/diff.js';
 import { capture } from '../lib/exec.js';
 import { audit } from '../lib/audit.js';
 import { logBus } from '../engine/logs.js';
@@ -94,6 +95,33 @@ export const deploysRoutes: FastifyPluginAsync = async (app) => {
     }
     void audit(app.db, req.user!.id, 'deploy.cancel', `#${depId}`);
     return { ok: true, status: 'cancelled' };
+  });
+
+  // Config diff: what changed between this deployment and the previous one
+  // (build config + env key fingerprint). Secret VALUES are never snapshotted —
+  // only key names (marked with *).
+  app.get('/:id/deploys/:depId/diff', { onRequest: [app.authenticate] }, async (req) => {
+    const id = num((req.params as { id: string }).id);
+    const depId = num((req.params as { depId: string }).depId);
+    const dep = await app.db.query.deployments.findFirst({ where: eq(deployments.id, depId) });
+    if (!dep || dep.serviceId !== id) throw notFound('Deployment not found');
+    // The nearest OLDER deployment of the same service with a snapshot.
+    const prev = await app.db.query.deployments.findFirst({
+      where: and(eq(deployments.serviceId, id), lt(deployments.id, depId), isNotNull(deployments.configSnapshot)),
+      orderBy: desc(deployments.id),
+    });
+    const current = dep.configSnapshot ? JSON.parse(dep.configSnapshot) as Record<string, unknown> : null;
+    const previous = prev?.configSnapshot ? JSON.parse(prev.configSnapshot!) as Record<string, unknown> : null;
+    const ops = diffLines(
+      previous ? Object.entries(previous).map(([k, v]) => `${k}: ${JSON.stringify(v)}`) : [],
+      current ? Object.entries(current).map(([k, v]) => `${k}: ${JSON.stringify(v)}`) : [],
+    );
+    return {
+      deploymentId: depId,
+      previousDeploymentId: prev?.id ?? null,
+      changed: ops.some((op) => op.kind !== 'same'),
+      diff: renderDiff(ops),
+    };
   });
 
   // Live log stream over WebSocket. Auth via ?token= (ws can't set headers easily).

@@ -147,6 +147,43 @@ function baseSetup(db: FakeDb, over: Record<string, unknown> = {}) {
   db.query.databaseAttachments.findMany.mockResolvedValue([]);
 }
 
+describe('runDeployment env merging', () => {
+  it('merges project-scope shared env under service env', async () => {
+    const { db } = makeDb();
+    baseSetup(db, { projectId: 4, image: 'nginx:latest' });
+    // Call order: config snapshot (service scope), project scope, service scope.
+    let n = 0;
+    db.query.envVars.findMany.mockImplementation(async () => {
+      n++;
+      if (n === 2) return [{ key: 'SHARED', valueEncrypted: 'enc:s', isSecret: true, scope: 'project' }];
+      return [{ key: 'OWN', valueEncrypted: 'enc:o', isSecret: true, scope: 'service' }];
+    });
+    await runDeployment(db as never, 1);
+    const ctx = h.builder.buildAndRun.mock.calls.at(-1)![0] as { env: Record<string, string> };
+    expect(ctx.env).toEqual({ SHARED: 'dec:enc:s', OWN: 'dec:enc:o' });
+  });
+
+  it('skips the project lookup for project-less services', async () => {
+    const { db } = makeDb();
+    baseSetup(db, { projectId: null, image: 'nginx:latest' });
+    await runDeployment(db as never, 1);
+    // Snapshot + service lookup only — no project-scope query.
+    expect(db.query.envVars.findMany).toHaveBeenCalledTimes(2);
+  });
+
+  it('snapshots the effective config onto the deployment row', async () => {
+    const { db, updates } = makeDb();
+    baseSetup(db, { image: 'nginx:latest' });
+    await runDeployment(db as never, 1);
+    const building = updates.find((u) => u.values.status === 'building');
+    expect(building).toBeDefined();
+    const snapshot = JSON.parse(building!.values.configSnapshot as string) as Record<string, unknown>;
+    expect(snapshot.image).toBe('nginx:latest');
+    expect(snapshot.restartPolicy).toBe('unless-stopped');
+    expect(snapshot.envKeys).toEqual([]);
+  });
+});
+
 describe('runDeployment', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -347,7 +384,7 @@ describe('runDeployment', () => {
     // reload, and only then was the old container stopped.
     expect(h.writeDynamicConfig).toHaveBeenCalledWith(db);
     expect(sleepMock.sleep).toHaveBeenCalledWith(2000);
-    expect(h.builder.stop).toHaveBeenCalledWith('old-c');
+    expect(h.builder.stop).toHaveBeenCalledWith('old-c', { graceSeconds: undefined });
   });
 
   it('rolls back to the previous runtime when the new one fails healthcheck (blue-green)', async () => {

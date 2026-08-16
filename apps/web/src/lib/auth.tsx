@@ -7,6 +7,8 @@ interface AuthContextValue {
   loading: boolean;
   login: (email: string, password: string, totpCode?: string) => Promise<void>;
   setup: (email: string, password: string, name?: string) => Promise<void>;
+  /** Passwordless sign-in with a registered passkey (WebAuthn). */
+  loginWithPasskey: () => Promise<void>;
   logout: () => void;
 }
 
@@ -39,6 +41,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     },
     setup: async (email, password, name) => {
       const session = await api.auth.setup({ email, password, name });
+      setSessionTokens(session.tokens.accessToken, session.tokens.refreshToken);
+      setUser(session.user);
+    },
+    loginWithPasskey: async () => {
+      const { startAuthentication } = await import('@simplewebauthn/browser');
+      const { options } = await api.auth.passkeys.loginOptions();
+      const assertion = await startAuthentication(JSON.parse(options) as Parameters<typeof startAuthentication>[0]);
+      const session = await api.auth.passkeys.loginVerify(assertion);
       setSessionTokens(session.tokens.accessToken, session.tokens.refreshToken);
       setUser(session.user);
     },

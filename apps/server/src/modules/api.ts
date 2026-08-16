@@ -12,12 +12,13 @@ import { backupDestinationRoutes } from './backupDestinations.js';
 import { deploysRoutes } from './deploys.js';
 import { domainIndexRoutes } from './domainIndex.js';
 import { domainsRoutes } from './domains.js';
-import { envRoutes } from './env.js';
+import { envRoutes, envSearchRoutes, projectEnvRoutes } from './env.js';
 import { hookReceiveRoutes, webhookMgmtRoutes } from './hooks.js';
 import { jobRoutes } from './jobs.js';
 import { serverRoutes } from './servers.js';
 import { projectRoutes } from './projects.js';
 import { notificationRoutes } from './notifications.js';
+import { networkRoutes } from './networks.js';
 import { metricRoutes, statsRoutes } from './stats.js';
 import { servicesRoutes } from './services.js';
 import { serviceMigrationRoutes } from './serviceMigration.js';
@@ -44,6 +45,7 @@ export const apiRoutes: FastifyPluginAsync = async (app) => {
   await app.register(authRoutes, { prefix: '/auth' });
   await app.register(userRoutes, { prefix: '/users' });
   await app.register(projectRoutes, { prefix: '/projects' });
+  await app.register(projectEnvRoutes, { prefix: '/projects' });
   await app.register(activityRoutes, { prefix: '/activity' });
   await app.register(alertRoutes, { prefix: '/alerts' });
   await app.register(aboutRoutes, { prefix: '/about' });
@@ -53,6 +55,7 @@ export const apiRoutes: FastifyPluginAsync = async (app) => {
   await app.register(backupRoutes, { prefix: '/backups' });
   await app.register(backupDestinationRoutes, { prefix: '/backup-destinations' });
   await app.register(domainIndexRoutes, { prefix: '/domains' });
+  await app.register(networkRoutes, { prefix: '/networks' });
   await app.register(volumeRoutes, { prefix: '/volumes' });
   await app.register(statsRoutes, { prefix: '/stats' });
   await app.register(dashboardRoutes, { prefix: '/dashboard' });
@@ -68,6 +71,7 @@ export const apiRoutes: FastifyPluginAsync = async (app) => {
   await app.register(webhookMgmtRoutes, { prefix: '/services' });
   await app.register(attachmentRoutes, { prefix: '/services' });
   await app.register(envRoutes, { prefix: '/services' });
+  await app.register(envSearchRoutes, { prefix: '/env' });
   await app.register(jobRoutes, { prefix: '/services' });
   await app.register(serverRoutes, { prefix: '/servers' });
   await app.register(metricRoutes, { prefix: '/services' });

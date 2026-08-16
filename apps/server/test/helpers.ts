@@ -1,6 +1,7 @@
 import { once } from 'node:events';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import websocket from '@fastify/websocket';
+import { vi } from 'vitest';
 import { ZodError } from 'zod';
 import type { DB } from '@ninedeploy/db';
 import { forbidden, unauthorized } from '../src/lib/errors.js';
@@ -102,15 +103,17 @@ export function createFakeDb(opts: FakeDbOpts = {}): DB {
       const error = opts.selectError?.[name];
       const isCount = cols !== undefined && 'n' in cols;
       const rows: Row[] = isCount ? (opts.counts?.[name] ?? []) : (opts.select?.[name] ?? []);
-      const result: {
-        then: (ok: (v: unknown) => unknown, rej?: (e: Error) => unknown) => unknown;
-        where: () => Promise<Row[]>;
-      } = {
-        // biome-ignore lint/suspicious/noThenProperty: intentional thenable — the fake DB query result must be awaitable by the code under test.
-        then: (ok, rej) => (error ? (rej ?? (() => {}))(error) : ok(rows)),
-        where: () => (error ? Promise.reject(error) : Promise.resolve(rows)),
-      };
-      return result;
+      // A chainable thenable: `await`, `.where(...)`, `.leftJoin(...)`,
+      // `.limit(...)` and `.orderBy(...)` all resolve to the configured rows,
+      // mirroring drizzle's query-builder shapes.
+      const chain: Record<string, unknown> = {};
+      // biome-ignore lint/suspicious/noThenProperty: intentional thenable — the fake DB query result must be awaitable by the code under test.
+      chain.then = (ok: (v: unknown) => unknown, rej?: (e: Error) => unknown) =>
+        error ? (rej ?? (() => {}))(error) : ok(rows);
+      for (const step of ['where', 'leftJoin', 'innerJoin', 'limit', 'orderBy']) {
+        chain[step] = vi.fn(() => chain);
+      }
+      return chain;
     },
   });
 
@@ -121,9 +124,12 @@ export function createFakeDb(opts: FakeDbOpts = {}): DB {
         const rows = () => resolveRows(opts.insert?.[name], [v], v);
         const builder: {
           returning: () => Promise<Row[]>;
+          onConflictDoUpdate: () => Promise<Row[]>;
           then: (ok: (v?: unknown) => unknown, rej?: (e: Error) => unknown) => unknown;
         } = {
           returning: () => rows(),
+          // Settings-style upserts resolve like a plain insert in the fake.
+          onConflictDoUpdate: () => rows(),
           // biome-ignore lint/suspicious/noThenProperty: intentional thenable — the fake DB insert result must be awaitable by the code under test.
           then: (ok, rej) => {
             rows().then(ok, rej);
@@ -292,6 +298,20 @@ export const userRow = (over: Record<string, unknown> = {}) => ({
   role: 'admin',
   createdAt: NOW,
   updatedAt: NOW,
+  ...over,
+});
+
+/** A live session row backing a refresh token (matches lib/sessions.ts). */
+export const sessionRow = (over: Record<string, unknown> = {}) => ({
+  id: 1,
+  userId: 1,
+  jti: 'jti-1',
+  ip: '127.0.0.1',
+  userAgent: 'vitest',
+  createdAt: NOW,
+  lastUsedAt: NOW,
+  expiresAt: new Date(Date.now() + 86_400_000),
+  revokedAt: null,
   ...over,
 });
 

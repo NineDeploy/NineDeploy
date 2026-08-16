@@ -170,7 +170,7 @@ typed SDK and Zod schemas:
   `notifications`, `sources`, `webhooks`, `databases`) with a `NineDeployError`
   type and injectable fetch
 
-## Database schema (26 tables, migrations 0000–0018)
+## Database schema (28 tables, migrations 0000–0019)
 
 Storage: **SQLite** via `@libsql/client` (dialect `turso`, local file
 `.data/ninedeploy.db`). PRAGMAs at boot: `foreign_keys=ON`,
@@ -259,16 +259,16 @@ to `400 validation_error` envelopes.
 
 | Module | Prefix | Routes |
 |---|---|---|
-| auth | /auth | first-admin setup, login (lockout + TOTP 2FA), forgot/reset-password, 2FA setup/enable/disable, refresh, logout, password, me, status, tokens CRUD |
+| auth | /auth | first-admin setup, login (lockout + TOTP 2FA), passkey register/login ceremonies, session list/revoke, forgot/reset-password, 2FA setup/enable/disable, refresh (jti-enforced), logout, password, me, status, tokens CRUD |
 | projects | /projects | project CRUD — services/databases/domains are scoped to a project (single level, optional) |
 | services | /services | CRUD (docker/pm2/compose types), update (incl. build config PATCH), stop/start/restart, limits, logs, export/import |
-| deploys | /services/:id/deploys | trigger, list, rollback, **cancel**, WS logs, WS exec (admin-only, audited) |
-| domains | /services/:id/domains | add, list, remove, per-domain SSL/headers |
+| deploys | /services/:id/deploys | trigger, list, rollback, **cancel**, **config diff vs previous deploy**, WS logs, WS exec (admin-only, audited) |
+| domains | /services/:id/domains | add (with **Cloudflare record auto-provision**), list, remove (record cleanup), per-domain SSL/headers |
 | domainIndex | /domains | list all, SSL toggle |
 | databases | /databases | CRUD, limits, wizard |
 | databaseBackup | /databases/:id | storage, backups, restore (ownership-checked) |
 | backups | /backups | list all, delete (incl. remote object), download; /backup-destinations: S3-compatible CRUD + connectivity test (admin) |
-| env | /services/:id/env | env var CRUD |
+| env | /services/:id/env + /projects/:id/env + /env/search | service env CRUD, project-scope shared env CRUD, cross-scope key search |
 | hooks | /hooks + /services | receive (HMAC + branch match + **watch-path globs** + replay dedup), manage CRUD; public, rate-limited 60/min |
 | templates | /templates | list, detail, deploy — served from a schema-validated registry bundle (bundled JSON by default; DB/env source override with 6 h cached remote fetch + offline fallback) |
 | topology | /topology | graph (services+DBs+domains+attachments) |
@@ -277,10 +277,11 @@ to `400 validation_error` envelopes.
 | sources | /sources | CRUD (PAT + deploy keys + registry creds) — admin-only |
 | tunnels | /tunnels | CRUD (cloudflared) — admin-only |
 | volumes | /volumes | inventory; delete — admin-only, audited |
-| system | /system | resources, prune, update-check (GitHub-release feed, semver compare, 6 h cache, offline → `updateAvailable: null`), export, import (tar-slip guarded, rollback) — admin-only |
+| networks | /networks | list (with members), create/delete, container attach/detach (local + typed-agent remote) — admin for writes, audited |
+| system | /system | resources, **docker-events feed**, prune, update-check (GitHub-release feed, semver compare, 6 h cache, offline → `updateAvailable: null`), export, import (tar-slip guarded, rollback) — admin-only |
 | jobs | /services/:id/jobs | cron-scheduled deploy/exec jobs, run-now, run history (croner; 5-min scheduler reload) |
 | servers | /servers | remote agent host registry, one-time token on register, connectivity test — admin-only |
-| settings | /settings | instance flags: allow-registration toggle, ACME email, template registry source, DNS-01 challenge (wildcard SSL) — admin-only, audited |
+| settings | /settings | instance flags: allow-registration toggle, ACME email, template registry source, DNS-01 challenge (wildcard SSL), **vault provider (Infisical/Doppler) + test**, **Cloudflare DNS records + test** — admin-only, audited |
 | users | /users | list, role change, password reset, one-time reset link, delete — admin-only |
 | notifications | /notifications | channels CRUD, test, delivery log — admin-only |
 | about | /about | version, changelog, tech stack (public); instance counts only for authenticated requests |
@@ -296,6 +297,16 @@ to `400 validation_error` envelopes.
   `users.token_version` — logout, role change, and password change/reset all
   bump it, revoking every outstanding session statelessly. The role is
   re-fetched from the DB on every request.
+- **Sessions** (`sessions` table, migration 0019): every refresh token carries
+  a `jti` referencing a live row (ip, user agent, last used, expiry, revoked).
+  `/auth/refresh` enforces the row on every rotation, so a single device can be
+  signed out from Settings → Account without touching other sessions. Access
+  tokens are short-lived and not per-session-checked (revocation completes
+  within the access TTL).
+- **Passkeys** (`webauthn_credentials` table, `lib/webauthn.ts`): WebAuthn
+  registration + passwordless login via `@simplewebauthn/server`; the relying
+  party derives from the public URL hostname, challenges are single-use with a
+  5-minute in-memory TTL, signature counters track clone detection.
 - **API tokens**: opaque, sha256-hashed at rest, expiry + `last_used_at`.
 - **2FA**: dependency-free RFC 6238 TOTP (`lib/totp.ts`), secret encrypted at
   rest; login accepts `totpCode`.
@@ -335,14 +346,22 @@ tree-kill (SIGTERM→SIGKILL) and a whitelisted env inheritance (never
 ### Pipeline (`engine/pipeline.ts`)
 
 ```
-1. Trigger (manual / webhook / CLI / cron job / template) → deployment row (queued)
+1. Trigger (manual / webhook / CLI / cron job / template) → deployment row (queued);
+   a [skip ci]/[skip cd] head-commit marker skips webhook auto-deploys
 2. A worker slot claims it atomically (queued→building, verified via
-   rowsAffected; claims skip services that already have a building deployment) → status: building
+   rowsAffected; claims skip services that already have a building deployment);
+   concurrency is partitioned per target server (local + each remote), so each
+   partition independently gets NINEDEPLOY_DEPLOY_CONCURRENCY slots → status: building.
+   The building row stores a config snapshot (build config + env-key
+   fingerprint — values never) powering the per-deploy config diff.
 3. Crash recovery on boot: any deployment stranded in `building` is marked failed
 4. If image deploy: pull image (rollback pins an exact digest); else: git clone →
    resolve source creds → checkout commit (token/SSH key scrubbed afterwards)
-5. Gather env: stored vars + attached-DB connection strings; registry auth from
-   registry-type sources
+5. Gather env: project-scope shared vars ← service vars ← attached-DB connection
+   strings (later wins), then resolve ${{infisical:KEY}}/${{doppler:KEY}}
+   vault references at deploy time (fetched from the provider, never stored; a
+   missing key fails the deploy rather than leaking the raw reference into a
+   container); registry auth from registry-type sources
 6. Build via builder dispatch: Docker (buildx) / PM2 (install + build commands,
    with the service env so builds see DB URLs) / Compose (`docker compose up -d
    --build`, project prefix ndcmp-, no blue-green)

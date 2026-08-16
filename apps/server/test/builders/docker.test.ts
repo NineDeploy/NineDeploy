@@ -79,6 +79,20 @@ describe('dockerBuilder.buildAndRun', () => {
     expect(runArgs.join(' ')).toContain('minio/minio server /data --console-address :9001');
   });
 
+  it('honors a configurable restart policy from the build config', async () => {
+    const ctx = makeCtx({ service: { slug: 'web', image: 'nginx', port: 3000, cpuShares: 0, memLimitMb: 0, healthPath: '/' }, buildConfig: { restartPolicy: 'on-failure:5' } });
+    await dockerBuilder.buildAndRun(ctx as never);
+    const runArgs = h.run.mock.calls.at(-1)![1] as unknown[];
+    expect(runArgs.join(' ')).toContain('--restart on-failure:5');
+  });
+
+  it('falls back to unless-stopped for an invalid restart policy', async () => {
+    const ctx = makeCtx({ service: { slug: 'web', image: 'nginx', port: 3000, cpuShares: 0, memLimitMb: 0, healthPath: '/' }, buildConfig: { restartPolicy: 'always --privileged' } });
+    await dockerBuilder.buildAndRun(ctx as never);
+    const runArgs = h.run.mock.calls.at(-1)![1] as unknown[];
+    expect(runArgs.join(' ')).toContain('--restart unless-stopped');
+  });
+
   it('pulls a pre-built image and starts a container with resource/env-file flags', async () => {
     h.run.mockRejectedValueOnce(new Error('pull failed')).mockResolvedValueOnce(undefined);
     const ctx = makeCtx({ service: { slug: 'web', image: 'nginx:1.25', port: 3000, cpuShares: 512, memLimitMb: 256, volumeMount: '/data', healthPath: '/health' } });
@@ -406,6 +420,18 @@ describe('dockerBuilder.stop', () => {
 
     expect(h.run).toHaveBeenCalledWith('docker', ['stop', '-t', '5', 'web-3'], {}, expect.any(Function));
     expect(h.run).toHaveBeenCalledWith('docker', ['rm', '-f', 'web-3'], {}, expect.any(Function));
+  });
+
+  it('uses the configured stop grace period', async () => {
+    await dockerBuilder.stop('web-3', { graceSeconds: 30 });
+    expect(h.run).toHaveBeenCalledWith('docker', ['stop', '-t', '30', 'web-3'], {}, expect.any(Function));
+  });
+
+  it('clamps and rejects bogus grace values', async () => {
+    await dockerBuilder.stop('web-3', { graceSeconds: 9999 });
+    expect(h.run).toHaveBeenCalledWith('docker', ['stop', '-t', '300', 'web-3'], {}, expect.any(Function));
+    await dockerBuilder.stop('web-3', { graceSeconds: -1 });
+    expect(h.run).toHaveBeenCalledWith('docker', ['stop', '-t', '5', 'web-3'], {}, expect.any(Function));
   });
 
   it('swallows errors from both commands', async () => {

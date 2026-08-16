@@ -21,6 +21,34 @@ describe('agent typed-op argv templates', () => {
     expect(await argvOf('docker.pull', { image: 'nginx:1' })).toEqual(['pull', 'nginx:1']);
   });
 
+  it('docker.networkCreate builds a validated argv', async () => {
+    expect(await argvOf('docker.networkCreate', { name: 'net-a', driver: 'overlay' })).toEqual([
+      'network', 'create', '--driver', 'overlay', 'net-a',
+    ]);
+    // Unknown drivers fall back to bridge; omitted driver adds no flag.
+    expect(await argvOf('docker.networkCreate', { name: 'net-b', driver: 'weird' })).toEqual([
+      'network', 'create', '--driver', 'bridge', 'net-b',
+    ]);
+    expect(await argvOf('docker.networkCreate', { name: 'net-c' })).toEqual(['network', 'create', 'net-c']);
+  });
+
+  it('docker.networkCreate rejects hostile names', async () => {
+    await expect(argvOf('docker.networkCreate', { name: 'a;rm' })).rejects.toThrow('Invalid network name');
+  });
+
+  it('docker.networkRm / connect / disconnect', async () => {
+    expect(await argvOf('docker.networkRm', { name: 'net-a' })).toEqual(['network', 'rm', 'net-a']);
+    expect(await argvOf('docker.networkConnect', { network: 'net-a', container: 'web-1' })).toEqual([
+      'network', 'connect', 'net-a', 'web-1',
+    ]);
+    expect(await argvOf('docker.networkDisconnect', { network: 'net-a', container: 'web-1' })).toEqual([
+      'network', 'disconnect', 'net-a', 'web-1',
+    ]);
+    await expect(argvOf('docker.networkConnect', { network: 'net-a', container: 'x;y' })).rejects.toThrow(
+      'Invalid container name',
+    );
+  });
+
   it('docker.build', async () => {
     expect(await argvOf('docker.build', { tag: 'app:1', dockerfile: 'Dockerfile', context: '.' })).toEqual(
       ['build', '-t', 'app:1', '-f', 'Dockerfile', '.'],

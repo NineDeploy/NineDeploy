@@ -177,6 +177,27 @@ describe('webhook receiver', () => {
     expect(res.json()).toEqual({ ok: 'skipped', reason: 'watch_paths', patterns: 2 });
   });
 
+  it('skips deploys for [skip ci] / [skip cd] commit markers', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({ findFirst: { webhooks: hook() } }),
+      rawBody: true,
+    });
+    await app.register(hookReceiveRoutes);
+    for (const marker of ['[skip ci]', '[SKIP CD]', '[skip-cd]']) {
+      const payload = pushPayload();
+      payload.head_commit.message = `update stuff ${marker}`;
+      const body = JSON.stringify(payload);
+      const res = await app.inject({
+        method: 'POST',
+        url: '/1',
+        headers: { 'content-type': 'application/json', 'x-github-event': 'push', 'x-hub-signature-256': sig(body) },
+        payload: body,
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ ok: 'skipped', reason: 'skip_marker' });
+    }
+  });
+
   it('deploys when a changed file matches a watch path', async () => {
     const app = await buildTestApp({
       db: createFakeDb({

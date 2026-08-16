@@ -27,6 +27,7 @@ function SettingsCard({ serviceId }: { serviceId: number }) {
     name: string; branch: string; repoUrl: string; image: string; port: string;
     healthPath: string; volumeMount: string;
     buildPack: string; baseDir: string; installCmd: string; buildCmd: string; startCmd: string; dockerfilePath: string;
+    restartPolicy: string; stopGraceSeconds: string;
   } | null>(null);
   useEffect(() => {
     if (!svc || form) return;
@@ -44,6 +45,8 @@ function SettingsCard({ serviceId }: { serviceId: number }) {
       buildCmd: svc.build?.buildCmd ?? '',
       startCmd: svc.build?.startCmd ?? '',
       dockerfilePath: svc.build?.dockerfilePath ?? '',
+      restartPolicy: svc.build?.restartPolicy ?? 'unless-stopped',
+      stopGraceSeconds: String(svc.build?.stopGraceSeconds ?? 5),
     });
   }, [svc, form]);
 
@@ -67,6 +70,8 @@ function SettingsCard({ serviceId }: { serviceId: number }) {
           buildCmd: orUndef(f.buildCmd),
           startCmd: orUndef(f.startCmd),
           dockerfilePath: orUndef(f.dockerfilePath),
+          restartPolicy: f.restartPolicy,
+          stopGraceSeconds: Number(f.stopGraceSeconds) || 5,
         },
       });
     },
@@ -117,6 +122,18 @@ function SettingsCard({ serviceId }: { serviceId: number }) {
           <Field label="Build command"><Input value={form.buildCmd} onChange={set('buildCmd')} placeholder="npm run build" className="h-9 font-mono text-xs" /></Field>
           <Field label="Start command"><Input value={form.startCmd} onChange={set('startCmd')} placeholder="npm start" className="h-9 font-mono text-xs" /></Field>
           <Field label="Dockerfile path"><Input value={form.dockerfilePath} onChange={set('dockerfilePath')} placeholder="./Dockerfile" className="h-9 font-mono text-xs" /></Field>
+          <Field label="Restart policy">
+            <Select value={form.restartPolicy} onChange={set('restartPolicy')} className="h-9">
+              <option value="unless-stopped">unless-stopped</option>
+              <option value="always">always</option>
+              <option value="on-failure">on-failure</option>
+              <option value="on-failure:5">on-failure:5 (loop cap)</option>
+              <option value="no">no</option>
+            </Select>
+          </Field>
+          <Field label="Stop grace (seconds)">
+            <Input value={form.stopGraceSeconds} onChange={set('stopGraceSeconds')} inputMode="numeric" placeholder="5" className="h-9 font-mono text-xs" />
+          </Field>
 
           <div className="col-span-full">
             <Button type="submit" size="sm" disabled={save.isPending}>

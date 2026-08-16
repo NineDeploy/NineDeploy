@@ -1,5 +1,5 @@
-import { and, eq } from 'drizzle-orm';
-import { envVars } from '@ninedeploy/db';
+import { and, eq, like } from 'drizzle-orm';
+import { envVars, projects, services } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { upsertEnvVar } from '@ninedeploy/schemas';
 import { decrypt, encrypt } from '../lib/crypto.js';
@@ -29,7 +29,14 @@ export const envRoutes: FastifyPluginAsync = async (app) => {
     const input = upsertEnvVar.parse(req.body);
     const [created] = await app.db
       .insert(envVars)
-      .values({ serviceId: id, key: input.key, valueEncrypted: encrypt(input.value), isSecret: input.isSecret ?? false })
+      .values({
+        serviceId: id,
+        scope: 'service',
+        scopeKey: id,
+        key: input.key,
+        valueEncrypted: encrypt(input.value),
+        isSecret: input.isSecret ?? false,
+      })
       .returning()
       .catch(() => [] as typeof envVars.$inferSelect[]);
     if (!created) throw badRequest('Env var with that key already exists');
@@ -54,5 +61,96 @@ export const envRoutes: FastifyPluginAsync = async (app) => {
     const varId = num((req.params as { varId: string }).varId);
     await app.db.delete(envVars).where(and(eq(envVars.id, varId), eq(envVars.serviceId, id)));
     return { ok: true };
+  });
+};
+
+/** Shared (project-scope) env vars. Mounted under /projects. */
+export const projectEnvRoutes: FastifyPluginAsync = async (app) => {
+  app.addHook('onRequest', app.authenticate);
+
+  app.get('/:id/env', async (req) => {
+    const id = num((req.params as { id: string }).id);
+    const rows = await app.db.query.envVars.findMany({
+      where: and(eq(envVars.scope, 'project'), eq(envVars.scopeKey, id)),
+      orderBy: (e, { asc }) => [asc(e.key)],
+    });
+    return rows.map(serialize);
+  });
+
+  app.post('/:id/env', async (req) => {
+    const id = num((req.params as { id: string }).id);
+    const project = await app.db.query.projects.findFirst({ where: eq(projects.id, id) });
+    if (!project) throw notFound('Project not found');
+    const input = upsertEnvVar.parse(req.body);
+    const [created] = await app.db
+      .insert(envVars)
+      .values({
+        serviceId: null,
+        scope: 'project',
+        scopeKey: id,
+        key: input.key,
+        valueEncrypted: encrypt(input.value),
+        isSecret: input.isSecret ?? false,
+      })
+      .returning()
+      .catch(() => [] as typeof envVars.$inferSelect[]);
+    if (!created) throw badRequest('Env var with that key already exists');
+    return serialize(created);
+  });
+
+  app.patch('/:id/env/:varId', async (req) => {
+    const id = num((req.params as { id: string }).id);
+    const varId = num((req.params as { varId: string }).varId);
+    const input = upsertEnvVar.parse(req.body);
+    const [updated] = await app.db
+      .update(envVars)
+      .set({ valueEncrypted: encrypt(input.value), isSecret: input.isSecret ?? false })
+      .where(and(eq(envVars.id, varId), eq(envVars.scope, 'project'), eq(envVars.scopeKey, id)))
+      .returning();
+    if (!updated) throw notFound('Env var not found');
+    return serialize(updated);
+  });
+
+  app.delete('/:id/env/:varId', async (req) => {
+    const id = num((req.params as { id: string }).id);
+    const varId = num((req.params as { varId: string }).varId);
+    await app.db
+      .delete(envVars)
+      .where(and(eq(envVars.id, varId), eq(envVars.scope, 'project'), eq(envVars.scopeKey, id)));
+    return { ok: true };
+  });
+};
+
+/** Cross-scope env key search: where is a given key defined? Mounted under /env. */
+export const envSearchRoutes: FastifyPluginAsync = async (app) => {
+  app.addHook('onRequest', app.authenticate);
+
+  app.get('/search', async (req) => {
+    const q = String((req.query as { q?: string }).q ?? '').trim();
+    if (q.length < 1) return { results: [] };
+    const needle = `%${q.replace(/[%_]/g, (c) => `\\${c}`)}%`;
+    const rows = await app.db
+      .select({
+        id: envVars.id,
+        key: envVars.key,
+        isSecret: envVars.isSecret,
+        serviceId: envVars.serviceId,
+        scope: envVars.scope,
+        scopeKey: envVars.scopeKey,
+        serviceName: services.name,
+      })
+      .from(envVars)
+      .leftJoin(services, eq(services.id, envVars.serviceId))
+      .where(like(envVars.key, needle))
+      .limit(100);
+    return {
+      results: rows.map((r) => ({
+        key: r.key,
+        isSecret: r.isSecret,
+        scope: r.scope,
+        serviceId: r.serviceId,
+        serviceName: r.serviceName,
+      })),
+    };
   });
 };

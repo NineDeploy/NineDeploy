@@ -78,6 +78,8 @@ const h = vi.hoisted(() => {
     envList: vi.fn(), envSet: vi.fn(), envRemove: vi.fn(),
     domainsList: vi.fn(), domainsAdd: vi.fn(), domainsRemove: vi.fn(),
     volumesList: vi.fn(), volumesRemove: vi.fn(),
+    networksList: vi.fn(), networksCreate: vi.fn(), networksRemove: vi.fn(),
+    sessionsList: vi.fn(), sessionsRevoke: vi.fn(),
     backupsList: vi.fn(), backupsCreate: vi.fn(), backupsRestore: vi.fn(),
     alertsList: vi.fn(), alertsCreate: vi.fn(), alertsRemove: vi.fn(),
     usersList: vi.fn(), activityList: vi.fn(),
@@ -155,6 +157,11 @@ vi.mock('../src/commands/manage.js', () => ({
   usersList: h.usersList,
   usersResetLink: h.usersResetLink,
   volumesList: h.volumesList,
+  networksList: h.networksList,
+  networksCreate: h.networksCreate,
+  networksRemove: h.networksRemove,
+  sessionsList: h.sessionsList,
+  sessionsRevoke: h.sessionsRevoke,
   volumesRemove: h.volumesRemove,
 }));
 vi.mock('../src/lib/format.js', () => ({ banner: h.banner }));
@@ -211,7 +218,7 @@ describe('program registration', () => {
     expect(root.children.map((c) => c.cmdName)).toEqual([
       'setup', 'login', 'logout', 'whoami', 'config',
       'services', 'databases', 'templates', 'deploys', 'token', 'system',
-      'env', 'domains', 'volumes', 'backups', 'alerts', 'users',
+      'env', 'domains', 'volumes', 'networks', 'sessions', 'backups', 'alerts', 'users',
       'reset-link <idOrEmail>', 'activity',
     ]);
     expect(findCommand('services').children).toHaveLength(10);
@@ -225,8 +232,9 @@ describe('program registration', () => {
     expect(findCommand('volumes').children).toHaveLength(2);
     expect(findCommand('backups').children).toHaveLength(3);
     expect(findCommand('alerts').children).toHaveLength(3);
-    // 1 root + 19 direct + nested: 10 + 2 + 2 + 3 + 2 + 5 + 3 + 3 + 2 + 3 + 3
-    expect(h.FakeCommand.instances).toHaveLength(58);
+    // 1 root + 21 direct + nested: 10 + 2 + 2 + 3 + 2 + 5 + 3 + 3 + 2 + 3 + 3
+    // (+3 for the new networks group, +2 for sessions, +1 activity)
+    expect(h.FakeCommand.instances).toHaveLength(65);
     // argv length > 2 → no banner, no exit
     expect(h.banner).not.toHaveBeenCalled();
     expect(h.exit).not.toHaveBeenCalled();
@@ -310,6 +318,42 @@ describe('whoami action', () => {
 
     expect(logSpy).toHaveBeenCalledWith('  Token expired. Run `ninedeploy login`.');
     expect(h.exit).toHaveBeenCalledWith(1);
+  });
+});
+
+describe('networks / sessions actions', () => {
+  it('drives the networks create action (overlay + default driver)', async () => {
+    h.loadConfig.mockReturnValue({ baseUrl: 'http://srv:3000', token: 'tok' });
+    h.getClient.mockReturnValue({});
+    await loadIndex();
+    const children = findCommand('networks').children;
+    const createAction = children.find((c) => c.cmdName === 'create <name> [driver]')!.actionFn!;
+    await createAction('net-x', 'overlay');
+    await createAction('net-y', undefined);
+    expect(h.networksCreate).toHaveBeenNthCalledWith(1, expect.anything(), 'net-x', 'overlay');
+    expect(h.networksCreate).toHaveBeenNthCalledWith(2, expect.anything(), 'net-y', 'bridge');
+  });
+
+  it('drives the networks list and rm actions', async () => {
+    h.loadConfig.mockReturnValue({ baseUrl: 'http://srv:3000', token: 'tok' });
+    h.getClient.mockReturnValue({});
+    await loadIndex();
+    const children = findCommand('networks').children;
+    await children.find((c) => c.cmdName === 'list')!.actionFn!();
+    expect(h.networksList).toHaveBeenCalledWith(expect.anything());
+    await children.find((c) => c.cmdName === 'rm <name>')!.actionFn!('net-x');
+    expect(h.networksRemove).toHaveBeenCalledWith(expect.anything(), 'net-x');
+  });
+
+  it('drives the sessions list and revoke actions', async () => {
+    h.loadConfig.mockReturnValue({ baseUrl: 'http://srv:3000', token: 'tok' });
+    h.getClient.mockReturnValue({});
+    await loadIndex();
+    const children = findCommand('sessions').children;
+    await children.find((c) => c.cmdName === 'list')!.actionFn!();
+    expect(h.sessionsList).toHaveBeenCalledWith(expect.anything());
+    await children.find((c) => c.cmdName === 'revoke <id>')!.actionFn!('4');
+    expect(h.sessionsRevoke).toHaveBeenCalledWith(expect.anything(), '4');
   });
 });
 

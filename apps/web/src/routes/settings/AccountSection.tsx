@@ -1,10 +1,10 @@
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import { KeyRound, Smartphone } from 'lucide-react';
+import { Fingerprint, KeyRound, MonitorSmartphone, Smartphone } from 'lucide-react';
 import { api, setSessionTokens } from '../../lib/api.js';
 import { useToast } from '../../components/Toast.js';
-import { Button, Card, CardBody } from '../../components/ui.js';
-import { useCopy } from '../../lib/format.js';
+import { Button, Card, CardBody, Skeleton } from '../../components/ui.js';
+import { formatDateTime, useCopy } from '../../lib/format.js';
 
 /** Account: self-service password change + two-factor authentication. */
 export function AccountSection() {
@@ -89,7 +89,157 @@ export function AccountSection() {
       </Card>
 
       <TwoFactorCard />
+      <PasskeyCard />
+      <SessionsCard />
     </>
+  );
+}
+
+// ── Passkeys (WebAuthn) ────────────────────────────────────────────────────
+function PasskeyCard() {
+  const { toast } = useToast();
+  const [name, setName] = useState('');
+  const queryClient = useQueryClient();
+
+  const passkeys = useQuery({ queryKey: ['passkeys'], queryFn: () => api.auth.passkeys.list() });
+
+  const register = useMutation({
+    mutationFn: async () => {
+      const { startRegistration } = await import('@simplewebauthn/browser');
+      const { options } = await api.auth.passkeys.registerOptions();
+      const attestation = await startRegistration(JSON.parse(options) as Parameters<typeof startRegistration>[0]);
+      return api.auth.passkeys.registerVerify({ name: name || 'Passkey', response: attestation });
+    },
+    onSuccess: () => {
+      setName('');
+      void queryClient.invalidateQueries({ queryKey: ['passkeys'] });
+      toast('Passkey added', 'success');
+    },
+    onError: (err) => toast(err instanceof Error && err.message ? `Passkey setup failed: ${err.message}` : 'Passkey setup failed or cancelled', 'error'),
+  });
+
+  const remove = useMutation({
+    mutationFn: (id: number) => api.auth.passkeys.remove(id),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['passkeys'] });
+      toast('Passkey removed', 'success');
+    },
+    onError: () => toast('Could not remove passkey', 'error'),
+  });
+
+  return (
+    <Card className="mb-5">
+      <CardBody>
+        <h2 className="mb-1 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
+          <Fingerprint size={14} /> Passkeys
+        </h2>
+        <p className="mb-4 text-xs text-slate-500">
+          Sign in with biometrics or a security key — no password needed. The relying party is bound to this
+          instance's hostname, so passkeys only work on the URL they were registered on.
+        </p>
+        <div className="mb-4 flex max-w-md items-end gap-2">
+          <label className="flex-1">
+            <span className="mb-1 block text-xs text-slate-500">Label</span>
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="MacBook Touch ID"
+              className="w-full rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-2 text-sm outline-none focus:border-indigo-500"
+            />
+          </label>
+          <Button size="sm" onClick={() => register.mutate()} disabled={register.isPending}>
+            {register.isPending ? 'Waiting for authenticator…' : 'Add passkey'}
+          </Button>
+        </div>
+        {passkeys.isLoading ? (
+          <Skeleton className="h-10 w-full" />
+        ) : !passkeys.data || passkeys.data.length === 0 ? (
+          <p className="text-xs text-slate-600">No passkeys registered yet.</p>
+        ) : (
+          <ul className="space-y-1">
+            {passkeys.data.map((p) => (
+              <li
+                key={p.id}
+                className="flex items-center justify-between rounded-lg bg-white/[0.02] px-3 py-2 text-xs ring-1 ring-inset ring-white/5"
+              >
+                <span className="text-slate-300">{p.name}</span>
+                <span className="flex items-center gap-3">
+                  <span className="text-slate-500">{formatDateTime(p.createdAt)}</span>
+                  <button type="button" onClick={() => remove.mutate(p.id)} className="text-rose-400 hover:text-rose-300">
+                    Remove
+                  </button>
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardBody>
+    </Card>
+  );
+}
+
+// ── Active sessions ────────────────────────────────────────────────────────
+function SessionsCard() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const sessions = useQuery({
+    queryKey: ['sessions'],
+    queryFn: () => api.auth.sessions.list(),
+    refetchInterval: 15000,
+  });
+  const revoke = useMutation({
+    mutationFn: (id: number) => api.auth.sessions.revoke(id),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['sessions'] });
+      toast('Session revoked', 'success');
+    },
+    onError: () => toast('Could not revoke session', 'error'),
+  });
+
+  return (
+    <Card className="mb-5">
+      <CardBody>
+        <h2 className="mb-1 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
+          <MonitorSmartphone size={14} /> Active sessions
+        </h2>
+        <p className="mb-4 text-xs text-slate-500">
+          Devices holding a valid refresh token for your account. Revoking signs that device out when its
+          access token expires (within minutes).
+        </p>
+        {sessions.isLoading ? (
+          <Skeleton className="h-10 w-full" />
+        ) : !sessions.data || sessions.data.length === 0 ? (
+          <p className="text-xs text-slate-600">No active sessions.</p>
+        ) : (
+          <ul className="space-y-1">
+            {sessions.data.map((s) => (
+              <li
+                key={s.id}
+                className="flex items-center justify-between gap-3 rounded-lg bg-white/[0.02] px-3 py-2 text-xs ring-1 ring-inset ring-white/5"
+              >
+                <span className="min-w-0">
+                  <span className="block truncate text-slate-300">
+                    {s.current && <span className="mr-2 rounded bg-indigo-500/20 px-1.5 py-0.5 text-[10px] font-medium text-indigo-300">this device</span>}
+                    {s.ip ?? 'unknown ip'}
+                  </span>
+                  <span className="block truncate text-slate-600" title={s.userAgent ?? undefined}>
+                    {s.userAgent ?? 'unknown client'}
+                  </span>
+                </span>
+                <span className="flex shrink-0 items-center gap-3">
+                  <span className="text-slate-500">{s.lastUsedAt ? formatDateTime(s.lastUsedAt) : formatDateTime(s.createdAt)}</span>
+                  {!s.current && (
+                    <button type="button" onClick={() => revoke.mutate(s.id)} className="text-rose-400 hover:text-rose-300">
+                      Revoke
+                    </button>
+                  )}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardBody>
+    </Card>
   );
 }
 

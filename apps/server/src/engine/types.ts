@@ -49,5 +49,5 @@ export interface DeployRuntime {
 export interface Builder {
   buildAndRun(ctx: BuildContext, previous?: DeployRuntime): Promise<DeployRuntime>;
   isHealthy(runtime: DeployRuntime, timeoutMs?: number, directGraceMs?: number, log?: (line: string) => void): Promise<boolean>;
-  stop(runtimeId: string): Promise<void>;
+  stop(runtimeId: string, opts?: { graceSeconds?: number }): Promise<void>;
 }

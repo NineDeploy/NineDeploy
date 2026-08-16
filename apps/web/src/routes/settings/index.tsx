@@ -7,8 +7,9 @@ import { SecuritySection } from './SecuritySection.js';
 import { SystemSection } from './SystemSection.js';
 import { NotificationsSection } from './NotificationsSection.js';
 import { MigrationSection } from './MigrationSection.js';
+import { IntegrationsSection } from './IntegrationsSection.js';
 
-type SectionId = 'account' | 'appearance' | 'security' | 'system' | 'notifications' | 'migration';
+type SectionId = 'account' | 'appearance' | 'security' | 'integrations' | 'system' | 'notifications' | 'migration';
 
 /** Settings page shell: tabbed sections, each self-contained. */
 export function Settings() {
@@ -32,6 +33,7 @@ export function Settings() {
           { id: 'account', label: 'Account' },
           { id: 'appearance', label: 'Appearance' },
           { id: 'security', label: 'Security' },
+          { id: 'integrations', label: 'Integrations' },
           { id: 'system', label: 'System' },
           { id: 'notifications', label: 'Notifications' },
           { id: 'migration', label: 'Migration' },
@@ -41,6 +43,7 @@ export function Settings() {
       {section === 'account' && <AccountSection />}
       {section === 'appearance' && <AppearanceSection />}
       {section === 'security' && <SecuritySection />}
+      {section === 'integrations' && <IntegrationsSection />}
       {section === 'system' && <SystemSection />}
       {section === 'notifications' && <NotificationsSection />}
       {section === 'migration' && <MigrationSection />}

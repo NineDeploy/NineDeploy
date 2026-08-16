@@ -61,6 +61,33 @@ export const systemRoutes: FastifyPluginAsync = async (app) => {
     return { ok: true };
   });
 
+  // Recent docker events (single-shot fetch for the Docker dashboard feed —
+  // polling this endpoint is simpler and sturdier than a streamed daemon
+  // connection). `minutes` caps how far back the daemon is asked to look.
+  app.get('/docker-events', async (req) => {
+    const minutes = Math.min(Math.max(Number((req.query as { minutes?: string }).minutes) || 60, 1), 1440);
+    try {
+      const raw = await capture('docker', [
+        'events', '--since', `${minutes}m`, '--until', '0s',
+        '--format', '{{.Time}}|{{.Type}}|{{.Action}}|{{.Actor.Attributes.name}}',
+      ]);
+      const events = raw
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => {
+          const parts = line.split('|');
+          // Shared accessor: trailing segments may be missing entirely.
+          const cell = (i: number): string => parts[i] ?? '';
+          return { time: cell(0), type: cell(1), action: cell(2), name: cell(3) };
+        })
+        .reverse()
+        .slice(0, 200);
+      return { events };
+    } catch {
+      return { events: [] };
+    }
+  });
+
   // ── Export: download a tar.gz of the entire system state ──────────────
   app.get('/export', async (_req, reply) => {
     const files: string[] = [];

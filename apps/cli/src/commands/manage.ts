@@ -122,6 +122,65 @@ export async function volumesRemove(client: NineDeployClient, name: string): Pro
   } catch (err) { fail(err); }
 }
 
+// ── networks ───────────────────────────────────────────────────────────────
+
+/** `ninedeploy networks list` */
+export async function networksList(client: NineDeployClient): Promise<void> {
+  header('Docker Networks');
+  await spinner('Fetching', async () => {
+    const { networks } = await client.networks.list();
+    if (networks.length === 0) { info('No user-defined networks.'); return; }
+    table(networks.map((n) => ({ name: n.name, driver: n.driver, members: n.members.join(', ') || '—' })), ['name', 'driver', 'members']);
+  });
+}
+
+/** `ninedeploy networks create <name> [driver]` */
+export async function networksCreate(client: NineDeployClient, name: string, driver: 'bridge' | 'overlay'): Promise<void> {
+  try {
+    await spinner('Creating network', () => client.networks.create({ name, driver }));
+    success(`Network ${c.cyan(name)} created.`);
+  } catch (err) { fail(err); }
+}
+
+/** `ninedeploy networks rm <name>` */
+export async function networksRemove(client: NineDeployClient, name: string): Promise<void> {
+  if (!name) return error('Usage: ninedeploy networks rm <name>');
+  const confirm = await prompt(`Type the network name (${name}) to confirm deletion`);
+  if (confirm !== name) return error('Cancelled.');
+  try {
+    await spinner('Removing network', () => client.networks.remove(name));
+    success(`Network ${c.cyan(name)} removed.`);
+  } catch (err) { fail(err); }
+}
+
+// ── sessions ───────────────────────────────────────────────────────────────
+
+/** `ninedeploy sessions list` */
+export async function sessionsList(client: NineDeployClient): Promise<void> {
+  header('Active Sessions');
+  await spinner('Fetching', async () => {
+    const rows = await client.auth.sessions.list();
+    if (rows.length === 0) { info('No active sessions.'); return; }
+    table(rows.map((s) => ({
+      id: s.id,
+      current: s.current ? 'yes' : '',
+      ip: s.ip ?? '—',
+      lastUsed: s.lastUsedAt ?? s.createdAt,
+      userAgent: (s.userAgent ?? '—').slice(0, 60),
+    })), ['id', 'current', 'ip', 'lastUsed', 'userAgent']);
+  });
+}
+
+/** `ninedeploy sessions revoke <id>` */
+export async function sessionsRevoke(client: NineDeployClient, idStr: string): Promise<void> {
+  const id = Number(idStr);
+  if (!Number.isInteger(id) || id <= 0) return error('Usage: ninedeploy sessions revoke <id>');
+  try {
+    await spinner('Revoking session', () => client.auth.sessions.revoke(id));
+    success(`Session #${id} revoked.`);
+  } catch (err) { fail(err); }
+}
+
 // ── backups ────────────────────────────────────────────────────────────────
 
 /** Human label for a backup row: prefer the database name, fall back to its id. */
@@ -243,9 +302,9 @@ export async function usersResetLink(client: NineDeployClient, who: string): Pro
 export async function activityList(client: NineDeployClient): Promise<void> {
   header('Activity');
   await spinner('Fetching', async () => {
-    const rows = await client.activity.list();
-    if (rows.length === 0) { info('No activity yet.'); return; }
-    table(rows.slice(0, 30).map((a) => ({ id: a.id, action: a.action, entity: a.entity ?? '—', time: fmtTime(a.ts) })), ['id', 'action', 'entity', 'time']);
+    const { entries } = await client.activity.list();
+    if (entries.length === 0) { info('No activity yet.'); return; }
+    table(entries.slice(0, 30).map((a) => ({ id: a.id, action: a.action, entity: a.entity ?? '—', time: fmtTime(a.ts) })), ['id', 'action', 'entity', 'time']);
   });
 }
 

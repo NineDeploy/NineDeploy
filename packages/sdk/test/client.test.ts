@@ -498,6 +498,129 @@ describe('createClient', () => {
     });
   });
 
+  describe('auth passkeys + sessions', () => {
+    it('exercises the passkey ceremony endpoints', async () => {
+      const { fetchMock, calls } = makeFetch(() => ok({ options: '{}' }));
+      const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
+      await client.auth.passkeys.registerOptions();
+      expect(last(calls)).toMatchObject({ url: '/v1/auth/passkey/register/options', init: { method: 'POST' } });
+      await client.auth.passkeys.loginOptions();
+      expect(last(calls)).toMatchObject({ url: '/v1/auth/passkey/login/options', init: { method: 'POST' } });
+    });
+
+    it('verifies and lists passkeys', async () => {
+      const { fetchMock, calls } = makeFetch(() => ok([]));
+      const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
+      await client.auth.passkeys.registerVerify({ name: 'yubi', response: { id: 'x' } });
+      expect(last(calls)).toMatchObject({ url: '/v1/auth/passkey/register/verify', init: { method: 'POST' } });
+      await client.auth.passkeys.list();
+      expect(last(calls)).toMatchObject({ url: '/v1/auth/passkey', init: { method: 'GET' } });
+      await client.auth.passkeys.loginVerify({ id: 'x' });
+      expect(last(calls)).toMatchObject({ url: '/v1/auth/passkey/login/verify', init: { method: 'POST' } });
+    });
+
+    it('removes a passkey and lists/revokes sessions', async () => {
+      const { fetchMock, calls } = makeFetch(() => ok({ ok: true }));
+      const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
+      await client.auth.passkeys.remove(4);
+      expect(last(calls)).toMatchObject({ url: '/v1/auth/passkey/4', init: { method: 'DELETE' } });
+      await client.auth.sessions.list();
+      expect(last(calls)).toMatchObject({ url: '/v1/auth/sessions', init: { method: 'GET' } });
+      await client.auth.sessions.revoke(9);
+      expect(last(calls)).toMatchObject({ url: '/v1/auth/sessions/9', init: { method: 'DELETE' } });
+    });
+  });
+
+  describe('deploys config diff', () => {
+    it('fetches the diff for a deployment', async () => {
+      const { fetchMock, calls } = makeFetch(() => ok({ changed: false, diff: '' }));
+      const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
+      await client.deploys.configDiff(3, 12);
+      expect(last(calls)).toMatchObject({ url: '/v1/services/3/deploys/12/diff', init: { method: 'GET' } });
+    });
+  });
+
+  describe('networks', () => {
+    it('exercises list, create, remove, attach and detach', async () => {
+      const { fetchMock, calls } = makeFetch(() => ok({ networks: [], remote: null }));
+      const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
+      await client.networks.list();
+      expect(last(calls)).toMatchObject({ url: '/v1/networks', init: { method: 'GET' } });
+      await client.networks.create({ name: 'net-a', driver: 'overlay' });
+      expect(last(calls)).toMatchObject({ url: '/v1/networks', init: { method: 'POST' } });
+      await client.networks.remove('net-a', 2);
+      expect(last(calls)).toMatchObject({ url: '/v1/networks/net-a?serverId=2', init: { method: 'DELETE' } });
+      await client.networks.remove('net-a');
+      expect(last(calls)).toMatchObject({ url: '/v1/networks/net-a', init: { method: 'DELETE' } });
+      await client.networks.attach({ network: 'net-a', container: 'c-1' });
+      expect(last(calls)).toMatchObject({ url: '/v1/networks/attach', init: { method: 'POST' } });
+      await client.networks.detach({ network: 'net-a', container: 'c-1' });
+      expect(last(calls)).toMatchObject({ url: '/v1/networks/detach', init: { method: 'POST' } });
+    });
+  });
+
+  describe('system docker events', () => {
+    it('fetches recent daemon events', async () => {
+      const { fetchMock, calls } = makeFetch(() => ok({ events: [] }));
+      const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
+      await client.system.dockerEvents(30);
+      expect(last(calls)).toMatchObject({ url: '/v1/system/docker-events?minutes=30', init: { method: 'GET' } });
+    });
+
+    it('defaults to the last hour when no window is given', async () => {
+      const { fetchMock, calls } = makeFetch(() => ok({ events: [] }));
+      const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
+      await client.system.dockerEvents();
+      expect(last(calls)).toMatchObject({ url: '/v1/system/docker-events?minutes=60', init: { method: 'GET' } });
+    });
+  });
+
+  describe('settings vault + dns records', () => {
+    it('exercises vault get/set/test', async () => {
+      const { fetchMock, calls } = makeFetch(() => ok({ ok: true }));
+      const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
+      await client.settings.vault.get();
+      expect(last(calls)).toMatchObject({ url: '/v1/settings/vault', init: { method: 'GET' } });
+      await client.settings.vault.set({ provider: 'doppler', token: 't' });
+      expect(last(calls)).toMatchObject({ url: '/v1/settings/vault', init: { method: 'PUT' } });
+      await client.settings.vault.test();
+      expect(last(calls)).toMatchObject({ url: '/v1/settings/vault/test', init: { method: 'POST' } });
+    });
+
+    it('exercises dns-records get/set/test', async () => {
+      const { fetchMock, calls } = makeFetch(() => ok({ ok: true }));
+      const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
+      await client.settings.dnsRecords.get();
+      expect(last(calls)).toMatchObject({ url: '/v1/settings/dns-records', init: { method: 'GET' } });
+      await client.settings.dnsRecords.set({ enabled: true });
+      expect(last(calls)).toMatchObject({ url: '/v1/settings/dns-records', init: { method: 'PUT' } });
+      await client.settings.dnsRecords.test();
+      expect(last(calls)).toMatchObject({ url: '/v1/settings/dns-records/test', init: { method: 'POST' } });
+    });
+  });
+
+  describe('env search + project env', () => {
+    it('searches env keys across scopes', async () => {
+      const { fetchMock, calls } = makeFetch(() => ok({ results: [] }));
+      const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
+      await client.env.search('DATABASE');
+      expect(last(calls)).toMatchObject({ url: '/v1/env/search?q=DATABASE', init: { method: 'GET' } });
+    });
+
+    it('manages project-scoped env vars', async () => {
+      const { fetchMock, calls } = makeFetch(() => ok([]));
+      const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
+      await client.projectEnv.list(6);
+      expect(last(calls)).toMatchObject({ url: '/v1/projects/6/env', init: { method: 'GET' } });
+      await client.projectEnv.create(6, { key: 'A', value: 'b' });
+      expect(last(calls)).toMatchObject({ url: '/v1/projects/6/env', init: { method: 'POST' } });
+      await client.projectEnv.update(6, 7, { key: 'A', value: 'c' });
+      expect(last(calls)).toMatchObject({ url: '/v1/projects/6/env/7', init: { method: 'PATCH' } });
+      await client.projectEnv.remove(6, 7);
+      expect(last(calls)).toMatchObject({ url: '/v1/projects/6/env/7', init: { method: 'DELETE' } });
+    });
+  });
+
   describe('activity', () => {
     it('lists activity', async () => {
       const { fetchMock, calls } = makeFetch(() => ok([]));
@@ -507,10 +630,20 @@ describe('createClient', () => {
     });
 
     it('filters the audit trail by entity', async () => {
-      const { fetchMock, calls } = makeFetch(() => ok([]));
+      const { fetchMock, calls } = makeFetch(() => ok({ entries: [], nextCursor: null }));
       const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
-      await client.activity.list('my app');
+      await client.activity.list({ entity: 'my app' });
       expect(last(calls)).toMatchObject({ url: '/v1/activity?entity=my%20app', init: { method: 'GET' } });
+    });
+
+    it('combines action/userId/before filters', async () => {
+      const { fetchMock, calls } = makeFetch(() => ok({ entries: [], nextCursor: null }));
+      const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
+      await client.activity.list({ action: 'deploy.trigger', userId: 3, before: 42 });
+      expect(last(calls)).toMatchObject({
+        url: '/v1/activity?action=deploy.trigger&userId=3&before=42',
+        init: { method: 'GET' },
+      });
     });
   });
 

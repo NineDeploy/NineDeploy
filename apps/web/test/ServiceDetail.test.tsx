@@ -792,14 +792,17 @@ describe('ServiceDetail', () => {
   });
 
   it('shows the service-filtered activity trail (server-side ?entity=)', async () => {
-    mockOf(api.activity.list).mockResolvedValue([
-      { id: 1, userId: 1, action: 'service.update', entity: 'api', ts: '2026-01-01T00:00:00Z' },
-      { id: 3, userId: 1, action: 'service.stop', entity: 'api', ts: '2026-01-01T00:02:00Z' },
-    ] as never);
+    mockOf(api.activity.list).mockResolvedValue({
+      entries: [
+        { id: 1, userId: 1, action: 'service.update', entity: 'api', meta: null, ts: '2026-01-01T00:00:00Z' },
+        { id: 3, userId: 1, action: 'service.stop', entity: 'api', meta: null, ts: '2026-01-01T00:02:00Z' },
+      ],
+      nextCursor: null,
+    } as never);
     renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
     await openTab('Activity');
     // the page asks the server to filter by the service's entity name
-    await waitFor(() => expect(api.activity.list).toHaveBeenCalledWith('api'));
+    await waitFor(() => expect(api.activity.list).toHaveBeenCalledWith({ entity: 'api' }));
     expect(await screen.findByText('service.update')).toBeInTheDocument();
     expect(screen.getByText('service.stop')).toBeInTheDocument();
   });

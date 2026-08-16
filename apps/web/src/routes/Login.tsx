@@ -1,12 +1,13 @@
 import { useQuery } from '@tanstack/react-query';
 import { type FormEvent, useState } from 'react';
 import { Navigate, Link, useLocation, useNavigate, useSearchParams } from 'react-router';
+import { Fingerprint } from 'lucide-react';
 import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.js';
 import { BrandMark, Button, Card, Field, Input } from '../components/ui.js';
 
 export function Login() {
-  const { user, login, setup } = useAuth();
+  const { user, login, setup, loginWithPasskey } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [params] = useSearchParams();
@@ -113,6 +114,35 @@ export function Login() {
             <Button type="submit" className="w-full" disabled={busy || status.isLoading}>
               {busy ? 'Please wait…' : initialized ? (needsTotp ? 'Verify & sign in' : 'Sign in') : 'Create account'}
             </Button>
+
+            {initialized && (
+              <div className="relative py-1 text-center">
+                <span className="relative z-10 bg-slate-900 px-2 text-xs text-slate-600">or</span>
+                <span className="absolute inset-x-0 top-1/2 h-px bg-white/5" />
+              </div>
+            )}
+            {initialized && (
+              <Button
+                type="button"
+                variant="secondary"
+                className="w-full"
+                disabled={busy}
+                onClick={async () => {
+                  setError(null);
+                  setBusy(true);
+                  try {
+                    await loginWithPasskey();
+                    navigate(from, { replace: true });
+                  } catch (err) {
+                    setError(err instanceof Error && err.message ? err.message : 'Passkey sign-in cancelled');
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              >
+                <Fingerprint size={15} /> Use a passkey
+              </Button>
+            )}
             {initialized && (
               <p className="text-center text-xs text-slate-500">
                 <Link to="/forgot-password" className="underline-offset-2 hover:underline">Forgot your password?</Link>

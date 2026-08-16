@@ -202,3 +202,13 @@ export interface AlertRule {
 
 /** Input for creating an alert rule — defaults optional (zod applies them server-side). */
 export type CreateAlertRuleInput = z.input<typeof alertRuleCreate>;
+
+/** One audit-log entry (activity feed). `meta` carries request context (ip/ua). */
+export interface ActivityEntry {
+  id: number;
+  userId: number | null;
+  action: string;
+  entity: string | null;
+  meta: Record<string, unknown> | null;
+  ts: string;
+}

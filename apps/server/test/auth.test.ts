@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { authRoutes, createFirstAdmin, registerAccount } from '../src/modules/auth.js';
-import { asUser, buildTestApp, createFakeDb, tokenRow, userRow } from './helpers.js';
+import { asUser, buildTestApp, createFakeDb, sessionRow, tokenRow, userRow } from './helpers.js';
 
 const cryptoMocks = vi.hoisted(() => ({
   hashPassword: vi.fn(async () => 'hashed'),
@@ -220,8 +220,9 @@ describe('auth routes', () => {
   });
 
   it('refreshes tokens with a valid refresh token', async () => {
+    jwtMocks.verifyJwt.mockResolvedValueOnce({ type: 'refresh', sub: '1', jti: 'jti-1' });
     const app = await buildTestApp({
-      db: createFakeDb({ findFirst: { users: userRow({ id: 1 }) } }),
+      db: createFakeDb({ findFirst: { users: userRow({ id: 1 }), sessions: sessionRow({ jti: 'jti-1', userId: 1 }) } }),
     });
     await app.register(authRoutes);
     const res = await app.inject({
@@ -235,9 +236,9 @@ describe('auth routes', () => {
 
   it('rejects a refresh token whose ver no longer matches the user tokenVersion (revoked session)', async () => {
     // Token minted at ver 0, but the user has since been bumped to ver 1 (logout/role change).
-    jwtMocks.verifyJwt.mockResolvedValueOnce({ type: 'refresh', sub: '1', ver: 0 });
+    jwtMocks.verifyJwt.mockResolvedValueOnce({ type: 'refresh', sub: '1', jti: 'jti-1', ver: 0 });
     const app = await buildTestApp({
-      db: createFakeDb({ findFirst: { users: userRow({ id: 1, tokenVersion: 1 }) } }),
+      db: createFakeDb({ findFirst: { users: userRow({ id: 1, tokenVersion: 1 }), sessions: sessionRow({ jti: 'jti-1' }) } }),
     });
     await app.register(authRoutes);
     const res = await app.inject({
@@ -255,6 +256,53 @@ describe('auth routes', () => {
     const res = await app.inject({ method: 'POST', url: '/refresh', payload: { refreshToken: 'bad' } });
     expect(res.statusCode).toBe(401);
     expect(res.json().error.message).toBe('Invalid refresh token');
+  });
+
+  it('accepts a refresh token without a ver claim', async () => {
+    jwtMocks.verifyJwt.mockResolvedValueOnce({ type: 'refresh', sub: '1', jti: 'jti-1' });
+    const app = await buildTestApp({
+      db: createFakeDb({ findFirst: { users: userRow({ id: 1, tokenVersion: 0 }), sessions: sessionRow({ jti: 'jti-1' }) } }),
+    });
+    await app.register(authRoutes);
+    const res = await app.inject({ method: 'POST', url: '/refresh', payload: { refreshToken: 'v' } });
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('rejects a refresh whose user vanished but session lives on', async () => {
+    jwtMocks.verifyJwt.mockResolvedValueOnce({ type: 'refresh', sub: '1', jti: 'jti-1' });
+    const app = await buildTestApp({
+      db: createFakeDb({ findFirst: { users: undefined, sessions: sessionRow({ jti: 'jti-1' }) } }),
+    });
+    await app.register(authRoutes);
+    const res = await app.inject({ method: 'POST', url: '/refresh', payload: { refreshToken: 'v' } });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('rejects a refresh token from a session of another user', async () => {
+    jwtMocks.verifyJwt.mockResolvedValueOnce({ type: 'refresh', sub: '1', jti: 'jti-1', ver: 0 });
+    const app = await buildTestApp({
+      db: createFakeDb({ findFirst: { users: userRow({ id: 1, tokenVersion: 0 }), sessions: sessionRow({ jti: 'jti-1', userId: 2 }) } }),
+    });
+    await app.register(authRoutes);
+    const res = await app.inject({ method: 'POST', url: '/refresh', payload: { refreshToken: 'v' } });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('rejects a legacy token without a jti claim (pre-sessions era)', async () => {
+    const app = await buildTestApp({ db: createFakeDb({ findFirst: { users: userRow({ id: 1 }) } }) });
+    await app.register(authRoutes);
+    const res = await app.inject({ method: 'POST', url: '/refresh', payload: { refreshToken: 'legacy' } });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('rejects a token whose session row was revoked', async () => {
+    jwtMocks.verifyJwt.mockResolvedValueOnce({ type: 'refresh', sub: '1', jti: 'jti-9' });
+    const app = await buildTestApp({
+      db: createFakeDb({ findFirst: { users: userRow({ id: 1 }), sessions: sessionRow({ jti: 'jti-9', revokedAt: new Date() }) } }),
+    });
+    await app.register(authRoutes);
+    const res = await app.inject({ method: 'POST', url: '/refresh', payload: { refreshToken: 'gone' } });
+    expect(res.statusCode).toBe(401);
   });
 
   it('rejects a non-refresh token type', async () => {

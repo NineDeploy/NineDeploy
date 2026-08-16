@@ -5,14 +5,14 @@ import { downloadBlob, formatDateTime } from '../../lib/format.js';
 import { useToast } from '../../components/Toast.js';
 import { Button, Card, CardBody, Skeleton } from '../../components/ui.js';
 
-type ActivityRow = { id: number; userId: number; action: string; entity: string; ts: string };
+type ActivityRow = { id: number; userId: number | null; action: string; entity: string | null; ts: string };
 
 /** Audit trail for one service (filtered server-side via ?entity=). */
 export function ActivityTab({ serviceId, name }: { serviceId: number; name: string }) {
   const { toast } = useToast();
   const activity = useQuery({
     queryKey: ['activity', serviceId],
-    queryFn: async () => (await api.activity.list(name)) as ActivityRow[],
+    queryFn: async () => (await api.activity.list({ entity: name })).entries as ActivityRow[],
     refetchInterval: 10000,
   });
 

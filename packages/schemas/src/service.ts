@@ -29,6 +29,10 @@ export const createService = z.object({
       buildCmd: z.string().optional(),
       startCmd: z.string().optional(),
       dockerfilePath: z.string().optional(),
+      // docker --restart policy: fixed values plus on-failure:N (restart-loop cap).
+      restartPolicy: z.string().regex(/^(no|always|unless-stopped|on-failure(?::\d{1,3})?)$/).optional(),
+      // Seconds between SIGTERM and SIGKILL on stop (docker stop -t).
+      stopGraceSeconds: z.number().int().min(0).max(300).optional(),
     })
     .default({ buildPack: 'auto', baseDir: '/' }),
 });
@@ -61,6 +65,8 @@ export const updateService = z.object({
       buildCmd: z.string().optional(),
       startCmd: z.string().optional(),
       dockerfilePath: z.string().optional(),
+      restartPolicy: z.string().regex(/^(no|always|unless-stopped|on-failure(?::\d{1,3})?)$/).optional(),
+      stopGraceSeconds: z.number().int().min(0).max(300).optional(),
     })
     .optional(),
 });
@@ -98,6 +104,8 @@ export const service = z.object({
       buildCmd: z.string().nullable(),
       startCmd: z.string().nullable(),
       dockerfilePath: z.string().nullable(),
+      restartPolicy: z.string(),
+      stopGraceSeconds: z.number().int(),
     })
     .nullable(),
   createdAt: z.string().datetime(),

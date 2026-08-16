@@ -18,7 +18,8 @@ import {
   activityList, alertsCreate, alertsList, alertsRemove,
   backupsCreate, backupsList, backupsRestore,
   deploysWatch, domainsAdd, domainsList, domainsRemove,
-  envList, envRemove, envSet, systemExport, systemImport,
+  envList, envRemove, envSet, networksCreate, networksList, networksRemove,
+  sessionsList, sessionsRevoke, systemExport, systemImport,
   usersList, usersResetLink, volumesList, volumesRemove,
 } from './commands/manage.js';
 
@@ -168,6 +169,22 @@ const volumesCmd = program.command('volumes').description('Manage Docker volumes
 volumesCmd.command('list').description('List all volumes').action(() => volumesList(getClient()));
 
 volumesCmd.command('rm <name>').description('Delete a volume (with confirmation)').action((name: string) => volumesRemove(getClient(), name));
+
+// ── Networks ───────────────────────────────────────────────────────────────
+const networksCmd = program.command('networks').description('Manage Docker networks');
+
+networksCmd.command('list').description('List user-defined networks').action(() => networksList(getClient()));
+
+networksCmd.command('create <name> [driver]').description('Create a network (bridge|overlay)').action((name: string, driver: string) => networksCreate(getClient(), name, driver === 'overlay' ? 'overlay' : 'bridge'));
+
+networksCmd.command('rm <name>').description('Delete a network (with confirmation)').action((name: string) => networksRemove(getClient(), name));
+
+// ── Sessions ───────────────────────────────────────────────────────────────
+const sessionsCmd = program.command('sessions').description('Manage your active sessions');
+
+sessionsCmd.command('list').description('List active sessions').action(() => sessionsList(getClient()));
+
+sessionsCmd.command('revoke <id>').description('Revoke a session').action((id: string) => sessionsRevoke(getClient(), id));
 
 // ── Backups ────────────────────────────────────────────────────────────────
 const backupsCmd = program.command('backups').description('Manage database backups');

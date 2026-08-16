@@ -61,6 +61,56 @@ beforeEach(() => {
   childProc.children.length = 0;
 });
 
+describe('deploys config diff route', () => {
+  it('diffs the deployment snapshot against the previous one', async () => {
+    const prev = depRow({
+      id: 1,
+      configSnapshot: JSON.stringify({ buildPack: 'auto', envKeys: ['A'] }),
+    });
+    const current = depRow({
+      id: 2,
+      configSnapshot: JSON.stringify({ buildPack: 'dockerfile', envKeys: ['A', 'B*'] }),
+    });
+    let calls = 0;
+    const db = createFakeDb({
+      findFirst: {
+        deployments: () => {
+          calls++;
+          return calls % 2 === 1 ? current : prev;
+        },
+      },
+    });
+    const app = await buildTestApp({ db });
+    await app.register(deploysRoutes);
+    const res = await app.inject({ method: 'GET', url: '/1/deploys/2/diff', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.previousDeploymentId).toBe(1);
+    expect(body.changed).toBe(true);
+    expect(body.diff).toContain('- buildPack: "auto"');
+    expect(body.diff).toContain('+ buildPack: "dockerfile"');
+  });
+
+  it('reports an unchanged diff when no snapshots exist', async () => {
+    let seen = 0;
+    const db = createFakeDb({
+      findFirst: { deployments: () => (++seen === 1 ? depRow({ id: 3, configSnapshot: null }) : undefined) },
+    });
+    const app = await buildTestApp({ db });
+    await app.register(deploysRoutes);
+    const res = await app.inject({ method: 'GET', url: '/1/deploys/3/diff', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ previousDeploymentId: null, changed: false, diff: '' });
+  });
+
+  it('404s for an unknown deployment', async () => {
+    const app = await buildTestApp({ db: createFakeDb() });
+    await app.register(deploysRoutes);
+    const res = await app.inject({ method: 'GET', url: '/1/deploys/77/diff', headers: asUser() });
+    expect(res.statusCode).toBe(404);
+  });
+});
+
 describe('deploys routes', () => {
   afterAll(async () => {
     for (const ws of sockets) {

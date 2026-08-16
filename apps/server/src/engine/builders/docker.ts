@@ -7,6 +7,11 @@ import { NETWORK } from '../proxy.js';
 
 const swallow = () => {};
 
+/** Valid docker --restart values: the fixed policies plus on-failure:N. */
+const RE_RESTART = /^(no|always|unless-stopped|on-failure(?::\d{1,3})?)$/;
+const safeRestartPolicy = (raw: string | undefined): string =>
+  raw && RE_RESTART.test(raw) ? raw : 'unless-stopped';
+
 /**
  * Write runtime env vars to a temp file (mode 0600) which docker then loads
  * via its env-file option. Keeping secrets in a file — rather than on the
@@ -109,7 +114,7 @@ export const dockerBuilder: Builder = {
     // (finalize) only after success; on failure it stops the NEW container,
     // leaving the old one running — a zero-downtime rollback.
 
-    const args = ['run', '-d', '--name', name, '--restart', 'unless-stopped', '--network', NETWORK];
+    const args = ['run', '-d', '--name', name, '--restart', safeRestartPolicy(buildConfig?.restartPolicy), '--network', NETWORK];
     // NOTE: no `-p` host port is published at all. Public traffic enters
     // exclusively through Traefik, which reaches the container by name over the
     // shared network; healthchecks probe the container's network IP directly
@@ -218,9 +223,10 @@ export const dockerBuilder: Builder = {
     return false;
   },
 
-  async stop(runtimeId) {
+  async stop(runtimeId, opts) {
+    const grace = opts?.graceSeconds && opts.graceSeconds >= 0 ? Math.min(Math.floor(opts.graceSeconds), 300) : 5;
     try {
-      await run('docker', ['stop', '-t', '5', runtimeId], {}, swallow);
+      await run('docker', ['stop', '-t', String(grace), runtimeId], {}, swallow);
     } catch {
       /* already gone */
     }

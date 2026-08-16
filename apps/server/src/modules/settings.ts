@@ -4,6 +4,8 @@ import { audit } from '../lib/audit.js';
 import { getSetting, getSettingString, setSetting, setSettingString } from '../lib/settings.js';
 import { invalidateTemplateCache } from '../templates/registry.js';
 import { DNS_PROVIDERS, encryptDnsToken } from '../engine/proxy.js';
+import { getVaultConfig, setVaultConfig, testVault } from '../lib/vault.js';
+import { getDnsRecordsConfig, setDnsRecordsConfig, testCloudflareToken } from '../lib/cloudflare.js';
 import { config } from '../config.js';
 
 const togglePatch = z.object({ enabled: z.boolean() });
@@ -18,6 +20,21 @@ const dnsPatch = z.object({
   provider: z.union([z.string().refine((p) => p === '' || p in DNS_PROVIDERS, 'Unsupported DNS provider'), z.literal('')]),
   token: z.string().min(1).max(4096).optional(),
   wildcardApex: z.union([z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9.-]*[a-zA-Z0-9]$/), z.literal('')]),
+});
+// Vault provider config: provider (or empty = off), optional token (omitted =
+// keep stored), Infisical workspace id / Doppler project, environment slug.
+const vaultPatch = z.object({
+  provider: z.enum(['', 'infisical', 'doppler']),
+  token: z.string().min(1).max(4096).optional(),
+  projectId: z.union([z.string().max(255), z.literal('')]).optional(),
+  environment: z.union([z.string().max(255), z.literal('')]).optional(),
+});
+// Cloudflare DNS-record provisioning: toggle + optional token (omitted = keep)
+// + explicit record content (IPv4 → A, hostname → CNAME; empty = auto-detect).
+const dnsRecordsPatch = z.object({
+  enabled: z.boolean(),
+  token: z.string().min(10).max(4096).optional(),
+  content: z.union([z.string().max(255), z.literal('')]).optional(),
 });
 
 /**
@@ -74,5 +91,59 @@ export const settingsRoutes: FastifyPluginAsync = async (app) => {
     void audit(app.db, req.user!.id, 'settings.acme', email || 'cleared');
     // Applied on next server start (the Traefik container is recreated then).
     return { ok: true, acmeEmail: email || null, applied: 'restart' };
+  });
+
+  // ── Vault provider (deploy-time secret resolution) ───────────────────────
+  app.get('/vault', async () => {
+    const cfg = await getVaultConfig(app.db);
+    return {
+      provider: cfg.provider,
+      hasToken: !!cfg.token,
+      projectId: cfg.projectId,
+      environment: cfg.environment,
+    };
+  });
+
+  app.put('/vault', async (req) => {
+    const input = vaultPatch.parse(req.body);
+    const current = await getVaultConfig(app.db);
+    await setVaultConfig(app.db, {
+      provider: input.provider === '' ? null : input.provider,
+      // Omitted token = keep the stored one; the others follow the payload.
+      token: input.token ?? (input.provider === current.provider ? current.token : null),
+      projectId: input.projectId ?? null,
+      environment: input.environment ?? null,
+    });
+    void audit(app.db, req.user!.id, 'settings.vault', input.provider || 'disabled');
+    return { ok: true, provider: input.provider || null };
+  });
+
+  app.post('/vault/test', async () => {
+    const count = await testVault(app.db);
+    return { ok: true, secrets: count };
+  });
+
+  // ── DNS records (Cloudflare auto-provisioning) ───────────────────────────
+  app.get('/dns-records', async () => {
+    const cfg = await getDnsRecordsConfig(app.db);
+    return { enabled: cfg.enabled, hasToken: !!cfg.token, content: cfg.content };
+  });
+
+  app.put('/dns-records', async (req) => {
+    const input = dnsRecordsPatch.parse(req.body);
+    await setDnsRecordsConfig(app.db, {
+      enabled: input.enabled,
+      token: input.token,
+      content: input.content || null,
+    });
+    void audit(app.db, req.user!.id, 'settings.dns_records', input.enabled ? 'cloudflare' : 'disabled');
+    return { ok: true, enabled: input.enabled };
+  });
+
+  app.post('/dns-records/test', async () => {
+    const cfg = await getDnsRecordsConfig(app.db);
+    if (!cfg.token) return { ok: false, error: 'No Cloudflare token configured' };
+    const status = await testCloudflareToken(cfg.token);
+    return { ok: true, status };
   });
 };
