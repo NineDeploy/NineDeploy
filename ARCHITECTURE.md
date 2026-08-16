@@ -459,7 +459,9 @@ endpoints and exposes `/projects` CRUD.
   - **Settings** — edit service fields (name, branch, repo, source, port,
     health path, volume mount, image) via `PATCH /services/:id`, edit the build
     config (build pack, install/build/start commands, Dockerfile path, base
-    dir), and set CPU/memory limits (`PATCH /services/:id/limits`)
+    dir; build pack `auto` uses the repo's Dockerfile when present, otherwise
+    Nixpacks — so Dockerfile-less repos like a plain Next.js app build
+    unchanged), and set CPU/memory limits (`PATCH /services/:id/limits`)
   - **Activity** — per-service filtered audit trail (`GET /activity`)
   - **Danger zone** — typed-name delete confirmation, with the service's data
     volume surfaced from the volume inventory

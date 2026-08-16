@@ -15,6 +15,30 @@ const h = vi.hoisted(() => {
 vi.mock('../../src/lib/exec.js', () => ({ run: h.run, sleep: h.sleep, capture: h.capture, buildEnv: () => ({}) }));
 vi.mock('../../src/config.js', () => ({ config: h.config }));
 
+// existsSync stays a passthrough to the real fs by default (env-file tests
+// probe real temp files); build-selection tests override its return value.
+const h2 = vi.hoisted(() => {
+  let actual: typeof import('node:fs');
+  const passthrough = (p: string) => actual.existsSync(p);
+  const exists = vi.fn(passthrough);
+  return {
+    exists,
+    bind: (a: typeof import('node:fs')) => {
+      actual = a;
+    },
+    // Reset per test but always fall back to the real fs.
+    reset: () => {
+      exists.mockReset();
+      exists.mockImplementation(passthrough);
+    },
+  };
+});
+vi.mock('node:fs', async (orig) => {
+  const actual = await orig<typeof import('node:fs')>();
+  h2.bind(actual);
+  return { ...actual, existsSync: h2.exists };
+});
+
 const spawnMocks = vi.hoisted(() => {
   const handlers: Array<{ ev: string; cb: (code: number | null) => void }> = [];
   const stdinHandlers: Array<{ ev: string; cb: (err?: Error) => void }> = [];
@@ -66,6 +90,7 @@ describe('dockerBuilder.buildAndRun', () => {
     h.run.mockResolvedValue(undefined);
     h.capture.mockReset();
     h.capture.mockResolvedValue('running');
+    h2.reset();
   });
 
   it('appends the template command after the image and mounts the docker socket when flagged', async () => {
@@ -159,6 +184,7 @@ describe('dockerBuilder.buildAndRun', () => {
   });
 
   it('builds from source with default baseDir and dockerfile when buildConfig is absent', async () => {
+    h2.exists.mockReturnValue(true); // repo ships a Dockerfile → auto picks docker build
     const ctx = makeCtx({ buildConfig: undefined });
 
     await dockerBuilder.buildAndRun(ctx as never);
@@ -172,6 +198,7 @@ describe('dockerBuilder.buildAndRun', () => {
   });
 
   it('uses the custom baseDir/dockerfile and falls back to latest tag for an empty sha', async () => {
+    h2.exists.mockReturnValue(true); // custom Dockerfile.prod exists → docker build
     const ctx = makeCtx({ commitSha: '', buildConfig: { baseDir: '/app', dockerfilePath: 'Dockerfile.prod' } });
 
     await dockerBuilder.buildAndRun(ctx as never);
@@ -277,11 +304,56 @@ describe('dockerBuilder.buildAndRun', () => {
     const runArgs = h.run.mock.calls.at(-1)![1] as unknown[];
     expect(runArgs[runArgs.length - 1]).toBe('nginx:1.25@sha256:abc123');
   });
+  it('auto falls back to nixpacks when the repo has no Dockerfile', async () => {
+    h2.exists.mockReturnValue(false); // Dockerfile-less repo (e.g. plain Next.js)
+    const ctx = makeCtx({ buildConfig: undefined });
+
+    await dockerBuilder.buildAndRun(ctx as never);
+
+    const nix = h.run.mock.calls.find((c) => c[0] === 'nixpacks');
+    expect(nix).toBeDefined();
+    expect(nix![1]).toEqual(['build', '.', '--name', 'ninedeploy/web:abcdef1']);
+    expect(nix![2]).toEqual({ cwd: '/work/web' });
+    // docker build was never invoked — nixpacks produced the image itself.
+    expect(h.run.mock.calls.some((c) => c[0] === 'docker' && c[1][0] === 'build')).toBe(false);
+  });
+
+  it('explicit nixpacks buildPack wins even when a Dockerfile exists', async () => {
+    h2.exists.mockReturnValue(true);
+    const ctx = makeCtx({ buildConfig: { buildPack: 'nixpacks', baseDir: '/' } });
+
+    await dockerBuilder.buildAndRun(ctx as never);
+
+    const nix = h.run.mock.calls.find((c) => c[0] === 'nixpacks');
+    expect(nix).toBeDefined();
+    expect(h.run.mock.calls.some((c) => c[0] === 'docker' && c[1][0] === 'build')).toBe(false);
+  });
+
+  it('passes custom install/build/start commands and baseDir to nixpacks', async () => {
+    h2.exists.mockReturnValue(false);
+    const ctx = makeCtx({ buildConfig: { buildPack: 'nixpacks', baseDir: '/app', installCmd: 'pnpm install --frozen-lockfile', buildCmd: 'pnpm build', startCmd: 'pnpm start' } });
+
+    await dockerBuilder.buildAndRun(ctx as never);
+
+    const nix = h.run.mock.calls.find((c) => c[0] === 'nixpacks');
+    expect(nix![1].join(' ')).toBe(
+      'build /app --name ninedeploy/web:abcdef1 --install-cmd pnpm install --frozen-lockfile --build-cmd pnpm build --start-cmd pnpm start',
+    );
+  });
+
+  it('fails fast with an actionable error when nixpacks is not installed', async () => {
+    h2.exists.mockReturnValue(false);
+    h.capture.mockRejectedValueOnce(new Error('ENOENT'));
+    const ctx = makeCtx({ buildConfig: { buildPack: 'nixpacks' } });
+
+    await expect(dockerBuilder.buildAndRun(ctx as never)).rejects.toThrow(/nixpacks is not installed/);
+  });
 });
 
 describe('dockerBuilder.isHealthy', () => {
   const fetchMock = vi.fn();
   beforeEach(() => {
+    h2.reset();
     h.capture.mockReset();
     // Default: container is running with a network IP.
     h.capture.mockResolvedValue('running|172.17.0.2');
@@ -418,6 +490,7 @@ describe('dockerBuilder.isHealthy', () => {
 
 describe('dockerBuilder.stop', () => {
   beforeEach(() => {
+    h2.reset();
     h.run.mockReset();
     // Mirror the real exec.run default: it invokes the sink (here `swallow`).
     h.run.mockImplementation(async (_c, _a, _o, sink) => {
@@ -453,6 +526,7 @@ describe('dockerBuilder.stop', () => {
 
 describe('dockerBuilder registry auth', () => {
   beforeEach(() => {
+    h2.reset();
     h.run.mockReset();
     // Keep the sink invocation (mirrors the real run) so no-op log drains run.
     h.run.mockImplementation(async (_c: string, _a: unknown[], _o: unknown, sink?: (line: string) => void) => {

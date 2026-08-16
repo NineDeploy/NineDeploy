@@ -1,7 +1,8 @@
-import { mkdirSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { Builder } from '../types.js';
+import type { BuildConfig } from '@ninedeploy/db';
 import { capture, buildEnv, run, sleep } from '../../lib/exec.js';
 import { NETWORK } from '../proxy.js';
 
@@ -49,6 +50,37 @@ export async function containerIp(name: string): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+/**
+ * Build a source dir into a Docker image with Nixpacks — the buildpack path
+ * for repos that ship no Dockerfile (e.g. a plain Next.js app). install/build/
+ * start commands from the build config override Nixpacks' own detection, so
+ * `npm ci` / `npm run build` / `npm start` style customizations work the same
+ * way they do on Dokploy/Coolify.
+ */
+async function buildWithNixpacks(
+  target: string,
+  baseDir: string,
+  buildConfig: BuildConfig | undefined,
+  workDir: string,
+  log: (line: string) => void,
+): Promise<void> {
+  // Fail fast with a actionable message rather than a bare ENOENT when the
+  // host never installed the CLI.
+  try {
+    await capture('nixpacks', ['--version']);
+  } catch {
+    throw new Error(
+      'nixpacks is not installed on this server — install it (curl -sSL https://nixpacks.com/install.sh | bash) or add a Dockerfile to the repo',
+    );
+  }
+  const args = ['build', baseDir, '--name', target];
+  if (buildConfig?.installCmd) args.push('--install-cmd', buildConfig.installCmd);
+  if (buildConfig?.buildCmd) args.push('--build-cmd', buildConfig.buildCmd);
+  if (buildConfig?.startCmd) args.push('--start-cmd', buildConfig.startCmd);
+  log(`nixpacks build ${baseDir} …`);
+  await run('nixpacks', args, { cwd: workDir }, log);
 }
 
 /** Docker builder: BuildKit image build + container run/stop via the docker CLI. */
@@ -108,8 +140,21 @@ export const dockerBuilder: Builder = {
       target = `ninedeploy/${service.slug}:${commitSha.slice(0, 7) || 'latest'}`;
       const baseDir = !buildConfig?.baseDir || buildConfig.baseDir === '/' ? '.' : buildConfig.baseDir;
       const dockerfile = buildConfig?.dockerfilePath || 'Dockerfile';
+      const pack = buildConfig?.buildPack ?? 'auto';
+      // 'auto' resolves per-repo: an existing Dockerfile wins, otherwise fall
+      // through to Nixpacks so Dockerfile-less repos (plain Next.js etc.) build
+      // without any repo-side changes.
+      const hasDockerfile = existsSync(path.resolve(workDir, baseDir, dockerfile));
+      const useNixpacks = pack === 'nixpacks' || (pack === 'auto' && !hasDockerfile);
       log(`Building image ${target} …`);
-      await run('docker', ['build', '-t', target, '-f', dockerfile, baseDir], { cwd: workDir, env: { DOCKER_BUILDKIT: '1' } }, log);
+      if (useNixpacks) {
+        await buildWithNixpacks(target, baseDir, buildConfig, workDir, log);
+        // Buildpack apps conventionally listen on $PORT — align it with the
+        // declared service port so Traefik routing matches without extra config.
+        if (service.port && env.PORT === undefined) env.PORT = String(service.port);
+      } else {
+        await run('docker', ['build', '-t', target, '-f', dockerfile, baseDir], { cwd: workDir, env: { DOCKER_BUILDKIT: '1' } }, log);
+      }
     }
     } finally {
       if (loggedIn) {
