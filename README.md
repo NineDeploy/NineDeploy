@@ -272,7 +272,7 @@ curl -X PATCH http://localhost:3000/v1/users/2/password -H "Authorization: Beare
   -d '{"newPassword":"fresh-pass-123"}'
 ```
 
-A read-only WebSocket event stream (deploys, domains, databases, backups, users) is available at `wss://<host>/v1/events?token=<token>` — the dashboard's Activity drawer consumes it.
+The dashboard's realtime features use purpose-specific WebSockets — live deploy log streaming (`/v1/services/:id/deployments/:id/logs`), the container exec terminal (`/v1/services/:id/exec`), and the global event stream at `wss://<host>/v1/events?token=<token>` (deploys, domains, databases, backups, users; backlog replay).
 
 ## Development
 
@@ -288,7 +288,7 @@ pnpm clean       # remove dist and node_modules
 
 CI runs typecheck, build, the full test suite (100% coverage gated), advisory lint, and a Docker image build on every PR; releases publish the image to GHCR on tags. Integration tests (real PostgreSQL/MySQL/Redis/MongoDB via testcontainers + an end-to-end deploy pipeline run) live under `apps/server/test/integration/` and run with `RUN_INTEGRATION=1` (the deploy e2e additionally requires a host-routable Docker bridge — Linux/CI).
 
-See [ARCHITECTURE.md](./ARCHITECTURE.md) for the system diagram, deploy pipeline, and design decisions.
+See [ARCHITECTURE.md](./ARCHITECTURE.md) for the system diagram, monorepo map, database schema, deploy pipeline, and design decisions. The marketing/docs site lives in [`website/`](./website) (React + Tailwind + Radix UI; `pnpm --filter website dev`).
 
 ## MCP server (AI assistants)
 

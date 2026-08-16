@@ -1,6 +1,7 @@
 packages:
   - "apps/*"
   - "packages/*"
+  - "website"
 
 # Force js-yaml >= 4.3.1 (CVE-2026-59870 / GHSA-5p4m-2wfm-xmqj): pm2 pins the
 # vulnerable 4.3.0 exactly. ^4.3.1 resolves to 4.3.1 — the minimal patched
