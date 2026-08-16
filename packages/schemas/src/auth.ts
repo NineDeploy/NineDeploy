@@ -37,6 +37,15 @@ export const passwordChange = z.object({
 export type PasswordChange = z.infer<typeof passwordChange>;
 
 /** Admin-initiated password reset for another user. */
+/** Admin-created user — same shape as register plus the starting role. */
+export const userCreate = z.object({
+  email: z.email().max(255),
+  password: z.string().min(8).max(128),
+  name: z.string().min(1).max(100).optional(),
+  role: z.enum(['admin', 'member']).default('member'),
+});
+export type UserCreate = z.infer<typeof userCreate>;
+
 export const passwordReset = z.object({
   newPassword: z.string().min(8).max(128),
 });

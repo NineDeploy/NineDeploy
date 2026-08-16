@@ -71,7 +71,8 @@ describe('Layout', () => {
 
   it('renders the activity bar, groups and the user avatar', () => {
     renderLayout();
-    expect(screen.getByText('9')).toBeInTheDocument();
+    // brand mark is the SVG logo now (aria-hidden) — assert the rail renders it
+    expect(document.querySelector('.flex.w-12 svg')).toBeInTheDocument();
     for (const g of ['Deploy', 'Data', 'Network', 'System']) {
       expect(screen.getAllByText(g).length).toBeGreaterThan(0);
     }

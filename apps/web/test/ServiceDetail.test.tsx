@@ -495,6 +495,7 @@ describe('ServiceDetail', () => {
     const user = userEvent.setup();
     mockOf(api.services.remove).mockResolvedValue(undefined as never);
     renderRoute(<ServiceDetail />, { path: '/services/:id', initialEntries: ['/services/1'] });
+    await openTab('Danger');
     await screen.findByText('Danger zone');
 
     // Button stays disabled until the exact name is typed.
@@ -510,6 +511,7 @@ describe('ServiceDetail', () => {
     const user = userEvent.setup();
     mockOf(api.services.remove).mockReturnValue(new Promise(() => {}) as never);
     renderRoute(<ServiceDetail />, { path: '/services/:id', initialEntries: ['/services/1'] });
+    await openTab('Danger');
     await screen.findByText('Danger zone');
     await user.type(screen.getByLabelText('Confirm service name'), service.name);
     fireEvent.click(screen.getByRole('button', { name: /Delete service/i }));
@@ -519,6 +521,7 @@ describe('ServiceDetail', () => {
   it('keeps the delete button disabled for a mismatched name', async () => {
     const user = userEvent.setup();
     renderRoute(<ServiceDetail />, { path: '/services/:id', initialEntries: ['/services/1'] });
+    await openTab('Danger');
     await screen.findByText('Danger zone');
     await user.type(screen.getByLabelText('Confirm service name'), 'wrong-name');
     expect(screen.getByRole('button', { name: /Delete service/i })).toBeDisabled();
@@ -558,8 +561,9 @@ describe('ServiceDetail', () => {
     fireEvent.click(screen.getByTitle('Remove webhook'));
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Could not remove the webhook', 'error'));
 
-    // Danger zone delete failure.
-    await user.type(screen.getByLabelText('Confirm service name'), service.name);
+    // Danger zone delete failure (own tab now).
+    await openTab('Danger');
+    await user.type(await screen.findByLabelText('Confirm service name'), service.name);
     fireEvent.click(screen.getByRole('button', { name: /Delete service/i }));
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Delete failed', 'error'));
   });
@@ -811,6 +815,7 @@ describe('ServiceDetail', () => {
       { name: 'nd-svc-api-data', sizeBytes: 5 * 1024 * 1024, owner: { kind: 'service', name: 'api' }, inUse: true },
     ] as never);
     renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+    await openTab('Danger');
     await screen.findByText('Danger zone');
     expect(await screen.findByText(/nd-svc-api-data/)).toBeInTheDocument();
     expect(screen.getByText(/5\.2 MB/)).toBeInTheDocument();
@@ -864,6 +869,7 @@ describe('ServiceDetail', () => {
         { name: 'nd-svc-api-data', sizeBytes: c.sizeBytes, owner: { kind: 'service', name: 'api' }, inUse: c.inUse },
       ] as never);
       const { unmount } = renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+      await openTab('Danger');
       expect(await screen.findByText(c.expected)).toBeInTheDocument();
       // inUse=false -> the '· in use' suffix is omitted
       expect(screen.queryByText(/· in use/)).not.toBeInTheDocument();

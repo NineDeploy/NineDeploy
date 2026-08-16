@@ -86,6 +86,23 @@ describe('run', () => {
     emitClose(child, 0);
 
     await expect(promise).resolves.toBeUndefined();
+
+    // stdin input path: pipe mode + EPIPE guard + end(input)
+    const stdinChild = Object.assign(new EventEmitter(), {
+      stdin: Object.assign(new EventEmitter(), { end: vi.fn() }),
+      stdout: new EventEmitter(),
+      stderr: new EventEmitter(),
+    });
+    mockSpawn.mockReturnValue(stdinChild as never);
+    const p2 = run('base64', ['-d'], {}, vi.fn(), Buffer.from('payload'));
+    stdinChild.stdin.emit('error', new Error('EPIPE')); // must not crash
+    stdinChild.emit('close', 0);
+    await expect(p2).resolves.toBeUndefined();
+    expect(stdinChild.stdin.end).toHaveBeenCalledWith(Buffer.from('payload'));
+    const lastCall = mockSpawn.mock.calls.at(-1) as unknown as [{}, {}, { stdio: string[] }];
+    const stdio = lastCall[2].stdio;
+    expect(stdio[0]).toBe('pipe');
+
     expect(mockSpawn).toHaveBeenCalledWith(
       'echo',
       ['hi'],

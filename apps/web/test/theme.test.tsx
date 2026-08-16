@@ -6,7 +6,7 @@ import './web-utils.js';
 import { ACCENTS, ThemeProvider, useTheme } from '../src/lib/theme.js';
 
 const THEME_KEY = 'ninedeploy.theme';
-const ACCENT_KEY = 'ninedeploy.accent';
+const ACCENT_KEY = 'ninedeploy.accent.v2';
 
 function Probe() {
   const { theme, accent, setTheme, setAccent, toggleTheme } = useTheme();

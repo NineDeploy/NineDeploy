@@ -82,6 +82,9 @@ describe('dashboard routes', () => {
   it('marks a service unhealthy when its probe returns a 5xx', async () => {
     const fetchMock = vi.fn(async () => ({ status: 500, ok: false })) as unknown as typeof fetch;
     vi.stubGlobal('fetch', fetchMock);
+    // mesh fallback must also fail, or the service would read healthy again
+    execMocks.capture.mockImplementation(async (_c: unknown, args: unknown[]) =>
+      (args as string[])[0] === 'inspect' ? 'running|172.18.0.2' : Promise.reject(new Error('wget failed')));
     const app = await buildTestApp({
       db: createFakeDb({
         select: { services: [svcRow({ id: 1, status: 'running', port: 3000, runtimeId: 'c1' })] },
@@ -97,6 +100,8 @@ describe('dashboard routes', () => {
   it('marks a service unhealthy when the probe rejects', async () => {
     const fetchMock = vi.fn(async () => { throw new Error('connection refused'); }) as unknown as typeof fetch;
     vi.stubGlobal('fetch', fetchMock);
+    execMocks.capture.mockImplementation(async (_c: unknown, args: unknown[]) =>
+      (args as string[])[0] === 'inspect' ? 'running|172.18.0.2' : Promise.reject(new Error('wget failed')));
     const app = await buildTestApp({
       db: createFakeDb({
         select: { services: [svcRow({ id: 1, status: 'running', port: 3000, runtimeId: 'c1', commitSha: 'long-sha' })] },
@@ -107,6 +112,55 @@ describe('dashboard routes', () => {
     const res = await app.inject({ method: 'GET', url: '/', headers: asUser() });
     expect(res.statusCode).toBe(200);
     expect(res.json().health[0]).toMatchObject({ healthy: false, responseMs: null });
+  });
+
+  it('falls back to the traefik mesh probe when the host cannot route bridge IPs', async () => {
+    // Docker Desktop case: direct fetch to the bridge IP times out, but the
+    // same request from inside the mesh (exec wget in the traefik container)
+    // succeeds — the service must read healthy.
+    const fetchMock = vi.fn(async () => { throw new Error('route unreachable'); }) as unknown as typeof fetch;
+    vi.stubGlobal('fetch', fetchMock);
+    // Reset the persistent implementation leaked from the previous test.
+    execMocks.capture.mockImplementation(async (_c: unknown, args: unknown[]) =>
+      (args as string[])[0] === 'inspect' ? 'running|172.18.0.2' : 'ok');
+    const app = await buildTestApp({
+      db: createFakeDb({
+        select: { services: [svcRow({ id: 1, status: 'running', port: 3000, runtimeId: 'c1' })] },
+        counts: {},
+      }),
+    });
+    await app.register(dashboardRoutes);
+    const res = await app.inject({ method: 'GET', url: '/', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().health[0]).toMatchObject({ healthy: true, responseMs: null });
+    expect(execMocks.capture).toHaveBeenCalledWith(
+      'docker',
+      ['exec', 'ninedeploy-traefik', 'wget', '-q', '-O', '/dev/null', '-T', '3', 'http://c1:3000/'],
+    );
+  });
+
+  it('falls back to a netns-sharing probe for containers outside the mesh', async () => {
+    // Compose-style service: not reachable from traefik's network, but the
+    // throwaway curl container sharing its netns gets a 200 from loopback.
+    const fetchMock = vi.fn(async () => { throw new Error('route unreachable'); }) as unknown as typeof fetch;
+    vi.stubGlobal('fetch', fetchMock);
+    execMocks.capture.mockImplementation(async (_c: unknown, args: unknown[]) => {
+      const a = args as string[];
+      if (a[0] === 'inspect') return 'running|172.18.0.2';
+      if (a[0] === 'exec') throw new Error('no route on mesh'); // e.g. compose network
+      if (a[0] === 'run') return '200';
+      return 'ok';
+    });
+    const app = await buildTestApp({
+      db: createFakeDb({
+        select: { services: [svcRow({ id: 1, status: 'running', port: 8080, runtimeId: 'ndcmp-web-1' })] },
+        counts: {},
+      }),
+    });
+    await app.register(dashboardRoutes);
+    const res = await app.inject({ method: 'GET', url: '/', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().health[0]).toMatchObject({ healthy: true });
   });
 
   it('probes docker services on the container network IP, never loopback', async () => {

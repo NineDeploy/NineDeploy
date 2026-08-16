@@ -532,6 +532,21 @@ describe('createClient', () => {
       expect(last(calls).init.method).toBe('PATCH');
       expect(JSON.parse(last(calls).init.body ?? '{}')).toEqual({ newPassword: 'fresh-pass-123' });
 
+      await client.volumes.listFiles('nd-svc-web-data', 'configs');
+      expect(last(calls).url).toBe('/v1/volumes/nd-svc-web-data/files?path=configs');
+      await client.volumes.readFile('nd-svc-web-data', 'a.env');
+      expect(last(calls).url).toBe('/v1/volumes/nd-svc-web-data/files/content?path=a.env');
+      await client.volumes.writeFile('nd-svc-web-data', { path: 'a.env', contentBase64: 'aGk=' });
+      expect(last(calls)).toMatchObject({ url: '/v1/volumes/nd-svc-web-data/files', init: { method: 'PUT' } });
+      await client.volumes.mkdir('nd-svc-web-data', { path: 'd' });
+      await client.volumes.deleteFile('nd-svc-web-data', 'old');
+      expect(last(calls).url).toBe('/v1/volumes/nd-svc-web-data/files?path=old');
+      await client.volumes.listFiles('nd-svc-web-data'); // default path branch
+      expect(last(calls).url).toBe('/v1/volumes/nd-svc-web-data/files?path=');
+
+      await client.users.create({ email: 'x@y.dev', password: '12345678', role: 'admin' });
+      expect(last(calls)).toMatchObject({ url: '/v1/users', init: { method: 'POST' } });
+
       await client.users.resetLink(1);
       expect(last(calls).url).toBe('/v1/users/1/reset-link');
       expect(last(calls).init.method).toBe('POST');

@@ -2,7 +2,7 @@ import { and, count, eq, ne, sql } from 'drizzle-orm';
 import { audit } from "../lib/audit.js";
 import { users } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
-import { passwordReset, rolePatch } from '@ninedeploy/schemas';
+import { passwordReset, rolePatch, userCreate } from '@ninedeploy/schemas';
 import { badRequest, forbidden, notFound, parseId } from '../lib/errors.js';
 import { hashPassword } from '../lib/crypto.js';
 import { issueResetToken } from '../lib/passwordReset.js';
@@ -25,6 +25,26 @@ export const userRoutes: FastifyPluginAsync = async (app) => {
   app.get('/', async () => {
     const rows = await app.db.query.users.findMany({ orderBy: (u, { asc }) => [asc(u.id)] });
     return rows.map(serialize);
+  });
+
+  // Direct user creation — the admin path for teams with open registration
+  // disabled (otherwise /v1/auth/register is the self-service route).
+  app.post('/', async (req) => {
+    const input = userCreate.parse(req.body);
+    const existing = await app.db.query.users.findFirst({ where: eq(users.email, input.email) });
+    if (existing) throw badRequest('Email is already registered', 'email_taken');
+    const [created] = await app.db
+      .insert(users)
+      .values({
+        email: input.email,
+        name: input.name ?? null,
+        role: input.role,
+        passwordHash: await hashPassword(input.password),
+      })
+      .returning();
+    if (!created) throw notFound('Could not create user');
+    void audit(app.db, req.user!.id, 'user.create', `${input.email} (${input.role})`);
+    return serialize(created);
   });
 
   app.patch('/:id/role', async (req) => {

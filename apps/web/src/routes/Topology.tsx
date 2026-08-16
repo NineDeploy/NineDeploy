@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
 import { useMemo } from 'react';
 import {
   Background,
@@ -147,11 +148,40 @@ const nodeTypes = {
 
 export function Topology() {
   const graph = useQuery({ queryKey: ['topology'], queryFn: () => api.topology.get() });
+  // Focus mode: when a service is picked, only its slice of the graph renders
+  // (its domains, attached databases, volumes and mesh links).
+  const [focus, setFocus] = useState<number | null>(null);
+  const onFocusChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    setFocus(e.target.value ? Number(e.target.value) : null);
+  };
+  const resetFocus = () => setFocus(null);
+  const retry = () => graph.refetch();
+
+  const filtered = useMemo(() => {
+    const g = graph.data;
+    const svc = g?.services.find((s) => s.id === focus);
+    if (focus == null || !g || !svc) return g; // no focus, or the service vanished
+    const atts = g.attachments.filter((a) => a.serviceId === focus);
+    const dbIds = new Set(atts.map((a) => a.databaseId));
+    return {
+      ...g,
+      services: [svc],
+      domains: g.domains.filter((d) => d.serviceId === focus),
+      attachments: atts,
+      databases: g.databases.filter((d) => dbIds.has(d.id)),
+      volumes: g.volumes.filter(
+        (v) =>
+          v.owner &&
+          ((v.owner.kind === 'service' && v.owner.refId === focus) ||
+            (v.owner.kind === 'database' && dbIds.has(v.owner.refId))),
+      ),
+    };
+  }, [graph.data, focus]);
 
   const { nodes, edges } = useMemo(() => {
     const nodes: Node[] = [];
     const edges: Edge[] = [];
-    const g = graph.data;
+    const g = filtered;
 
     const services = g?.services ?? [];
     const databases = g?.databases ?? [];
@@ -281,28 +311,62 @@ export function Topology() {
     });
 
     // Networks above the service column; dashed links into running containers.
-    (g?.networks ?? []).forEach((n, i) => {
+    for (const [i, n] of (g?.networks ?? []).entries()) {
       nodes.push({ id: `net-${n.name}`, type: 'network', position: { x: NETWORK_X + i * 150, y: -120 }, data: { name: n.name, containers: n.containers.length } });
-      n.containers.forEach((c) => {
+      for (const c of n.containers) {
         const target = services.find((s) => s.runtimeId === c);
-        if (!target) return; // gateway/agent containers aren't service nodes
+        if (!target) continue; // gateway/agent containers aren't service nodes
         edges.push({ id: `e-net-${n.name}-${c}`, source: `net-${n.name}`, target: `service-${target.id}`, style: { stroke: '#0ea5e9', strokeDasharray: '2 4' } });
-      });
-    });
+      }
+    }
 
     return { nodes, edges };
-  }, [graph.data]);
+  }, [filtered]);
 
   return (
     <div>
-      <PageHeader title="Topology" subtitle="Domains, gateway, services, databases, volumes and networks — the whole picture." />
+      <PageHeader
+        title="Topology"
+        subtitle="Domains, gateway, services, databases, volumes and networks — the whole picture."
+      />
+
+      {/* focus selector — isolate one service's slice of the graph */}
+      <div className="mb-4 flex items-center gap-3">
+        <label htmlFor="topology-focus" className="text-xs text-slate-500">
+          focus
+        </label>
+        <select
+          id="topology-focus"
+          aria-label="Focus service"
+          value={focus ?? ''}
+          onChange={onFocusChange}
+          disabled={graph.isLoading}
+          className="rounded-lg border border-white/10 bg-slate-900/70 px-3 py-1.5 text-xs text-slate-200 outline-none focus:border-[var(--nd-accent)]"
+        >
+          <option value="">all services</option>
+          {(graph.data?.services ?? []).map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name}
+            </option>
+          ))}
+        </select>
+        {focus != null && (
+          <button
+            type="button"
+            onClick={resetFocus}
+            className="rounded-lg bg-white/[0.04] px-2.5 py-1.5 text-xs text-slate-400 transition hover:bg-white/[0.08] hover:text-slate-200"
+          >
+            reset
+          </button>
+        )}
+      </div>
 
       <div className="nd-fade h-[72vh] overflow-hidden rounded-2xl border border-white/10 bg-slate-950/40">
         {graph.isLoading ? (
           <div className="grid h-full place-items-center text-sm text-slate-500">Loading graph…</div>
         ) : graph.isError ? (
           <div className="grid h-full place-items-center">
-            <ErrorCard title="Couldn't load the topology" error={graph.error} onRetry={() => graph.refetch()} />
+            <ErrorCard title="Couldn't load the topology" error={graph.error} onRetry={retry} />
           </div>
         ) : nodes.length === 0 ? (
           <div className="grid h-full place-items-center text-sm text-slate-500">Nothing deployed yet.</div>
@@ -326,3 +390,4 @@ export function Topology() {
     </div>
   );
 }
+

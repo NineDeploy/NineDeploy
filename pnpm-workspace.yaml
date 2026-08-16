@@ -19,6 +19,7 @@ overrides:
 allowBuilds:
   cpu-features: true
   esbuild: true
+  node-pty: true
   protobufjs: true
   ssh2: true
 

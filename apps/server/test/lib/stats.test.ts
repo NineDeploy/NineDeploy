@@ -36,21 +36,28 @@ const DOCKER_OUTPUT = [
 
 describe('collectContainerStats', () => {
   it('parses docker stats output into a map', async () => {
-    execMock.capture.mockResolvedValue(DOCKER_OUTPUT);
+    // 'web' has a configured 64MiB limit (docker inspect); everything else is
+    // unlimited → memLimitBytes 0 (NOT docker stats' host-total fallback).
+    execMock.capture.mockImplementation(async (_c: unknown, args: unknown[]) => {
+      const a = args as string[];
+      if (a[0] === 'ps') return 'id1\nid2\n';
+      if (a[0] === 'inspect') return '/web|67108864\n/db|0\n';
+      return DOCKER_OUTPUT;
+    });
     const map = await collectContainerStats();
 
     expect(map.size).toBe(12);
     expect(map.get('web')).toEqual({ name: 'web', cpuPct: 1.23, memBytes: 10.5 * 1024 ** 2, memLimitBytes: 64 * 1024 ** 2 });
-    expect(map.get('db')).toEqual({ name: 'db', cpuPct: 0, memBytes: 12.34 * 1024 ** 3, memLimitBytes: 1.5 * 1024 ** 3 });
-    expect(map.get('api')).toMatchObject({ cpuPct: 0, memBytes: 5 * 1024 ** 2, memLimitBytes: 977 * 1024 });
-    expect(map.get('all-units')).toEqual({ name: 'all-units', cpuPct: 9, memBytes: 1024, memLimitBytes: 1024 });
-    expect(map.get('u2')).toEqual({ name: 'u2', cpuPct: 9, memBytes: 1024 ** 2, memLimitBytes: 1024 ** 2 });
-    expect(map.get('u3')).toEqual({ name: 'u3', cpuPct: 9, memBytes: 1024 ** 3, memLimitBytes: 1024 ** 3 });
-    expect(map.get('u4')).toEqual({ name: 'u4', cpuPct: 9, memBytes: 1024 ** 4, memLimitBytes: 1024 ** 4 });
-    expect(map.get('u5')).toEqual({ name: 'u5', cpuPct: 9, memBytes: 1, memLimitBytes: 2 });
+    expect(map.get('db')).toEqual({ name: 'db', cpuPct: 0, memBytes: 12.34 * 1024 ** 3, memLimitBytes: 0 });
+    expect(map.get('api')).toMatchObject({ cpuPct: 0, memBytes: 5 * 1024 ** 2, memLimitBytes: 0 });
+    expect(map.get('all-units')).toEqual({ name: 'all-units', cpuPct: 9, memBytes: 1024, memLimitBytes: 0 });
+    expect(map.get('u2')).toEqual({ name: 'u2', cpuPct: 9, memBytes: 1024 ** 2, memLimitBytes: 0 });
+    expect(map.get('u3')).toEqual({ name: 'u3', cpuPct: 9, memBytes: 1024 ** 3, memLimitBytes: 0 });
+    expect(map.get('u4')).toEqual({ name: 'u4', cpuPct: 9, memBytes: 1024 ** 4, memLimitBytes: 0 });
+    expect(map.get('u5')).toEqual({ name: 'u5', cpuPct: 9, memBytes: 1, memLimitBytes: 0 });
     expect(map.get('u6')).toMatchObject({ memBytes: 0, memLimitBytes: 0 });
     expect(map.get('loner')).toEqual({ name: 'loner', cpuPct: 0, memBytes: 0, memLimitBytes: 0 });
-    expect(map.get('num')).toEqual({ name: 'num', cpuPct: 9, memBytes: 123, memLimitBytes: 456 });
+    expect(map.get('num')).toEqual({ name: 'num', cpuPct: 9, memBytes: 123, memLimitBytes: 0 });
     expect(map.get('nolit')).toEqual({ name: 'nolit', cpuPct: 9, memBytes: 100, memLimitBytes: 0 });
     expect(execMock.capture).toHaveBeenCalledWith('docker', expect.arrayContaining(['stats']));
   });
@@ -60,10 +67,26 @@ describe('collectContainerStats', () => {
     await expect(collectContainerStats()).resolves.toEqual(new Map());
   });
 
-  it('handles a single line with no trailing newline', async () => {
-    execMock.capture.mockResolvedValue('solo|5%|1MiB / 2MiB');
+  it('skips limit probing when nothing is running', async () => {
+    execMock.capture.mockImplementation(async (_c: unknown, args: unknown[]) => {
+      const a = args as string[];
+      if (a[0] === 'ps') return '\n';
+      return DOCKER_OUTPUT;
+    });
     const map = await collectContainerStats();
-    expect(map.get('solo')).toEqual({ name: 'solo', cpuPct: 5, memBytes: 1024 ** 2, memLimitBytes: 2 * 1024 ** 2 });
+    // no inspect call happened → no configured limits → 0
+    expect(map.get('web')).toMatchObject({ memLimitBytes: 0 });
+  });
+
+  it('handles a single line with no trailing newline', async () => {
+    // limit probing degrades to zero when ps/inspect fail — stats still parse
+    execMock.capture.mockImplementation(async (_c: unknown, args: unknown[]) => {
+      const a = args as string[];
+      if (a[0] === 'ps') throw new Error('docker ps failed');
+      return 'solo|5%|1MiB / 2MiB';
+    });
+    const map = await collectContainerStats();
+    expect(map.get('solo')).toEqual({ name: 'solo', cpuPct: 5, memBytes: 1024 ** 2, memLimitBytes: 0 });
   });
 });
 

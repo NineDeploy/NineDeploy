@@ -39,9 +39,38 @@ function parseBytes(input: string): number {
   return n * mult;
 }
 
+/**
+ * Configured memory limits per container name (bytes, 0 = unlimited), from
+ * HostConfig.Memory. `docker stats` reports the HOST total as the "limit" for
+ * unlimited containers, which made every service read as "x MB / 7.9 GB" and
+ * the panel look like memory was maxed — the real limit is what was set via
+ * `--memory`, and that is 0 unless the operator configured one.
+ */
+async function containerMemoryLimits(): Promise<Map<string, number>> {
+  const limits = new Map<string, number>();
+  try {
+    const ids = (await capture('docker', ['ps', '-q'])).trim().split('\n').filter(Boolean);
+    if (ids.length === 0) return limits;
+    const raw = await capture('docker', [
+      'inspect',
+      '--format',
+      '{{.Name}}|{{.HostConfig.Memory}}',
+      ...ids,
+    ]);
+    for (const line of raw.split('\n')) {
+      const [name, mem] = line.trim().split('|');
+      if (name) limits.set(name.replace(/^\//, ''), Number(mem) || 0);
+    }
+  } catch {
+    /* docker unavailable — callers fall back to no limits */
+  }
+  return limits;
+}
+
 /** Collect current CPU/memory for every running container via `docker stats`. */
 export async function collectContainerStats(): Promise<Map<string, ContainerStat>> {
   const out = new Map<string, ContainerStat>();
+  const limits = await containerMemoryLimits();
   let raw = '';
   try {
     raw = await capture('docker', [
@@ -58,12 +87,16 @@ export async function collectContainerStats(): Promise<Map<string, ContainerStat
     if (!line.trim()) continue;
     const [name, cpu, mem] = line.split('|');
     if (!name) continue;
-    const [used, limit] = (mem ?? ' / ').split('/');
+    const [used] = (mem ?? ' / ').split('/');
+    const configured = limits.get(name.trim());
     out.set(name.trim(), {
       name: name.trim(),
       cpuPct: Number((cpu ?? '0').replace('%', '').trim()) || 0,
       memBytes: parseBytes(used!),
-      memLimitBytes: parseBytes(limit ?? ''),
+      // Only the operator-configured limit counts; unlimited containers must
+      // not read as "host total" (docker stats' fallback), which faked high
+      // memory use on every service.
+      memLimitBytes: configured !== undefined && configured > 0 ? configured : 0,
     });
   }
   return out;

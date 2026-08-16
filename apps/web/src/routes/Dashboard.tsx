@@ -29,6 +29,7 @@ export function Dashboard() {
   if (dash.isLoading) {
     return (
       <div className="space-y-4">
+        <FetchBar show />
         <Skeleton className="h-24 w-full" />
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4"><Skeleton className="h-20 w-full" /><Skeleton className="h-20 w-full" /><Skeleton className="h-20 w-full" /><Skeleton className="h-20 w-full" /></div>
         <Skeleton className="h-48 w-full" />
@@ -55,6 +56,7 @@ export function Dashboard() {
           <Upload size={13} /> {importing ? 'Importing…' : 'Import service'}
         </button>
       </div>
+      <FetchBar show={dash.isFetching} />
       <div
         className={cn(
           'relative overflow-hidden rounded-2xl border p-5',
@@ -217,4 +219,14 @@ function StatCard({ icon, label, value, sub, tone }: { icon: React.ReactNode; la
       <div className="text-[10px] text-slate-500">{sub}</div>
     </Card>
   );
+}
+
+/**
+ * Thin brand-colored bar pinned to the viewport top while dashboard data is
+ * in flight — the skeleton covers only the first load; this covers background
+ * re-fetches (health probes can take a second).
+ */
+function FetchBar({ show }: { show: boolean }) {
+  if (!show) return null;
+  return <div aria-hidden="true" className="fixed inset-x-0 top-0 z-50 h-0.5 animate-pulse bg-[var(--nd-accent)]" />;
 }

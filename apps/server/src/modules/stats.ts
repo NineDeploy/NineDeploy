@@ -75,7 +75,13 @@ export const metricRoutes: FastifyPluginAsync = async (app) => {
     });
     return {
       kind,
-      points: rows.map((r) => ({ ts: r.ts.toISOString(), value: r.value })),
+      // Storage units are internal (cpu: percent×100, memory: bytes); the API
+      // serves display units — cpu % and memory MiB — so clients can label
+      // values directly instead of scaling raw samples.
+      points: rows.map((r) => ({
+        ts: r.ts.toISOString(),
+        value: kind === 'memory' ? Math.round(r.value / (1024 * 1024)) : Math.round(r.value) / 100,
+      })),
     };
   });
 };

@@ -1,10 +1,20 @@
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { databases, services } from '@ninedeploy/db';
+import { volumeFileWrite, volumePathCreate } from '@ninedeploy/schemas';
 import { audit } from '../lib/audit.js';
 import { removeVolume } from '../engine/database.js';
 import { capture } from '../lib/exec.js';
 import { containerRunning, resolveVolumeOwner } from '../lib/inventory.js';
 import { badRequest, conflict } from '../lib/errors.js';
+import {
+  deleteVolumePath,
+  isManagedVolume,
+  listVolumeDir,
+  makeVolumeDir,
+  readVolumeFile,
+  safeRelPath,
+  writeVolumeFile,
+} from '../engine/volumeFiles.js';
 
 interface VolumeOwner {
   kind: string;
@@ -81,6 +91,60 @@ export const volumeRoutes: FastifyPluginAsync = async (app) => {
     }
     void audit(app.db, req.user!.id, 'volume.delete', name);
     await removeVolume(name, (line) => req.log.info(line));
+    return { ok: true };
+  });
+
+  // ── File manager inside a volume ─────────────────────────────────────────
+  // All routes are admin-only + audited: this is full read/write access to
+  // the volume's data (same power as the exec terminal, so same guard).
+  const guardVolume = (name: string): string => {
+    if (!isManagedVolume(name)) throw badRequest('not a managed volume');
+    return name;
+  };
+  const guardPath = (raw: unknown): string => {
+    const rel = safeRelPath(String(raw ?? ''));
+    if (rel === null) throw badRequest('invalid path');
+    return rel;
+  };
+
+  app.get('/:name/files', { preHandler: [app.requireAdmin] }, async (req) => {
+    const name = guardVolume((req.params as { name: string }).name);
+    const rel = guardPath((req.query as { path?: string }).path);
+    return { path: rel, entries: await listVolumeDir(name, rel) };
+  });
+
+  app.get('/:name/files/content', { preHandler: [app.requireAdmin] }, async (req, reply) => {
+    const name = guardVolume((req.params as { name: string }).name);
+    const rel = guardPath((req.query as { path?: string }).path);
+    void audit(app.db, req.user!.id, 'volume.file.read', `${name}:${rel}`);
+    const file = await readVolumeFile(name, rel);
+    reply.header('content-type', 'application/json');
+    return file;
+  });
+
+  app.put('/:name/files', { preHandler: [app.requireAdmin] }, async (req) => {
+    const name = guardVolume((req.params as { name: string }).name);
+    const input = volumeFileWrite.parse(req.body);
+    const rel = guardPath(input.path);
+    void audit(app.db, req.user!.id, 'volume.file.write', `${name}:${rel}`);
+    await writeVolumeFile(name, rel, input.contentBase64, (line) => req.log.info(line));
+    return { ok: true };
+  });
+
+  app.post('/:name/files/dir', { preHandler: [app.requireAdmin] }, async (req) => {
+    const name = guardVolume((req.params as { name: string }).name);
+    const input = volumePathCreate.parse(req.body);
+    const rel = guardPath(input.path);
+    void audit(app.db, req.user!.id, 'volume.file.mkdir', `${name}:${rel}`);
+    await makeVolumeDir(name, rel);
+    return { ok: true };
+  });
+
+  app.delete('/:name/files', { preHandler: [app.requireAdmin] }, async (req) => {
+    const name = guardVolume((req.params as { name: string }).name);
+    const rel = guardPath((req.query as { path?: string }).path);
+    void audit(app.db, req.user!.id, 'volume.file.delete', `${name}:${rel}`);
+    await deleteVolumePath(name, rel, (line) => req.log.info(line));
     return { ok: true };
   });
 };

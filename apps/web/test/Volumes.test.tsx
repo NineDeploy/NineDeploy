@@ -23,6 +23,20 @@ const volumes = [
 ];
 
 describe('Volumes', () => {
+  it('opens the volume browser from a volume card', async () => {
+    mockOf(api.volumes.list).mockResolvedValue([
+      { name: 'nd-svc-api-data', sizeBytes: 1024, owner: { kind: 'service', name: 'api' }, inUse: true },
+    ] as never);
+    renderWithProviders(<Volumes />);
+    fireEvent.click(await screen.findByTitle('Browse files in this volume'));
+    // name appears both on the card and inside the browser header
+    expect((await screen.findAllByText('nd-svc-api-data')).length).toBeGreaterThanOrEqual(2);
+    expect(api.volumes.listFiles).toHaveBeenCalledWith('nd-svc-api-data', '');
+    // close via the X button
+    fireEvent.click(screen.getByLabelText('Close volume browser'));
+    await waitFor(() => expect(screen.queryByLabelText('Close volume browser')).toBeNull());
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
   });

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { KeyRound, Link2 as LinkIcon, Shield, Trash2, Users as UsersIcon } from 'lucide-react';
+import { KeyRound, Link2 as LinkIcon, Shield, Trash2, UserPlus, Users as UsersIcon } from 'lucide-react';
 import { useState } from 'react';
 import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.js';
@@ -13,6 +13,43 @@ export function Users() {
   const { toast } = useToast();
   const { copy } = useCopy();
   const list = useQuery({ queryKey: ['users'], queryFn: () => api.users.list() });
+
+  // ── Admin user creation ──────────────────────────────────────────────────
+  const [showAdd, setShowAdd] = useState(false);
+  const [addEmail, setAddEmail] = useState('');
+  const [addName, setAddName] = useState('');
+  const [addPassword, setAddPassword] = useState('');
+  const [addRole, setAddRole] = useState<'admin' | 'member'>('member');
+  const createUser = useMutation({
+    mutationFn: () =>
+      api.users.create({
+        email: addEmail.trim(),
+        password: addPassword,
+        name: addName.trim() || undefined,
+        role: addRole,
+      }),
+    onSuccess: (u) => {
+      qc.invalidateQueries({ queryKey: ['users'] });
+      setShowAdd(false);
+      setAddEmail('');
+      setAddName('');
+      setAddPassword('');
+      setAddRole('member');
+      toast(`User ${u.email} created`, 'success');
+    },
+    onError: () => toast('Could not create the user (email taken?)', 'error'),
+  });
+  const submitCreate = () => {
+    if (!/^\S+@\S+\.\S+$/.test(addEmail.trim())) {
+      toast('Enter a valid email', 'error');
+      return;
+    }
+    if (addPassword.length < 8) {
+      toast('Password must be at least 8 characters', 'error');
+      return;
+    }
+    createUser.mutate();
+  };
   const setRole = useMutation({
     mutationFn: ({ id, role }: { id: number; role: 'admin' | 'member' }) => api.users.setRole(id, role),
     onSuccess: (_res, vars) => {
@@ -94,6 +131,46 @@ export function Users() {
           </div>
         </Card>
       )}
+
+      {/* Add-user form (admin) */}
+      <Card className="mb-4">
+        <div className="p-4">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
+              <UserPlus size={14} /> Add user
+            </h2>
+            <button type="button"
+              onClick={() => setShowAdd(!showAdd)}
+              className="rounded-lg bg-white/[0.04] px-3 py-1.5 text-xs text-slate-400 transition hover:bg-white/[0.08] hover:text-slate-200"
+            >
+              {showAdd ? 'Cancel' : 'New user…'}
+            </button>
+          </div>
+          {showAdd && (
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <input value={addEmail} onChange={(e) => setAddEmail(e.target.value)}
+                placeholder="email@example.com" aria-label="New user email"
+                className="w-56 rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-1.5 text-xs outline-none focus:border-indigo-500" />
+              <input value={addName} onChange={(e) => setAddName(e.target.value)}
+                placeholder="name (optional)" aria-label="New user name"
+                className="w-40 rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-1.5 text-xs outline-none focus:border-indigo-500" />
+              <input value={addPassword} onChange={(e) => setAddPassword(e.target.value)}
+                type="password" placeholder="password (min 8)" aria-label="New user password"
+                className="w-44 rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-1.5 text-xs outline-none focus:border-indigo-500" />
+              <select value={addRole} onChange={(e) => setAddRole(e.target.value as 'admin' | 'member')}
+                aria-label="New user role"
+                className="rounded-lg border border-slate-700 bg-slate-900/60 px-2 py-1.5 text-xs outline-none focus:border-indigo-500">
+                <option value="member">member</option>
+                <option value="admin">admin</option>
+              </select>
+              <button type="button" onClick={submitCreate} disabled={createUser.isPending}
+                className="rounded-lg bg-[var(--nd-accent)] px-4 py-1.5 text-xs font-semibold text-black transition hover:brightness-110 disabled:opacity-50">
+                {createUser.isPending ? 'Creating…' : 'Create user'}
+              </button>
+            </div>
+          )}
+        </div>
+      </Card>
 
       {list.isLoading ? (
         <Card className="p-5"><Skeleton className="h-10 w-full" /></Card>
@@ -209,7 +286,8 @@ export function Users() {
         </Card>
       )}
       <p className="mt-3 text-xs text-slate-600">
-        New users can register at <code className="text-slate-400">/v1/auth/register</code>. The first user is always admin. Toggle role badges to promote/demote. The last admin cannot be removed.
+        Admins can create users directly above, or new users can self-register at{' '}
+        <code className="text-slate-400">/v1/auth/register</code> (when open registration is enabled). Toggle role badges to promote/demote. The last admin cannot be removed.
       </p>
 
       <ConfirmDialog

@@ -1,17 +1,19 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import { Database, HardDrive, Layers, Lock, Package, Server, Trash2 } from 'lucide-react';
+import { Database, FolderOpen, HardDrive, Layers, Lock, Package, Server, Trash2 } from 'lucide-react';
 import { Link } from 'react-router';
 import { api } from '../lib/api.js';
 import { useToast } from '../components/Toast.js';
 import { Button, Card, ConfirmDialog, EmptyState, ErrorCard, PageHeader, Skeleton, cn } from '../components/ui.js';
 import { formatBytes } from '../lib/format.js';
+import { VolumeBrowser } from '../components/VolumeBrowser.js';
 
 export function Volumes() {
   const qc = useQueryClient();
   const { toast } = useToast();
   const list = useQuery({ queryKey: ['volumes'], queryFn: () => api.volumes.list() });
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  const [browsing, setBrowsing] = useState<string | null>(null);
   const remove = useMutation({
     mutationFn: (name: string) => api.volumes.remove(name),
     onSuccess: () => {
@@ -70,15 +72,24 @@ export function Volumes() {
                   <span className={cn('rounded px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide', v.inUse ? 'bg-rose-500/10 text-rose-300' : isRetained ? 'bg-amber-500/15 text-amber-300' : 'bg-emerald-500/10 text-emerald-300/80')}>
                     {v.inUse ? 'in use · locked' : isRetained ? 'retained · reusable' : 'attached · stopped'}
                   </span>
-                  {!v.inUse && (
+                  <div className="flex items-center gap-2">
                     <button type="button"
-                      onClick={() => setPendingDelete(v.name)}
-                      className="text-slate-600 transition hover:text-rose-400"
-                      title="Delete volume (destructive)"
+                      onClick={() => setBrowsing(v.name)}
+                      className="text-slate-600 transition hover:text-[var(--nd-accent)]"
+                      title="Browse files in this volume"
                     >
-                      <Trash2 size={13} />
+                      <FolderOpen size={13} />
                     </button>
-                  )}
+                    {!v.inUse && (
+                      <button type="button"
+                        onClick={() => setPendingDelete(v.name)}
+                        className="text-slate-600 transition hover:text-rose-400"
+                        title="Delete volume (destructive)"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    )}
+                  </div>
                   {v.inUse && <span title={`Attached to a running ${v.owner?.kind ?? 'workload'} — stop it first`}><Lock size={13} className="text-slate-600" /></span>}
                 </div>
                 <div className="mt-1 truncate font-mono text-[10px] text-slate-600">{v.name}</div>
@@ -87,6 +98,8 @@ export function Volumes() {
           })}
         </div>
       )}
+      {browsing && <VolumeBrowser volume={browsing} onClose={() => setBrowsing(null)} />}
+
       <p className="mt-3 text-xs text-slate-600">
         Deleting a database keeps its volume (marked <span className="text-amber-400">retained</span>) so data survives — recreating the same database reuses it. Remove a volume here only to free disk. <Link to="/backups" className="text-indigo-400 hover:underline">Backups</Link>.
       </p>

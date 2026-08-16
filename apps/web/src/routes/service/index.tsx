@@ -17,7 +17,7 @@ import { SettingsTab } from './SettingsTab.js';
 import { ActivityTab } from './ActivityTab.js';
 import { DangerZone } from './DangerZone.js';
 
-type TabId = 'overview' | 'deploys' | 'environment' | 'network' | 'settings' | 'activity';
+type TabId = 'overview' | 'deploys' | 'environment' | 'network' | 'settings' | 'activity' | 'danger';
 
 export function ServiceDetail() {
   const params = useParams();
@@ -231,6 +231,7 @@ export function ServiceDetail() {
           { id: 'network', label: 'Network' },
           { id: 'settings', label: 'Settings' },
           { id: 'activity', label: 'Activity' },
+          { id: 'danger', label: 'Danger' },
         ]}
       />
 
@@ -249,15 +250,18 @@ export function ServiceDetail() {
       {tab === 'settings' && <SettingsTab serviceId={id} svc={svc} />}
       {tab === 'activity' && <ActivityTab serviceId={id} name={svc.name} />}
 
-      {/* Danger zone */}
-      <DangerZone
-        slug={svc.slug}
-        name={svc.name}
-        confirmDelete={confirmDelete}
-        setConfirmDelete={setConfirmDelete}
-        onDelete={() => removeService.mutate()}
-        deleting={removeService.isPending}
-      />
+      {/* Danger zone lives in its own tab so it never reads as part of
+          everyday settings. */}
+      {tab === 'danger' && (
+        <DangerZone
+          slug={svc.slug}
+          name={svc.name}
+          confirmDelete={confirmDelete}
+          setConfirmDelete={setConfirmDelete}
+          onDelete={() => removeService.mutate()}
+          deleting={removeService.isPending}
+        />
+      )}
     </div>
   );
 }

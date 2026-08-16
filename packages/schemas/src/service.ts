@@ -299,7 +299,7 @@ export type StatsSnapshot = z.infer<typeof statsSnapshot>;
 
 export const metricSeries = z.object({
   kind: z.string(),
-  points: z.array(z.object({ ts: z.string().datetime(), value: z.number().int() })),
+  points: z.array(z.object({ ts: z.string().datetime(), value: z.number() })),
 });
 export type MetricSeries = z.infer<typeof metricSeries>;
 
@@ -413,6 +413,28 @@ export const volumeEntry = z.object({
   inUse: z.boolean(),
 });
 export type VolumeEntry = z.infer<typeof volumeEntry>;
+
+// ── Volume file manager ────────────────────────────────────────────────────
+export const volumeFileEntry = z.object({
+  name: z.string(),
+  type: z.enum(['file', 'dir']),
+  sizeBytes: z.number().int(),
+  modifiedAt: z.string().datetime().nullable(),
+});
+export type VolumeFileEntry = z.infer<typeof volumeFileEntry>;
+
+export const volumeFileWrite = z.object({
+  /** Relative path inside the volume. */
+  path: z.string().min(1).max(1024),
+  /** Base64-encoded file content (schemas validate; argv never sees it). */
+  contentBase64: z.string().max(8 * 1024 * 1024),
+});
+export type VolumeFileWriteInput = z.input<typeof volumeFileWrite>;
+
+export const volumePathCreate = z.object({
+  path: z.string().min(1).max(1024),
+});
+export type VolumePathCreateInput = z.input<typeof volumePathCreate>;
 
 // ── Docker resource accounting ─────────────────────────────────────────────
 export const dockerResources = z.object({

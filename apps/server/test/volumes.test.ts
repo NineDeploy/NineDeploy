@@ -8,6 +8,27 @@ const dbEngineMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../src/lib/exec.js', () => execMocks);
+const volFilesMocks = vi.hoisted(() => ({
+  listVolumeDir: vi.fn(),
+  readVolumeFile: vi.fn(),
+  writeVolumeFile: vi.fn(),
+  makeVolumeDir: vi.fn(),
+  deleteVolumePath: vi.fn(),
+}));
+vi.mock('../src/engine/volumeFiles.js', () => ({
+  ...volFilesMocks,
+  isManagedVolume: (n: string) => /^nd-(svc|db)-[a-z0-9-]+$/.test(n),
+  safeRelPath: (input: string) => {
+    if (input.includes('\n') || input.includes('\0')) return null;
+    const parts: string[] = [];
+    for (const seg of input.split('/')) {
+      if (!seg || seg === '.') continue;
+      if (seg === '..') { if (!parts.length) return null; parts.pop(); continue; }
+      parts.push(seg);
+    }
+    return parts.join('/');
+  },
+}));
 vi.mock('../src/engine/database.js', () => dbEngineMocks);
 
 beforeEach(() => {
@@ -15,6 +36,88 @@ beforeEach(() => {
 });
 
 describe('volume routes', () => {
+  describe('file manager', () => {
+    it('lists a directory inside a volume', async () => {
+      volFilesMocks.listVolumeDir.mockResolvedValue([
+        { name: 'data', type: 'dir', sizeBytes: 4096, modifiedAt: null },
+        { name: 'app.env', type: 'file', sizeBytes: 42, modifiedAt: null },
+      ]);
+      const app = await buildTestApp({ db: createFakeDb() });
+      await app.register(volumeRoutes);
+      const res = await app.inject({ method: 'GET', url: '/nd-svc-web-data/files?path=configs', headers: asUser() });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({
+        path: 'configs',
+        entries: [
+          { name: 'data', type: 'dir', sizeBytes: 4096, modifiedAt: null },
+          { name: 'app.env', type: 'file', sizeBytes: 42, modifiedAt: null },
+        ],
+      });
+      expect(volFilesMocks.listVolumeDir).toHaveBeenCalledWith('nd-svc-web-data', 'configs');
+    });
+
+    it('defaults to the volume root when no path is given', async () => {
+      volFilesMocks.listVolumeDir.mockResolvedValue([]);
+      const app = await buildTestApp({ db: createFakeDb() });
+      await app.register(volumeRoutes);
+      const res = await app.inject({ method: 'GET', url: '/nd-svc-web-data/files', headers: asUser() });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ path: '', entries: [] });
+      expect(volFilesMocks.listVolumeDir).toHaveBeenCalledWith('nd-svc-web-data', '');
+    });
+
+    it('refuses non-managed volume names and escaping paths', async () => {
+      const app = await buildTestApp({ db: createFakeDb() });
+      await app.register(volumeRoutes);
+      const bad1 = await app.inject({ method: 'GET', url: '/etc/files', headers: asUser() });
+      expect(bad1.statusCode).toBe(400);
+      const bad2 = await app.inject({ method: 'GET', url: '/nd-svc-web-data/files?path=../../etc', headers: asUser() });
+      expect(bad2.statusCode).toBe(400);
+      expect(volFilesMocks.listVolumeDir).not.toHaveBeenCalled();
+    });
+
+    it('reads a file as base64', async () => {
+      volFilesMocks.readVolumeFile.mockResolvedValue({ content: 'aGk=', encoding: 'base64' });
+      const app = await buildTestApp({ db: createFakeDb() });
+      await app.register(volumeRoutes);
+      const res = await app.inject({ method: 'GET', url: '/nd-svc-web-data/files/content?path=app.env', headers: asUser() });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ content: 'aGk=', encoding: 'base64' });
+    });
+
+    it('writes a file (base64 body) and creates directories', async () => {
+      volFilesMocks.writeVolumeFile.mockImplementation(async (_v: string, _p: string, _c: string, sink: (l: string) => void) => { sink('written'); });
+      volFilesMocks.makeVolumeDir.mockResolvedValue(undefined);
+      const app = await buildTestApp({ db: createFakeDb() });
+      await app.register(volumeRoutes);
+      const put = await app.inject({
+        method: 'PUT',
+        url: '/nd-svc-web-data/files',
+        headers: asUser(),
+        payload: { path: 'configs/app.env', contentBase64: 'aGk=' },
+      });
+      expect(put.statusCode).toBe(200);
+      expect(volFilesMocks.writeVolumeFile).toHaveBeenCalledWith('nd-svc-web-data', 'configs/app.env', 'aGk=', expect.any(Function));
+      const mk = await app.inject({
+        method: 'POST',
+        url: '/nd-svc-web-data/files/dir',
+        headers: asUser(),
+        payload: { path: 'configs/deep' },
+      });
+      expect(mk.statusCode).toBe(200);
+      expect(volFilesMocks.makeVolumeDir).toHaveBeenCalledWith('nd-svc-web-data', 'configs/deep');
+    });
+
+    it('deletes a path inside a volume', async () => {
+      volFilesMocks.deleteVolumePath.mockImplementation(async (_v: string, _p: string, sink: (l: string) => void) => { sink('removing'); });
+      const app = await buildTestApp({ db: createFakeDb() });
+      await app.register(volumeRoutes);
+      const res = await app.inject({ method: 'DELETE', url: '/nd-svc-web-data/files?path=old', headers: asUser() });
+      expect(res.statusCode).toBe(200);
+      expect(volFilesMocks.deleteVolumePath).toHaveBeenCalledWith('nd-svc-web-data', 'old', expect.any(Function));
+    });
+  });
+
   it('lists managed volumes with owners and sizes', async () => {
     execMocks.capture.mockImplementation((_cmd: string, args: string[]) => {
       if (args[0] === 'volume') return Promise.resolve('nd-svc-web\nnd-db-pg\nnd-svc-orphan\nnd-db-lonely\n');

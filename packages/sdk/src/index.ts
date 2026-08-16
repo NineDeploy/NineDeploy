@@ -39,6 +39,10 @@ import type {
   TemplateSummary,
   TopologyGraph,
   TunnelEntry,
+  UserCreate,
+  VolumeFileEntry,
+  VolumeFileWriteInput,
+  VolumePathCreateInput,
   TriggerDeploy,
   UpdateCheckResult,
   UpdateServiceInput,
@@ -138,6 +142,16 @@ export interface NineDeployClient {
   volumes: {
     list: () => Promise<VolumeEntry[]>;
     remove: (name: string) => Promise<void>;
+    /** File manager: list a directory inside the volume. */
+    listFiles: (name: string, path?: string) => Promise<{ path: string; entries: VolumeFileEntry[] }>;
+    /** File manager: read a file (base64 content). */
+    readFile: (name: string, path: string) => Promise<{ content: string; encoding: 'utf8' | 'base64' }>;
+    /** File manager: write/overwrite a file (base64 content). */
+    writeFile: (name: string, input: VolumeFileWriteInput) => Promise<{ ok: boolean }>;
+    /** File manager: create a directory. */
+    mkdir: (name: string, input: VolumePathCreateInput) => Promise<{ ok: boolean }>;
+    /** File manager: delete a file or directory (recursive). */
+    deleteFile: (name: string, path: string) => Promise<void>;
   };
   system: {
     resources: () => Promise<DockerResources>;
@@ -171,6 +185,8 @@ export interface NineDeployClient {
   };
   users: {
     list: () => Promise<PublicUser[]>;
+    /** Admin-only: create a user directly (no registration flow needed). */
+    create: (input: UserCreate) => Promise<PublicUser>;
     setRole: (id: number, role: 'admin' | 'member') => Promise<PublicUser>;
     remove: (id: number) => Promise<void>;
     /** Admin reset of another user's password (revokes their sessions). */
@@ -409,6 +425,15 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
     },
     volumes: {
       list: () => get<VolumeEntry[]>('/v1/volumes'),
+      listFiles: (name, path = '') =>
+        get<{ path: string; entries: VolumeFileEntry[] }>(`/v1/volumes/${encodeURIComponent(name)}/files?path=${encodeURIComponent(path)}`),
+      readFile: (name, path) =>
+        get<{ content: string; encoding: 'utf8' | 'base64' }>(`/v1/volumes/${encodeURIComponent(name)}/files/content?path=${encodeURIComponent(path)}`),
+      writeFile: (name, input) => send<{ ok: boolean }>('PUT', `/v1/volumes/${encodeURIComponent(name)}/files`, input),
+      mkdir: (name, input) => send<{ ok: boolean }>('POST', `/v1/volumes/${encodeURIComponent(name)}/files/dir`, input),
+      deleteFile: async (name, path) => {
+        await request(`/v1/volumes/${encodeURIComponent(name)}/files?path=${encodeURIComponent(path)}`, { method: 'DELETE' });
+      },
       remove: async (name) => {
         await request(`/v1/volumes/${encodeURIComponent(name)}`, { method: 'DELETE' });
       },
@@ -450,6 +475,7 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
     },
     users: {
       list: () => get<PublicUser[]>('/v1/users'),
+      create: (input) => send<PublicUser>('POST', '/v1/users', input),
       setRole: (id, role) => send<PublicUser>('PATCH', `/v1/users/${id}/role`, { role }),
       resetPassword: (id, input) => send<{ ok: boolean }>('PATCH', `/v1/users/${id}/password`, input),
       resetLink: (id) => send<{ url: string; expiresAt: string }>('POST', `/v1/users/${id}/reset-link`),

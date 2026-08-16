@@ -108,6 +108,23 @@ html[data-theme='light'][data-accent='violet']  { --nd-accent-soft: #7c3aed; --n
   *::-webkit-scrollbar-thumb:hover { background: rgba(148,163,184,.35); background-clip: padding-box; }
 }
 
+/* ── Dark brand surfaces ──────────────────────────────────────────────────
+   The dark theme is re-toned onto the website brand navy (not neutral slate):
+     page   #0a101b  (website --color-void)
+     panel  #101a2b  (website --color-panel)
+   Utility classes are remapped here so components never hardcode brand hexes. */
+html:not([data-theme='light']) .bg-slate-950 { background-color: #0a101b; }
+html:not([data-theme='light']) .bg-slate-950\/40 { background-color: rgba(10, 16, 27, 0.4); }
+html:not([data-theme='light']) .bg-slate-950\/60 { background-color: rgba(10, 16, 27, 0.6); }
+html:not([data-theme='light']) .bg-slate-950\/70 { background-color: rgba(10, 16, 27, 0.7); }
+html:not([data-theme='light']) .bg-slate-950\/80 { background-color: rgba(10, 16, 27, 0.8); }
+html:not([data-theme='light']) .bg-slate-900\/90 { background-color: rgba(16, 26, 43, 0.9); }
+html:not([data-theme='light']) .bg-slate-900\/95 { background-color: rgba(16, 26, 43, 0.95); }
+html:not([data-theme='light']) .bg-\[\#0a0a10\] { background-color: #101a2b; }
+/* hairline borders pick up the website line tone instead of pure white */
+html:not([data-theme='light']) .border-white\/5 { border-color: rgba(34, 50, 78, 0.45); }
+html:not([data-theme='light']) .border-white\/10 { border-color: rgba(34, 50, 78, 0.7); }
+
 /* ── Light theme overrides ─────────────────────────────────────────────── */
 html[data-theme='light'] body {
   background-color: #f4f7fb; /* website --nd-bg (light) */

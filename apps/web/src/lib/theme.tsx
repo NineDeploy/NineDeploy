@@ -14,7 +14,10 @@ interface ThemeContextValue {
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 const THEME_KEY = 'ninedeploy.theme';
-const ACCENT_KEY = 'ninedeploy.accent';
+// v2: renamed so the pre-brand default (indigo) stored by earlier versions is
+// ignored once — everyone gets the brand phosphor accent out of the box,
+// while explicit choices (incl. indigo) still persist from now on.
+const ACCENT_KEY = 'ninedeploy.accent.v2';
 
 export const ACCENTS: Array<{ id: Accent; label: string; color: string }> = [
   // Brand accent — the logo teal used across the marketing website.

@@ -3,6 +3,7 @@ import { databases, deployments, domains, services, webhooks } from '@ninedeploy
 import type { FastifyPluginAsync } from 'fastify';
 import { capture } from '../lib/exec.js';
 import { containerIp } from '../engine/builders/docker.js';
+import { TRAEFIK_CONTAINER } from '../engine/proxy.js';
 
 interface HealthStatus {
   serviceId: number;
@@ -19,10 +20,10 @@ interface HealthStatus {
 }
 
 /** Probe a URL with a short per-attempt timeout (never blocks the request). */
-async function probeUrl(url: string): Promise<{ healthy: boolean; responseMs: number | null }> {
+async function probeUrl(url: string, timeoutMs = 3000): Promise<{ healthy: boolean; responseMs: number | null }> {
   const start = Date.now();
   try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(3000) });
+    const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
     return { healthy: res.status < 500, responseMs: Date.now() - start };
   } catch {
     return { healthy: false, responseMs: null };
@@ -30,10 +31,51 @@ async function probeUrl(url: string): Promise<{ healthy: boolean; responseMs: nu
 }
 
 /**
+ * Probe from INSIDE the docker network by exec'ing wget in the Traefik
+ * container (alpine base, always running on the shared `ninedeploy` network).
+ * This is the portable fallback: hosts that cannot route bridge IPs directly
+ * (Docker Desktop / macOS / Windows) would otherwise mark every container
+ * unhealthy even though it serves fine on the mesh.
+ */
+async function probeViaMesh(runtimeId: string, port: number, path: string): Promise<boolean> {
+  try {
+    await capture('docker', [
+      'exec', TRAEFIK_CONTAINER,
+      'wget', '-q', '-O', '/dev/null', '-T', '3',
+      `http://${runtimeId}:${port}${path}`,
+    ]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Last-resort probe for containers that are NOT on the shared mesh (e.g.
+ * compose projects run their own network): a throwaway curl container shares
+ * the target's network namespace, so 127.0.0.1:<port> lands directly on the
+ * app regardless of how the container is networked.
+ */
+async function probeViaNetns(runtimeId: string, port: number, path: string): Promise<boolean> {
+  try {
+    const out = await capture('docker', [
+      'run', '--rm', '--network', `container:${runtimeId}`, 'curlimages/curl:latest',
+      '-s', '-o', '/dev/null', '-w', '%{http_code}', '-m', '3',
+      `http://127.0.0.1:${port}${path}`,
+    ]);
+    const code = Number(out.trim());
+    return code > 0 && code < 500;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Probe a running service's health endpoint. Docker services publish no host
  * ports (Traefik is the only ingress, per the container-security model), so
- * they are probed on their container network IP — probing 127.0.0.1 would fail
- * for every Docker deploy. PM2 services are host processes, so they are probed
+ * they are probed on their container network IP first — the fast path on
+ * Linux hosts that can route bridge IPs — and via the Traefik mesh fallback
+ * on hosts that cannot. PM2 services are host processes, so they are probed
  * on loopback like before.
  */
 async function probeService(svc: {
@@ -44,8 +86,34 @@ async function probeService(svc: {
 }): Promise<{ healthy: boolean; responseMs: number | null }> {
   const path = svc.healthPath || '/';
   if (svc.type === 'pm2') return probeUrl(`http://127.0.0.1:${svc.port}${path}`);
-  const ip = svc.runtimeId ? await containerIp(svc.runtimeId) : null;
-  return ip ? probeUrl(`http://${ip}:${svc.port}${path}`) : { healthy: false, responseMs: null };
+  const runtimeId = svc.runtimeId;
+  if (!runtimeId) return { healthy: false, responseMs: null };
+  const ip = await containerIp(runtimeId);
+  if (!ip) return { healthy: false, responseMs: null }; // container not running
+  // Race the transports: the direct fetch and the mesh probe run CONCURRENTLY
+  // and the first healthy answer wins. Waiting for the doomed 1.2s direct
+  // timeout before even starting the mesh probe is what made the dashboard
+  // slow on hosts that cannot route bridge IPs (Docker Desktop).
+  return new Promise((resolve) => {
+    let settled = false;
+    const settle = (v: { healthy: boolean; responseMs: number | null }) => {
+      if (!settled) {
+        settled = true;
+        resolve(v);
+      }
+    };
+    void probeUrl(`http://${ip}:${svc.port}${path}`, 1200).then((direct) => {
+      if (direct.healthy) {
+        settle(direct);
+      } else {
+        // Direct failed — containers outside the mesh need the netns probe.
+        void probeViaNetns(runtimeId, svc.port, path).then((ok) => settle({ healthy: ok, responseMs: null }));
+      }
+    });
+    void probeViaMesh(runtimeId, svc.port, path).then((ok) => {
+      if (ok) settle({ healthy: true, responseMs: null });
+    });
+  });
 }
 
 /** Dashboard overview: stats + per-service health + recent deploys. */
@@ -93,46 +161,51 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
       };
     });
 
-    // Health probe each running service
-    const healthStatuses: HealthStatus[] = [];
-    for (const svc of allServices) {
-      const lastDep = await app.db.query.deployments.findFirst({
-        where: eq(deployments.serviceId, svc.id),
-        orderBy: desc(deployments.id),
-      });
-
-      let healthy = false;
-      let responseMs: number | null = null;
-
-      if (svc.status === 'running' && svc.port) {
-        const probe = await probeService({
-          type: svc.type,
-          runtimeId: svc.runtimeId,
-          port: svc.port,
-          healthPath: svc.healthPath,
+    // Health probe each running service — all services IN PARALLEL. Probes
+    // chain through up to three transports (direct fetch → mesh → netns) and
+    // each hop can cost seconds on hosts that cannot route bridge IPs; a
+    // sequential loop multiplied that delay by the service count and made the
+    // dashboard take 5-7s to render.
+    const healthStatuses = await Promise.all(
+      allServices.map(async (svc): Promise<HealthStatus> => {
+        const lastDep = await app.db.query.deployments.findFirst({
+          where: eq(deployments.serviceId, svc.id),
+          orderBy: desc(deployments.id),
         });
-        healthy = probe.healthy;
-        responseMs = probe.responseMs;
-      } else if (svc.status === 'stopped') {
-        healthy = false;
-      } else if (!svc.port) {
-        healthy = svc.status === 'running';
-      }
 
-      healthStatuses.push({
-        serviceId: svc.id,
-        name: svc.name,
-        slug: svc.slug,
-        type: svc.type,
-        status: svc.status,
-        healthy,
-        responseMs,
-        port: svc.port,
-        runtimeId: svc.runtimeId,
-        commitSha: svc.commitSha?.slice(0, 7) ?? null,
-        lastDeploy: lastDep?.createdAt.toISOString() ?? null,
-      });
-    }
+        let healthy = false;
+        let responseMs: number | null = null;
+
+        if (svc.status === 'running' && svc.port) {
+          const probe = await probeService({
+            type: svc.type,
+            runtimeId: svc.runtimeId,
+            port: svc.port,
+            healthPath: svc.healthPath,
+          });
+          healthy = probe.healthy;
+          responseMs = probe.responseMs;
+        } else if (svc.status === 'stopped') {
+          healthy = false;
+        } else if (!svc.port) {
+          healthy = svc.status === 'running';
+        }
+
+        return {
+          serviceId: svc.id,
+          name: svc.name,
+          slug: svc.slug,
+          type: svc.type,
+          status: svc.status,
+          healthy,
+          responseMs,
+          port: svc.port,
+          runtimeId: svc.runtimeId,
+          commitSha: svc.commitSha?.slice(0, 7) ?? null,
+          lastDeploy: lastDep?.createdAt.toISOString() ?? null,
+        };
+      }),
+    );
 
     // Docker container count
     let containerCount = 0;

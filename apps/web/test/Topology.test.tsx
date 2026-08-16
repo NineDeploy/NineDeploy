@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { fireEvent, screen } from '@testing-library/react';
+import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { Topology } from '../src/routes/Topology.js';
 import { api } from '../src/lib/api.js';
 import { renderWithProviders, mockOf } from './helpers.js';
@@ -79,6 +79,57 @@ it('shows an error state with retry when the graph query fails', async () => {
       await screen.findByText('Nothing deployed yet.');
     });
 
+    it('focuses a single service and resets back to the full graph', async () => {
+      mockOf(api.topology.get).mockResolvedValue(graph as never);
+      renderWithProviders(<Topology />);
+      await screen.findByTestId('react-flow');
+      // full graph: 2 services + 2 dbs + domain + gateway + volumes + network
+      const full = Number((await screen.findByTestId('react-flow')).getAttribute('data-nodes'));
+
+      // pick "worker" (id 2): no domains, no attachments, no volumes of its own
+      fireEvent.change(screen.getByLabelText('Focus service'), { target: { value: '2' } });
+      await waitFor(() => {
+        const focused = Number(screen.getByTestId('react-flow').getAttribute('data-nodes'));
+        expect(focused).toBeLessThan(full);
+        // worker node present; api's domain/db/volume gone
+        expect(screen.getByTestId('react-flow')).toHaveTextContent('worker');
+        expect(screen.getByTestId('react-flow')).not.toHaveTextContent('app.example.com');
+        expect(screen.getByTestId('react-flow')).not.toHaveTextContent('db-main');
+        expect(screen.getByTestId('react-flow')).not.toHaveTextContent('api-data');
+      });
+
+      // reset restores the full graph (both the button and the '' option)
+      fireEvent.click(screen.getByRole('button', { name: 'reset' }));
+      await waitFor(() =>
+        expect(Number(screen.getByTestId('react-flow').getAttribute('data-nodes'))).toBe(full),
+      );
+
+      // focusing a service WITH an attachment keeps its database + volumes
+      fireEvent.change(screen.getByLabelText('Focus service'), { target: { value: '1' } });
+      await waitFor(() => {
+        const flow = screen.getByTestId('react-flow');
+        expect(flow).toHaveTextContent('db-main');
+        expect(flow).toHaveTextContent('api-data');
+        expect(flow).not.toHaveTextContent('cache'); // unattached db filtered out
+        expect(flow).not.toHaveTextContent('worker');
+      });
+
+      // picking an id that vanished from the graph falls back to the full view
+      fireEvent.change(screen.getByLabelText('Focus service'), { target: { value: '999' } });
+      await waitFor(() =>
+        expect(Number(screen.getByTestId('react-flow').getAttribute('data-nodes'))).toBe(full),
+      );
+      // selecting the empty option also clears the focus
+      fireEvent.change(screen.getByLabelText('Focus service'), { target: { value: '2' } });
+      await waitFor(() =>
+        expect(Number(screen.getByTestId('react-flow').getAttribute('data-nodes'))).toBeLessThan(full),
+      );
+      fireEvent.change(screen.getByLabelText('Focus service'), { target: { value: '' } });
+      await waitFor(() =>
+        expect(Number(screen.getByTestId('react-flow').getAttribute('data-nodes'))).toBe(full),
+      );
+    });
+
     it('renders the gateway stopped state when traefik is down', async () => {
       mockOf(api.topology.get).mockResolvedValue({
         ...graph,
@@ -104,16 +155,16 @@ it('shows an error state with retry when the graph query fails', async () => {
       expect(screen.getByTestId('background')).toBeInTheDocument();
       expect(screen.getByTestId('controls')).toBeInTheDocument();
       // node components rendered via nodeTypes with their data
-      expect(screen.getByText('api')).toBeInTheDocument();
-      expect(screen.getByText('worker')).toBeInTheDocument();
-      expect(screen.getByText('db-main')).toBeInTheDocument();
-      expect(screen.getByText('cache')).toBeInTheDocument();
-      expect(screen.getByText('app.example.com')).toBeInTheDocument();
-      expect(screen.getByText('Traefik')).toBeInTheDocument();
-      expect(screen.getByText('ninedeploy')).toBeInTheDocument();
+      expect(screen.getByTestId('react-flow')).toHaveTextContent('api');
+      expect(screen.getByTestId('react-flow')).toHaveTextContent('worker');
+      expect(screen.getByTestId('react-flow')).toHaveTextContent('db-main');
+      expect(screen.getByTestId('react-flow')).toHaveTextContent('cache');
+      expect(screen.getByTestId('react-flow')).toHaveTextContent('app.example.com');
+      expect(screen.getByTestId('react-flow')).toHaveTextContent('Traefik');
+      expect(screen.getByTestId('react-flow')).toHaveTextContent('ninedeploy');
       // volume names are shortened (nd-svc-/-data stripped); orphan is kept
-      expect(screen.getByText('api-data')).toBeInTheDocument();
-      expect(screen.getByText('ghost-data')).toBeInTheDocument();
+      expect(screen.getByTestId('react-flow')).toHaveTextContent('api-data');
+      expect(screen.getByTestId('react-flow')).toHaveTextContent('ghost-data');
       expect(screen.getAllByText('postgres').length).toBeGreaterThan(0);
       expect(screen.getAllByText('running').length).toBeGreaterThan(0);
     });

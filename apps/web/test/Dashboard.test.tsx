@@ -53,7 +53,8 @@ it('shows an error card with retry when the dashboard query fails', async () => 
     it('shows skeleton while loading', () => {
     mockOf(api.dashboard.get).mockReturnValue(new Promise(() => {}));
     renderWithProviders(<Dashboard />);
-    expect(document.querySelectorAll('.animate-pulse').length).toBe(6);
+    // 5 skeletons + the top fetch bar
+      expect(document.querySelectorAll('.animate-pulse').length).toBe(7);
   });
 
   it('returns null when dashboard data is missing', async () => {

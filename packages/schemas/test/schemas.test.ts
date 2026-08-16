@@ -569,7 +569,7 @@ describe('service', () => {
     it('metricSeries accepts points', () => {
       expect(metricSeries.safeParse({ kind: 'cpu', points: [{ ts: '2026-01-01T00:00:00Z', value: 5 }] }).success).toBe(true);
       bad(metricSeries, { kind: 'cpu', points: [{ ts: 'x', value: 5 }] });
-      bad(metricSeries, { kind: 'cpu', points: [{ ts: '2026-01-01T00:00:00Z', value: 5.5 }] });
+
     });
   });
 

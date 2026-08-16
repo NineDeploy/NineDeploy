@@ -108,7 +108,7 @@ function armTimeout(child: ChildProcess, timeoutMs: number, onTimeout: () => voi
  * Rejects with an Error (or {@link ExecTimeoutError}) if the process exits
  * non-zero or exceeds its timeout.
  */
-export function run(cmd: string, args: string[], opts: ExecOptions, sink: (line: string) => void): Promise<void> {
+export function run(cmd: string, args: string[], opts: ExecOptions, sink: (line: string) => void, input?: Buffer): Promise<void> {
   const label = [cmd, ...args].join(' ');
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   return new Promise((resolve, reject) => {
@@ -116,15 +116,19 @@ export function run(cmd: string, args: string[], opts: ExecOptions, sink: (line:
       cwd: opts.cwd,
       env: buildEnv(opts.env),
       detached: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: [input ? 'pipe' : 'ignore', 'pipe', 'pipe'],
     });
+    if (input && child.stdin) {
+      child.stdin.on('error', () => { /* EPIPE when the child exits early */ });
+      child.stdin.end(input);
+    }
 
     const splitter = makeLineSplitter();
     const onData = (chunk: Buffer) => {
       for (const line of splitter.feed(chunk)) sink(line);
     };
-    child.stdout.on('data', onData);
-    child.stderr.on('data', onData);
+    child.stdout?.on('data', onData);
+    child.stderr?.on('data', onData);
 
     let settled = false;
     // onTimeout fires from the single-shot timer; close/error cancel it first,

@@ -51,6 +51,9 @@ const childProc = vi.hoisted(() => {
 });
 vi.mock('node:child_process', () => ({ spawn: (...a: unknown[]) => childProc.spawn(...a) }));
 
+const execMocks = vi.hoisted(() => ({ capture: vi.fn() }));
+vi.mock('../src/lib/exec.js', () => ({ capture: (...a: unknown[]) => execMocks.capture(...a) }));
+
 const sockets: WebSocket[] = [];
 
 beforeEach(() => {
@@ -261,6 +264,8 @@ describe('deploys routes', () => {
   });
 
   it('opens a container exec terminal over websocket', async () => {
+    // python3 pty probe unavailable → legacy pipe mode
+    execMocks.capture.mockRejectedValue(new Error('no python3'));
     const app = await buildTestApp({
       websocket: true,
       db: createFakeDb({ findFirst: { services: svcRow({ id: 1, runtimeId: 'c1' }) } }),
@@ -272,7 +277,7 @@ describe('deploys routes', () => {
     const messages = collectMessages(ws);
     await waitFor(() => childProc.children.length === 1);
     const child = childProc.children[0];
-    expect(childProc.spawn).toHaveBeenCalledWith('docker', ['exec', '-i', 'c1', 'sh'], {});
+    expect(childProc.spawn).toHaveBeenCalledWith('docker', ['exec', '-i', '--', 'c1', 'sh'], {});
 
     child.stdout.emit('data', 'hello from container');
     await waitFor(() => messages.some((m) => m.includes('hello from container')));
@@ -287,6 +292,28 @@ describe('deploys routes', () => {
     await closed;
     child.emit('close');
     await waitFor(() => (child.kill as ReturnType<typeof vi.fn>).mock.calls.length > 0);
+    ws.close();
+    await app.close();
+  });
+
+  it('wraps exec in a python pty when available (real TTY mode)', async () => {
+    execMocks.capture.mockResolvedValue(''); // python3 -c 'import pty' succeeds
+    const app = await buildTestApp({
+      websocket: true,
+      db: createFakeDb({ findFirst: { services: svcRow({ id: 1, runtimeId: 'c1' }) } }),
+    });
+    await app.register(deploysRoutes, { prefix: '/services' });
+    const port = await listen(app);
+    const ws = await openWs(wsUrl(port, '/services/1/exec?token=valid'));
+    sockets.push(ws);
+    await waitFor(() => childProc.children.length === 1);
+    const [cmd, args, opts] = childProc.spawn.mock.calls[0] as unknown as [string, string[], { env: Record<string, string> }];
+    expect(cmd).toBe('python3');
+    expect(args[0]).toBe('-c');
+    expect(args[1]).toContain('pty.spawn');
+    // container name rides via env, never the command string
+    expect(opts.env.ND_EXEC_CONTAINER).toBe('c1');
+    expect(args.join(' ')).not.toContain('c1');
     ws.close();
     await app.close();
   });

@@ -56,19 +56,19 @@ describe('stats routes', () => {
 });
 
 describe('metric routes', () => {
-  it('returns cpu points by default', async () => {
+  it('returns cpu points by default (storage pct×100 → display %)', async () => {
     const app = await buildTestApp({
-      db: createFakeDb({ findMany: { metrics: [metricRow({ ts: new Date('2026-01-01T00:01:00Z') })] } }),
+      db: createFakeDb({ findMany: { metrics: [metricRow({ value: 325, ts: new Date('2026-01-01T00:01:00Z') })] } }),
     });
     await app.register(metricRoutes);
     const res = await app.inject({ method: 'GET', url: '/1/metrics', headers: asUser() });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ kind: 'cpu', points: [{ ts: '2026-01-01T00:01:00.000Z', value: 5 }] });
+    expect(res.json()).toEqual({ kind: 'cpu', points: [{ ts: '2026-01-01T00:01:00.000Z', value: 3.25 }] });
   });
 
   it('returns memory points when requested', async () => {
     const app = await buildTestApp({
-      db: createFakeDb({ findMany: { metrics: [metricRow({ kind: 'memory', value: 42 })] } }),
+      db: createFakeDb({ findMany: { metrics: [metricRow({ kind: 'memory', value: 42 * 1024 * 1024 })] } }),
     });
     await app.register(metricRoutes);
     const res = await app.inject({ method: 'GET', url: '/1/metrics?kind=memory&minutes=10', headers: asUser() });

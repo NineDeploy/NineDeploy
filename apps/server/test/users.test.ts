@@ -52,6 +52,69 @@ describe('users routes', () => {
     ]);
   });
 
+  it('creates a user directly (admin path, e.g. closed registration)', async () => {
+    // findFirst call 1 = acting admin (guard), call 2 = email uniqueness (miss)
+    let findFirstCalls = 0;
+    const app = await appWith({
+      findFirst: { users: () => (++findFirstCalls === 1 ? admin() : undefined) },
+      insert: { users: [userRow({ id: 3, email: 'new@example.com', name: 'New', role: 'member' })] },
+    });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/',
+      headers: asUser(),
+      payload: { email: 'new@example.com', password: 'fresh-pass-123', name: 'New', role: 'member' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ id: 3, email: 'new@example.com', name: 'New', role: 'member' });
+    expect(cryptoMock.hashPassword).toHaveBeenCalledWith('fresh-pass-123');
+  });
+
+  it('creates a user without a name (optional field)', async () => {
+    let findFirstCalls = 0;
+    const app = await appWith({
+      findFirst: { users: () => (++findFirstCalls === 1 ? admin() : undefined) },
+      insert: { users: [userRow({ id: 4, email: 'bare@example.com', name: null })] },
+    });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/',
+      headers: asUser(),
+      payload: { email: 'bare@example.com', password: 'fresh-pass-123' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().name).toBeNull();
+  });
+
+  it('reports not-found when the insert returns nothing', async () => {
+    let findFirstCalls = 0;
+    const app = await appWith({
+      findFirst: { users: () => (++findFirstCalls === 1 ? admin() : undefined) },
+      insert: { users: [] },
+    });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/',
+      headers: asUser(),
+      payload: { email: 'ghost@example.com', password: 'fresh-pass-123' },
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('rejects creating a user with a duplicate email', async () => {
+    const app = await appWith({ findFirst: { users: admin() } });
+    // second findFirst (email check) returns the existing user
+    app.db.query.users.findFirst = async () => userRow({ id: 2, email: 'dup@example.com' });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/',
+      headers: asUser(),
+      payload: { email: 'dup@example.com', password: 'fresh-pass-123' },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('email_taken');
+  });
+
   it('rejects an invalid role', async () => {
     const app = await appWith({ findFirst: { users: admin() } });
     const res = await app.inject({

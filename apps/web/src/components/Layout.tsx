@@ -9,6 +9,7 @@ import { useAuth } from '../lib/auth.js';
 import { getToken } from '../lib/api.js';
 import { useProjectScope } from '../lib/projects.js';
 import { useTheme } from '../lib/theme.js';
+import { Logo } from './Logo.js';
 import { cn } from './ui.js';
 import { CommandPalette } from './CommandPalette.js';
 
@@ -101,9 +102,8 @@ export function Layout() {
       {/* ── Activity Bar (far-left rail) ──────────────────── */}
       <div className="flex w-12 shrink-0 flex-col items-center border-r border-white/[0.06] bg-slate-950/70 py-3 backdrop-blur">
         {/* Brand mark */}
-        <div className="mb-3 grid h-8 w-8 place-items-center rounded-lg text-sm font-bold text-white shadow-lg shadow-indigo-500/30"
-          style={{ background: 'linear-gradient(135deg, var(--nd-accent), var(--nd-accent-strong))' }}>
-          9
+        <div className="mb-3 grid h-8 w-8 place-items-center">
+          <Logo className="h-8 w-8" />
         </div>
 
         {/* Group icons */}

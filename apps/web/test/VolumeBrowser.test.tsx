@@ -1,0 +1,221 @@
+import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { VolumeBrowser } from '../src/components/VolumeBrowser.js';
+import { api } from '../src/lib/api.js';
+import { renderWithProviders, mockOf } from './helpers.js';
+
+vi.mock('../src/lib/api.js', async () => {
+  const { createFakeApiModule } = await import('./helpers.js');
+  return createFakeApiModule();
+});
+
+const dir = {
+  path: '',
+  entries: [
+    { name: 'configs', type: 'dir' as const, sizeBytes: 4096, modifiedAt: null },
+    { name: 'app.env', type: 'file' as const, sizeBytes: 96, modifiedAt: null },
+  ],
+};
+
+describe('VolumeBrowser', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('renders the directory listing with breadcrumb navigation', async () => {
+    mockOf(api.volumes.listFiles).mockResolvedValue(dir as never);
+    renderWithProviders(<VolumeBrowser volume="nd-svc-web-data" onClose={vi.fn()} />);
+    expect(await screen.findByText('configs')).toBeInTheDocument();
+    expect(screen.getByText('app.env')).toBeInTheDocument();
+    expect(screen.getByText('nd-svc-web-data')).toBeInTheDocument();
+  });
+
+  it('navigates into a folder and back to the root', async () => {
+    mockOf(api.volumes.listFiles).mockResolvedValue(dir as never);
+    renderWithProviders(<VolumeBrowser volume="nd-svc-web-data" onClose={vi.fn()} />);
+    fireEvent.click(await screen.findByText('configs'));
+    await waitFor(() => expect(api.volumes.listFiles).toHaveBeenCalledWith('nd-svc-web-data', 'configs'));
+    mockOf(api.volumes.listFiles).mockResolvedValue({ path: 'configs', entries: [] } as never);
+    // breadcrumb root '/'
+    fireEvent.click(screen.getByRole('button', { name: '/' }));
+    await waitFor(() => expect(api.volumes.listFiles).toHaveBeenCalledWith('nd-svc-web-data', ''));
+  });
+
+  it('opens a file into the editor and saves it as base64', async () => {
+    mockOf(api.volumes.listFiles).mockResolvedValue(dir as never);
+    mockOf(api.volumes.readFile).mockResolvedValue({ content: btoa('KEY=1'), encoding: 'base64' } as never);
+    mockOf(api.volumes.writeFile).mockResolvedValue({ ok: true } as never);
+    renderWithProviders(<VolumeBrowser volume="nd-svc-web-data" onClose={vi.fn()} />);
+    fireEvent.click(await screen.findByText('app.env'));
+    const editor = await screen.findByLabelText('File editor');
+    expect((editor as HTMLTextAreaElement).value).toBe('KEY=1');
+    fireEvent.change(editor, { target: { value: 'KEY=2' } });
+    fireEvent.click(screen.getByRole('button', { name: /Save/ }));
+    await waitFor(() =>
+      expect(api.volumes.writeFile).toHaveBeenCalledWith('nd-svc-web-data', {
+        path: 'app.env',
+        contentBase64: btoa('KEY=2'),
+      }),
+    );
+  });
+
+  it('deletes an entry after confirmation', async () => {
+    mockOf(api.volumes.listFiles).mockResolvedValue(dir as never);
+    mockOf(api.volumes.deleteFile).mockResolvedValue({ ok: true } as never);
+    window.confirm = vi.fn(() => true);
+    renderWithProviders(<VolumeBrowser volume="nd-svc-web-data" onClose={vi.fn()} />);
+    fireEvent.click(await screen.findByLabelText('Delete app.env'));
+    await waitFor(() => expect(api.volumes.deleteFile).toHaveBeenCalledWith('nd-svc-web-data', 'app.env'));
+  });
+
+  it('covers the editor toolbar: new file, back, and read errors', async () => {
+    mockOf(api.volumes.listFiles).mockResolvedValue(dir as never);
+    mockOf(api.volumes.readFile).mockRejectedValue(new Error('binary') as never);
+    window.prompt = vi.fn(() => 'notes.md');
+    renderWithProviders(<VolumeBrowser volume="nd-svc-web-data" onClose={vi.fn()} />);
+
+    // New file → editor opens empty and dirty
+    fireEvent.click(await screen.findByRole('button', { name: /File$/ }));
+    const editor = await screen.findByLabelText('File editor');
+    expect((editor as HTMLTextAreaElement).value).toBe('');
+    // Back returns to the listing
+    fireEvent.click(screen.getByRole('button', { name: /Back/ }));
+    expect(await screen.findByText('configs')).toBeInTheDocument();
+
+    // A failing read (binary/too large) surfaces an error toast instead of the editor
+    fireEvent.click(screen.getByText('app.env'));
+    await waitFor(() => expect(screen.getByText(/Could not read the file/)).toBeInTheDocument());
+    expect(screen.queryByLabelText('File editor')).toBeNull();
+  });
+
+  it('covers save-pending state and nested folder/file creation paths', async () => {
+    mockOf(api.volumes.readFile).mockResolvedValue({ content: btoa('hi'), encoding: 'base64' } as never);
+    mockOf(api.volumes.writeFile).mockReturnValue(new Promise(() => {}) as never);
+    mockOf(api.volumes.listFiles).mockImplementation(async (_n: string, path: string) =>
+      path === 'configs'
+        ? { path, entries: [] }
+        : { path, entries: [{ name: 'configs', type: 'dir' as const, sizeBytes: 0, modifiedAt: null }] },
+    );
+    window.prompt = vi.fn(() => 'nested');
+    renderWithProviders(<VolumeBrowser volume="nd-svc-web-data" onClose={vi.fn()} />);
+
+    // folder creation inside a subdirectory (cwd non-empty branch)
+    fireEvent.click(await screen.findByText('configs'));
+    await screen.findByText('Empty directory');
+    fireEvent.click(screen.getByRole('button', { name: /Folder/ }));
+    await waitFor(() => expect(api.volumes.mkdir).toHaveBeenCalledWith('nd-svc-web-data', { path: 'configs/nested' }));
+
+    // new file inside a subdirectory (cwd non-empty branch)
+    fireEvent.click(screen.getByRole('button', { name: /File$/ }));
+    const editor = await screen.findByLabelText('File editor');
+    expect((editor as HTMLTextAreaElement).value).toBe('');
+
+    // save in-flight shows the pending label
+    fireEvent.change(editor, { target: { value: 'body' } });
+    fireEvent.click(screen.getByRole('button', { name: /Save/ }));
+    await waitFor(() => expect(screen.getByText('Saving…')).toBeInTheDocument());
+  });
+
+  it('closes on Escape via the backdrop key handler', async () => {
+    mockOf(api.volumes.listFiles).mockResolvedValue(dir as never);
+    renderWithProviders(<VolumeBrowser volume="nd-svc-web-data" onClose={vi.fn()} />);
+    await screen.findByText('app.env');
+    fireEvent.keyDown(screen.getByRole('presentation'), { key: 'Escape' });
+    // non-Escape keys are ignored
+    fireEvent.keyDown(screen.getByRole('presentation'), { key: 'a' });
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Enter' });
+    expect(await screen.findByText('app.env')).toBeInTheDocument();
+  });
+
+  it('handles utf8-encoded reads', async () => {
+    mockOf(api.volumes.listFiles).mockResolvedValue(dir as never);
+    mockOf(api.volumes.readFile).mockResolvedValue({ content: 'KEY=1', encoding: 'utf8' } as never);
+    renderWithProviders(<VolumeBrowser volume="nd-svc-web-data" onClose={vi.fn()} />);
+    fireEvent.click(await screen.findByText('app.env'));
+    const editor = await screen.findByLabelText('File editor');
+    expect((editor as HTMLTextAreaElement).value).toBe('KEY=1');
+  });
+
+  it('ignores cancelled prompts', async () => {
+    mockOf(api.volumes.listFiles).mockResolvedValue(dir as never);
+    window.prompt = vi.fn(() => null);
+    renderWithProviders(<VolumeBrowser volume="nd-svc-web-data" onClose={vi.fn()} />);
+    await screen.findByText('app.env');
+    fireEvent.click(screen.getByRole('button', { name: /Folder/ }));
+    fireEvent.click(screen.getByRole('button', { name: /File$/ }));
+    expect(api.volumes.mkdir).not.toHaveBeenCalled();
+    expect(await screen.findByText('app.env')).toBeInTheDocument(); // still in listing, no editor
+  });
+
+  it('shows the loading skeleton and the error state', async () => {
+    // loading: a never-resolving query keeps the skeleton mounted
+    mockOf(api.volumes.listFiles).mockReturnValue(new Promise(() => {}) as never);
+    const { unmount } = renderWithProviders(<VolumeBrowser volume="nd-svc-web-data" onClose={vi.fn()} />);
+    expect(document.querySelectorAll('.animate-pulse').length).toBeGreaterThan(0);
+    unmount();
+
+    mockOf(api.volumes.listFiles).mockRejectedValue(new Error('docker down') as never);
+    renderWithProviders(<VolumeBrowser volume="nd-svc-web-data" onClose={vi.fn()} />);
+    expect(await screen.findByText("Couldn't open the volume.")).toBeInTheDocument();
+  });
+
+  it('deletes a folder with the recursive warning', async () => {
+    mockOf(api.volumes.listFiles).mockResolvedValue({ path: '', entries: [dir.entries[0]] } as never);
+    mockOf(api.volumes.deleteFile).mockResolvedValue({ ok: true } as never);
+    const confirmSpy = vi.fn(() => false);
+    window.confirm = confirmSpy;
+    renderWithProviders(<VolumeBrowser volume="nd-svc-web-data" onClose={vi.fn()} />);
+    fireEvent.click(await screen.findByLabelText('Delete configs'));
+    expect(confirmSpy).toHaveBeenCalledWith('Delete configs? (folder and everything in it)');
+    expect(api.volumes.deleteFile).not.toHaveBeenCalled(); // cancelled
+  });
+
+  it('shows deep breadcrumbs after navigating into folders', async () => {
+    mockOf(api.volumes.listFiles).mockImplementation(async (_n: string, path: string) => {
+      if (path === 'configs') return { path, entries: [{ name: 'nginx', type: 'dir' as const, sizeBytes: 0, modifiedAt: null }] };
+      if (path === 'configs/nginx') return { path, entries: [] };
+      return dir;
+    });
+    renderWithProviders(<VolumeBrowser volume="nd-svc-web-data" onClose={vi.fn()} />);
+    fireEvent.click(await screen.findByText('configs'));
+    await screen.findByText('nginx');
+    fireEvent.click(screen.getByText('nginx'));
+    await screen.findByText('Empty directory');
+    // full crumb trail renders and each crumb is clickable
+    expect(screen.getByRole('button', { name: 'configs' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'configs' }));
+    await waitFor(() => expect(api.volumes.listFiles).toHaveBeenLastCalledWith('nd-svc-web-data', 'configs'));
+  });
+
+  it('surfaces mutation failures as toasts', async () => {
+    mockOf(api.volumes.listFiles).mockResolvedValue(dir as never);
+    mockOf(api.volumes.deleteFile).mockRejectedValue(new Error('nope') as never);
+    mockOf(api.volumes.mkdir).mockRejectedValue(new Error('nope') as never);
+    mockOf(api.volumes.writeFile).mockRejectedValue(new Error('nope') as never);
+    mockOf(api.volumes.readFile).mockResolvedValue({ content: btoa('x'), encoding: 'base64' } as never);
+    window.confirm = vi.fn(() => true);
+    window.prompt = vi.fn(() => 'newdir');
+    renderWithProviders(<VolumeBrowser volume="nd-svc-web-data" onClose={vi.fn()} />);
+
+    fireEvent.click(await screen.findByLabelText('Delete app.env'));
+    await waitFor(() => expect(screen.getByText('Delete failed')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: /Folder/ }));
+    await waitFor(() => expect(screen.getByText('Could not create the folder')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText('app.env'));
+    await screen.findByLabelText('File editor');
+    fireEvent.change(screen.getByLabelText('File editor'), { target: { value: 'changed' } });
+    fireEvent.click(screen.getByRole('button', { name: /Save/ }));
+    await waitFor(() => expect(screen.getByText('Save failed')).toBeInTheDocument());
+  });
+
+  it('creates a folder via prompt', async () => {
+    mockOf(api.volumes.listFiles).mockResolvedValue(dir as never);
+    mockOf(api.volumes.mkdir).mockResolvedValue({ ok: true } as never);
+    window.prompt = vi.fn(() => 'uploads');
+    renderWithProviders(<VolumeBrowser volume="nd-svc-web-data" onClose={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: /Folder/ }));
+    await waitFor(() => expect(api.volumes.mkdir).toHaveBeenCalledWith('nd-svc-web-data', { path: 'uploads' }));
+  });
+});

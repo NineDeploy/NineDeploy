@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { and, desc, eq, inArray } from 'drizzle-orm';
 import { deployments, services } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
+import { capture } from '../lib/exec.js';
 import { audit } from '../lib/audit.js';
 import { logBus } from '../engine/logs.js';
 import { resolveUser } from '../lib/auth.js';
@@ -118,9 +119,25 @@ export const deploysRoutes: FastifyPluginAsync = async (app) => {
     socket.on('error', unsub);
   });
 
-  // Container exec — interactive shell via WebSocket (docker exec -i).
+  // Container exec — interactive shell via WebSocket (`docker exec -it`).
   // Admin-only + audited: this is a root shell inside the service container
   // (it can read env vars incl. DB credentials and mounted data).
+  //
+  // TTY: `docker exec -t` requires the docker client's stdio to be a tty, which
+  // a plain Node pipe is not — without one the shell has no prompt, no echo
+  // and no line editing, which reads as "terminal is broken". When python3 is
+  // available we wrap docker in `pty.spawn(...)` (real pty, full interactivity);
+  // otherwise we fall back to the legacy pipe mode (works, just less shell-like).
+  // Probed per connection (~30ms) — cheap next to a WS handshake.
+  const isPtyAvailable = async (): Promise<boolean> => {
+    try {
+      await capture('python3', ['-c', 'import pty']);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   app.get('/:id/exec', { websocket: true }, async (socket, req) => {
     const token = (req.query as { token?: string }).token;
     const id = num((req.params as { id: string }).id);
@@ -140,7 +157,16 @@ export const deploysRoutes: FastifyPluginAsync = async (app) => {
     }
     void audit(app.db, user.id, 'service.exec', svc.name);
 
-    const child = spawn('docker', ['exec', '-i', svc.runtimeId, 'sh'], {});
+    // The container name reaches python via the environment — never through
+    // the command string — so a hostile-looking runtimeId can't inject options.
+    // Both docker invocations use `--` before the dynamic container name.
+    const child = (await isPtyAvailable())
+      ? spawn(
+          'python3',
+          ['-c', 'import os,pty; pty.spawn(["docker","exec","-i","-t","--",os.environ["ND_EXEC_CONTAINER"],"sh"])'],
+          { env: { ...process.env, ND_EXEC_CONTAINER: svc.runtimeId } },
+        )
+      : spawn('docker', ['exec', '-i', '--', svc.runtimeId, 'sh'], {});
     // Absorb EPIPE on stdin: a keystroke racing the child's exit must never
     // crash the process (unhandled 'error' on a stream is fatal).
     child.stdin.on('error', () => { /* child already gone */ });

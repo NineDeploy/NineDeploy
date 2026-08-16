@@ -34,6 +34,65 @@ describe('Users', () => {
     expect(document.querySelector('.animate-pulse')).not.toBeNull();
   });
 
+  it('creates a user via the add-user form', async () => {
+    mockOf(api.users.list).mockResolvedValue([] as never);
+    mockOf(api.users.create).mockResolvedValue({ id: 9, email: 'new@x.dev', name: null, role: 'member' } as never);
+    renderWithProviders(<Users />);
+    fireEvent.click(await screen.findByRole('button', { name: /New user…/i }));
+    fireEvent.change(screen.getByLabelText('New user email'), { target: { value: 'new@x.dev' } });
+    fireEvent.change(screen.getByLabelText('New user password'), { target: { value: 'fresh-pass-123' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create user' }));
+    await waitFor(() => expect(api.users.create).toHaveBeenCalledWith({
+      email: 'new@x.dev', password: 'fresh-pass-123', name: undefined, role: 'member',
+    }));
+  });
+
+  it('validates the add-user form before submitting', async () => {
+    mockOf(api.users.list).mockResolvedValue([] as never);
+    renderWithProviders(<Users />);
+    fireEvent.click(await screen.findByRole('button', { name: /New user…/i }));
+    // invalid email -> refused before any request
+    fireEvent.change(screen.getByLabelText('New user email'), { target: { value: 'not-an-email' } });
+    fireEvent.change(screen.getByLabelText('New user password'), { target: { value: 'fresh-pass-123' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create user' }));
+    expect(api.users.create).not.toHaveBeenCalled();
+    // short password -> also refused
+    fireEvent.change(screen.getByLabelText('New user email'), { target: { value: 'new@x.dev' } });
+    fireEvent.change(screen.getByLabelText('New user password'), { target: { value: 'short' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create user' }));
+    expect(api.users.create).not.toHaveBeenCalled();
+    // optional name + admin role ride along when filled
+    fireEvent.change(screen.getByLabelText('New user name'), { target: { value: 'New Person' } });
+    fireEvent.change(screen.getByLabelText('New user role'), { target: { value: 'admin' } });
+    fireEvent.change(screen.getByLabelText('New user password'), { target: { value: 'fresh-pass-123' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create user' }));
+    await waitFor(() => expect(api.users.create).toHaveBeenCalledWith({
+      email: 'new@x.dev', password: 'fresh-pass-123', name: 'New Person', role: 'admin',
+    }));
+  });
+
+  it('shows the pending state while creation is in flight', async () => {
+    mockOf(api.users.list).mockResolvedValue([] as never);
+    mockOf(api.users.create).mockReturnValue(new Promise(() => {}) as never);
+    renderWithProviders(<Users />);
+    fireEvent.click(await screen.findByRole('button', { name: /New user…/i }));
+    fireEvent.change(screen.getByLabelText('New user email'), { target: { value: 'new@x.dev' } });
+    fireEvent.change(screen.getByLabelText('New user password'), { target: { value: 'fresh-pass-123' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create user' }));
+    await waitFor(() => expect(screen.getByText('Creating…')).toBeInTheDocument());
+  });
+
+  it('toasts when user creation fails', async () => {
+    mockOf(api.users.list).mockResolvedValue([] as never);
+    mockOf(api.users.create).mockRejectedValue(new Error('email_taken') as never);
+    renderWithProviders(<Users />);
+    fireEvent.click(await screen.findByRole('button', { name: /New user…/i }));
+    fireEvent.change(screen.getByLabelText('New user email'), { target: { value: 'dup@x.dev' } });
+    fireEvent.change(screen.getByLabelText('New user password'), { target: { value: 'fresh-pass-123' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create user' }));
+    await waitFor(() => expect(screen.getByText(/Could not create the user/)).toBeInTheDocument());
+  });
+
   it('shows empty state when there are no users', async () => {
     mockOf(api.users.list).mockResolvedValue([] as never);
     renderWithProviders(<Users />);
