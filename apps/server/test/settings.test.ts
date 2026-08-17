@@ -3,7 +3,7 @@ import { settingsRoutes } from '../src/modules/settings.js';
 import { asUser, buildTestApp, createFakeDb } from './helpers.js';
 
 const settingsMock = vi.hoisted(() => ({
-  getSetting: vi.fn(async () => true),
+  getSetting: vi.fn(async () => false),
   setSetting: vi.fn(async () => undefined),
   getSettingString: vi.fn(async (_db: unknown, key: string) => (key === 'dns_token_encrypted' ? 'enc' : null)),
   setSettingString: vi.fn(async () => undefined),
@@ -22,7 +22,7 @@ describe('settings routes (admin-only)', () => {
     await app.register(settingsRoutes);
     const res = await app.inject({ method: 'GET', url: '/', headers: asUser() });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ allowRegistration: true, acmeEmail: null, templatesSource: null, dnsProvider: null, hasDnsToken: true, wildcardApex: null });
+    expect(res.json()).toEqual({ allowRegistration: false, acmeEmail: null, templatesSource: null, dnsProvider: null, hasDnsToken: true, wildcardApex: null });
     await app.close();
   });
 

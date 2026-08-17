@@ -45,7 +45,7 @@ export const backupScope = ['db', 'scheduled', 'volumes', 'full'] as const;
 export const backupStatus = ['pending', 'running', 'completed', 'failed'] as const;
 export const jobKind = ['deploy', 'exec'] as const;
 export const jobRunStatus = ['running', 'completed', 'failed'] as const;
-export const serverStatus = ['offline', 'online', 'error'] as const;
+export const serverStatus = ['offline', 'online', 'error', 'pending'] as const;
 
 // ─── users & auth ─────────────────────────────────────────────────────────
 export const users = sqliteTable('users', {
@@ -147,6 +147,7 @@ export const services = sqliteTable(
   {
     id: id(),
     projectId: integer('project_id').references(() => projects.id, { onDelete: 'set null' }),
+    ownerUserId: integer('owner_user_id').references(() => users.id, { onDelete: 'set null' }),
     name: text('name').notNull(),
     slug: text('slug').notNull(),
     type: text('type', { enum: serviceType }).notNull().default('docker'),

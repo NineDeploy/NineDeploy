@@ -141,6 +141,13 @@
       "when": 1786905682130,
       "tag": "0019_complete_epoch",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "6",
+      "when": 1786906000000,
+      "tag": "0021_optimal_the_anarchist",
+      "breakpoints": true
     }
   ]
 }

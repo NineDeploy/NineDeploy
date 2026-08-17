@@ -92,7 +92,7 @@ describe('Servers', () => {
     fireEvent.click(screen.getAllByTitle('Remove server')[0]!);
     // Removal goes through the shared confirm dialog.
     fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
-    await waitFor(() => expect(api.servers.remove).toHaveBeenCalledWith(1));
+    await waitFor(() => expect(api.servers.remove).toHaveBeenCalledWith(1, { force: true }));
   });
 
   it('toasts on remove failures', async () => {
@@ -159,7 +159,7 @@ describe('Servers', () => {
     await waitFor(() => expect(api.servers.create).toHaveBeenCalledWith({ name: 'x', host: 'h', port: 4700 }));
     // The revealed command always shows the default port hint.
     await waitFor(() =>
-      expect(document.querySelector('code')?.textContent).toContain('NINEDEPLOY_AGENT_PORT=4600'));
+      expect(Array.from(document.querySelectorAll('code')).some((c) => c.textContent?.includes('NINEDEPLOY_AGENT_PORT=4600'))).toBe(true));
   });
 
   it('cancels out of the add form and dismisses the reveal banner', async () => {
@@ -218,5 +218,89 @@ describe('Servers', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Register server' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Copy command' }));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(expect.stringContaining('NINEDEPLOY_AGENT=1')));
+  });
+
+  it('copies the auto-join command and toggles between docker and npx tabs', async () => {
+    mockOf(api.servers.list).mockResolvedValue([] as never);
+    mockOf(api.servers.create).mockResolvedValue({
+      id: 3, token: 'raw-tok', tokenSha256: 'a'.repeat(64), agentCommand: 'x',
+    } as never);
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    renderWithProviders(<Servers />);
+    
+    // Copy auto-join command
+    fireEvent.click(await screen.findByRole('button', { name: /Copy Auto-Join Command/i }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(expect.stringContaining('NINEDEPLOY_MASTER_URL')));
+
+    // Open add server and switch tabs
+    fireEvent.click(screen.getByRole('button', { name: 'Add server' }));
+    fireEvent.change(screen.getByPlaceholderText('edge-1'), { target: { value: 'x' } });
+    fireEvent.change(screen.getByPlaceholderText('10.0.0.5'), { target: { value: 'h' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Register server' }));
+
+    // Switch to NPX tab
+    fireEvent.click(await screen.findByRole('button', { name: 'NPX / Node' }));
+    expect(screen.getByText(/npx -y @ninedeploy\/server/)).toBeInTheDocument();
+
+    // Switch back to Docker tab
+    fireEvent.click(screen.getByRole('button', { name: /Docker/i }));
+    expect(screen.getAllByText(/docker run -d --name ninedeploy-agent/).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('approves a discovered pending node and toasts on success or failure', async () => {
+    mockOf(api.servers.list).mockResolvedValue([
+      { id: 9, name: 'discovered-node', host: '192.168.1.100', port: 4600, status: 'pending', lastSeenAt: null },
+    ] as never);
+    mockOf(api.servers.approve).mockResolvedValue({ ok: true, status: 'online' } as never);
+
+    renderWithProviders(<Servers />);
+    expect(await screen.findByText('discovered-node')).toBeInTheDocument();
+    expect(screen.getByText('Pending Approval')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /Approve & Connect/i }));
+    await waitFor(() => expect(api.servers.approve).toHaveBeenCalledWith(9));
+
+    // Error case
+    mockOf(api.servers.approve).mockRejectedValueOnce(new Error('Agent timed out'));
+    fireEvent.click(screen.getByRole('button', { name: /Approve & Connect/i }));
+    await waitFor(() => expect(api.servers.approve).toHaveBeenCalledTimes(2));
+
+    // Non-error throw
+    mockOf(api.servers.approve).mockRejectedValueOnce('unreachable');
+    fireEvent.click(screen.getByRole('button', { name: /Approve & Connect/i }));
+    await waitFor(() => expect(api.servers.approve).toHaveBeenCalledTimes(3));
+  });
+
+  it('shows verifying label while approval is in flight', async () => {
+    mockOf(api.servers.list).mockResolvedValue([
+      { id: 9, name: 'discovered-node', host: '192.168.1.100', port: 4600, status: 'pending', lastSeenAt: null },
+    ] as never);
+    let resolveApprove: (v: unknown) => void;
+    mockOf(api.servers.approve).mockImplementationOnce(() => new Promise((resolve) => { resolveApprove = resolve; }));
+    renderWithProviders(<Servers />);
+    expect(await screen.findByText('discovered-node')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Approve & Connect/i }));
+    await waitFor(() => expect(screen.getByText(/Verifying/)).toBeInTheDocument());
+    resolveApprove!({ ok: true, status: 'online' });
+    await waitFor(() => expect(screen.queryByText(/Verifying/)).not.toBeInTheDocument());
+  });
+
+  it('rejects a discovered pending node and toasts on success or failure', async () => {
+    mockOf(api.servers.list).mockResolvedValue([
+      { id: 10, name: 'rogue-node', host: '192.168.1.101', port: 4600, status: 'pending', lastSeenAt: null },
+    ] as never);
+    mockOf(api.servers.reject).mockResolvedValue({ ok: true } as never);
+
+    renderWithProviders(<Servers />);
+    expect(await screen.findByText('rogue-node')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /Reject/i }));
+    await waitFor(() => expect(api.servers.reject).toHaveBeenCalledWith(10));
+
+    // Error case
+    mockOf(api.servers.reject).mockRejectedValueOnce(new Error('fail'));
+    fireEvent.click(screen.getByRole('button', { name: /Reject/i }));
+    await waitFor(() => expect(api.servers.reject).toHaveBeenCalledTimes(2));
   });
 });

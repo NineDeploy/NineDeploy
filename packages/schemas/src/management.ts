@@ -145,6 +145,22 @@ export const serverCreate = z.object({
 });
 export type ServerCreate = z.infer<typeof serverCreate>;
 
+export const serverAnnounce = z.object({
+  name: z.string().trim().min(1).max(100),
+  host: z
+    .string()
+    .trim()
+    .regex(/^[A-Za-z0-9][A-Za-z0-9.-]*(:\d+)?$/, 'host must be a hostname or host:port')
+    .optional(),
+  port: z
+    .unknown()
+    .optional()
+    .transform((v) => Number(v ?? 4600) || 4600)
+    .pipe(z.number().int().min(1).max(65535)),
+  token: z.string().trim().min(16).max(256),
+});
+export type ServerAnnounce = z.infer<typeof serverAnnounce>;
+
 // ── Scheduled jobs ─────────────────────────────────────────────────────────
 /**
  * The cron expression itself is validated with croner at the route (the

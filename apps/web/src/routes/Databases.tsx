@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import { Check, Copy, Database, HardDriveDownload, Plus, Trash2 } from 'lucide-react';
+import { Check, Copy, Database, HardDriveDownload, Link2, Plus, Trash2 } from 'lucide-react';
 import { api } from '../lib/api.js';
 import { useProjectScope } from '../lib/projects.js';
 import { useToast } from '../components/Toast.js';
@@ -15,7 +15,7 @@ export function Databases() {
   const qc = useQueryClient();
   const { toast } = useToast();
   const [wizard, setWizard] = useState(false);
-  const [pendingRemove, setPendingRemove] = useState<{ id: number; name: string } | null>(null);
+  const [pendingRemove, setPendingRemove] = useState<{ id: number; name: string; attachedServices?: Array<{ id: number; name: string; slug: string }> } | null>(null);
   const { copied, copy } = useCopy();
   const { selectedId } = useProjectScope();
 
@@ -24,7 +24,7 @@ export function Databases() {
     queryFn: () => api.databases.list(selectedId != null ? `?projectId=${selectedId}` : ''),
   });
   const remove = useMutation({
-    mutationFn: (id: number) => api.databases.remove(id),
+    mutationFn: ({ id, force }: { id: number; force?: boolean }) => api.databases.remove(id, { force }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['databases'] });
       toast('Database deleted — its volume was kept (retained)', 'success');
@@ -84,7 +84,18 @@ export function Databases() {
                     <Database size={18} />
                   </div>
                   <div>
-                    <div className="font-semibold leading-tight">{d.name}</div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold leading-tight">{d.name}</span>
+                      {d.attachedServices && d.attachedServices.length > 0 && (
+                        <span
+                          className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-300 ring-1 ring-inset ring-amber-500/20"
+                          title={`In use by: ${d.attachedServices.map((s) => s.name).join(', ')}`}
+                        >
+                          <Link2 size={10} />
+                          {d.attachedServices.length} linked
+                        </span>
+                      )}
+                    </div>
                     <div className="font-mono text-[11px] text-slate-500">{ENGINE_LABEL[d.engine] ?? d.engine}{d.version ? ` ${d.version}` : ''}</div>
                   </div>
                 </div>
@@ -122,7 +133,7 @@ export function Databases() {
                   <HardDriveDownload size={12} /> Backup
                 </button>
                 <button type="button"
-                  onClick={() => setPendingRemove({ id: d.id, name: d.name })}
+                  onClick={() => setPendingRemove({ id: d.id, name: d.name, attachedServices: d.attachedServices })}
                   className={cn('flex items-center gap-1 text-xs text-slate-600 transition hover:text-rose-400')}
                 >
                   <Trash2 size={12} /> Remove
@@ -135,10 +146,14 @@ export function Databases() {
 
       <ConfirmDialog
         open={pendingRemove != null}
-        title="Delete database"
-        message={`Delete "${pendingRemove?.name}"? The container is removed; its data volume is kept and can be freed under Volumes.`}
-        confirmLabel="Delete"
-        onConfirm={() => pendingRemove && remove.mutate(pendingRemove.id)}
+        title={pendingRemove?.attachedServices && pendingRemove.attachedServices.length > 0 ? 'Force delete in-use database' : 'Delete database'}
+        message={
+          pendingRemove?.attachedServices && pendingRemove.attachedServices.length > 0
+            ? `⚠️ Dependency warning: "${pendingRemove.name}" is currently attached to ${pendingRemove.attachedServices.length} service(s) (${pendingRemove.attachedServices.map((s) => s.name).join(', ')}). Deleting it will immediately break these services!`
+            : `Delete "${pendingRemove?.name}"? The container is removed; its data volume is kept and can be freed under Volumes.`
+        }
+        confirmLabel={pendingRemove?.attachedServices && pendingRemove.attachedServices.length > 0 ? 'Force Delete' : 'Delete'}
+        onConfirm={() => pendingRemove && remove.mutate({ id: pendingRemove.id, force: (pendingRemove.attachedServices?.length ?? 0) > 0 })}
         onClose={() => setPendingRemove(null)}
       />
     </div>

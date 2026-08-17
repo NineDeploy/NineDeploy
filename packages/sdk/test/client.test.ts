@@ -25,8 +25,13 @@ function makeFetch(respond: (url: string, init: RecordedInit) => FakeResponse) {
     // Record the path portion (strip the origin) so assertions can use paths.
     calls.push({ url: url.replace(/^https?:\/\/[^/]+/, ''), init });
     const { status, body } = respond(url, init);
-    const text = body === undefined ? '' : typeof body === 'string' ? body : JSON.stringify(body);
-    return { ok: status >= 200 && status < 300, status, text: async () => text };
+    const bodyStr = body === undefined ? '' : typeof body === 'string' ? body : JSON.stringify(body);
+    return {
+      ok: status >= 200 && status < 300,
+      status,
+      text: async () => bodyStr,
+      json: async () => (bodyStr === '' ? undefined : JSON.parse(bodyStr)),
+    } as unknown as Response;
   });
   return { fetchMock, calls };
 }
@@ -383,8 +388,19 @@ describe('createClient', () => {
       await client.servers.remove(1);
       expect(last(calls)).toMatchObject({ url: '/v1/servers/1', init: { method: 'DELETE' } });
 
+      await client.servers.remove(2, { force: true });
+      expect(last(calls)).toMatchObject({ url: '/v1/servers/2?force=true', init: { method: 'DELETE' } });
+
       await client.servers.test(1);
       expect(last(calls).url).toBe('/v1/servers/1/test');
+      expect(last(calls).init.method).toBe('POST');
+
+      await client.servers.approve(1);
+      expect(last(calls).url).toBe('/v1/servers/1/approve');
+      expect(last(calls).init.method).toBe('POST');
+
+      await client.servers.reject(2);
+      expect(last(calls).url).toBe('/v1/servers/2/reject');
       expect(last(calls).init.method).toBe('POST');
     });
   });
@@ -872,6 +888,9 @@ describe('createClient', () => {
 
       await client.databases.remove(1);
       expect(last(calls)).toMatchObject({ url: '/v1/databases/1', init: { method: 'DELETE' } });
+
+      await client.databases.remove(2, { force: true });
+      expect(last(calls)).toMatchObject({ url: '/v1/databases/2?force=true', init: { method: 'DELETE' } });
     });
   });
 
@@ -1024,6 +1043,45 @@ describe('createClient', () => {
       const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
       await client.health();
       expect(last(calls)).toMatchObject({ url: '/health', init: { method: 'GET' } });
+    });
+  });
+
+  describe('error body fallback coverage', () => {
+    it('uses unknown_error code when err is null (body=null)', async () => {
+      // body=null → (null)?.error === undefined → err is undefined → code falls back to 'unknown_error'
+      const { fetchMock } = makeFetch(() => ({ status: 500, body: null }));
+      const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
+      try {
+        await client.health();
+        expect.unreachable('expected health() to throw');
+      } catch (e: unknown) {
+        const err = e as { code?: string; message?: string; name?: string };
+        expect(err.code).toBe('unknown_error'); // err?.code ?? 'unknown_error' — err is nullish
+      }
+    });
+
+    it('uses request-failed-with-status message when err is null', async () => {
+      const { fetchMock } = makeFetch(() => ({ status: 502, body: null }));
+      const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
+      try {
+        await client.health();
+        expect.unreachable('expected health() to throw');
+      } catch (e: unknown) {
+        const err = e as { code?: string; message?: string; name?: string };
+        expect(err.message).toBe('Request failed with status 502'); // err?.message ?? fallback
+      }
+    });
+
+    it('uses unknown_error code when body has no error field', async () => {
+      const { fetchMock } = makeFetch(() => ({ status: 500, body: { notError: true } }));
+      const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
+      try {
+        await client.health();
+        expect.unreachable('expected health() to throw');
+      } catch (e: unknown) {
+        const err = e as { code?: string; message?: string; name?: string };
+        expect(err.code).toBe('unknown_error'); // (body)?.error === undefined → code ?? 'unknown_error'
+      }
     });
   });
 });

@@ -113,7 +113,7 @@ export function createFakeApiModule() {
     limits: { setService: vi.fn(), setDatabase: vi.fn() },
     backupDestinations: { list: vi.fn(), create: vi.fn(), update: vi.fn(), remove: vi.fn(), test: vi.fn() },
     jobs: { list: vi.fn(), create: vi.fn(), update: vi.fn(), remove: vi.fn(), run: vi.fn(), runs: vi.fn() },
-    servers: { list: vi.fn(), create: vi.fn(), remove: vi.fn(), test: vi.fn() },
+    servers: { list: vi.fn(), create: vi.fn(), remove: vi.fn(), test: vi.fn(), approve: vi.fn(), reject: vi.fn() },
     health: vi.fn(),
   };
   const getToken = vi.fn(() => 'test-token');

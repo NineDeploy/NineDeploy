@@ -6,6 +6,7 @@ import { createQueryClient, deferred, renderWithProviders } from './web-utils.js
 const apiMock = vi.hoisted(() => ({
   api: {
     databases: { create: vi.fn() },
+    volumes: { list: vi.fn().mockResolvedValue([]) },
   },
 }));
 
@@ -26,6 +27,7 @@ describe('DatabaseWizard', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     apiMock.api.databases.create.mockResolvedValue({ id: 1 });
+    apiMock.api.volumes.list.mockResolvedValue([]);
   });
 
   it('starts on the engine step with all four engines', () => {
@@ -65,7 +67,7 @@ describe('DatabaseWizard', () => {
     await user.click(screen.getByRole('button', { name: /continue/i }));
     expect(screen.getByText('Review')).toBeInTheDocument();
     expect(screen.getByText('default')).toBeInTheDocument();
-    expect(screen.getByText('persistent (nd-db-…-data)')).toBeInTheDocument();
+    expect(screen.getByText('nd-db-prod-data')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /create database/i }));
     await waitFor(() =>
       expect(apiMock.api.databases.create).toHaveBeenCalledWith({
@@ -157,5 +159,37 @@ describe('DatabaseWizard', () => {
     // The review row combines the engine emoji and label via `ENGINES.find(...)`
     // — covers the `?? ''` and `?? ''` nullish fallbacks.
     expect(screen.getByText(/⚡ Redis/)).toBeInTheDocument();
+  });
+
+  it('selects, changes and attaches an existing retained volume or toggles back to fresh volume', async () => {
+    apiMock.api.volumes.list.mockResolvedValueOnce([
+      { name: 'nd-db-old-postgres-data', sizeBytes: 50 * 1024 * 1024, owner: null, inUse: false },
+      { name: 'nd-db-second-postgres-data', sizeBytes: 120 * 1024 * 1024, owner: null, inUse: false },
+    ]);
+    const user = userEvent.setup();
+    renderWizard();
+    await user.click(screen.getByText('PostgreSQL'));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.type(screen.getByPlaceholderText('my-database'), 'restored-db');
+    expect(await screen.findByText(/Re-attach retained volume/i)).toBeInTheDocument();
+    await user.click(screen.getByText(/Re-attach retained volume/i));
+    const select = screen.getByRole('combobox');
+    expect(select).toBeInTheDocument();
+    await user.selectOptions(select, 'nd-db-second-postgres-data');
+    await user.click(screen.getByText(/Create fresh volume/i));
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+    await user.click(screen.getByText(/Re-attach retained volume/i));
+    await user.selectOptions(screen.getByRole('combobox'), 'nd-db-second-postgres-data');
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    expect(screen.getByText(/Re-attach \(nd-db-second-postgres-data\)/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /create database/i }));
+    await waitFor(() =>
+      expect(apiMock.api.databases.create).toHaveBeenCalledWith({
+        name: 'restored-db',
+        engine: 'postgres',
+        version: undefined,
+        existingVolume: 'nd-db-second-postgres-data',
+      }),
+    );
   });
 });

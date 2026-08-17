@@ -1,7 +1,8 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { type FormEvent, useState } from 'react';
-import { ArrowLeft, ArrowRight, Check, Database, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, Database, HardDrive, X } from 'lucide-react';
 import { api } from '../lib/api.js';
+import { formatBytes } from '../lib/format.js';
 import { Button, Input, cn } from './ui.js';
 
 const ENGINES = [
@@ -20,11 +21,28 @@ export function DatabaseWizard({ onClose }: { onClose: () => void }) {
   const [engine, setEngine] = useState<typeof ENGINES[number]['id'] | null>(null);
   const [name, setName] = useState('');
   const [version, setVersion] = useState('');
+  const [selectedVolume, setSelectedVolume] = useState<string>('');
+
+  const volumes = useQuery({
+    queryKey: ['volumes'],
+    queryFn: () => api.volumes.list(),
+  });
+
+  const retainedVolumes = (volumes.data || []).filter(
+    (v) => v.owner === null && !v.inUse && v.name.startsWith('nd-db-'),
+  );
 
   const create = useMutation({
-    mutationFn: () => api.databases.create({ name, engine: engine!, version: version || undefined }),
+    mutationFn: () =>
+      api.databases.create({
+        name,
+        engine: engine!,
+        version: version || undefined,
+        existingVolume: selectedVolume || undefined,
+      }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['databases'] });
+      qc.invalidateQueries({ queryKey: ['volumes'] });
       onClose();
     },
   });
@@ -96,8 +114,55 @@ export function DatabaseWizard({ onClose }: { onClose: () => void }) {
                 <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-slate-400">Version (optional)</span>
                 <Input value={version} onChange={(e) => setVersion(e.target.value)} placeholder="e.g. 16 (default if empty)" />
               </div>
+
+              {retainedVolumes.length > 0 && (
+                <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3.5 space-y-2.5">
+                  <div className="flex items-center gap-2 text-xs font-semibold text-slate-300">
+                    <HardDrive size={14} className="text-indigo-400" />
+                    <span>Persistent Volume</span>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="volumeChoice"
+                        checked={!selectedVolume}
+                        onChange={() => setSelectedVolume('')}
+                        className="accent-indigo-500"
+                      />
+                      <span>Create fresh volume (<code className="text-slate-400 font-mono text-[11px]">nd-db-{name.trim() || '…'}-data</code>)</span>
+                    </label>
+                    <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="volumeChoice"
+                        checked={!!selectedVolume}
+                        onChange={() => setSelectedVolume(retainedVolumes[0]!.name)}
+                        className="accent-indigo-500"
+                      />
+                      <span>Re-attach retained volume ({retainedVolumes.length} available)</span>
+                    </label>
+                    {!!selectedVolume && (
+                      <select
+                        value={selectedVolume}
+                        onChange={(e) => setSelectedVolume(e.target.value)}
+                        className="w-full rounded-lg border border-white/10 bg-slate-900 px-3 py-2 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none"
+                      >
+                        {retainedVolumes.map((v) => (
+                          <option key={v.name} value={v.name}>
+                            {v.name} ({formatBytes(v.sizeBytes)})
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                </div>
+              )}
+
               <p className="rounded-lg bg-white/[0.03] px-3 py-2 text-xs text-slate-500">
-                A persistent volume, auto-generated credentials and a connection string will be created automatically.
+                {selectedVolume
+                  ? `Will re-attach to existing volume "${selectedVolume}" with its previous data.`
+                  : 'A fresh persistent volume, auto-generated credentials and a connection string will be created.'}
               </p>
             </div>
           )}
@@ -107,7 +172,7 @@ export function DatabaseWizard({ onClose }: { onClose: () => void }) {
               <Row label="Engine" value={`${ENGINES.find((e) => e.id === engine)!.emoji} ${ENGINES.find((e) => e.id === engine)!.label}`} />
               <Row label="Name" value={name} />
               <Row label="Version" value={version || 'default'} />
-              <Row label="Volume" value="persistent (nd-db-…-data)" />
+              <Row label="Volume" value={selectedVolume ? `Re-attach (${selectedVolume})` : `nd-db-${name}-data`} />
               <Row label="Credentials" value="auto-generated, encrypted" />
             </div>
           )}

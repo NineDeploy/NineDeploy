@@ -1,6 +1,6 @@
-import { eq } from 'drizzle-orm';
-import { servers, type ServerRow } from '@ninedeploy/db';
-import { serverCreate } from '@ninedeploy/schemas';
+import { and, eq } from 'drizzle-orm';
+import { servers, services, type ServerRow } from '@ninedeploy/db';
+import { serverAnnounce, serverCreate } from '@ninedeploy/schemas';
 import type { FastifyPluginAsync } from 'fastify';
 import { audit } from '../lib/audit.js';
 import { decrypt, encrypt } from '../lib/crypto.js';
@@ -20,58 +20,153 @@ function serialize(s: ServerRow) {
 }
 
 /**
- * Remote server registry (admin only). Registering generates a shared agent
- * token returned exactly once — the remote host runs the agent with
- * NINEDEPLOY_AGENT=1 + its sha256 hash.
+ * Remote server registry. Supports both manual registration by admin and
+ * zero-touch auto-discovery announcements from edge agents.
  */
 export const serverRoutes: FastifyPluginAsync = async (app) => {
-  app.addHook('onRequest', app.authenticate);
-  app.addHook('preHandler', app.requireAdmin);
+  // Public announce route for self-registering edge agents.
+  // When an agent starts with NINEDEPLOY_MASTER_URL, it announces its presence.
+  // It is placed in 'pending' status until the admin clicks "Approve & Connect".
+  app.post('/announce', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (req) => {
+    const { name, host: providedHost, port, token } = serverAnnounce.parse(req.body ?? {});
+    const rawIp = req.ip || '127.0.0.1';
+    const host = providedHost || (rawIp === '::1' || rawIp === '127.0.0.1' ? '127.0.0.1' : rawIp.replace(/^::ffff:/, ''));
 
-  app.get('/', async () => {
-    const rows = await app.db.query.servers.findMany();
-    return rows.map(serialize);
-  });
+    const existing = await app.db.query.servers.findFirst({
+      where: and(eq(servers.host, host), eq(servers.port, port)),
+    });
 
-  app.post('/', async (req) => {
-    const { name, host, port } = serverCreate.parse(req.body ?? {});
-    const token = generateAgentToken();
+    if (existing) {
+      await app.db
+        .update(servers)
+        .set({
+          name,
+          tokenEncrypted: encrypt(token),
+          updatedAt: new Date(),
+        })
+        .where(eq(servers.id, existing.id));
+      return {
+        ok: true,
+        id: existing.id,
+        status: existing.status,
+        message: existing.status === 'online'
+          ? 'Server already active and connected'
+          : 'Server re-announced. Pending admin approval.',
+      };
+    }
+
     const [row] = await app.db
       .insert(servers)
-      .values({ name, host, port, tokenEncrypted: encrypt(token), status: 'offline' })
+      .values({
+        name,
+        host,
+        port,
+        tokenEncrypted: encrypt(token),
+        status: 'pending',
+      })
       .returning();
-    if (!row) throw badRequest('Could not register server');
-    void audit(app.db, req.user!.id, 'server.register', name);
-    // The raw token is returned exactly once; the agent needs its sha256.
-    const { createHash } = await import('node:crypto');
+
+    if (!row) throw badRequest('Could not register announced server');
+
     return {
-      ...serialize(row),
-      token,
-      tokenSha256: createHash('sha256').update(token).digest('hex'),
-      agentCommand: `NINEDEPLOY_AGENT=1 NINEDEPLOY_AGENT_TOKEN=${'{sha256}'} ninedeploy-server`,
+      ok: true,
+      id: row.id,
+      status: 'pending',
+      message: 'Node announced successfully. Waiting for admin approval in the NineDeploy panel.',
     };
   });
 
-  app.delete('/:id', async (req) => {
-    const id = parseId((req.params as { id: string }).id);
-    await app.db.delete(servers).where(eq(servers.id, id));
-    void audit(app.db, req.user!.id, 'server.delete', `#${id}`);
-    return { ok: true };
-  });
+  // Authenticated admin endpoints
+  await app.register(async (authed) => {
+    authed.addHook('onRequest', authed.authenticate);
+    authed.addHook('preHandler', authed.requireAdmin);
 
-  // Connectivity + auth probe; on success the server is marked online.
-  app.post('/:id/test', async (req) => {
-    const id = parseId((req.params as { id: string }).id);
-    const row = await app.db.query.servers.findFirst({ where: eq(servers.id, id) });
-    if (!row) throw notFound('Server not found');
-    try {
-      await agentPing(row.host, row.port, decrypt(row.tokenEncrypted));
-    } catch (err) {
-      await app.db.update(servers).set({ status: 'error' }).where(eq(servers.id, id));
-      throw badRequest(`Agent unreachable: ${err instanceof Error ? err.message : err}`);
-    }
-    await app.db.update(servers).set({ status: 'online', lastSeenAt: new Date() }).where(eq(servers.id, id));
-    void audit(app.db, req.user!.id, 'server.test', row.name);
-    return { ok: true, status: 'online' };
+    authed.get('/', async () => {
+      const rows = await authed.db.query.servers.findMany();
+      return rows.map(serialize);
+    });
+
+    authed.post('/', async (req) => {
+      const { name, host, port } = serverCreate.parse(req.body ?? {});
+      const token = generateAgentToken();
+      const [row] = await authed.db
+        .insert(servers)
+        .values({ name, host, port, tokenEncrypted: encrypt(token), status: 'offline' })
+        .returning();
+      if (!row) throw badRequest('Could not register server');
+      void audit(authed.db, req.user!.id, 'server.register', name);
+      const { createHash } = await import('node:crypto');
+      const tokenSha256 = createHash('sha256').update(token).digest('hex');
+      const agentCommand = `docker run -d --name ninedeploy-agent --restart unless-stopped -p ${port || 4600}:4600 -v /var/run/docker.sock:/var/run/docker.sock -e NINEDEPLOY_AGENT=1 -e NINEDEPLOY_AGENT_TOKEN=${tokenSha256} -e NINEDEPLOY_AGENT_PORT=4600 ghcr.io/ninedeploy/server:latest`;
+      return {
+        ...serialize(row),
+        token,
+        tokenSha256,
+        agentCommand,
+      };
+    });
+
+    authed.delete('/:id', async (req) => {
+      const id = parseId((req.params as { id: string }).id);
+      const row = await authed.db.query.servers.findFirst({ where: eq(servers.id, id) });
+      if (!row) throw notFound('Server not found');
+
+      const hostedServices = await authed.db.query.services.findMany({
+        where: eq(services.serverId, id),
+      });
+      const force = (req.query as { force?: string }).force === 'true';
+      if (hostedServices.length > 0 && !force) {
+        const names = hostedServices.map((s) => s.name).join(', ');
+        throw badRequest(
+          `Cannot delete server "${row.name}": It is locked and actively hosting ${hostedServices.length} service(s) (${names}). Reassign or delete these services first or pass ?force=true.`,
+        );
+      }
+
+      await authed.db.delete(servers).where(eq(servers.id, id));
+      void audit(authed.db, req.user!.id, 'server.delete', `#${id}`);
+      return { ok: true };
+    });
+
+    // Connectivity + auth probe; on success the server is marked online.
+    authed.post('/:id/test', async (req) => {
+      const id = parseId((req.params as { id: string }).id);
+      const row = await authed.db.query.servers.findFirst({ where: eq(servers.id, id) });
+      if (!row) throw notFound('Server not found');
+      try {
+        await agentPing(row.host, row.port, decrypt(row.tokenEncrypted));
+      } catch (err) {
+        await authed.db.update(servers).set({ status: 'error' }).where(eq(servers.id, id));
+        throw badRequest(`Agent unreachable: ${err instanceof Error ? err.message : err}`);
+      }
+      await authed.db.update(servers).set({ status: 'online', lastSeenAt: new Date() }).where(eq(servers.id, id));
+      void audit(authed.db, req.user!.id, 'server.test', row.name);
+      return { ok: true, status: 'online' };
+    });
+
+    // Approve a discovered / pending server node.
+    authed.post('/:id/approve', async (req) => {
+      const id = parseId((req.params as { id: string }).id);
+      const row = await authed.db.query.servers.findFirst({ where: eq(servers.id, id) });
+      if (!row) throw notFound('Server not found');
+      try {
+        await agentPing(row.host, row.port, decrypt(row.tokenEncrypted));
+      } catch (err) {
+        await authed.db.update(servers).set({ status: 'error' }).where(eq(servers.id, id));
+        throw badRequest(`Agent unreachable: ${err instanceof Error ? err.message : err}`);
+      }
+      await authed.db.update(servers).set({ status: 'online', lastSeenAt: new Date() }).where(eq(servers.id, id));
+      void audit(authed.db, req.user!.id, 'server.approve', row.name);
+      return { ok: true, status: 'online' };
+    });
+
+    // Reject a discovered / pending server node.
+    authed.post('/:id/reject', async (req) => {
+      const id = parseId((req.params as { id: string }).id);
+      const row = await authed.db.query.servers.findFirst({ where: eq(servers.id, id) });
+      if (!row) throw notFound('Server not found');
+      await authed.db.delete(servers).where(eq(servers.id, id));
+      void audit(authed.db, req.user!.id, 'server.reject', row.name);
+      return { ok: true };
+    });
   });
 };

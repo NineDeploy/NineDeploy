@@ -74,6 +74,24 @@ describe('databases routes', () => {
     expect(engineMocks.defaultPort).toHaveBeenCalledWith('postgres');
   });
 
+  it('creates a database reusing an existing retained volume', async () => {
+    let insertedVolume = '';
+    const fakeDb = createFakeDb({
+      insert: { databases: [dbRow({ id: 8, volumeName: 'nd-db-old-data', status: 'running' })] },
+      findFirst: { databases: dbRow({ id: 8, volumeName: 'nd-db-old-data', status: 'running' }) },
+    });
+    const app = await buildTestApp({ db: fakeDb });
+    await app.register(databasesRoutes);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/',
+      headers: asUser(),
+      payload: { name: 'reconnected-db', engine: 'postgres', existingVolume: 'nd-db-old-data' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ id: 8 });
+  });
+
   it('rejects an unknown engine', async () => {
     const app = await buildTestApp({ db: createFakeDb() });
     await app.register(databasesRoutes);
@@ -212,6 +230,31 @@ describe('databases routes', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it('rejects deleting an in-use database unless force=true is passed', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: {
+          databases: {
+            ...dbRow({ id: 7, name: 'prod-pg' }),
+            attachments: [{ service: { id: 1, name: 'api-svc', slug: 'api-svc' } }],
+          },
+        },
+      }),
+    });
+    await app.register(databasesRoutes);
+
+    // Blocked by default
+    const resBlocked = await app.inject({ method: 'DELETE', url: '/7', headers: asUser() });
+    expect(resBlocked.statusCode).toBe(400);
+    expect(resBlocked.json().error.message).toContain('locked');
+    expect(resBlocked.json().error.message).toContain('api-svc');
+
+    // Allowed with force=true
+    const resForce = await app.inject({ method: 'DELETE', url: '/7?force=true', headers: asUser() });
+    expect(resForce.statusCode).toBe(200);
+    expect(resForce.json()).toEqual({ ok: true });
   });
 
   it('returns 404 when deleting a missing database', async () => {

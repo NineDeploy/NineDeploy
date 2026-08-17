@@ -117,7 +117,7 @@ describe('Databases', () => {
     fireEvent.click(removeButton);
     // Removal is confirmed through the shared dialog.
     fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
-    await waitFor(() => expect(api.databases.remove).toHaveBeenCalledWith(1));
+    await waitFor(() => expect(api.databases.remove).toHaveBeenCalledWith(1, { force: false }));
   });
 
   it('toasts on backup and removal failures', async () => {
@@ -131,7 +131,29 @@ describe('Databases', () => {
     await waitFor(() => expect(api.backups.backupNow).toHaveBeenCalledWith(1));
     fireEvent.click(screen.getAllByRole('button', { name: /Remove/ })[0]!);
     fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
-    await waitFor(() => expect(api.databases.remove).toHaveBeenCalledWith(1));
+    await waitFor(() => expect(api.databases.remove).toHaveBeenCalledWith(1, { force: false }));
+  });
+
+  it('warns when deleting an in-use attached database and passes force=true', async () => {
+    mockOf(api.databases.list).mockResolvedValue([
+      {
+        id: 1,
+        name: 'locked-db',
+        engine: 'postgres',
+        version: '16',
+        status: 'running',
+        connectionString: 'postgres://...',
+        attachedServices: [{ id: 10, name: 'web-app', slug: 'web-app' }],
+      },
+    ] as never);
+    mockOf(api.databases.remove).mockResolvedValue(undefined as never);
+    renderWithProviders(<Databases />);
+    expect(await screen.findByText('1 linked')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Remove/ }));
+    expect(screen.getByText(/Dependency warning/)).toBeInTheDocument();
+    expect(screen.getByText(/web-app/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Force Delete' }));
+    await waitFor(() => expect(api.databases.remove).toHaveBeenCalledWith(1, { force: true }));
   });
 
   it('cancels a removal without deleting and shows an error card on query failure', async () => {

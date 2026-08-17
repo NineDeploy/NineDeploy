@@ -62,7 +62,10 @@ describe('saveConfig', () => {
 
     expect(fs.existsSync(configFile())).toBe(true);
     const stat = fs.statSync(configFile());
-    expect(stat.mode & 0o777).toBe(0o600);
+    // chmodSync is a no-op on Windows (ACL-based); skip the mode check there.
+    if (process.platform !== 'win32') {
+      expect(stat.mode & 0o777).toBe(0o600);
+    }
     expect(JSON.parse(fs.readFileSync(configFile(), 'utf8'))).toEqual({
       baseUrl: 'https://x.example',
       token: 'secret',

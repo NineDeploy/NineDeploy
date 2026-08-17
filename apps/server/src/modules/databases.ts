@@ -9,8 +9,19 @@ import { encrypt, randomToken } from '../lib/crypto.js';
 import { badRequest, notFound, parseId as num } from '../lib/errors.js';
 import { slugify } from '../lib/slug.js';
 
-function serialize(d: Database) {
+function serialize(
+  d: Database & {
+    attachments?: Array<{
+      service?: { id: number; name: string; slug: string } | null;
+    }>;
+  },
+) {
   const cfg = ENGINES[d.engine];
+  const attachedServices =
+    d.attachments
+      ?.map((a) => (a.service ? { id: a.service.id, name: a.service.name, slug: a.service.slug } : null))
+      .filter((s): s is { id: number; name: string; slug: string } => s != null) ?? [];
+
   return {
     id: d.id,
     projectId: d.projectId,
@@ -24,6 +35,7 @@ function serialize(d: Database) {
     username: cfg?.username() ?? null,
     database: cfg?.dbName() ?? null,
     connectionString: d.status === 'running' ? connectionString(d) : null,
+    attachedServices,
     createdAt: d.createdAt.toISOString(),
     updatedAt: d.updatedAt.toISOString(),
   };
@@ -39,6 +51,13 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
     const scoped = Number.isInteger(projectId) && projectId > 0 ? projectId : null;
     const rows = await app.db.query.databases.findMany({
       orderBy: (d, { desc }) => [desc(d.id)],
+      with: {
+        attachments: {
+          with: {
+            service: true,
+          },
+        },
+      },
       ...(scoped != null && { where: (d, { eq }) => eq(d.projectId, scoped) }),
     });
     return rows.map(serialize);
@@ -51,7 +70,7 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
     if (!cfg) throw badRequest(`Unknown engine: ${input.engine}`);
     const password = randomToken(18);
     const containerName = `nd-db-${slug}`;
-    const volumeName = `nd-db-${slug}-data`;
+    const volumeName = input.existingVolume?.trim() ? input.existingVolume.trim() : `nd-db-${slug}-data`;
 
     const [created] = await app.db
       .insert(databases)
@@ -82,20 +101,49 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
       throw badRequest(`Failed to start database: ${err instanceof Error ? err.message : err}`);
     }
 
-    const updated = await app.db.query.databases.findFirst({ where: eq(databases.id, created.id) });
+    const updated = await app.db.query.databases.findFirst({
+      where: eq(databases.id, created.id),
+      with: { attachments: { with: { service: true } } },
+    });
     void audit(app.db, req.user!.id, 'database.create', input.name);
     return serialize(updated!);
   });
 
   app.get('/:id', async (req) => {
-    const d = await app.db.query.databases.findFirst({ where: eq(databases.id, num((req.params as { id: string }).id)) });
+    const d = await app.db.query.databases.findFirst({
+      where: eq(databases.id, num((req.params as { id: string }).id)),
+      with: { attachments: { with: { service: true } } },
+    });
     if (!d) throw notFound('Database not found');
     return serialize(d);
   });
 
   app.delete('/:id', async (req) => {
-    const d = await app.db.query.databases.findFirst({ where: eq(databases.id, num((req.params as { id: string }).id)) });
+    const id = num((req.params as { id: string }).id);
+    const d = await app.db.query.databases.findFirst({
+      where: eq(databases.id, id),
+      with: {
+        attachments: {
+          with: { service: true },
+        },
+      },
+    });
     if (!d) throw notFound('Database not found');
+
+    const attachedServices =
+      d.attachments
+        ?.map((a) => (a.service ? { id: a.service.id, name: a.service.name, slug: a.service.slug } : null))
+        .filter((s): s is { id: number; name: string; slug: string } => s != null) ?? [];
+    const force = (req.query as { force?: string }).force === 'true';
+
+    // Guard against breaking connected services
+    if (attachedServices.length > 0 && !force) {
+      const names = attachedServices.map((s) => s.name).join(', ');
+      throw badRequest(
+        `Cannot delete database "${d.name}": It is locked and actively in use by ${attachedServices.length} service(s) (${names}). Detach these services first or pass ?force=true to override.`,
+      );
+    }
+
     await stopDatabase(d, (line) => app.log.info({ component: 'database' }, line));
     // Capture the dump paths BEFORE the transaction deletes the rows.
     const backupRows = await app.db.query.backups.findMany({ where: eq(backups.databaseId, d.id) });

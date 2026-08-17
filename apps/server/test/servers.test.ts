@@ -125,11 +125,28 @@ describe('servers routes', () => {
     expect(test.json().error.message).toContain('plain fail');
   });
 
-  it('deletes a server', async () => {
-    const app = await appWith({});
-    const res = await app.inject({ method: 'DELETE', url: '/servers/1', headers: asUser() });
-    expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ ok: true });
+  it('deletes a server when no services are hosted or force is true', async () => {
+    const app = await appWith({
+      findFirst: { servers: serverRow({ id: 1, name: 'edge-host' }) },
+      findMany: { services: [{ id: 10, name: 'hosted-api', serverId: 1 }] },
+    });
+
+    // Blocked without force
+    const resBlocked = await app.inject({ method: 'DELETE', url: '/servers/1', headers: asUser() });
+    expect(resBlocked.statusCode).toBe(400);
+    expect(resBlocked.json().error.message).toContain('locked');
+    expect(resBlocked.json().error.message).toContain('hosted-api');
+
+    // Allowed with force
+    const resForce = await app.inject({ method: 'DELETE', url: '/servers/1?force=true', headers: asUser() });
+    expect(resForce.statusCode).toBe(200);
+    expect(resForce.json()).toEqual({ ok: true });
+  });
+
+  it('404s when deleting a missing server', async () => {
+    const app = await appWith({ findFirst: { servers: undefined } });
+    const res = await app.inject({ method: 'DELETE', url: '/servers/99', headers: asUser() });
+    expect(res.statusCode).toBe(404);
   });
 
   it('marks a reachable agent online', async () => {
@@ -154,9 +171,70 @@ describe('servers routes', () => {
     expect(res.json().error.message).toContain('timeout');
   });
 
-  it('404s when testing a missing server', async () => {
+  it('approves a pending server and marks it online', async () => {
+    const app = await appWith({
+      findFirst: { servers: serverRow({ status: 'pending' }) },
+      update: { servers: [serverRow({ status: 'online' })] },
+    });
+    const res = await app.inject({ method: 'POST', url: '/servers/1/approve', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: true, status: 'online' });
+    expect(agentMocks.agentPing).toHaveBeenCalledWith('10.0.0.5', 4600, 'raw-agent-token');
+  });
+
+  it('rejects a pending server and removes it', async () => {
+    const app = await appWith({
+      findFirst: { servers: serverRow({ status: 'pending' }) },
+    });
+    const res = await app.inject({ method: 'POST', url: '/servers/1/reject', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: true });
+  });
+
+  it('404s when approving or rejecting a missing server', async () => {
     const app = await appWith({ findFirst: { servers: undefined } });
-    const res = await app.inject({ method: 'POST', url: '/servers/99/test', headers: asUser() });
-    expect(res.statusCode).toBe(404);
+    const res1 = await app.inject({ method: 'POST', url: '/servers/99/approve', headers: asUser() });
+    expect(res1.statusCode).toBe(404);
+    const res2 = await app.inject({ method: 'POST', url: '/servers/99/reject', headers: asUser() });
+    expect(res2.statusCode).toBe(404);
+  });
+
+  it('allows unauthenticated edge agent announcement to register as pending', async () => {
+    const app = await appWith({
+      findFirst: { servers: undefined },
+      insert: { servers: [serverRow({ id: 5, status: 'pending' })] },
+    });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/servers/announce',
+      payload: {
+        name: 'auto-edge-1',
+        host: '192.168.1.55',
+        port: 4600,
+        token: 'a'.repeat(32),
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ ok: true, id: 5, status: 'pending' });
+    expect(cryptoMocks.encrypt).toHaveBeenCalledWith('a'.repeat(32));
+  });
+
+  it('updates existing server when re-announced', async () => {
+    const app = await appWith({
+      findFirst: { servers: serverRow({ id: 1, host: '192.168.1.55', port: 4600, status: 'pending' }) },
+      update: { servers: [serverRow({ id: 1 })] },
+    });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/servers/announce',
+      payload: {
+        name: 'auto-edge-renamed',
+        host: '192.168.1.55',
+        port: 4600,
+        token: 'b'.repeat(32),
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ ok: true, id: 1 });
   });
 });

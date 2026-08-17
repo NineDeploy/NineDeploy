@@ -209,11 +209,48 @@ export async function runOp(op: string, params: Params, onLine: (l: string) => v
   return spawnValidated(def.exe, argv, onLine);
 }
 
+async function announceToMaster(
+  masterUrl: string,
+  payload: { name: string; host?: string; port: number; token: string },
+): Promise<void> {
+  try {
+    const endpoint = `${masterUrl.replace(/\/+$/, '')}/v1/servers/announce`;
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (res.ok) {
+      const data = (await res.json()) as { status?: string; message?: string };
+      // eslint-disable-next-line no-console
+      console.log(`[NineDeploy Agent] Announced to master at ${masterUrl} (${data.status}). Waiting for admin approval in NineDeploy panel.`);
+    } else {
+      const errText = await res.text().catch(() => '');
+      // eslint-disable-next-line no-console
+      console.warn(`[NineDeploy Agent] Master announce warning (${res.status}): ${errText.slice(0, 200)}`);
+    }
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(`[NineDeploy Agent] Could not reach master at ${masterUrl}: ${err instanceof Error ? err.message : err}`);
+  }
+}
+
 async function main(): Promise<void> {
-  const tokenHash = process.env['NINEDEPLOY_AGENT_TOKEN'] ?? '';
+  const masterUrl = process.env['NINEDEPLOY_MASTER_URL'] ?? '';
+  let tokenHash = process.env['NINEDEPLOY_AGENT_TOKEN'] ?? '';
+  let rawToken = process.env['NINEDEPLOY_AGENT_RAW_TOKEN'] ?? '';
+
+  if (!tokenHash && masterUrl) {
+    // Auto-discovery mode: generate a local token pair and announce to master
+    const { randomBytes, createHash } = await import('node:crypto');
+    rawToken = rawToken || randomBytes(32).toString('hex');
+    tokenHash = createHash('sha256').update(rawToken).digest('hex');
+  }
+
   if (!tokenHash) {
     // eslint-disable-next-line no-console
-    console.error('NINEDEPLOY_AGENT_TOKEN (sha256 hash of the shared token) is required in agent mode');
+    console.error('NINEDEPLOY_AGENT_TOKEN (sha256 hash) or NINEDEPLOY_MASTER_URL is required in agent mode');
     process.exit(1);
   }
   const port = Number(process.env['NINEDEPLOY_AGENT_PORT'] ?? 4600);
@@ -224,6 +261,19 @@ async function main(): Promise<void> {
   await app.listen({ host: '0.0.0.0', port });
   // eslint-disable-next-line no-console
   console.log(`NineDeploy agent listening on :${port} (${Object.keys(OPS).length} typed deploy operations)`);
+
+  if (masterUrl) {
+    const { hostname } = await import('node:os');
+    const nodeName = process.env['NINEDEPLOY_NODE_NAME'] || hostname() || 'edge-node';
+    const advertiseHost = process.env['NINEDEPLOY_ADVERTISE_HOST'] || undefined;
+    void announceToMaster(masterUrl, {
+      name: nodeName,
+      host: advertiseHost,
+      port,
+      token: rawToken,
+    });
+  }
+
   notifyReady();
   const stopWatchdog = startWatchdog(30_000);
   const shutdown = () => {
