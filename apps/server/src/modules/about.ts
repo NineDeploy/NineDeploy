@@ -1,5 +1,5 @@
 import { count } from 'drizzle-orm';
-import { databases, deployments, services, users } from '@ninedeploy/db';
+import { databases, deployments, installedPlugins, services, users } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { ABOUT } from '../version.js';
 
@@ -27,19 +27,21 @@ export const aboutRoutes: FastifyPluginAsync = async (app) => {
       return { ...ABOUT };
     }
 
-    let stats = { services: 0, databases: 0, deployments: 0, users: 0 };
+    let stats = { services: 0, databases: 0, deployments: 0, users: 0, plugins: 0 };
     try {
-      const [s, d, dep, u] = await Promise.all([
+      const [s, d, dep, u, p] = await Promise.all([
         app.db.select({ n: count() }).from(services),
         app.db.select({ n: count() }).from(databases),
         app.db.select({ n: count() }).from(deployments),
         app.db.select({ n: count() }).from(users),
+        app.db.select({ n: count() }).from(installedPlugins),
       ]);
       stats = {
         services: s[0]?.n ?? 0,
         databases: d[0]?.n ?? 0,
         deployments: dep[0]?.n ?? 0,
         users: u[0]?.n ?? 0,
+        plugins: p[0]?.n ?? 0,
       };
     } catch {
       /* DB not ready */

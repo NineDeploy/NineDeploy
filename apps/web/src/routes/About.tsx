@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { ExternalLink, GitBranch, Heart, Package, Shield, Sparkles, Terminal } from 'lucide-react';
+import { ExternalLink, GitBranch, Heart, Layers, Package, Shield, Sparkles, Terminal } from 'lucide-react';
 import { api } from '../lib/api.js';
 import { Card, CardBody, Skeleton } from '../components/ui.js';
 
@@ -56,6 +56,7 @@ export function About() {
                 <Badge icon={<Terminal size={12} />} label={`${data.stats.deployments} deploys`} />
                 <Badge label={`${data.stats.databases} databases`} />
                 <Badge label={`${data.stats.users} users`} />
+                <Badge icon={<Layers size={12} />} label={`${(data.stats as any).plugins} plugins`} />
               </>
             )}
           </div>

@@ -3,11 +3,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { attachmentRoutes, databasesRoutes } from '../src/modules/databases.js';
+import { encrypt } from '../src/lib/crypto.js';
 import { asUser, attachmentRow, backupRow, buildTestApp, createFakeDb, dbRow, svcRow } from './helpers.js';
 
 const engineMocks = vi.hoisted(() => ({
   startDatabase: vi.fn(async (_d: unknown, log: (l: string) => void) => { log('starting'); }),
   stopDatabase: vi.fn(async (_d: unknown, log: (l: string) => void) => { log('stopping'); }),
+  restartDatabase: vi.fn(async (_d: unknown, log: (l: string) => void) => { log('restarting'); }),
+  databaseLogs: vi.fn(async (_d: unknown, _lines?: number) => ['log line 1', 'log line 2']),
   connectionString: vi.fn(() => 'postgres://conn'),
   defaultPort: vi.fn((_engine: string) => 5432),
 }));
@@ -21,6 +24,8 @@ vi.mock('../src/engine/database.js', () => ({
   },
   startDatabase: engineMocks.startDatabase,
   stopDatabase: engineMocks.stopDatabase,
+  restartDatabase: engineMocks.restartDatabase,
+  databaseLogs: engineMocks.databaseLogs,
   connectionString: engineMocks.connectionString,
   defaultPort: engineMocks.defaultPort,
 }));
@@ -75,7 +80,6 @@ describe('databases routes', () => {
   });
 
   it('creates a database reusing an existing retained volume', async () => {
-    let insertedVolume = '';
     const fakeDb = createFakeDb({
       insert: { databases: [dbRow({ id: 8, volumeName: 'nd-db-old-data', status: 'running' })] },
       findFirst: { databases: dbRow({ id: 8, volumeName: 'nd-db-old-data', status: 'running' }) },
@@ -315,6 +319,114 @@ describe('databases routes', () => {
       payload: { cpuShares: 128 },
     });
     expect(res.statusCode).toBe(404);
+  });
+
+  it('restarts a database', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { databases: dbRow({ id: 3, name: 'pg-restart', status: 'running' }) },
+        update: { databases: [dbRow({ id: 3, status: 'running' })] },
+      }),
+    });
+    await app.register(databasesRoutes);
+    const res = await app.inject({ method: 'POST', url: '/3/restart', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: true });
+    expect(engineMocks.restartDatabase).toHaveBeenCalled();
+
+    const emptyApp = await buildTestApp({ db: createFakeDb() });
+    await emptyApp.register(databasesRoutes);
+    const notFoundRes = await emptyApp.inject({ method: 'POST', url: '/99/restart', headers: asUser() });
+    expect(notFoundRes.statusCode).toBe(404);
+  });
+
+  it('stops a database', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { databases: dbRow({ id: 3, name: 'pg-stop', status: 'running' }) },
+        update: { databases: [dbRow({ id: 3, status: 'stopped' })] },
+      }),
+    });
+    await app.register(databasesRoutes);
+    const res = await app.inject({ method: 'POST', url: '/3/stop', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: true });
+    expect(engineMocks.stopDatabase).toHaveBeenCalled();
+
+    const emptyApp = await buildTestApp({ db: createFakeDb() });
+    await emptyApp.register(databasesRoutes);
+    const notFoundRes = await emptyApp.inject({ method: 'POST', url: '/99/stop', headers: asUser() });
+    expect(notFoundRes.statusCode).toBe(404);
+  });
+
+  it('starts a database', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { databases: dbRow({ id: 3, name: 'pg-start', status: 'stopped' }) },
+        update: { databases: [dbRow({ id: 3, status: 'running' })] },
+      }),
+    });
+    await app.register(databasesRoutes);
+    const res = await app.inject({ method: 'POST', url: '/3/start', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: true });
+    expect(engineMocks.startDatabase).toHaveBeenCalled();
+
+    const emptyApp = await buildTestApp({ db: createFakeDb() });
+    await emptyApp.register(databasesRoutes);
+    const notFoundRes = await emptyApp.inject({ method: 'POST', url: '/99/start', headers: asUser() });
+    expect(notFoundRes.statusCode).toBe(404);
+  });
+
+  it('retrieves database logs', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { databases: dbRow({ id: 3, name: 'pg-logs' }) },
+      }),
+    });
+    await app.register(databasesRoutes);
+    const res = await app.inject({ method: 'GET', url: '/3/logs?lines=50', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().logs).toEqual(['log line 1', 'log line 2']);
+
+    const defaultLinesRes = await app.inject({ method: 'GET', url: '/3/logs', headers: asUser() });
+    expect(defaultLinesRes.statusCode).toBe(200);
+
+    const emptyApp = await buildTestApp({ db: createFakeDb() });
+    await emptyApp.register(databasesRoutes);
+    const notFoundRes = await emptyApp.inject({ method: 'GET', url: '/99/logs', headers: asUser() });
+    expect(notFoundRes.statusCode).toBe(404);
+  });
+
+  it('retrieves database credentials', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { databases: dbRow({ id: 3, name: 'pg-creds', engine: 'postgres', passwordEncrypted: '' }) },
+      }),
+    });
+    await app.register(databasesRoutes);
+    const res = await app.inject({ method: 'GET', url: '/3/credentials', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({
+      engine: 'postgres',
+      username: 'nine',
+      database: 'app',
+      connectionString: 'postgres://conn',
+    });
+
+    const redisApp = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { databases: dbRow({ id: 4, name: 'redis-creds', engine: 'redis', username: 'rd-user', dbName: 'rd-db', passwordEncrypted: encrypt('enc-pass') }) },
+      }),
+    });
+    await redisApp.register(databasesRoutes);
+    const redisRes = await redisApp.inject({ method: 'GET', url: '/4/credentials', headers: asUser() });
+    expect(redisRes.statusCode).toBe(200);
+
+    const emptyApp = await buildTestApp({ db: createFakeDb() });
+    await emptyApp.register(databasesRoutes);
+    const notFoundRes = await emptyApp.inject({ method: 'GET', url: '/99/credentials', headers: asUser() });
+    expect(notFoundRes.statusCode).toBe(404);
   });
 });
 

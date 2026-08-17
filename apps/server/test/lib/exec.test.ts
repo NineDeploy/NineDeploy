@@ -99,7 +99,7 @@ describe('run', () => {
     stdinChild.emit('close', 0);
     await expect(p2).resolves.toBeUndefined();
     expect(stdinChild.stdin.end).toHaveBeenCalledWith(Buffer.from('payload'));
-    const lastCall = mockSpawn.mock.calls.at(-1) as unknown as [{}, {}, { stdio: string[] }];
+    const lastCall = mockSpawn.mock.calls.at(-1) as unknown as [unknown, unknown, { stdio: string[] }];
     const stdio = lastCall[2].stdio;
     expect(stdio[0]).toBe('pipe');
 

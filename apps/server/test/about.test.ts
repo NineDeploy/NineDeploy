@@ -10,7 +10,7 @@ describe('about routes', () => {
   it('returns ABOUT info with counts from the db for authenticated callers', async () => {
     const app = await buildTestApp({
       db: createFakeDb({
-        counts: { services: [{ n: 3 }], databases: [{ n: 2 }], deployments: [{ n: 5 }], users: [{ n: 1 }] },
+        counts: { services: [{ n: 3 }], databases: [{ n: 2 }], deployments: [{ n: 5 }], users: [{ n: 1 }], installed_plugins: [{ n: 4 }] },
       }),
     });
     await app.register(aboutRoutes);
@@ -18,13 +18,13 @@ describe('about routes', () => {
     expect(res.statusCode).toBe(200);
     const body = res.json();
     expect(body.name).toBe('NineDeploy');
-    expect(body.stats).toEqual({ services: 3, databases: 2, deployments: 5, users: 1 });
+    expect(body.stats).toEqual({ services: 3, databases: 2, deployments: 5, users: 1, plugins: 4 });
   });
 
   it('hides instance counts from unauthenticated callers', async () => {
     const app = await buildTestApp({
       db: createFakeDb({
-        counts: { services: [{ n: 3 }], databases: [{ n: 2 }], deployments: [{ n: 5 }], users: [{ n: 1 }] },
+        counts: { services: [{ n: 3 }], databases: [{ n: 2 }], deployments: [{ n: 5 }], users: [{ n: 1 }], installed_plugins: [{ n: 4 }] },
       }),
     });
     await app.register(aboutRoutes);
@@ -53,16 +53,16 @@ describe('about routes', () => {
     await app.register(aboutRoutes);
     const res = await app.inject({ method: 'GET', url: '/', headers: authed });
     expect(res.statusCode).toBe(200);
-    expect(res.json().stats).toEqual({ services: 0, databases: 0, deployments: 0, users: 0 });
+    expect(res.json().stats).toEqual({ services: 0, databases: 0, deployments: 0, users: 0, plugins: 0 });
   });
 
   it('keeps zeroed stats when the db is unavailable', async () => {
     const app = await buildTestApp({
-      db: createFakeDb({ selectError: { services: new Error('down'), databases: new Error('down'), deployments: new Error('down'), users: new Error('down') } }),
+      db: createFakeDb({ selectError: { services: new Error('down'), databases: new Error('down'), deployments: new Error('down'), users: new Error('down'), installed_plugins: new Error('down') } }),
     });
     await app.register(aboutRoutes);
     const res = await app.inject({ method: 'GET', url: '/', headers: authed });
     expect(res.statusCode).toBe(200);
-    expect(res.json().stats).toEqual({ services: 0, databases: 0, deployments: 0, users: 0 });
+    expect(res.json().stats).toEqual({ services: 0, databases: 0, deployments: 0, users: 0, plugins: 0 });
   });
 });

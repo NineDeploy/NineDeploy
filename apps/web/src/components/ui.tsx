@@ -63,14 +63,21 @@ export const Button = forwardRef<
 });
 
 // ── Card ──────────────────────────────────────────────────────────────────
-export function Card({ className, children, interactive }: { className?: string; children: ReactNode; interactive?: boolean }) {
+export function Card({
+  className,
+  children,
+  interactive,
+  ...props
+}: React.HTMLAttributes<HTMLDivElement> & { interactive?: boolean }) {
   return (
     <div
       className={cn(
         'rounded-2xl border border-white/[0.08] bg-white/[0.025] backdrop-blur-sm',
-        interactive && 'transition-all duration-200 hover:border-white/15 hover:bg-white/[0.04] hover:shadow-xl hover:shadow-black/40',
+        interactive &&
+          'cursor-pointer transition-all duration-200 hover:border-white/15 hover:bg-white/[0.04] hover:shadow-xl hover:shadow-black/40',
         className,
       )}
+      {...props}
     >
       {children}
     </div>

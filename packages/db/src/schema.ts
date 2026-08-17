@@ -598,8 +598,62 @@ export const passwordResetTokens = sqliteTable('password_reset_tokens', {
   createdAt: tsUpdatable('created_at'),
 }, (t) => [index('password_reset_tokens_user_idx').on(t.userId)]);
 
+// ─── configuration center & plugins ──────────────────────────────────────────
+export const configEntries = sqliteTable(
+  'config_entries',
+  {
+    key: text('key').primaryKey(),
+    pluginId: text('plugin_id'),
+    value: text('value').notNull(),
+    isSecret: integer('is_secret', { mode: 'boolean' }).notNull().default(false),
+    category: text('category').notNull().default('general'),
+    tags: text('tags', { mode: 'json' })
+      .$type<string[]>()
+      .notNull()
+      .default(sql`'[]'`),
+    description: text('description'),
+    updatedAt: tsUpdatable('updated_at'),
+    updatedBy: integer('updated_by').references(() => users.id, { onDelete: 'set null' }),
+  },
+  (t) => ({
+    pluginIdx: index('config_entries_plugin_idx').on(t.pluginId),
+    categoryIdx: index('config_entries_category_idx').on(t.category),
+  }),
+);
+
+export const installedPlugins = sqliteTable(
+  'installed_plugins',
+  {
+    id: text('id').primaryKey(),
+    name: text('name').notNull(),
+    version: text('version').notNull(),
+    description: text('description'),
+    author: text('author'),
+    icon: text('icon'),
+    enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+    isOfficial: integer('is_official', { mode: 'boolean' }).notNull().default(false),
+    status: text('status', { enum: ['active', 'disabled', 'errored', 'installing'] })
+      .notNull()
+      .default('active'),
+    error: text('error'),
+    manifest: text('manifest', { mode: 'json' })
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default(sql`'{}'`),
+    createdAt: ts('created_at'),
+    updatedAt: tsUpdatable('updated_at'),
+  },
+  (t) => ({
+    statusIdx: index('installed_plugins_status_idx').on(t.status),
+  }),
+);
+
 export const passwordResetTokensRelations = relations(passwordResetTokens, ({ one }) => ({
   user: one(users, { fields: [passwordResetTokens.userId], references: [users.id] }),
+}));
+
+export const configEntriesRelations = relations(configEntries, ({ one }) => ({
+  updatedByUser: one(users, { fields: [configEntries.updatedBy], references: [users.id] }),
 }));
 
 export const usersRelations = relations(users, ({ many }) => ({
@@ -711,3 +765,7 @@ export type JobRun = typeof jobRuns.$inferSelect;
 export type ServerRow = typeof servers.$inferSelect;
 export type WebauthnCredential = typeof webauthnCredentials.$inferSelect;
 export type SessionRow = typeof sessions.$inferSelect;
+export type ConfigEntry = typeof configEntries.$inferSelect;
+export type NewConfigEntry = typeof configEntries.$inferInsert;
+export type InstalledPlugin = typeof installedPlugins.$inferSelect;
+export type NewInstalledPlugin = typeof installedPlugins.$inferInsert;

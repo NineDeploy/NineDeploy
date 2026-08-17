@@ -864,12 +864,10 @@ describe('ServiceDetail', () => {
 
   it('redirects /services/abc to /services when the id is not a positive integer', async () => {
     renderWithProviders(
-      <>
-        <Routes>
-          <Route path="/services/:id" element={<ServiceDetail />} />
-          <Route path="/services" element={<div data-testid="services-list">list</div>} />
-        </Routes>
-      </>,
+      <Routes>
+        <Route path="/services/:id" element={<ServiceDetail />} />
+        <Route path="/services" element={<div data-testid="services-list">list</div>} />
+      </Routes>,
       { initialEntries: ['/services/abc'] },
     );
     expect(await screen.findByTestId('services-list')).toBeInTheDocument();

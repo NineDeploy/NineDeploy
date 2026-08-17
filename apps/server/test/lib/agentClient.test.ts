@@ -1,6 +1,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { agentOp, agentPing, generateAgentToken, tokenMatches } from '../../src/lib/agentClient.js';
+import { runOp } from '../../src/agent.js';
 import { createFakeDb } from '../helpers.js';
 
 const cryptoReal = await import('../../src/lib/crypto.js');
@@ -64,7 +65,6 @@ describe('agentOp', () => {
 
   it('rejects unknown ops through the null-def path', async () => {
     // No spawn mock needed: an unknown op returns -1 before any spawning.
-    const { runOp } = await import('../../src/agent.js');
     const code = await runOp('nope.nope', {}, () => {});
     expect(code).toBe(-1);
   });

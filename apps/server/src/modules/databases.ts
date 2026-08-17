@@ -4,8 +4,8 @@ import { audit } from "../lib/audit.js";
 import { backups, databaseAttachments, databases, services, type Database } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { createAttachment, createDatabase, setLimits } from '@ninedeploy/schemas';
-import { connectionString, defaultPort, ENGINES, startDatabase, stopDatabase } from '../engine/database.js';
-import { encrypt, randomToken } from '../lib/crypto.js';
+import { connectionString, databaseLogs, defaultPort, ENGINES, restartDatabase, startDatabase, stopDatabase } from '../engine/database.js';
+import { decrypt, encrypt, randomToken } from '../lib/crypto.js';
 import { badRequest, notFound, parseId as num } from '../lib/errors.js';
 import { slugify } from '../lib/slug.js';
 
@@ -35,6 +35,10 @@ function serialize(
     username: cfg?.username() ?? null,
     database: cfg?.dbName() ?? null,
     connectionString: d.status === 'running' ? connectionString(d) : null,
+    containerName: d.containerName,
+    volumeName: d.volumeName,
+    cpuShares: d.cpuShares,
+    memLimitMb: d.memLimitMb,
     attachedServices,
     createdAt: d.createdAt.toISOString(),
     updatedAt: d.updatedAt.toISOString(),
@@ -180,6 +184,63 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
       await startDatabase(updated, (line) => app.log.info({ component: 'database' }, line));
     }
     return { cpuShares: updated!.cpuShares, memLimitMb: updated!.memLimitMb };
+  });
+
+  app.post('/:id/restart', async (req) => {
+    const id = num((req.params as { id: string }).id);
+    const d = await app.db.query.databases.findFirst({ where: eq(databases.id, id) });
+    if (!d) throw notFound('Database not found');
+    await restartDatabase(d, (line) => app.log.info({ component: 'database' }, line));
+    await app.db.update(databases).set({ status: 'running' }).where(eq(databases.id, d.id));
+    void audit(app.db, req.user!.id, 'database.restart', d.name);
+    return { ok: true };
+  });
+
+  app.post('/:id/stop', async (req) => {
+    const id = num((req.params as { id: string }).id);
+    const d = await app.db.query.databases.findFirst({ where: eq(databases.id, id) });
+    if (!d) throw notFound('Database not found');
+    await stopDatabase(d, (line) => app.log.info({ component: 'database' }, line));
+    await app.db.update(databases).set({ status: 'stopped' }).where(eq(databases.id, d.id));
+    void audit(app.db, req.user!.id, 'database.stop', d.name);
+    return { ok: true };
+  });
+
+  app.post('/:id/start', async (req) => {
+    const id = num((req.params as { id: string }).id);
+    const d = await app.db.query.databases.findFirst({ where: eq(databases.id, id) });
+    if (!d) throw notFound('Database not found');
+    await startDatabase(d, (line) => app.log.info({ component: 'database' }, line));
+    await app.db.update(databases).set({ status: 'running' }).where(eq(databases.id, d.id));
+    void audit(app.db, req.user!.id, 'database.start', d.name);
+    return { ok: true };
+  });
+
+  app.get('/:id/logs', async (req) => {
+    const id = num((req.params as { id: string }).id);
+    const d = await app.db.query.databases.findFirst({ where: eq(databases.id, id) });
+    if (!d) throw notFound('Database not found');
+    const lines = Number((req.query as { lines?: string }).lines) || 100;
+    const logs = await databaseLogs(d, lines);
+    return { logs };
+  });
+
+  app.get('/:id/credentials', async (req) => {
+    const id = num((req.params as { id: string }).id);
+    const d = await app.db.query.databases.findFirst({ where: eq(databases.id, id) });
+    if (!d) throw notFound('Database not found');
+    const cfg = ENGINES[d.engine];
+    const password = d.passwordEncrypted ? decrypt(d.passwordEncrypted) : '';
+    const connStr = connectionString(d);
+    return {
+      engine: d.engine,
+      username: cfg?.username() ?? d.username,
+      password,
+      database: cfg?.dbName() ?? d.dbName,
+      internalHost: d.internalHost,
+      internalPort: d.internalPort,
+      connectionString: connStr,
+    };
   });
 };
 

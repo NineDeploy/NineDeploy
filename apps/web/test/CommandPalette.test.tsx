@@ -10,6 +10,8 @@ const apiMock = vi.hoisted(() => ({
     services: { list: vi.fn() },
     databases: { list: vi.fn() },
     templates: { list: vi.fn() },
+    plugins: { list: vi.fn() },
+    menus: { list: vi.fn() },
   },
 }));
 
@@ -45,6 +47,8 @@ describe('CommandPalette', () => {
     apiMock.api.services.list.mockResolvedValue([]);
     apiMock.api.databases.list.mockResolvedValue([]);
     apiMock.api.templates.list.mockResolvedValue([]);
+    apiMock.api.plugins.list.mockResolvedValue({ plugins: [] });
+    apiMock.api.menus.list.mockResolvedValue({ items: [] });
   });
 
   it('lists the first 8 nav commands when the query is empty', async () => {
@@ -89,6 +93,17 @@ describe('CommandPalette', () => {
     apiMock.api.templates.list.mockResolvedValue([
       { id: 'n8n', name: 'n8n', tagline: 'Workflow automation' },
     ] as never);
+    apiMock.api.plugins.list.mockResolvedValue({
+      plugins: [
+        { id: 'datadog', name: 'Datadog APM', version: '1.0.0', status: 'active' },
+      ],
+    } as never);
+    apiMock.api.menus.list.mockResolvedValue({
+      items: [
+        { id: 'cf-tunnel-nav', label: 'Cloudflare Tunnels Extension', route: '/tunnels', icon: 'cloud' },
+        { id: 'custom-ext', label: 'Custom Ext', route: '/custom', icon: 'unknown_icon' },
+      ],
+    } as never);
     renderPalette();
     // Query 'b' matches nav "Backups" and service "blog" (label) + database
     // "Backups" doesn't match pg-main — use a broader query to surface all
@@ -99,6 +114,16 @@ describe('CommandPalette', () => {
     // Template's label is "Deploy n8n" which doesn't contain 'b'; broaden.
     fireEvent.change(screen.getByPlaceholderText(/Search services/), { target: { value: 'n' } });
     await waitFor(() => expect(screen.getByText('Deploy n8n')).toBeInTheDocument());
+
+    // Plugin & Extension matches
+    fireEvent.change(screen.getByPlaceholderText(/Search services/), { target: { value: 'datadog' } });
+    await waitFor(() => expect(screen.getByText('Datadog APM')).toBeInTheDocument());
+
+    fireEvent.change(screen.getByPlaceholderText(/Search services/), { target: { value: 'cloudflare' } });
+    await waitFor(() => expect(screen.getByText('Cloudflare Tunnels Extension')).toBeInTheDocument());
+
+    fireEvent.change(screen.getByPlaceholderText(/Search services/), { target: { value: 'custom ext' } });
+    await waitFor(() => expect(screen.getByText('Custom Ext')).toBeInTheDocument());
   });
 
   it('executes the selected command with Enter and closes', async () => {

@@ -1,6 +1,6 @@
-import { and, desc, eq, lt, type SQL } from 'drizzle-orm';
+import { and, desc, eq, inArray, lt, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
-import { auditLog } from '@ninedeploy/db';
+import { auditLog, users } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
 
 const PAGE_SIZE = 50;
@@ -29,10 +29,28 @@ export const activityRoutes: FastifyPluginAsync = async (app) => {
       orderBy: desc(auditLog.id),
       limit: PAGE_SIZE,
     });
+
+    const userIds = Array.from(new Set(rows.map((r) => r.userId).filter((id): id is number => id !== null)));
+    const userMap = new Map<number, { name: string | null; email: string }>();
+    if (userIds.length > 0) {
+      try {
+        const usersList = await app.db.query.users.findMany({
+          where: inArray(users.id, userIds),
+        });
+        for (const u of usersList) {
+          userMap.set(u.id, { name: u.name, email: u.email });
+        }
+      } catch {
+        /* fallback if query is mocked or down */
+      }
+    }
+
     return {
       entries: rows.map((r) => ({
         id: r.id,
         userId: r.userId,
+        userName: r.userId ? userMap.get(r.userId)?.name ?? null : null,
+        userEmail: r.userId ? userMap.get(r.userId)?.email ?? null : null,
         action: r.action,
         entity: r.entity,
         meta: r.meta ?? null,

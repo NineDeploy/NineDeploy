@@ -22,6 +22,14 @@ import {
   sessionsList, sessionsRevoke, systemExport, systemImport,
   usersList, usersResetLink, volumesList, volumesRemove,
 } from './commands/manage.js';
+import {
+  pluginsList, pluginsMarketplace, pluginsInstall,
+  pluginsEnable, pluginsDisable, pluginsUninstall,
+  pluginsInspect, pluginsReload,
+} from './commands/plugins.js';
+import {
+  configCenterList, configCenterGet, configCenterSet, configCenterDelete,
+} from './commands/configCenter.js';
 
 const program = new Command();
 
@@ -224,6 +232,37 @@ program.command('reset-link <idOrEmail>').description('Generate a one-time passw
   .action((who: string) => usersResetLink(getClient(), who));
 
 program.command('activity').description('Show recent activity').action(() => activityList(getClient()));
+
+// ── Plugins & Microkernel ───────────────────────────────────────────────────
+const plugins = program.command('plugins').description('Manage plugins and marketplace extensions');
+plugins.command('list').description('List all installed plugins').action(() => pluginsList(getClient()));
+plugins.command('marketplace').description('Browse verified marketplace extensions').action(() => pluginsMarketplace(getClient()));
+plugins.command('inspect <id>').description('Inspect plugin manifest and runtime telemetry').action((id: string) => pluginsInspect(getClient(), id));
+plugins.command('install <target>').description('Install a plugin (marketplace, npm, git, local)')
+  .option('-s, --source <source>', 'Source type (marketplace, npm, git, local)', 'marketplace')
+  .option('-n, --name <name>', 'Custom display name')
+  .option('-v, --version <version>', 'Custom version')
+  .option('-d, --desc <description>', 'Description')
+  .action((target: string, opts: any) => pluginsInstall(getClient(), target, opts));
+plugins.command('enable <id>').description('Enable an installed plugin').action((id: string) => pluginsEnable(getClient(), id));
+plugins.command('disable <id>').description('Disable a plugin').action((id: string) => pluginsDisable(getClient(), id));
+plugins.command('reload <id>').description('Hot-reload a plugin').action((id: string) => pluginsReload(getClient(), id));
+plugins.command('uninstall <id>').description('Uninstall a plugin').action((id: string) => pluginsUninstall(getClient(), id));
+
+// ── Configuration Center ────────────────────────────────────────────────────
+const configCenter = program.command('config-center').description('Manage central configuration entries and secrets');
+configCenter.command('list').description('List configuration entries')
+  .option('-c, --category <category>', 'Filter by category')
+  .option('-p, --plugin <pluginId>', 'Filter by plugin id')
+  .option('-r, --reveal', 'Reveal decrypted secrets (admin only)')
+  .action((opts: any) => configCenterList(getClient(), opts));
+configCenter.command('get <key>').description('Get a configuration key in detail').action((key: string) => configCenterGet(getClient(), key));
+configCenter.command('set <key> <value>').description('Set or update a configuration key')
+  .option('-s, --secret', 'Mark as encrypted secret')
+  .option('-d, --desc <description>', 'Description')
+  .option('-t, --tags <tags>', 'Comma-separated tags')
+  .action((key: string, value: string, opts: any) => configCenterSet(getClient(), key, value, opts));
+configCenter.command('delete <key>').description('Delete a custom configuration key').action((key: string) => configCenterDelete(getClient(), key));
 
 // ── System export/import + deploy log streaming ────────────────────────────
 system.command('export [file]').description('Export the full system state as JSON').action((file?: string) => systemExport(file));

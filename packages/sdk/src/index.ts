@@ -18,6 +18,14 @@ import type {
   CreateWebhookInput,
   CreatedApiToken,
   CreatedWebhook,
+  ConfigItem,
+  ConfigListResponse,
+  SetConfigInput,
+  PluginListResponse,
+  PluginInspectResponse,
+  InstallPluginInput,
+  MarketplaceCatalogResponse,
+  MenuListResponse,
   Deployment,
   DockerResources,
   Domain,
@@ -25,6 +33,8 @@ import type {
   EnvVar,
   Login,
   ManagedDatabase,
+  DatabaseDetail,
+  DatabaseCredentials,
   PasswordChange,
   PasswordReset,
   MetricSeries,
@@ -278,8 +288,14 @@ export interface NineDeployClient {
     /** `query` is appended verbatim, e.g. `?projectId=3` (project scoping). */
     list: (query?: string) => Promise<ManagedDatabase[]>;
     create: (input: CreateDatabaseInput) => Promise<ManagedDatabase>;
-    get: (id: number) => Promise<ManagedDatabase>;
+    get: (id: number) => Promise<DatabaseDetail>;
     remove: (id: number, options?: { force?: boolean }) => Promise<void>;
+    restart: (id: number) => Promise<void>;
+    stop: (id: number) => Promise<void>;
+    start: (id: number) => Promise<void>;
+    logs: (id: number, lines?: number) => Promise<{ logs: string[] }>;
+    credentials: (id: number) => Promise<DatabaseCredentials>;
+    setLimits: (id: number, input: SetLimitsInput) => Promise<{ cpuShares: number | null; memLimitMb: number | null }>;
   };
   attachments: {
     list: (serviceId: number) => Promise<Attachment[]>;
@@ -364,6 +380,25 @@ export interface NineDeployClient {
     logs: (lines?: number) => Promise<{ logs: string[] }>;
     restart: () => Promise<{ ok: boolean; message?: string }>;
     backupCerts: () => Promise<{ ok: boolean; message?: string; filename?: string }>;
+  };
+  config: {
+    list: (query?: { category?: string; pluginId?: string; reveal?: boolean }) => Promise<ConfigListResponse>;
+    get: (key: string) => Promise<ConfigItem>;
+    set: (key: string, input: SetConfigInput) => Promise<{ ok: boolean; key: string }>;
+    delete: (key: string) => Promise<{ ok: boolean; key: string }>;
+  };
+  plugins: {
+    list: () => Promise<PluginListResponse>;
+    marketplace: () => Promise<MarketplaceCatalogResponse>;
+    install: (input: InstallPluginInput) => Promise<{ ok: boolean; id: string; status: string }>;
+    enable: (id: string) => Promise<{ ok: boolean; id: string; status: string }>;
+    disable: (id: string) => Promise<{ ok: boolean; id: string; status: string }>;
+    reload: (id: string) => Promise<{ ok: boolean; id: string; status: string }>;
+    inspect: (id: string) => Promise<PluginInspectResponse>;
+    uninstall: (id: string) => Promise<{ ok: boolean; id: string }>;
+  };
+  menus: {
+    list: (query?: { slot?: string }) => Promise<MenuListResponse>;
   };
   health: () => Promise<HealthStatus>;
 }
@@ -638,10 +673,22 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
     databases: {
       list: (query) => get<ManagedDatabase[]>(`/v1/databases${query ?? ''}`),
       create: (input) => send<ManagedDatabase>('POST', '/v1/databases', input),
-      get: (id) => get<ManagedDatabase>(`/v1/databases/${id}`),
+      get: (id) => get<DatabaseDetail>(`/v1/databases/${id}`),
       remove: async (id, opts) => {
         await request(`/v1/databases/${id}${opts?.force ? '?force=true' : ''}`, { method: 'DELETE' });
       },
+      restart: async (id) => {
+        await request(`/v1/databases/${id}/restart`, { method: 'POST' });
+      },
+      stop: async (id) => {
+        await request(`/v1/databases/${id}/stop`, { method: 'POST' });
+      },
+      start: async (id) => {
+        await request(`/v1/databases/${id}/start`, { method: 'POST' });
+      },
+      logs: (id, lines) => get<{ logs: string[] }>(`/v1/databases/${id}/logs${lines ? `?lines=${lines}` : ''}`),
+      credentials: (id) => get<DatabaseCredentials>(`/v1/databases/${id}/credentials`),
+      setLimits: (id, input) => send<{ cpuShares: number | null; memLimitMb: number | null }>('PATCH', `/v1/databases/${id}/limits`, input),
     },
     attachments: {
       list: (serviceId) => get<Attachment[]>(`/v1/services/${serviceId}/attachments`),
@@ -735,6 +782,35 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
       logs: (lines = 50) => get<{ logs: string[] }>(`/v1/traefik/logs?lines=${lines}`),
       restart: () => send<{ ok: boolean; message: string }>('POST', '/v1/traefik/restart'),
       backupCerts: () => send<{ ok: boolean; message: string; filename?: string }>('POST', '/v1/traefik/backup-certs'),
+    },
+    config: {
+      list: (query) => {
+        const parts: string[] = [];
+        if (query?.category) parts.push(`category=${encodeURIComponent(query.category)}`);
+        if (query?.pluginId) parts.push(`pluginId=${encodeURIComponent(query.pluginId)}`);
+        if (query?.reveal) parts.push('reveal=true');
+        const qs = parts.length ? `?${parts.join('&')}` : '';
+        return get<ConfigListResponse>(`/v1/config${qs}`);
+      },
+      get: (key) => get<ConfigItem>(`/v1/config/${encodeURIComponent(key)}`),
+      set: (key, input) => send<{ ok: boolean; key: string }>('POST', `/v1/config/${encodeURIComponent(key)}`, input),
+      delete: (key) => send<{ ok: boolean; key: string }>('DELETE', `/v1/config/${encodeURIComponent(key)}`),
+    },
+    plugins: {
+      list: () => get<PluginListResponse>('/v1/plugins'),
+      marketplace: () => get<MarketplaceCatalogResponse>('/v1/plugins/marketplace'),
+      install: (input) => send<{ ok: boolean; id: string; status: string }>('POST', '/v1/plugins/install', input),
+      enable: (id) => send<{ ok: boolean; id: string; status: string }>('POST', `/v1/plugins/${encodeURIComponent(id)}/enable`),
+      disable: (id) => send<{ ok: boolean; id: string; status: string }>('POST', `/v1/plugins/${encodeURIComponent(id)}/disable`),
+      reload: (id) => send<{ ok: boolean; id: string; status: string }>('POST', `/v1/plugins/${encodeURIComponent(id)}/reload`),
+      inspect: (id) => get<PluginInspectResponse>(`/v1/plugins/${encodeURIComponent(id)}/inspect`),
+      uninstall: (id) => send<{ ok: boolean; id: string }>('POST', `/v1/plugins/${encodeURIComponent(id)}/uninstall`),
+    },
+    menus: {
+      list: (query) => {
+        const qs = query?.slot ? `?slot=${encodeURIComponent(query.slot)}` : '';
+        return get<MenuListResponse>(`/v1/menus${qs}`);
+      },
     },
     health: () => get<HealthStatus>('/health'),
   };

@@ -245,7 +245,7 @@ await nd.deploys.trigger(1);`,
     blocks: [
       {
         kind: "p",
-        text: "NineDeploy ships a Model Context Protocol server (stdio) with 15 tools over the same typed SDK: 12 read-only (services, deploys, logs, domains, databases, projects, alerts, activity, stats, topology, health) plus three guarded actions — deploy, restart, rollback.",
+        text: "NineDeploy ships a Model Context Protocol server (stdio) with 26 tools over the same typed SDK: services, deploys, logs, domains, databases, projects, alerts, activity, stats, topology, health, plus plugins and central configuration management.",
       },
       {
         kind: "code",
@@ -262,6 +262,87 @@ await nd.deploys.trigger(1);`,
     }
   }
 }`,
+      },
+    ],
+  },
+  {
+    slug: "microkernel",
+    title: "Microkernel Architecture",
+    description: "Event-driven, hookable, zero-coupling core engine.",
+    group: "Core",
+    blocks: [
+      {
+        kind: "p",
+        text: "NineDeploy is architected around an asynchronous microkernel. Core services (Docker, Traefik, S3, PM2) interact via an event bus, prioritized waterfall hook pipelines, driver registries, and dual-vault config scopes instead of direct tight coupling.",
+      },
+      { kind: "h2", text: "Key Kernel Systems" },
+      {
+        kind: "list",
+        items: [
+          "EventBus: Low-latency async event pub/sub with typed events (deploy, audit, service, backup).",
+          "HookPipeline: Waterfall middleware pipeline (deploy.before, deploy.after, container.created) enabling plugins to modify build args or environment variables in-flight.",
+          "ServiceRegistry: Dynamic driver interchange (Compute Drivers, Proxy Drivers, Storage Drivers).",
+          "MenuRegistry: Dynamic UI navigation slot injection (sidebar, service tabs, command palette).",
+        ],
+      },
+    ],
+  },
+  {
+    slug: "config-center",
+    title: "Configuration Center",
+    description: "Centralized dual-vault configuration and secret management.",
+    group: "Core",
+    blocks: [
+      {
+        kind: "p",
+        text: "Config Center provides a unified, reactive store for global server settings, system overrides, and plugin-scoped parameters.",
+      },
+      { kind: "h2", text: "Vault Separation & Encryption" },
+      {
+        kind: "list",
+        items: [
+          "Dual Vault: Plain text values (boolean, numbers, strings, JSON) vs AES-256-GCM encrypted secrets.",
+          "Namespace Scoping: Unique plugin-scoped keys (e.g. plugin:s3-backups:bucket_name) with tag-based querying.",
+          "Reactive Watchers: In-memory cache with zero DB lag and real-time onChange listeners for hot reloads.",
+        ],
+      },
+    ],
+  },
+  {
+    slug: "plugin-sdk",
+    title: "Plugin SDK & Marketplace",
+    description: "Build, publish, and install custom NineDeploy extensions.",
+    group: "Extend",
+    blocks: [
+      {
+        kind: "p",
+        text: "Extend NineDeploy using @ninedeploy/plugin-sdk. Plugins can declare configuration schemas, register UI navigation items, tap into the deployment pipeline, and listen to security events.",
+      },
+      { kind: "h2", text: "Example Plugin" },
+      {
+        kind: "code",
+        file: "my-plugin.ts",
+        body: `import { definePlugin } from '@ninedeploy/plugin-sdk';
+
+export default definePlugin({
+  id: 'my-custom-extension',
+  name: 'My Custom Extension',
+  version: '1.0.0',
+  configSchema: [
+    { key: 'api_token', type: 'string', isSecret: true, label: 'API Token' }
+  ],
+  init: (ctx) => {
+    ctx.hooks.tap('deploy.before', async (context) => {
+      console.log('Deploying service:', context.serviceId);
+      return context;
+    });
+  }
+});`,
+      },
+      { kind: "h2", text: "Installing Extensions" },
+      {
+        kind: "p",
+        text: "Install verified extensions from the web marketplace or CLI via `ninedeploy plugins install <id>`. Supports Marketplace, NPM packages, Git repos, and local directories.",
       },
     ],
   },
@@ -295,7 +376,7 @@ NINEDEPLOY_UPDATE_CHECK_URL=…      # or "disabled" for air-gapped`,
   },
 ];
 
-export const docGroups = ["Start", "Core", "Interfaces", "Reference"].map((name) => ({
+export const docGroups = ["Start", "Core", "Extend", "Interfaces", "Reference"].map((name) => ({
   name,
   items: docs.filter((d) => d.group === name),
 }));

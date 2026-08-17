@@ -13,6 +13,7 @@ import collectorPlugin from './plugins/collector.js';
 import dbPlugin from './plugins/db.js';
 import housekeepingPlugin from './plugins/housekeeping.js';
 import jobSchedulerPlugin from './plugins/jobScheduler.js';
+import kernelPlugin from './plugins/kernel.js';
 import rateLimitPlugin from './plugins/rateLimit.js';
 import rawBodyPlugin from './plugins/rawBody.js';
 import staticFilesPlugin from './plugins/staticFiles.js';
@@ -63,6 +64,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(rateLimitPlugin);
   await app.register(rawBodyPlugin);
   await app.register(dbPlugin);
+  await app.register(kernelPlugin);
   await app.register(authPlugin);
 
   app.setErrorHandler((err: FastifyError, _req: FastifyRequest, reply: FastifyReply) => {

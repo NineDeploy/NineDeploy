@@ -72,7 +72,7 @@ export const ENGINES: Record<string, EngineConfig> = {
     connectionString: (h, prt, u, p, d) => `postgres://${enc(u)}:${enc(p)}@${h}:${prt}/${d}`,
   },
   mysql: {
-    image: (v) => `mysql:${v || '8'}`,
+    image: (v) => `mysql:${v || '8.4'}`,
     port: 3306,
     volumePath: '/var/lib/mysql',
     env: (p) => ({ MYSQL_ROOT_PASSWORD: p }),
@@ -357,5 +357,22 @@ export async function restoreDatabase(d: Database, file: string, log: (line: str
     if (d.engine !== 'redis') {
       await run('docker', ['exec', cn, 'rm', '-f', RESTORE_TMP], {}, swallow).catch(() => undefined);
     }
+  }
+}
+
+/** Restart an existing database container. */
+export async function restartDatabase(d: Database, log: (line: string) => void): Promise<void> {
+  if (!d.containerName) throw new Error('database not runnable');
+  await run('docker', ['restart', d.containerName], {}, log);
+}
+
+/** Fetch recent logs from the database container. */
+export async function databaseLogs(d: Database, lines = 100): Promise<string[]> {
+  if (!d.containerName) return [];
+  try {
+    const raw = await capture('docker', ['logs', '--tail', String(lines), d.containerName]);
+    return raw.split('\n').filter(Boolean);
+  } catch {
+    return [];
   }
 }

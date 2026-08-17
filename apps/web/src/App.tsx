@@ -12,6 +12,7 @@ import { About } from './routes/About.js';
 import { Backups } from './routes/Backups.js';
 import { Dashboard } from './routes/Dashboard.js';
 import { Databases } from './routes/Databases.js';
+import { DatabaseDetail } from './routes/DatabaseDetail.js';
 import { Domains } from './routes/Domains.js';
 import { Hub } from './routes/Hub.js';
 import { ServiceDetail } from './routes/service/index.js';
@@ -26,6 +27,7 @@ import { Volumes } from './routes/Volumes.js';
 import { Networks } from './routes/Networks.js';
 import { DockerDashboard } from './routes/Docker.js';
 import { Traefik } from './routes/Traefik.js';
+import { Activity } from './routes/Activity.js';
 
 function RequireAuth({ children }: { children: ReactNode }) {
   const { user } = useAuth();
@@ -82,8 +84,10 @@ export default function App() {
         <Route path="settings" element={<Settings />} />
         <Route path="about" element={<About />} />
         <Route path="monitoring" element={<Monitoring />} />
+        <Route path="activity" element={<Activity />} />
         <Route path="traefik" element={<Traefik />} />
         <Route path="services/:id" element={<ServiceDetail />} />
+        <Route path="databases/:id" element={<DatabaseDetail />} />
       </Route>
       <Route path="*" element={<NotFound />} />
     </Routes>

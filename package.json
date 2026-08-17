@@ -10,7 +10,8 @@
   },
   "scripts": {
     "build": "turbo run build",
-    "dev": "turbo run dev",
+    "dev": "pnpm --filter @ninedeploy/server dev",
+    "dev:web": "pnpm --filter @ninedeploy/web dev",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",

@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router';
 import { api } from '../lib/api.js';
+import { ICON_MAP } from './Layout.js';
 import { cn } from './ui.js';
 
 interface Cmd {
@@ -30,6 +31,7 @@ const NAV_COMMANDS: Cmd[] = [
   { type: 'Navigate', label: 'Sources', sub: 'Private repo credentials', to: '/sources', icon: KeyRound },
   { type: 'Navigate', label: 'Users', sub: 'Team management', to: '/users', icon: Users },
   { type: 'Navigate', label: 'Monitoring', sub: 'Resource metrics', to: '/monitoring', icon: Activity },
+  { type: 'Navigate', label: 'Activity', sub: 'Audit logs & platform events', to: '/activity', icon: Activity },
   { type: 'Navigate', label: 'Servers', sub: 'Remote hosts running the agent', to: '/servers', icon: HardDrive },
   { type: 'Navigate', label: 'About', sub: 'System information', to: '/about', icon: HelpCircle },
   { type: 'Navigate', label: 'Settings', sub: 'System info', to: '/settings', icon: SettingsIcon },
@@ -43,6 +45,20 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
   const services = useQuery({ queryKey: ['services'], queryFn: () => api.services.list() });
   const databases = useQuery({ queryKey: ['databases'], queryFn: () => api.databases.list() });
   const templates = useQuery({ queryKey: ['templates'], queryFn: () => api.templates.list() });
+  const plugins = useQuery({
+    queryKey: ['plugins'],
+    queryFn: async () => {
+      const res = await api.plugins.list();
+      return res.plugins;
+    },
+  });
+  const menus = useQuery({
+    queryKey: ['menus'],
+    queryFn: async () => {
+      const res = await api.menus.list();
+      return res.items;
+    },
+  });
 
   const results = useMemo<Cmd[]>(() => {
     const dynamic: Cmd[] = [
@@ -55,6 +71,12 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
       ...(templates.data ?? []).map((t) => ({
         type: 'Template', label: `Deploy ${t.name}`, sub: t.tagline, to: '/hub', icon: Sparkles,
       })),
+      ...(plugins.data ?? []).map((p) => ({
+        type: 'Plugin', label: p.name, sub: `v${p.version} · ${p.status}`, to: '/settings', icon: Layers,
+      })),
+      ...(menus.data ?? []).map((m) => ({
+        type: 'Extension', label: m.label, sub: m.route, to: m.route, icon: m.icon && ICON_MAP[m.icon.toLowerCase()] ? ICON_MAP[m.icon.toLowerCase()]! : Globe,
+      })),
     ];
 
     const all = [...NAV_COMMANDS, ...dynamic];
@@ -63,7 +85,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
     return all
       .filter((c) => c.label.toLowerCase().includes(q) || c.sub.toLowerCase().includes(q) || c.type.toLowerCase().includes(q))
       .slice(0, 24);
-  }, [query, services.data, databases.data, templates.data]);
+  }, [query, services.data, databases.data, templates.data, plugins.data, menus.data]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: intentionally keyed on query — the selection must reset whenever the search text changes, even though the body only touches the setter.
   useEffect(() => {

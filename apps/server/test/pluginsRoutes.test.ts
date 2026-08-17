@@ -1,0 +1,339 @@
+import { describe, expect, it } from 'vitest';
+import { pluginRoutes } from '../src/modules/plugins.js';
+import { asUser, buildTestApp, createFakeDb } from './helpers.js';
+
+describe('Plugins HTTP API', () => {
+  it('lists plugins and allows enabling/disabling with admin authorization', async () => {
+    const pluginStore = new Map<string, any>();
+    const fakeDb = createFakeDb({
+      findFirst: {
+        installedPlugins: ((args: any) => {
+          const chunks = args?.where?.queryChunks;
+          if (Array.isArray(chunks)) {
+            for (const chunk of chunks) {
+              if (chunk && typeof chunk === 'object' && 'value' in chunk && typeof chunk.value === 'string') {
+                if (pluginStore.has(chunk.value)) return pluginStore.get(chunk.value);
+              }
+            }
+          }
+          for (const [k, v] of pluginStore.entries()) {
+            if (args?.where?.value === k || args?.where?.right?.value === k) return v;
+          }
+          return undefined;
+        }) as any,
+      },
+      findMany: {
+        installedPlugins: (() => Array.from(pluginStore.values())) as any,
+      },
+      insert: {
+        installed_plugins: ((val: any) => {
+          const row = { ...val, installedAt: new Date(), updatedAt: new Date() };
+          pluginStore.set(val.id, row);
+          return [row];
+        }) as any,
+      },
+      update: {
+        installed_plugins: ((val: any) => {
+          if (val.id && pluginStore.has(val.id)) {
+            pluginStore.set(val.id, { ...pluginStore.get(val.id), ...val, updatedAt: new Date() });
+          } else if (pluginStore.has('test-notifier')) {
+            pluginStore.set('test-notifier', { ...pluginStore.get('test-notifier'), ...val, updatedAt: new Date() });
+          }
+          return [val];
+        }) as any,
+      },
+    });
+
+    const app = await buildTestApp({ db: fakeDb });
+    await app.register(pluginRoutes);
+
+    // Register a plugin in the kernel
+    await app.kernel.registerPlugin({
+      id: 'test-notifier',
+      name: 'Test Notifier',
+      version: '1.2.0',
+      description: 'Sends alerts',
+      init: () => {},
+    });
+
+    await app.kernel.registerPlugin({
+      id: 'kernel-only-addon',
+      name: 'Kernel Only Addon',
+      version: '1.0.0',
+      description: 'Kernel only',
+      init: () => {},
+    });
+
+    await app.kernel.registerPlugin({
+      id: 'active-in-db',
+      name: 'Active In DB',
+      version: '1.0.0',
+      description: 'Full Plugin',
+      configSchema: [{ key: 'k1', type: 'string', isSecret: false, label: 'L1' }],
+      menuItems: [
+        {
+          id: 'active-menu',
+          slot: 'sidebar:main',
+          label: 'Active Plugin',
+          route: '/plugins/active',
+        },
+      ],
+      dependencies: ['test-notifier'],
+      init: () => {},
+    });
+
+    pluginStore.set('active-in-db', {
+      id: 'active-in-db',
+      name: 'Active In DB',
+      version: '1.0.0',
+      isOfficial: true,
+      enabled: true,
+      status: 'active',
+      createdAt: new Date(),
+    });
+
+    pluginStore.set('manifest-plugin', {
+      id: 'manifest-plugin',
+      name: 'Manifest Plugin',
+      version: '2.0.0',
+      isOfficial: false,
+      enabled: false,
+      status: 'errored',
+      error: 'Crash on boot',
+      manifest: {
+        author: 'Custom Author',
+        dependencies: ['dep1'],
+        configSchema: [{ key: 'custom_key' }],
+      },
+      createdAt: new Date(),
+    });
+
+    // Add an offline plugin in DB not loaded in kernel
+    pluginStore.set('offline-plugin', {
+      id: 'offline-plugin',
+      name: 'Offline Plugin',
+      version: '0.9.0',
+      isOfficial: false,
+      enabled: false,
+      status: 'disabled',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    // 1. List plugins as member
+    const listRes = await app.inject({
+      method: 'GET',
+      url: '/',
+      headers: asUser({ role: 'member' }),
+    });
+    expect(listRes.statusCode).toBe(200);
+    const plugins = listRes.json().plugins;
+    expect(plugins.some((p: any) => p.id === 'test-notifier')).toBe(true);
+    expect(plugins.some((p: any) => p.id === 'offline-plugin')).toBe(true);
+
+    // 2. Disable plugin as admin (insert branch)
+    const disableRes = await app.inject({
+      method: 'POST',
+      url: '/test-notifier/disable',
+      headers: asUser({ role: 'admin' }),
+    });
+    expect(disableRes.statusCode).toBe(200);
+    expect(disableRes.json()).toEqual({ ok: true, id: 'test-notifier', status: 'disabled' });
+
+    // Disable plugin when already existing in DB (update branch)
+    const disableExistingRes = await app.inject({
+      method: 'POST',
+      url: '/test-notifier/disable',
+      headers: asUser({ role: 'admin' }),
+    });
+    expect(disableExistingRes.statusCode).toBe(200);
+
+    // Verify menu item was purged
+    expect(app.kernel.menuRegistry.getAllItems().some((m) => m.id === 'test-notifier-menu')).toBe(false);
+
+    // Disable a plugin row that did not previously exist in DB
+    const disableNewRes = await app.inject({
+      method: 'POST',
+      url: '/unregistered-plugin/disable',
+      headers: asUser({ role: 'admin' }),
+    });
+    expect(disableNewRes.statusCode).toBe(200);
+
+    // 3. Enable plugin as admin
+    const enableRes = await app.inject({
+      method: 'POST',
+      url: '/test-notifier/enable',
+      headers: asUser({ role: 'admin' }),
+    });
+    expect(enableRes.statusCode).toBe(200);
+    expect(enableRes.json()).toEqual({ ok: true, id: 'test-notifier', status: 'active' });
+
+    // Enable an unrecorded plugin
+    const enableNewRes = await app.inject({
+      method: 'POST',
+      url: '/brand-new-plugin/enable',
+      headers: asUser({ role: 'admin' }),
+    });
+    expect(enableNewRes.statusCode).toBe(200);
+
+    // 4. Member forbidden
+    const memberMutateRes = await app.inject({
+      method: 'POST',
+      url: '/test-notifier/disable',
+      headers: asUser({ role: 'member' }),
+    });
+    expect(memberMutateRes.statusCode).toBe(403);
+
+    // 5. Get marketplace catalog
+    const marketplaceRes = await app.inject({
+      method: 'GET',
+      url: '/marketplace',
+      headers: asUser({ role: 'member' }),
+    });
+    expect(marketplaceRes.statusCode).toBe(200);
+    const catalogJson = marketplaceRes.json();
+    expect(catalogJson.catalog).toBeDefined();
+    expect(Array.isArray(catalogJson.catalog)).toBe(true);
+
+    // 6. Install plugin from marketplace (valid)
+    const installRes = await app.inject({
+      method: 'POST',
+      url: '/install',
+      headers: asUser({ role: 'admin' }),
+      payload: { source: 'marketplace', target: 's3-backups' },
+    });
+    expect(installRes.statusCode).toBe(200);
+    expect(installRes.json()).toEqual({ ok: true, id: 's3-backups', status: 'active' });
+
+    // Install invalid payload (400 validation)
+    const installInvalidRes = await app.inject({
+      method: 'POST',
+      url: '/install',
+      headers: asUser({ role: 'admin' }),
+      payload: { source: 'unknown-source', target: '' },
+    });
+    expect(installInvalidRes.statusCode).toBe(400);
+
+    // Install error (not found in marketplace)
+    const installNotFoundRes = await app.inject({
+      method: 'POST',
+      url: '/install',
+      headers: asUser({ role: 'admin' }),
+      payload: { source: 'marketplace', target: 'ghost-pkg' },
+    });
+    expect(installNotFoundRes.statusCode).toBe(400);
+
+    // 7. Inspect plugin (valid)
+    const inspectRes = await app.inject({
+      method: 'GET',
+      url: '/active-in-db/inspect',
+      headers: asUser({ role: 'member' }),
+    });
+    expect(inspectRes.statusCode).toBe(200);
+    expect(inspectRes.json()).toMatchObject({
+      id: 'active-in-db',
+      name: 'Active In DB',
+      version: '1.0.0',
+      status: 'active',
+      dependencies: ['test-notifier'],
+    });
+
+    // Inspect kernel-only plugin (kernel-only-addon)
+    const inspectKernelRes = await app.inject({
+      method: 'GET',
+      url: '/kernel-only-addon/inspect',
+      headers: asUser({ role: 'member' }),
+    });
+    expect(inspectKernelRes.statusCode).toBe(200);
+    expect(inspectKernelRes.json()).toMatchObject({
+      id: 'kernel-only-addon',
+      name: 'Kernel Only Addon',
+      author: 'NineDeploy Team',
+      status: 'active',
+    });
+
+    // Inspect manifest-plugin with custom author and error
+    const inspectManifestRes = await app.inject({
+      method: 'GET',
+      url: '/manifest-plugin/inspect',
+      headers: asUser({ role: 'member' }),
+    });
+    expect(inspectManifestRes.statusCode).toBe(200);
+    expect(inspectManifestRes.json()).toMatchObject({
+      id: 'manifest-plugin',
+      name: 'Manifest Plugin',
+      author: 'Custom Author',
+      isOfficial: false,
+      status: 'errored',
+      error: 'Crash on boot',
+      dependencies: ['dep1'],
+    });
+
+    // Inspect DB-only plugin (offline-plugin)
+    const inspectDbRes = await app.inject({
+      method: 'GET',
+      url: '/offline-plugin/inspect',
+      headers: asUser({ role: 'member' }),
+    });
+    expect(inspectDbRes.statusCode).toBe(200);
+    expect(inspectDbRes.json()).toMatchObject({
+      id: 'offline-plugin',
+      name: 'Offline Plugin',
+      author: 'Community Developer',
+      status: 'disabled',
+    });
+
+    // Inspect not found (404)
+    const inspectNotFoundRes = await app.inject({
+      method: 'GET',
+      url: '/non-existent-plugin/inspect',
+      headers: asUser({ role: 'member' }),
+    });
+    expect(inspectNotFoundRes.statusCode).toBe(404);
+
+    // 8. Hot-reload plugin (valid admin)
+    const reloadRes = await app.inject({
+      method: 'POST',
+      url: '/active-in-db/reload',
+      headers: asUser({ role: 'admin' }),
+    });
+    expect(reloadRes.statusCode).toBe(200);
+    expect(reloadRes.json()).toEqual({ ok: true, id: 'active-in-db', status: 'active' });
+
+    // Hot-reload kernel-only plugin
+    const reloadKernelRes = await app.inject({
+      method: 'POST',
+      url: '/kernel-only-addon/reload',
+      headers: asUser({ role: 'admin' }),
+    });
+    expect(reloadKernelRes.statusCode).toBe(200);
+    expect(reloadKernelRes.json()).toEqual({ ok: true, id: 'kernel-only-addon', status: 'active' });
+
+    // Hot-reload not found (404)
+    const reloadNotFoundRes = await app.inject({
+      method: 'POST',
+      url: '/non-existent-plugin/reload',
+      headers: asUser({ role: 'admin' }),
+    });
+    expect(reloadNotFoundRes.statusCode).toBe(404);
+
+    // 9. Uninstall plugin (valid)
+    const uninstallRes = await app.inject({
+      method: 'POST',
+      url: '/s3-backups/uninstall',
+      headers: asUser({ role: 'admin' }),
+    });
+    expect(uninstallRes.statusCode).toBe(200);
+    expect(uninstallRes.json()).toEqual({ ok: true, id: 's3-backups' });
+
+    // Uninstall not found (400)
+    const uninstallNotFoundRes = await app.inject({
+      method: 'POST',
+      url: '/ghost-plugin/uninstall',
+      headers: asUser({ role: 'admin' }),
+    });
+    expect(uninstallNotFoundRes.statusCode).toBe(400);
+
+    await app.close();
+  });
+});

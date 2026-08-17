@@ -14,6 +14,8 @@ const apiMock = vi.hoisted(() => ({
     databases: { list: vi.fn() },
     templates: { list: vi.fn() },
     projects: { list: vi.fn() },
+    plugins: { list: vi.fn() },
+    menus: { list: vi.fn() },
   },
 }));
 
@@ -61,6 +63,9 @@ describe('Layout', () => {
     apiMock.api.services.list.mockResolvedValue([]);
     apiMock.api.databases.list.mockResolvedValue([]);
     apiMock.api.templates.list.mockResolvedValue([]);
+    apiMock.api.projects.list.mockResolvedValue([]);
+    apiMock.api.plugins.list.mockResolvedValue({ plugins: [] });
+    apiMock.api.menus.list.mockResolvedValue({ items: [] });
     FakeWebSocket.instances.length = 0;
     vi.stubGlobal('WebSocket', FakeWebSocket);
   });
@@ -290,8 +295,15 @@ describe('Layout', () => {
     // Backdrop close: the backdrop sits inside the drawer's `.fixed`
     // wrapper as the first child (`absolute inset-0 bg-black/40`).
     await user.click(screen.getByTitle('Activity'));
+    expect(screen.getByText('View Full Audit Ledger')).toBeInTheDocument();
     const backdrop = container.querySelector('div.fixed > button.absolute') as HTMLElement;
     await user.click(backdrop);
+    expect(screen.queryByText('Events')).not.toBeInTheDocument();
+
+    // Clicking View Full Audit Ledger navigates and closes drawer
+    await user.click(screen.getByTitle('Activity'));
+    const ledgerLink = screen.getByRole('link', { name: /View Full Audit Ledger/i });
+    await user.click(ledgerLink);
     expect(screen.queryByText('Events')).not.toBeInTheDocument();
   });
 
@@ -353,6 +365,31 @@ describe('Layout', () => {
       expect(container.querySelector('.text-rose-300')).not.toBeNull();
       expect(container.querySelector('.text-emerald-300')).not.toBeNull();
       expect(container.querySelector('.text-slate-300')).not.toBeNull();
+    });
+  });
+
+  it('renders dynamic extension items registered by plugins with custom and fallback icons', async () => {
+    apiMock.api.menus.list.mockResolvedValue({
+      items: [
+        { id: 'datadog-dash', label: 'Datadog APM', route: '/datadog', icon: 'activity' },
+        { id: 'custom-tool', label: 'Custom Tool', route: '/custom', icon: 'unknown_icon' },
+      ],
+    });
+
+    renderLayout('/databases');
+    await waitFor(() => {
+      expect(screen.getAllByText('Extensions').length).toBeGreaterThan(0);
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Extensions' }));
+    expect(await screen.findByText('Datadog APM')).toBeInTheDocument();
+    expect(screen.getByText('Custom Tool')).toBeInTheDocument();
+  });
+
+  it('gracefully falls back when menus query rejects', async () => {
+    apiMock.api.menus.list.mockRejectedValue(new Error('menus unavailable'));
+    renderLayout('/databases');
+    await waitFor(() => {
+      expect(screen.getByRole('link', { name: /Databases/ })).toBeInTheDocument();
     });
   });
 });

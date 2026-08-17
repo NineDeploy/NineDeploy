@@ -106,6 +106,18 @@ const h = vi.hoisted(() => {
   systemUpdateCheck: vi.fn(),
   usersResetLink: vi.fn(),
   banner: vi.fn(),
+  pluginsList: vi.fn(),
+  pluginsMarketplace: vi.fn(),
+  pluginsInstall: vi.fn(),
+  pluginsEnable: vi.fn(),
+  pluginsDisable: vi.fn(),
+  pluginsReload: vi.fn(),
+  pluginsInspect: vi.fn(),
+  pluginsUninstall: vi.fn(),
+  configCenterList: vi.fn(),
+  configCenterGet: vi.fn(),
+  configCenterSet: vi.fn(),
+  configCenterDelete: vi.fn(),
   };
 });
 
@@ -136,6 +148,22 @@ vi.mock('../src/commands/misc.js', () => ({
   tplList: h.tplList,
   tokenCreate: h.tokenCreate,
   tokenList: h.tokenList,
+}));
+vi.mock('../src/commands/plugins.js', () => ({
+  pluginsList: h.pluginsList,
+  pluginsMarketplace: h.pluginsMarketplace,
+  pluginsInstall: h.pluginsInstall,
+  pluginsEnable: h.pluginsEnable,
+  pluginsDisable: h.pluginsDisable,
+  pluginsReload: h.pluginsReload,
+  pluginsInspect: h.pluginsInspect,
+  pluginsUninstall: h.pluginsUninstall,
+}));
+vi.mock('../src/commands/configCenter.js', () => ({
+  configCenterList: h.configCenterList,
+  configCenterGet: h.configCenterGet,
+  configCenterSet: h.configCenterSet,
+  configCenterDelete: h.configCenterDelete,
 }));
 vi.mock('../src/commands/manage.js', () => ({
   activityList: h.activityList,
@@ -219,7 +247,7 @@ describe('program registration', () => {
       'setup', 'login', 'logout', 'whoami', 'config',
       'services', 'databases', 'templates', 'deploys', 'token', 'system',
       'env', 'domains', 'volumes', 'networks', 'sessions', 'backups', 'alerts', 'users',
-      'reset-link <idOrEmail>', 'activity',
+      'reset-link <idOrEmail>', 'activity', 'plugins', 'config-center',
     ]);
     expect(findCommand('services').children).toHaveLength(10);
     expect(findCommand('databases').children).toHaveLength(2);
@@ -232,9 +260,9 @@ describe('program registration', () => {
     expect(findCommand('volumes').children).toHaveLength(2);
     expect(findCommand('backups').children).toHaveLength(3);
     expect(findCommand('alerts').children).toHaveLength(3);
-    // 1 root + 21 direct + nested: 10 + 2 + 2 + 3 + 2 + 5 + 3 + 3 + 2 + 3 + 3
-    // (+3 for the new networks group, +2 for sessions, +1 activity)
-    expect(h.FakeCommand.instances).toHaveLength(65);
+    expect(findCommand('plugins').children).toHaveLength(8);
+    expect(findCommand('config-center').children).toHaveLength(4);
+    expect(h.FakeCommand.instances).toHaveLength(79);
     // argv length > 2 → no banner, no exit
     expect(h.banner).not.toHaveBeenCalled();
     expect(h.exit).not.toHaveBeenCalled();
@@ -603,5 +631,33 @@ describe('delegating actions', () => {
     expect(h.systemInfo).toHaveBeenCalledWith(client);
     await system.children.find((c) => c.cmdName === 'dashboard')!.actionFn!();
     expect(h.systemDashboard).toHaveBeenCalledWith(client);
+
+    const plugins = findCommand('plugins');
+    await plugins.children.find((c) => c.cmdName === 'list')!.actionFn!();
+    expect(h.pluginsList).toHaveBeenCalledWith(client);
+    await plugins.children.find((c) => c.cmdName === 'marketplace')!.actionFn!();
+    expect(h.pluginsMarketplace).toHaveBeenCalledWith(client);
+    await plugins.children.find((c) => c.cmdName === 'inspect <id>')!.actionFn!('s3-backups');
+    expect(h.pluginsInspect).toHaveBeenCalledWith(client, 's3-backups');
+    await plugins.children.find((c) => c.cmdName === 'install <target>')!.actionFn!('s3-backups', { source: 'marketplace' });
+    expect(h.pluginsInstall).toHaveBeenCalledWith(client, 's3-backups', { source: 'marketplace' });
+    await plugins.children.find((c) => c.cmdName === 'enable <id>')!.actionFn!('s3-backups');
+    expect(h.pluginsEnable).toHaveBeenCalledWith(client, 's3-backups');
+    await plugins.children.find((c) => c.cmdName === 'disable <id>')!.actionFn!('s3-backups');
+    expect(h.pluginsDisable).toHaveBeenCalledWith(client, 's3-backups');
+    await plugins.children.find((c) => c.cmdName === 'reload <id>')!.actionFn!('s3-backups');
+    expect(h.pluginsReload).toHaveBeenCalledWith(client, 's3-backups');
+    await plugins.children.find((c) => c.cmdName === 'uninstall <id>')!.actionFn!('s3-backups');
+    expect(h.pluginsUninstall).toHaveBeenCalledWith(client, 's3-backups');
+
+    const configCenter = findCommand('config-center');
+    await configCenter.children.find((c) => c.cmdName === 'list')!.actionFn!({ category: 'general' });
+    expect(h.configCenterList).toHaveBeenCalledWith(client, { category: 'general' });
+    await configCenter.children.find((c) => c.cmdName === 'get <key>')!.actionFn!('site_name');
+    expect(h.configCenterGet).toHaveBeenCalledWith(client, 'site_name');
+    await configCenter.children.find((c) => c.cmdName === 'set <key> <value>')!.actionFn!('site_name', 'NineDeploy', { secret: false });
+    expect(h.configCenterSet).toHaveBeenCalledWith(client, 'site_name', 'NineDeploy', { secret: false });
+    await configCenter.children.find((c) => c.cmdName === 'delete <key>')!.actionFn!('site_name');
+    expect(h.configCenterDelete).toHaveBeenCalledWith(client, 'site_name');
   });
 });

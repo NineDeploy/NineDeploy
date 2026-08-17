@@ -3,11 +3,17 @@ import { screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Hub } from '../src/routes/Hub.js';
 import { api } from '../src/lib/api.js';
+import { useAuth } from '../src/lib/auth.js';
 import { renderWithProviders, mockOf } from './helpers.js';
 
 vi.mock('../src/lib/api.js', async () => {
   const { createFakeApiModule } = await import('./helpers.js');
   return createFakeApiModule();
+});
+
+vi.mock('../src/lib/auth.js', async () => {
+  const { createAuthMock } = await import('./helpers.js');
+  return createAuthMock();
 });
 
 vi.mock('../src/components/DeployWizard.js', () => ({
@@ -55,9 +61,40 @@ const templateDetail = {
   ],
 };
 
+const marketplaceCatalog = [
+  {
+    id: 's3-backups',
+    name: 'S3 Sync',
+    version: '1.0.0',
+    description: 'Amazon S3 backup extension',
+    author: 'NineDeploy Official',
+    category: 'storage',
+    isOfficial: true,
+    isInstalled: false,
+    configSchema: [{ key: 'bucket_name', type: 'string', isSecret: false, label: 'Bucket' }],
+  },
+  {
+    id: 'discord-alerts',
+    name: 'Discord Bot',
+    version: '2.0.0',
+    description: 'Discord notification extension',
+    author: 'Community',
+    category: 'notifications',
+    isOfficial: false,
+    isInstalled: true,
+    configSchema: [],
+  },
+];
+
 describe('Hub', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockOf(useAuth).mockReturnValue({
+      user: { id: 1, email: 'admin@test.com', name: 'Admin', role: 'admin' },
+      loading: false,
+    } as never);
+    mockOf(api.templates.list).mockResolvedValue(templates as never);
+    mockOf(api.plugins.marketplace).mockResolvedValue({ catalog: marketplaceCatalog } as never);
   });
 
   it('shows skeleton while loading', () => {
@@ -171,11 +208,188 @@ describe('Hub', () => {
     expect(screen.queryByText('A workflow tool')).not.toBeInTheDocument();
   });
 
-  it('shows loading state inside the detail modal', async () => {
+  it('switches to Compose YAML subtab and copies docker compose to clipboard', async () => {
+    const user = userEvent.setup();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+      writable: true,
+    });
+
     mockOf(api.templates.list).mockResolvedValue(templates as never);
-    mockOf(api.templates.get).mockReturnValue(new Promise(() => {}) as never);
+    mockOf(api.templates.get).mockResolvedValue(templateDetail as never);
     renderWithProviders(<Hub />);
+
     fireEvent.click(await screen.findByRole('button', { name: /n8n/ }));
-    await waitFor(() => expect(document.querySelectorAll('.animate-pulse').length).toBeGreaterThan(0));
+    await screen.findByText('A workflow tool');
+
+    // Switch to Compose YAML subtab
+    await user.click(screen.getByRole('button', { name: 'Compose YAML' }));
+    expect(screen.getByText('docker-compose.yml preview')).toBeInTheDocument();
+    expect(screen.getByText(/image: docker\.io\/n8nio\/n8n/)).toBeInTheDocument();
+
+    // Click Copy YAML
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    await user.click(screen.getByRole('button', { name: 'Copy YAML' }));
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining('services:'));
+    expect(await screen.findByText('Copied!')).toBeInTheDocument();
+    vi.advanceTimersByTime(2100);
+    vi.useRealTimers();
+
+    // Switch back to Overview
+    await user.click(screen.getByRole('button', { name: 'Overview' }));
+    expect(screen.getByText('A workflow tool')).toBeInTheDocument();
+  });
+
+  it('generateComposeYaml handles minimal and full template configurations', async () => {
+    const { generateComposeYaml } = await import('../src/routes/Hub.js');
+    const minimalYaml = generateComposeYaml({
+      id: 'simple-app',
+      name: 'Simple App',
+      emoji: '🚀',
+      category: 'Tools',
+      tagline: 'Simple test app',
+      description: 'A test app without env or port or volume',
+      image: 'alpine:latest',
+      port: 0,
+      env: [],
+      volumeMount: null,
+      featured: false,
+    });
+    expect(minimalYaml).toContain('services:');
+    expect(minimalYaml).toContain('simple-app:');
+    expect(minimalYaml).toContain('image: alpine:latest');
+    expect(minimalYaml).not.toContain('ports:');
+    expect(minimalYaml).not.toContain('volumes:');
+  });
+
+  describe('Extension Marketplace Tab', () => {
+    it('switches to marketplace tab and renders extension cards and installs', async () => {
+      const user = userEvent.setup();
+      mockOf(api.plugins.install).mockResolvedValue({ ok: true, id: 's3-backups', status: 'active' });
+
+      renderWithProviders(<Hub />);
+      await user.click(screen.getByRole('button', { name: /Extension Marketplace/ }));
+
+      await waitFor(() => {
+        expect(screen.getByText('S3 Sync')).toBeInTheDocument();
+        expect(screen.getByText('Discord Bot')).toBeInTheDocument();
+        expect(screen.getByText('Official')).toBeInTheDocument();
+        expect(screen.getByText('Community')).toBeInTheDocument();
+        expect(screen.getByText('Installed')).toBeInTheDocument();
+      });
+
+      // Filter marketplace items
+      await user.type(screen.getByPlaceholderText('Search extensions…'), 'Amazon');
+      expect(screen.getByText('S3 Sync')).toBeInTheDocument();
+      expect(screen.queryByText('Discord Bot')).not.toBeInTheDocument();
+
+      // Click install
+      await user.click(screen.getByRole('button', { name: /Install/ }));
+      await waitFor(() => {
+        expect(mockOf(api.plugins.install)).toHaveBeenCalledWith({
+          source: 'marketplace',
+          target: 's3-backups',
+        });
+      });
+    });
+
+    it('switches back to templates tab and tests non-admin disabled install', async () => {
+      const user = userEvent.setup();
+      mockOf(useAuth).mockReturnValue({
+        user: { id: 2, email: 'member@test.com', name: 'Member', role: 'member' },
+        loading: false,
+      } as never);
+
+      renderWithProviders(<Hub />);
+      // Switch to marketplace
+      await user.click(screen.getByRole('button', { name: /Extension Marketplace/ }));
+      await waitFor(() => expect(screen.getByText('S3 Sync')).toBeInTheDocument());
+
+      // Install button is disabled for non-admin
+      const installBtn = screen.getByRole('button', { name: /Install/ });
+      expect(installBtn).toBeDisabled();
+
+      // Switch back to App Templates
+      await user.click(screen.getByRole('button', { name: /App Templates/ }));
+      await waitFor(() => expect(screen.getByText('n8n')).toBeInTheDocument());
+    });
+
+    it('shows installing spinner while install is in flight', async () => {
+      const user = userEvent.setup();
+      let resolveInstall!: (val: unknown) => void;
+      mockOf(api.plugins.install).mockReturnValue(
+        new Promise((res) => {
+          resolveInstall = res;
+        }) as never,
+      );
+
+      renderWithProviders(<Hub />);
+      await user.click(screen.getByRole('button', { name: /Extension Marketplace/ }));
+      await waitFor(() => expect(screen.getByText('S3 Sync')).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: /Install/ }));
+      expect(await screen.findByText('Installing…')).toBeInTheDocument();
+
+      resolveInstall({ ok: true, id: 's3-backups', status: 'active' });
+      await waitFor(() => expect(screen.queryByText('Installing…')).not.toBeInTheDocument());
+    });
+
+    it('shows loading state in marketplace tab', async () => {
+      const user = userEvent.setup();
+      mockOf(api.plugins.marketplace).mockReturnValue(new Promise(() => {}));
+
+      renderWithProviders(<Hub />);
+      await user.click(screen.getByRole('button', { name: /Extension Marketplace/ }));
+      expect(document.querySelectorAll('.animate-pulse').length).toBeGreaterThan(0);
+    });
+
+    it('shows error state with retry in marketplace tab', async () => {
+      const user = userEvent.setup();
+      mockOf(api.plugins.marketplace).mockRejectedValue(new Error('Marketplace offline'));
+
+      renderWithProviders(<Hub />);
+      await user.click(screen.getByRole('button', { name: /Extension Marketplace/ }));
+      expect(await screen.findByText("Couldn't load marketplace")).toBeInTheDocument();
+      expect(screen.getByText('Marketplace offline')).toBeInTheDocument();
+
+      mockOf(api.plugins.marketplace).mockResolvedValue({ catalog: marketplaceCatalog } as never);
+      fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+      await waitFor(() => expect(screen.getByText('S3 Sync')).toBeInTheDocument());
+    });
+
+    it('shows empty state when catalog is empty in marketplace tab', async () => {
+      const user = userEvent.setup();
+      mockOf(api.plugins.marketplace).mockResolvedValue({ catalog: [] } as never);
+
+      renderWithProviders(<Hub />);
+      await user.click(screen.getByRole('button', { name: /Extension Marketplace/ }));
+      expect(await screen.findByText('No extensions match')).toBeInTheDocument();
+      expect(screen.getByText('No extensions found.')).toBeInTheDocument();
+    });
+
+    it('shows query empty state in marketplace tab when search returns no match', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<Hub />);
+      await user.click(screen.getByRole('button', { name: /Extension Marketplace/ }));
+      await waitFor(() => expect(screen.getByText('S3 Sync')).toBeInTheDocument());
+
+      await user.type(screen.getByPlaceholderText('Search extensions…'), 'xyznonexistent');
+      expect(await screen.findByText('No extensions match')).toBeInTheDocument();
+      expect(screen.getByText('Nothing matches "xyznonexistent" in extensions.')).toBeInTheDocument();
+    });
+
+    it('handles install failure gracefully in marketplace tab', async () => {
+      const user = userEvent.setup();
+      mockOf(api.plugins.install).mockRejectedValue(new Error('Install failed'));
+
+      renderWithProviders(<Hub />);
+      await user.click(screen.getByRole('button', { name: /Extension Marketplace/ }));
+      await waitFor(() => expect(screen.getByText('S3 Sync')).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: /Install/ }));
+      await waitFor(() => expect(mockOf(api.plugins.install)).toHaveBeenCalled());
+    });
   });
 });

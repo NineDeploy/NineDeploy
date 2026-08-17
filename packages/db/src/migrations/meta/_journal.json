@@ -148,6 +148,13 @@
       "when": 1786906000000,
       "tag": "0021_optimal_the_anarchist",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "6",
+      "when": 1786982690155,
+      "tag": "0022_funny_peter_quill",
+      "breakpoints": true
     }
   ]
 }

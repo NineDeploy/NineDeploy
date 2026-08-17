@@ -5,11 +5,13 @@ import path from 'node:path';
 import {
   backupDatabase,
   connectionString,
+  databaseLogs,
   readBackupBytes,
   databaseSize,
   defaultPort,
   ENGINES,
   removeVolume,
+  restartDatabase,
   restoreDatabase,
   startDatabase,
   stopDatabase,
@@ -64,7 +66,7 @@ describe('ENGINES metadata', () => {
   it('maps each engine to image, port, volume and env', () => {
     expect(ENGINES.postgres.image()).toBe('postgres:16');
     expect(ENGINES.postgres.image('17')).toBe('postgres:17');
-    expect(ENGINES.mysql.image()).toBe('mysql:8');
+    expect(ENGINES.mysql.image()).toBe('mysql:8.4');
     expect(ENGINES.mysql.image('9')).toBe('mysql:9');
     expect(ENGINES.mariadb.image()).toBe('mariadb:11');
     expect(ENGINES.mariadb.image('12')).toBe('mariadb:12');
@@ -181,7 +183,7 @@ describe('startDatabase', () => {
         '--cpu-shares', '512', '--memory', '256m',
         '-v', 'vm:/var/lib/mysql',
         '--env-file', expect.any(String),
-        'mysql:8',
+        'mysql:8.4',
       ],
       {},
       log,
@@ -585,5 +587,23 @@ describe('restoreDatabase', () => {
       {},
       expect.any(Function),
     );
+  });
+
+  it('restarts a running database container', async () => {
+    await restartDatabase(dbRow({ containerName: 'db-cont' }), vi.fn());
+    expect(h.run).toHaveBeenCalledWith('docker', ['restart', 'db-cont'], {}, expect.any(Function));
+    await expect(restartDatabase(dbRow({ containerName: null }), vi.fn())).rejects.toThrow('database not runnable');
+  });
+
+  it('captures database logs and handles errors or missing container', async () => {
+    h.capture.mockResolvedValueOnce('line 1\nline 2\n');
+    const logs = await databaseLogs(dbRow({ containerName: 'db-cont' }), 50);
+    expect(logs).toEqual(['line 1', 'line 2']);
+    expect(h.capture).toHaveBeenCalledWith('docker', ['logs', '--tail', '50', 'db-cont']);
+
+    expect(await databaseLogs(dbRow({ containerName: null }))).toEqual([]);
+
+    h.capture.mockRejectedValueOnce(new Error('docker dead'));
+    expect(await databaseLogs(dbRow({ containerName: 'db-cont' }))).toEqual([]);
   });
 });

@@ -1,22 +1,40 @@
 import { useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
-import { GitBranch, Plus, Server } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { GitBranch, Plus, Search, Server } from 'lucide-react';
 import { Link } from 'react-router';
 import { api } from '../lib/api.js';
 import { useProjectScope } from '../lib/projects.js';
-import { Button, Card, EmptyState, ErrorCard, PageHeader, Skeleton, StatusBadge } from '../components/ui.js';
+import { Button, Card, EmptyState, ErrorCard, Input, PageHeader, Skeleton, StatusBadge } from '../components/ui.js';
 import { DeployWizard } from '../components/DeployWizard.js';
 
 export function ServicesList() {
   const [wizard, setWizard] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'running' | 'stopped' | 'errored'>('all');
   const { selectedId } = useProjectScope();
   const { data: services, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['services', selectedId],
     queryFn: () => api.services.list(selectedId != null ? `?projectId=${selectedId}` : ''),
   });
 
+  const filteredServices = useMemo(() => {
+    if (!services) return [];
+    return services.filter((s) => {
+      const matchStatus = statusFilter === 'all' || s.status === statusFilter;
+      if (!matchStatus) return false;
+      if (!searchQuery.trim()) return true;
+      const q = searchQuery.toLowerCase();
+      return (
+        s.name.toLowerCase().includes(q) ||
+        s.slug.toLowerCase().includes(q) ||
+        s.branch.toLowerCase().includes(q) ||
+        s.type.toLowerCase().includes(q)
+      );
+    });
+  }, [services, searchQuery, statusFilter]);
+
   return (
-    <div>
+    <div className="space-y-6">
       <PageHeader
         icon={<Server size={18} />}
         title="Services"
@@ -56,33 +74,86 @@ export function ServicesList() {
           />
         </Card>
       ) : (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {services.map((s) => (
-            <Link key={s.id} to={`/services/${s.id}`} className="block">
-              <Card interactive className="group h-full p-5">
-                <div className="flex items-start justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="grid h-10 w-10 place-items-center rounded-xl bg-white/[0.04] text-slate-400 ring-1 ring-inset ring-white/10 transition group-hover:text-indigo-300">
-                      <Server size={18} />
-                    </div>
-                    <div>
-                      <div className="font-semibold leading-tight text-slate-100 group-hover:text-white">{s.name}</div>
-                      <div className="font-mono text-[11px] text-slate-500">{s.slug}</div>
-                    </div>
-                  </div>
-                  <StatusBadge status={s.status} />
-                </div>
+        <div className="space-y-4">
+          {/* Search and status filter bar */}
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="relative max-w-xs flex-1">
+              <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+              <Input
+                placeholder="Search services..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-9 text-xs"
+              />
+            </div>
+            <div className="flex items-center gap-1.5 overflow-x-auto">
+              {(['all', 'running', 'stopped', 'errored'] as const).map((st) => (
+                <button
+                  key={st}
+                  type="button"
+                  onClick={() => setStatusFilter(st)}
+                  className={`rounded-lg px-2.5 py-1 text-xs font-medium capitalize transition ${
+                    statusFilter === st
+                      ? 'bg-indigo-500/15 text-indigo-300 ring-1 ring-inset ring-indigo-500/30'
+                      : 'bg-white/[0.03] text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  {st}
+                </button>
+              ))}
+            </div>
+          </div>
 
-                <div className="mt-5 flex items-center gap-4 text-xs text-slate-500">
-                  <span className="font-mono uppercase tracking-wide text-slate-400">{s.type}</span>
-                  <span className="flex items-center gap-1">
-                    <GitBranch size={12} /> {s.branch}
-                  </span>
-                  {s.port && <span className="font-mono">:{s.port}</span>}
-                </div>
-              </Card>
-            </Link>
-          ))}
+          {filteredServices.length === 0 ? (
+            <Card>
+              <EmptyState
+                icon={<Server size={24} />}
+                title="No matching services"
+                hint="Try searching with a different keyword or resetting your filter."
+                action={
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => {
+                      setSearchQuery('');
+                      setStatusFilter('all');
+                    }}
+                  >
+                    Reset filters
+                  </Button>
+                }
+              />
+            </Card>
+          ) : (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {filteredServices.map((s) => (
+                <Link key={s.id} to={`/services/${s.id}`} className="block">
+                  <Card interactive className="group h-full p-5">
+                    <div className="flex items-start justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="grid h-10 w-10 place-items-center rounded-xl bg-white/[0.04] text-slate-400 ring-1 ring-inset ring-white/10 transition group-hover:text-indigo-300">
+                          <Server size={18} />
+                        </div>
+                        <div>
+                          <div className="font-semibold leading-tight text-slate-100 group-hover:text-white">{s.name}</div>
+                          <div className="font-mono text-[11px] text-slate-500">{s.slug}</div>
+                        </div>
+                      </div>
+                      <StatusBadge status={s.status} />
+                    </div>
+
+                    <div className="mt-5 flex items-center gap-4 text-xs text-slate-500">
+                      <span className="font-mono uppercase tracking-wide text-slate-400">{s.type}</span>
+                      <span className="flex items-center gap-1">
+                        <GitBranch size={12} /> {s.branch}
+                      </span>
+                      {s.port && <span className="font-mono">:{s.port}</span>}
+                    </div>
+                  </Card>
+                </Link>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -1,13 +1,14 @@
 import { useQuery } from '@tanstack/react-query';
 import { AlertCircle, CheckCircle2, Database, Globe, Link2, Package, Rocket, Server, Upload, XCircle } from 'lucide-react';
 import { useRef, useState } from 'react';
-import { Link } from 'react-router';
+import { Link, useNavigate } from 'react-router';
 import { api } from '../lib/api.js';
 import { useToast } from '../components/Toast.js';
-import { Card, CardBody, ErrorCard, Skeleton, cn } from '../components/ui.js';
+import { Button, Card, CardBody, ErrorCard, Skeleton, cn } from '../components/ui.js';
 import { formatDateTime } from '../lib/format.js';
 
 export function Dashboard() {
+  const navigate = useNavigate();
   const { toast } = useToast();
   const dash = useQuery({ queryKey: ['dashboard'], queryFn: () => api.dashboard.get(), refetchInterval: 5000 });
   const importRef = useRef<HTMLInputElement>(null);
@@ -19,7 +20,7 @@ export function Dashboard() {
       const text = await file.text();
       const bundle = JSON.parse(text);
       const res = await api.services.importBundle(bundle);
-      window.location.href = `/services/${res.serviceId}`;
+      navigate(`/services/${res.serviceId}`);
     } catch {
       setImporting(false);
       toast('Import failed', 'error');
@@ -31,7 +32,12 @@ export function Dashboard() {
       <div className="space-y-4">
         <FetchBar show />
         <Skeleton className="h-24 w-full" />
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4"><Skeleton className="h-20 w-full" /><Skeleton className="h-20 w-full" /><Skeleton className="h-20 w-full" /><Skeleton className="h-20 w-full" /></div>
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+          <Skeleton className="h-20 w-full" />
+          <Skeleton className="h-20 w-full" />
+          <Skeleton className="h-20 w-full" />
+          <Skeleton className="h-20 w-full" />
+        </div>
         <Skeleton className="h-48 w-full" />
       </div>
     );
@@ -50,11 +56,10 @@ export function Dashboard() {
     <div className="nd-fade space-y-5">
       {/* Hero status banner */}
       <input ref={importRef} type="file" accept=".json" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) doImport(f); e.target.value = ''; }} />
-      <div className="mb-2 flex justify-end gap-2">
-        <button type="button" onClick={() => importRef.current?.click()} disabled={importing}
-          className="flex items-center gap-1.5 rounded-lg bg-white/[0.04] px-3 py-1.5 text-xs text-slate-400 transition hover:bg-white/[0.08] hover:text-slate-200 disabled:opacity-50">
+      <div className="flex justify-end">
+        <Button variant="secondary" size="sm" onClick={() => importRef.current?.click()} disabled={importing}>
           <Upload size={13} /> {importing ? 'Importing…' : 'Import service'}
-        </button>
+        </Button>
       </div>
       <FetchBar show={dash.isFetching} />
       <div

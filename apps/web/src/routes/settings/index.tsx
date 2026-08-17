@@ -8,8 +8,19 @@ import { SystemSection } from './SystemSection.js';
 import { NotificationsSection } from './NotificationsSection.js';
 import { MigrationSection } from './MigrationSection.js';
 import { IntegrationsSection } from './IntegrationsSection.js';
+import { ConfigCenterSection } from './ConfigCenterSection.js';
+import { PluginsSection } from './PluginsSection.js';
 
-type SectionId = 'account' | 'appearance' | 'security' | 'integrations' | 'system' | 'notifications' | 'migration';
+type SectionId =
+  | 'account'
+  | 'appearance'
+  | 'security'
+  | 'integrations'
+  | 'config'
+  | 'plugins'
+  | 'system'
+  | 'notifications'
+  | 'migration';
 
 /** Settings page shell: tabbed sections, each self-contained. */
 export function Settings() {
@@ -34,6 +45,8 @@ export function Settings() {
           { id: 'appearance', label: 'Appearance' },
           { id: 'security', label: 'Security' },
           { id: 'integrations', label: 'Integrations' },
+          { id: 'config', label: 'Config Center' },
+          { id: 'plugins', label: 'Plugins' },
           { id: 'system', label: 'System' },
           { id: 'notifications', label: 'Notifications' },
           { id: 'migration', label: 'Migration' },
@@ -44,6 +57,8 @@ export function Settings() {
       {section === 'appearance' && <AppearanceSection />}
       {section === 'security' && <SecuritySection />}
       {section === 'integrations' && <IntegrationsSection />}
+      {section === 'config' && <ConfigCenterSection />}
+      {section === 'plugins' && <PluginsSection />}
       {section === 'system' && <SystemSection />}
       {section === 'notifications' && <NotificationsSection />}
       {section === 'migration' && <MigrationSection />}

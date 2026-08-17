@@ -16,6 +16,23 @@ function fakeClient(): NineDeployClient {
     stats: { snapshot: vi.fn(async () => 'STATS') },
     topology: { get: vi.fn(async () => 'TOPO') },
     health: vi.fn(async () => 'HEALTH'),
+    plugins: {
+      list: vi.fn(async () => 'PLUGINS_LIST'),
+      marketplace: vi.fn(async () => 'MARKETPLACE'),
+      install: vi.fn(async () => 'INSTALLED'),
+      enable: vi.fn(async () => 'ENABLED'),
+      disable: vi.fn(async () => 'DISABLED'),
+      uninstall: vi.fn(async () => 'UNINSTALLED'),
+    },
+    config: {
+      list: vi.fn(async () => 'CONFIG_LIST'),
+      get: vi.fn(async () => 'CONFIG_GET'),
+      set: vi.fn(async () => 'CONFIG_SET'),
+      delete: vi.fn(async () => 'CONFIG_DELETE'),
+    },
+    menus: {
+      list: vi.fn(async () => 'MENUS_LIST'),
+    },
   } as unknown as NineDeployClient;
 }
 
@@ -26,9 +43,9 @@ const byName = (name: string) => {
 };
 
 describe('MCP tools', () => {
-  it('exposes 15 unique tools with descriptions', () => {
-    expect(TOOLS).toHaveLength(15);
-    expect(new Set(TOOLS.map((t) => t.name)).size).toBe(15);
+  it('exposes 26 unique tools with descriptions', () => {
+    expect(TOOLS).toHaveLength(26);
+    expect(new Set(TOOLS.map((t) => t.name)).size).toBe(26);
     for (const t of TOOLS) expect(t.description.length).toBeGreaterThan(10);
   });
 
@@ -76,11 +93,52 @@ describe('MCP tools', () => {
     expect(await byName('health').handler(c, {})).toBe('HEALTH');
   });
 
-  it('input schemas reject malformed ids', () => {
+  it('exercises plugin tools', async () => {
+    const c = fakeClient();
+    expect(await byName('list_plugins').handler(c, {})).toBe('PLUGINS_LIST');
+    expect(await byName('marketplace_plugins').handler(c, {})).toBe('MARKETPLACE');
+
+    await byName('install_plugin').handler(c, { source: 'marketplace', target: 's3-backups' });
+    expect(c.plugins.install).toHaveBeenCalledWith({ source: 'marketplace', target: 's3-backups' });
+
+    await byName('enable_plugin').handler(c, { id: 's3-backups' });
+    expect(c.plugins.enable).toHaveBeenCalledWith('s3-backups');
+
+    await byName('disable_plugin').handler(c, { id: 's3-backups' });
+    expect(c.plugins.disable).toHaveBeenCalledWith('s3-backups');
+
+    await byName('uninstall_plugin').handler(c, { id: 's3-backups' });
+    expect(c.plugins.uninstall).toHaveBeenCalledWith('s3-backups');
+  });
+
+  it('exercises config tools', async () => {
+    const c = fakeClient();
+    await byName('list_configs').handler(c, { category: 'security', reveal: true });
+    expect(c.config.list).toHaveBeenCalledWith({ category: 'security', reveal: true });
+
+    await byName('get_config').handler(c, { key: 'site_name' });
+    expect(c.config.get).toHaveBeenCalledWith('site_name');
+
+    await byName('set_config').handler(c, { key: 'site_name', value: 'NineDeploy', isSecret: false, description: 'Desc' });
+    expect(c.config.set).toHaveBeenCalledWith('site_name', { value: 'NineDeploy', isSecret: false, description: 'Desc' });
+
+    await byName('delete_config').handler(c, { key: 'site_name' });
+    expect(c.config.delete).toHaveBeenCalledWith('site_name');
+  });
+
+  it('exercises menu tools', async () => {
+    const c = fakeClient();
+    await byName('list_menus').handler(c, { slot: 'sidebar:main' });
+    expect(c.menus.list).toHaveBeenCalledWith({ slot: 'sidebar:main' });
+  });
+
+  it('input schemas validate and reject malformed inputs', () => {
     expect(byName('get_service').input.safeParse({ serviceId: 0 }).success).toBe(false);
     expect(byName('get_service').input.safeParse({}).success).toBe(false);
     expect(byName('get_service').input.safeParse({ serviceId: 5 }).success).toBe(true);
     expect(byName('rollback_deploy').input.safeParse({ serviceId: 5 }).success).toBe(false);
     expect(byName('list_services').input.safeParse({ projectId: 'x' }).success).toBe(false);
+    expect(byName('install_plugin').input.safeParse({ target: 'pkg' }).success).toBe(true);
+    expect(byName('set_config').input.safeParse({ key: 'k1', value: 123 }).success).toBe(true);
   });
 });

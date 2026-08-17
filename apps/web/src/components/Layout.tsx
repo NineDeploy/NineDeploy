@@ -1,12 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import {
-  Activity, ChevronLeft, Cloud, Container, Database, FolderKanban, Globe, HardDrive,
+  Activity, ChevronLeft, ChevronRight, Clock, Cloud, Container, Database, FolderKanban, Globe, HardDrive,
   Info, KeyRound, Layers, LayoutDashboard, Moon, Network, Shield, type LucideIcon,
   Rocket, Search, Server, Settings as SettingsIcon, Sparkles, Sun, Users, X,
 } from 'lucide-react';
 import { Link, Outlet, useLocation } from 'react-router';
 import { useAuth } from '../lib/auth.js';
-import { getToken } from '../lib/api.js';
+import { api, getToken } from '../lib/api.js';
 import { useProjectScope } from '../lib/projects.js';
 import { useTheme } from '../lib/theme.js';
 import { Logo } from './Logo.js';
@@ -16,6 +17,22 @@ import { CommandPalette } from './CommandPalette.js';
 interface NavItem { to: string; label: string; icon: LucideIcon }
 
 interface NavGroup { id: string; label: string; icon: LucideIcon; items: NavItem[] }
+
+export const ICON_MAP: Record<string, LucideIcon> = {
+  server: Server,
+  activity: Activity,
+  database: Database,
+  shield: Shield,
+  harddrive: HardDrive,
+  container: Container,
+  globe: Globe,
+  network: Network,
+  cloud: Cloud,
+  key: KeyRound,
+  sparkles: Sparkles,
+  layers: Layers,
+  users: Users,
+};
 
 const GROUPS: NavGroup[] = [
   {
@@ -43,6 +60,7 @@ const GROUPS: NavGroup[] = [
   },
   {
     id: 'system', label: 'System', icon: SettingsIcon, items: [
+      { to: '/activity', label: 'Activity', icon: Clock },
       { to: '/monitoring', label: 'Monitoring', icon: Activity },
       { to: '/docker', label: 'Docker', icon: Container },
       { to: '/sources', label: 'Sources', icon: KeyRound },
@@ -60,8 +78,8 @@ function matchItem(item: NavItem, pathname: string): boolean {
   return pathname.startsWith(item.to);
 }
 
-function findGroup(pathname: string): string | null {
-  for (const g of GROUPS) {
+function findGroup(pathname: string, groups: NavGroup[] = GROUPS): string | null {
+  for (const g of groups) {
     if (g.items.some((i) => matchItem(i, pathname))) return g.id;
   }
   return null;
@@ -71,7 +89,40 @@ export function Layout() {
   const { user, logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const location = useLocation();
-  const [activeGroup, setActiveGroup] = useState<string | null>(() => findGroup(location.pathname));
+
+  const menus = useQuery({
+    queryKey: ['menus'],
+    queryFn: async () => {
+      try {
+        const res = await api.menus.list();
+        return res.items;
+      } catch {
+        return [];
+      }
+    },
+  });
+
+  const navGroups = useMemo(() => {
+    const extensionItems: NavItem[] = (menus.data ?? []).map((m) => ({
+      to: m.route,
+      label: m.label,
+      icon: m.icon && ICON_MAP[m.icon.toLowerCase()] ? ICON_MAP[m.icon.toLowerCase()]! : Globe,
+    }));
+
+    if (extensionItems.length === 0) return GROUPS;
+
+    return [
+      ...GROUPS,
+      {
+        id: 'extensions',
+        label: 'Extensions',
+        icon: Layers,
+        items: extensionItems,
+      },
+    ];
+  }, [menus.data]);
+
+  const [activeGroup, setActiveGroup] = useState<string | null>(() => findGroup(location.pathname, GROUPS));
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
 
@@ -89,11 +140,11 @@ export function Layout() {
 
   // Auto-open the correct group when navigating.
   useEffect(() => {
-    const g = findGroup(location.pathname);
+    const g = findGroup(location.pathname, navGroups);
     if (g) setActiveGroup(g);
-  }, [location.pathname]);
+  }, [location.pathname, navGroups]);
 
-  const currentGroup = GROUPS.find((g) => g.id === activeGroup) ?? null;
+  const currentGroup = navGroups.find((g) => g.id === activeGroup) ?? null;
 
   const toggleGroup = (id: string) => setActiveGroup((prev) => (prev === id ? null : id));
 
@@ -103,14 +154,14 @@ export function Layout() {
   return (
     <div className="flex h-screen overflow-hidden">
       {/* ── Activity Bar (far-left rail) ──────────────────── */}
-      <div className="flex w-12 shrink-0 flex-col items-center border-r border-white/[0.06] bg-slate-950/70 py-3 backdrop-blur">
+      <div className="relative z-30 flex w-12 shrink-0 flex-col items-center border-r border-white/[0.06] bg-slate-950/70 py-3 backdrop-blur">
         {/* Brand mark */}
         <div className="mb-3 grid h-8 w-8 place-items-center">
           <Logo className="h-8 w-8" />
         </div>
 
         {/* Group icons */}
-        {GROUPS.map((g) => {
+        {navGroups.map((g) => {
           const Icon = g.icon;
           const active = activeGroup === g.id;
           return (
@@ -127,7 +178,7 @@ export function Layout() {
               {/* Active indicator */}
               {active && <span className="absolute -left-3 top-1/2 h-6 w-1 -translate-y-1/2 rounded-r-full bg-indigo-400" />}
               {/* Tooltip */}
-              <span className="pointer-events-none absolute left-full ml-2 z-50 whitespace-nowrap rounded-md bg-slate-800 px-2 py-1 text-xs text-slate-200 opacity-0 shadow-lg transition-opacity group-hover:opacity-100">
+              <span className="pointer-events-none absolute left-full top-1/2 ml-2.5 z-50 -translate-y-1/2 whitespace-nowrap rounded-md border border-slate-700/80 bg-slate-900 px-2 py-1 text-xs font-medium text-slate-100 shadow-2xl opacity-0 transition-all duration-150 group-hover:opacity-100">
                 {g.label}
               </span>
             </button>
@@ -143,7 +194,7 @@ export function Layout() {
           title="Sign out"
         >
           {(user?.email ?? '?')[0]?.toUpperCase()}
-          <span className="pointer-events-none absolute left-full ml-2 z-50 whitespace-nowrap rounded-md bg-slate-800 px-2 py-1 text-xs text-slate-200 opacity-0 shadow-lg transition-opacity group-hover:opacity-100">
+          <span className="pointer-events-none absolute left-full top-1/2 ml-2.5 z-50 -translate-y-1/2 whitespace-nowrap rounded-md border border-slate-700/80 bg-slate-900 px-2 py-1 text-xs font-medium text-slate-100 shadow-2xl opacity-0 transition-all duration-150 group-hover:opacity-100">
             {user?.email} · Sign out
           </span>
         </button>
@@ -151,7 +202,7 @@ export function Layout() {
 
       {/* ── Secondary Panel (group items) ────────────────── */}
       {currentGroup && (
-        <div className="nd-flex nd-fade flex w-52 shrink-0 flex-col border-r border-white/[0.06] bg-white/[0.015] backdrop-blur-sm">
+        <div className="nd-flex nd-fade relative z-10 flex w-52 shrink-0 flex-col border-r border-white/[0.06] bg-white/[0.015] backdrop-blur-sm">
           {/* Group header */}
           <div className="flex items-center gap-2 px-4 pb-2 pt-4">
             <currentGroup.icon size={14} className="text-indigo-400" />
@@ -365,6 +416,16 @@ function ActivityDrawer({ onClose }: { onClose: () => void }) {
               ))}
             </ul>
           )}
+        </div>
+        <div className="border-t border-white/5 p-3">
+          <Link
+            to="/activity"
+            onClick={onClose}
+            className="flex items-center justify-center gap-1.5 rounded-lg bg-white/[0.04] py-2 text-xs font-medium text-slate-300 transition hover:bg-white/[0.08] hover:text-white"
+          >
+            <span>View Full Audit Ledger</span>
+            <ChevronRight size={13} />
+          </Link>
         </div>
       </div>
     </div>

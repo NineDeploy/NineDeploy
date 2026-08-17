@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Check, Copy, Database, HardDriveDownload, Link2, Plus, Trash2 } from 'lucide-react';
+import { Link } from 'react-router';
 import { api } from '../lib/api.js';
 import { useProjectScope } from '../lib/projects.js';
 import { useToast } from '../components/Toast.js';
@@ -9,7 +10,7 @@ import { useCopy } from '../lib/format.js';
 import { StorageGauge } from '../components/StorageGauge.js';
 import { DatabaseWizard } from '../components/DatabaseWizard.js';
 
-const ENGINE_LABEL: Record<string, string> = { postgres: 'PostgreSQL', mysql: 'MySQL', redis: 'Redis', mongo: 'MongoDB' };
+const ENGINE_LABEL: Record<string, string> = { postgres: 'PostgreSQL', mysql: 'MySQL', mariadb: 'MariaDB', redis: 'Redis', mongo: 'MongoDB' };
 
 export function Databases() {
   const qc = useQueryClient();
@@ -85,7 +86,9 @@ export function Databases() {
                   </div>
                   <div>
                     <div className="flex items-center gap-2">
-                      <span className="font-semibold leading-tight">{d.name}</span>
+                      <Link to={`/databases/${d.id}`} className="font-semibold leading-tight text-slate-100 hover:text-indigo-300 transition">
+                        {d.name}
+                      </Link>
                       {d.attachedServices && d.attachedServices.length > 0 && (
                         <span
                           className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-300 ring-1 ring-inset ring-amber-500/20"
@@ -125,13 +128,21 @@ export function Databases() {
               </div>
 
               <div className="mt-4 flex items-center justify-between">
-                <button type="button"
-                  onClick={() => backup.mutate(d.id)}
-                  disabled={backup.isPending}
-                  className="flex items-center gap-1 text-xs text-slate-400 transition hover:text-indigo-300 disabled:opacity-50"
-                >
-                  <HardDriveDownload size={12} /> Backup
-                </button>
+                <div className="flex items-center gap-3">
+                  <Link
+                    to={`/databases/${d.id}`}
+                    className="text-xs font-medium text-indigo-400 hover:text-indigo-300 transition"
+                  >
+                    Manage &rarr;
+                  </Link>
+                  <button type="button"
+                    onClick={() => backup.mutate(d.id)}
+                    disabled={backup.isPending}
+                    className="flex items-center gap-1 text-xs text-slate-400 transition hover:text-indigo-300 disabled:opacity-50"
+                  >
+                    <HardDriveDownload size={12} /> Backup
+                  </button>
+                </div>
                 <button type="button"
                   onClick={() => setPendingRemove({ id: d.id, name: d.name, attachedServices: d.attachedServices })}
                   className={cn('flex items-center gap-1 text-xs text-slate-600 transition hover:text-rose-400')}

@@ -30,6 +30,8 @@ describe('schema', () => {
     'tunnels',
     'notificationChannels',
     'notificationLog',
+    'configEntries',
+    'installedPlugins',
   ] as const;
 
   it('exposes every expected table', () => {
@@ -116,6 +118,8 @@ describe('schema', () => {
       'passwordResetTokens',
       'jobRuns',
       'scheduledJobs',
+      'configEntries',
+      'installedPlugins',
     ] as const;
     for (const name of tables) {
       const table = (schema as unknown as Record<string, unknown>)[name];

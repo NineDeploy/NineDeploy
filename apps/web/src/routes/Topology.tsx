@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useMemo } from 'react';
+import { Link } from 'react-router';
 import {
   Background,
   BackgroundVariant,
@@ -39,16 +40,19 @@ type GatewayData = { running: boolean };
 
 function ServiceNode(props: NodeProps) {
   const data = props.data as ServiceData;
+  const serviceId = props.id.replace('service-', '');
   return (
-    <div className="w-52 rounded-xl border border-indigo-500/30 bg-slate-900/90 px-3 py-2.5 shadow-lg shadow-black/40 backdrop-blur">
+    <div className="w-52 rounded-xl border border-indigo-500/30 bg-slate-900/90 px-3 py-2.5 shadow-lg shadow-black/40 backdrop-blur transition hover:border-indigo-400">
       <Handle type="target" position={Position.Left} style={{ background: 'var(--nd-accent)' }} />
       <Handle type="source" position={Position.Right} style={{ background: 'var(--nd-accent)' }} />
       <Handle type="source" id="bottom" position={Position.Bottom} style={{ background: '#f59e0b' }} />
-      <div className="flex items-center gap-2">
-        <span className="grid h-7 w-7 place-items-center rounded-lg bg-indigo-500/15 text-indigo-300">
-          <Server size={14} />
-        </span>
-        <span className="truncate font-medium text-slate-100">{data.name}</span>
+      <div className="flex items-center justify-between">
+        <Link to={`/services/${serviceId}`} className="flex items-center gap-2 truncate hover:underline">
+          <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-indigo-500/15 text-indigo-300">
+            <Server size={14} />
+          </span>
+          <span className="truncate font-medium text-slate-100">{data.name}</span>
+        </Link>
       </div>
       <div className="mt-1.5 flex items-center justify-between">
         <span className="font-mono text-[10px] uppercase text-slate-500">{data.port ? `${data.type}:${data.port}` : data.type}</span>
@@ -60,15 +64,18 @@ function ServiceNode(props: NodeProps) {
 
 function DatabaseNode(props: NodeProps) {
   const data = props.data as DatabaseData;
+  const dbId = props.id.replace('database-', '');
   return (
-    <div className="w-48 rounded-xl border border-emerald-500/30 bg-slate-900/90 px-3 py-2.5 shadow-lg shadow-black/40 backdrop-blur">
+    <div className="w-48 rounded-xl border border-emerald-500/30 bg-slate-900/90 px-3 py-2.5 shadow-lg shadow-black/40 backdrop-blur transition hover:border-emerald-400">
       <Handle type="target" position={Position.Left} style={{ background: '#10b981' }} />
       <Handle type="source" id="bottom" position={Position.Bottom} style={{ background: '#f59e0b' }} />
-      <div className="flex items-center gap-2">
-        <span className="grid h-7 w-7 place-items-center rounded-lg bg-emerald-500/15 text-emerald-300">
-          <Database size={14} />
-        </span>
-        <span className="truncate font-medium text-slate-100">{data.name}</span>
+      <div className="flex items-center justify-between">
+        <Link to={`/databases/${dbId}`} className="flex items-center gap-2 truncate hover:underline">
+          <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-emerald-500/15 text-emerald-300">
+            <Database size={14} />
+          </span>
+          <span className="truncate font-medium text-slate-100">{data.name}</span>
+        </Link>
       </div>
       <div className="mt-1.5 flex items-center justify-between">
         <span className="font-mono text-[10px] capitalize text-slate-500">{data.engine}</span>

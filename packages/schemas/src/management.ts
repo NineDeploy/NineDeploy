@@ -223,6 +223,8 @@ export type CreateAlertRuleInput = z.input<typeof alertRuleCreate>;
 export interface ActivityEntry {
   id: number;
   userId: number | null;
+  userName?: string | null;
+  userEmail?: string | null;
   action: string;
   entity: string | null;
   meta: Record<string, unknown> | null;
@@ -274,5 +276,38 @@ export interface TraefikInfo {
   routers: TraefikRouter[];
   services: TraefikService[];
   middlewares: TraefikMiddleware[];
+}
+
+// ── Database detail & credentials types ─────────────────────────────────────
+export interface DatabaseDetail {
+  id: number;
+  projectId: number | null;
+  name: string;
+  slug: string;
+  engine: string;
+  version: string | null;
+  status: string;
+  host: string | null;
+  port: number | null;
+  username: string | null;
+  database: string | null;
+  connectionString: string | null;
+  containerName?: string | null;
+  volumeName?: string | null;
+  cpuShares?: number | null;
+  memLimitMb?: number | null;
+  attachedServices: Array<{ id: number; name: string; slug: string }>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DatabaseCredentials {
+  engine: string;
+  username: string | null;
+  password: string;
+  database: string | null;
+  internalHost: string | null;
+  internalPort: number | null;
+  connectionString: string;
 }
 

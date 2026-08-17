@@ -893,6 +893,28 @@ describe('createClient', () => {
 
       await client.databases.remove(2, { force: true });
       expect(last(calls)).toMatchObject({ url: '/v1/databases/2?force=true', init: { method: 'DELETE' } });
+
+      await client.databases.restart(1);
+      expect(last(calls)).toMatchObject({ url: '/v1/databases/1/restart', init: { method: 'POST' } });
+
+      await client.databases.stop(1);
+      expect(last(calls)).toMatchObject({ url: '/v1/databases/1/stop', init: { method: 'POST' } });
+
+      await client.databases.start(1);
+      expect(last(calls)).toMatchObject({ url: '/v1/databases/1/start', init: { method: 'POST' } });
+
+      await client.databases.logs(1);
+      expect(last(calls)).toMatchObject({ url: '/v1/databases/1/logs', init: { method: 'GET' } });
+
+      await client.databases.logs(1, 50);
+      expect(last(calls)).toMatchObject({ url: '/v1/databases/1/logs?lines=50', init: { method: 'GET' } });
+
+      await client.databases.credentials(1);
+      expect(last(calls)).toMatchObject({ url: '/v1/databases/1/credentials', init: { method: 'GET' } });
+
+      await client.databases.setLimits(1, { cpuShares: 512, memLimitMb: 1024 });
+      expect(last(calls)).toMatchObject({ url: '/v1/databases/1/limits', init: { method: 'PATCH' } });
+      expect(JSON.parse(last(calls).init.body ?? '{}')).toEqual({ cpuShares: 512, memLimitMb: 1024 });
     });
   });
 
@@ -1064,6 +1086,74 @@ describe('createClient', () => {
 
       await client.traefik.backupCerts();
       expect(last(calls)).toMatchObject({ url: '/v1/traefik/backup-certs', init: { method: 'POST' } });
+    });
+  });
+
+  describe('config', () => {
+    it('lists, gets, sets, and deletes config entries', async () => {
+      const { fetchMock, calls } = makeFetch(() => ok({ entries: [] }));
+      const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
+
+      await client.config.list();
+      expect(last(calls)).toMatchObject({ url: '/v1/config', init: { method: 'GET' } });
+
+      await client.config.list({ category: 'general', pluginId: 'smtp', reveal: true });
+      expect(last(calls)).toMatchObject({ url: '/v1/config?category=general&pluginId=smtp&reveal=true', init: { method: 'GET' } });
+
+      await client.config.get('system.site_name');
+      expect(last(calls)).toMatchObject({ url: '/v1/config/system.site_name', init: { method: 'GET' } });
+
+      await client.config.set('system.site_name', { value: 'NineDeploy', isSecret: false, description: 'Main site' });
+      expect(last(calls)).toMatchObject({ url: '/v1/config/system.site_name', init: { method: 'POST' } });
+      expect(JSON.parse(last(calls).init.body ?? '{}')).toEqual({ value: 'NineDeploy', isSecret: false, description: 'Main site' });
+
+      await client.config.delete('system.site_name');
+      expect(last(calls)).toMatchObject({ url: '/v1/config/system.site_name', init: { method: 'DELETE' } });
+    });
+  });
+
+  describe('plugins', () => {
+    it('lists, marketplaces, installs, enables, disables, and uninstalls plugins', async () => {
+      const { fetchMock, calls } = makeFetch(() => ok({ plugins: [], catalog: [] }));
+      const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
+
+      await client.plugins.list();
+      expect(last(calls)).toMatchObject({ url: '/v1/plugins', init: { method: 'GET' } });
+
+      await client.plugins.marketplace();
+      expect(last(calls)).toMatchObject({ url: '/v1/plugins/marketplace', init: { method: 'GET' } });
+
+      await client.plugins.install({ source: 'marketplace', target: 's3-backups' });
+      expect(last(calls)).toMatchObject({ url: '/v1/plugins/install', init: { method: 'POST' } });
+      expect(JSON.parse(last(calls).init.body ?? '{}')).toEqual({ source: 'marketplace', target: 's3-backups' });
+
+      await client.plugins.enable('smtp-notifier');
+      expect(last(calls)).toMatchObject({ url: '/v1/plugins/smtp-notifier/enable', init: { method: 'POST' } });
+
+      await client.plugins.disable('smtp-notifier');
+      expect(last(calls)).toMatchObject({ url: '/v1/plugins/smtp-notifier/disable', init: { method: 'POST' } });
+
+      await client.plugins.reload('smtp-notifier');
+      expect(last(calls)).toMatchObject({ url: '/v1/plugins/smtp-notifier/reload', init: { method: 'POST' } });
+
+      await client.plugins.inspect('smtp-notifier');
+      expect(last(calls)).toMatchObject({ url: '/v1/plugins/smtp-notifier/inspect', init: { method: 'GET' } });
+
+      await client.plugins.uninstall('smtp-notifier');
+      expect(last(calls)).toMatchObject({ url: '/v1/plugins/smtp-notifier/uninstall', init: { method: 'POST' } });
+    });
+  });
+
+  describe('menus', () => {
+    it('lists menus with and without slot query', async () => {
+      const { fetchMock, calls } = makeFetch(() => ok({ slots: {}, items: [] }));
+      const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
+
+      await client.menus.list();
+      expect(last(calls)).toMatchObject({ url: '/v1/menus', init: { method: 'GET' } });
+
+      await client.menus.list({ slot: 'sidebar:main' });
+      expect(last(calls)).toMatchObject({ url: '/v1/menus?slot=sidebar%3Amain', init: { method: 'GET' } });
     });
   });
 

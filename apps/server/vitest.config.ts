@@ -8,8 +8,8 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       include: ['src/**/*.ts'],
-      // types.ts is interfaces-only (compiles to no runtime code).
-      exclude: ['src/engine/types.ts'],
+      // types.ts and index.ts are interfaces-only / barrel re-exports.
+      exclude: ['src/engine/types.ts', 'src/kernel/types.ts', 'src/kernel/index.ts'],
       reporter: ['text'],
       thresholds: {
         statements: 100,

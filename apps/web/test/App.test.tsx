@@ -107,6 +107,47 @@ describe('App', () => {
     expect(await screen.findByText('Hub')).toBeInTheDocument();
   });
 
+  it('renders the activity route inside the authenticated shell', async () => {
+    authState({ id: 1, email: 'a@b.c' });
+    mockOf(api.activity.list).mockResolvedValue({ entries: [] } as never);
+    renderWithProviders(<App />, { route: '/activity' });
+    await screen.findByTestId('layout');
+    expect(await screen.findByText('Activity & Audit Logs')).toBeInTheDocument();
+  });
+
+  it('renders the database detail route inside the authenticated shell', async () => {
+    authState({ id: 1, email: 'a@b.c' });
+    mockOf(api.databases.get).mockResolvedValue({
+      id: 1,
+      name: 'pg-app',
+      slug: 'pg-app',
+      engine: 'postgres',
+      version: '16',
+      status: 'running',
+      host: 'nd-db-pg-app',
+      port: 5432,
+      username: 'nine',
+      database: 'app',
+      connectionString: 'postgres://conn',
+      attachedServices: [],
+      createdAt: '2026-08-17T12:00:00.000Z',
+      updatedAt: '2026-08-17T12:00:00.000Z',
+    } as any);
+    mockOf(api.databases.credentials).mockResolvedValue({
+      engine: 'postgres',
+      username: 'nine',
+      password: 'p',
+      database: 'app',
+      internalHost: 'nd-db-pg-app',
+      internalPort: 5432,
+      connectionString: 'postgres://conn',
+    } as any);
+    mockOf(api.backups.list).mockResolvedValue([]);
+    renderWithProviders(<App />, { route: '/databases/1' });
+    await screen.findByTestId('layout');
+    expect(await screen.findByText('pg-app')).toBeInTheDocument();
+  });
+
   it('renders the login route for unauthenticated users', async () => {
     authState(null);
     mockOf(api.auth.status).mockResolvedValue({ initialized: true } as never);

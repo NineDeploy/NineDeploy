@@ -30,9 +30,11 @@ describe('buildServer', () => {
   it('lists all tools with schemas', async () => {
     const mcp = await connected(fake());
     const tools = await mcp.listTools();
-    expect(tools.tools).toHaveLength(15);
+    expect(tools.tools).toHaveLength(26);
     expect(tools.tools.map((t) => t.name)).toContain('deploy_service');
     expect(tools.tools.map((t) => t.name)).toContain('list_services');
+    expect(tools.tools.map((t) => t.name)).toContain('list_plugins');
+    expect(tools.tools.map((t) => t.name)).toContain('list_configs');
   });
 
   it('serves a tool call as JSON text', async () => {
@@ -125,6 +127,7 @@ describe('production defaults', () => {
     expect(isDirectRun('/other/dist/index.js', self)).toBe(false);
     expect(isDirectRun('/x/test/server.test.ts', self)).toBe(false);
     expect(isDirectRun(undefined, self)).toBe(false);
+    expect(isDirectRun('://bad-url\0', self)).toBe(false);
   });
 
   it('staticToken returns a closure yielding the token', () => {

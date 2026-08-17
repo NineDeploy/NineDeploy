@@ -115,4 +115,92 @@ export const TOOLS: ToolDef[] = [
       return c.deploys.rollback(serviceId, deploymentId);
     },
   },
+  // ── Plugins & Microkernel Extensibility ────────────────────────────────
+  {
+    name: 'list_plugins',
+    description: 'List all installed and active kernel plugins, extensions, and their operational status.',
+    input: z.object({}),
+    handler: (c) => c.plugins.list(),
+  },
+  {
+    name: 'marketplace_plugins',
+    description: 'Get verified plugins and extensions from the official NineDeploy Marketplace catalog.',
+    input: z.object({}),
+    handler: (c) => c.plugins.marketplace(),
+  },
+  {
+    name: 'install_plugin',
+    description: 'Install a new plugin from the marketplace, NPM registry, Git repository or local manifest.',
+    input: z.object({
+      source: z.enum(['marketplace', 'npm', 'git', 'local']).default('marketplace'),
+      target: z.string(),
+      name: z.string().optional(),
+      version: z.string().optional(),
+      description: z.string().optional(),
+    }),
+    handler: (c, input) => c.plugins.install(input as any),
+  },
+  {
+    name: 'enable_plugin',
+    description: 'Enable an installed plugin in the microkernel runtime.',
+    input: z.object({ id: z.string() }),
+    handler: (c, input) => c.plugins.enable((input as { id: string }).id),
+  },
+  {
+    name: 'disable_plugin',
+    description: 'Disable a plugin and temporarily unload its runtime hooks and menu integrations.',
+    input: z.object({ id: z.string() }),
+    handler: (c, input) => c.plugins.disable((input as { id: string }).id),
+  },
+  {
+    name: 'uninstall_plugin',
+    description: 'Uninstall a plugin, destroying its runtime resources and purging its registered menus/schemas.',
+    input: z.object({ id: z.string() }),
+    handler: (c, input) => c.plugins.uninstall((input as { id: string }).id),
+  },
+  // ── Configuration Center ───────────────────────────────────────────────
+  {
+    name: 'list_configs',
+    description: 'List all configuration entries, scoped plugin configs, and system environment tokens.',
+    input: z.object({
+      category: z.string().optional(),
+      pluginId: z.string().optional(),
+      reveal: z.boolean().optional(),
+    }),
+    handler: (c, input) => c.config.list(input as any),
+  },
+  {
+    name: 'get_config',
+    description: 'Get details and value for a specific configuration key.',
+    input: z.object({ key: z.string() }),
+    handler: (c, input) => c.config.get((input as { key: string }).key),
+  },
+  {
+    name: 'set_config',
+    description: 'Set or update a configuration key in the central dual-vault config store.',
+    input: z.object({
+      key: z.string(),
+      value: z.unknown(),
+      isSecret: z.boolean().optional(),
+      description: z.string().optional(),
+      tags: z.array(z.string()).optional(),
+    }),
+    handler: (c, input) => {
+      const { key, ...body } = input as { key: string; value: unknown; isSecret?: boolean; description?: string; tags?: string[] };
+      return c.config.set(key, body);
+    },
+  },
+  {
+    name: 'delete_config',
+    description: 'Delete a custom configuration key from the configuration center.',
+    input: z.object({ key: z.string() }),
+    handler: (c, input) => c.config.delete((input as { key: string }).key),
+  },
+  // ── Navigation & Menus ─────────────────────────────────────────────────
+  {
+    name: 'list_menus',
+    description: 'List dynamic navigation menu items contributed by official and community plugins.',
+    input: z.object({ slot: z.string().optional() }),
+    handler: (c, input) => c.menus.list(input as any),
+  },
 ];

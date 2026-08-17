@@ -62,8 +62,8 @@ describe('ServicesList', () => {
     expect((await screen.findAllByText('my-api')).length).toBeGreaterThanOrEqual(2); // name + slug
     expect(screen.getAllByText('worker').length).toBeGreaterThanOrEqual(2); // name + slug
     expect(screen.getByText(':3000')).toBeInTheDocument();
-    expect(screen.getByText('running')).toBeInTheDocument();
-    expect(screen.getByText('stopped')).toBeInTheDocument();
+    expect(screen.getAllByText('running').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('stopped').length).toBeGreaterThanOrEqual(1);
     expect(screen.getByRole('link', { name: /my-api/ })).toHaveAttribute('href', '/services/1');
     expect(screen.getByText('main')).toBeInTheDocument();
     expect(screen.getByText('dev')).toBeInTheDocument();
@@ -84,5 +84,31 @@ describe('ServicesList', () => {
     await screen.findByText('No services yet');
     expect(api.services.list).toHaveBeenCalledWith('?projectId=3');
     localStorage.removeItem('ninedeploy.projectId');
+  });
+
+  it('filters services by search query and status pill, and resets filters', async () => {
+    const user = userEvent.setup();
+    mockOf(api.services.list).mockResolvedValue(services as never);
+    renderWithProviders(<ServicesList />);
+
+    await screen.findAllByText('my-api');
+    const searchInput = screen.getByPlaceholderText('Search services...');
+    fireEvent.change(searchInput, { target: { value: 'worker' } });
+
+    expect(screen.getAllByText('worker').length).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByText('my-api')).not.toBeInTheDocument();
+
+    // Filter by running status (worker is stopped) -> shows empty matching state
+    const runningBtn = screen.getByRole('button', { name: 'running' });
+    await user.click(runningBtn);
+
+    expect(screen.getByText('No matching services')).toBeInTheDocument();
+
+    // Reset filters
+    const resetBtn = screen.getByRole('button', { name: 'Reset filters' });
+    await user.click(resetBtn);
+
+    expect(screen.getAllByText('my-api').length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText('worker').length).toBeGreaterThanOrEqual(2);
   });
 });

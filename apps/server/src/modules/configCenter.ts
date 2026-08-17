@@ -1,0 +1,187 @@
+import { configEntries } from '@ninedeploy/db';
+import { eq } from 'drizzle-orm';
+import type { FastifyPluginAsync } from 'fastify';
+import { z } from 'zod';
+import { audit } from '../lib/audit.js';
+
+const setConfigBody = z.object({
+  value: z.unknown(),
+  isSecret: z.boolean().optional(),
+  description: z.string().max(500).optional(),
+  tags: z.array(z.string().max(50)).optional(),
+});
+
+export const configCenterRoutes: FastifyPluginAsync = async (app) => {
+  app.addHook('onRequest', app.authenticate);
+
+  // List all configuration entries & definitions
+  app.get('/', async (req) => {
+    const isAdmin = req.user!.role === 'admin';
+    const query = req.query as { category?: string; pluginId?: string; reveal?: string };
+    const definitions = req.kernel.configCenter.listDefinitions(query.category, query.pluginId);
+
+    // Fetch all stored DB rows
+    const rows = await app.db.query.configEntries.findMany();
+    const rowsMap = new Map(rows.map((r) => [r.key, r]));
+
+    const entries = [];
+    const handledKeys = new Set<string>();
+
+    // 1. Process known definitions
+    for (const def of definitions) {
+      handledKeys.add(def.key);
+      const row = rowsMap.get(def.key);
+      const isSecret = def.isSecret || (row?.isSecret ?? false);
+
+      let effectiveValue: unknown;
+      if (row) {
+        if (isSecret) {
+          if (isAdmin && query.reveal === 'true') {
+            effectiveValue = await req.kernel.configCenter.getSecret(def.key);
+          } else {
+            effectiveValue = '••••••••';
+          }
+        } else {
+          effectiveValue = await req.kernel.configCenter.get(def.key);
+        }
+      } else {
+        effectiveValue = def.defaultValue;
+      }
+
+      entries.push({
+        key: def.key,
+        pluginId: def.pluginId ?? row?.pluginId ?? null,
+        type: def.type,
+        isSecret,
+        label: def.label,
+        category: def.category,
+        description: def.description ?? row?.description ?? undefined,
+        tags: def.tags ?? (row?.tags as string[] | undefined) ?? [],
+        options: def.options,
+        value: effectiveValue,
+        isConfigured: !!row,
+        updatedAt: row?.updatedAt?.toISOString(),
+      });
+    }
+
+    // 2. Process arbitrary stored config rows that might not have a static definition
+    for (const row of rows) {
+      if (handledKeys.has(row.key)) continue;
+      if (query.category && row.category !== query.category) continue;
+      if (query.pluginId && row.pluginId !== query.pluginId) continue;
+
+      let effectiveValue: unknown;
+      if (row.isSecret) {
+        if (isAdmin && query.reveal === 'true') {
+          effectiveValue = await req.kernel.configCenter.getSecret(row.key);
+        } else {
+          effectiveValue = '••••••••';
+        }
+      } else {
+        effectiveValue = await req.kernel.configCenter.get(row.key);
+      }
+
+      entries.push({
+        key: row.key,
+        pluginId: row.pluginId,
+        type: 'string',
+        isSecret: row.isSecret,
+        label: row.key,
+        category: row.category,
+        description: row.description ?? undefined,
+        tags: row.tags as string[],
+        value: effectiveValue,
+        isConfigured: true,
+        updatedAt: row.updatedAt?.toISOString(),
+      });
+    }
+
+    return { entries };
+  });
+
+  // Get specific key
+  app.get<{ Params: { key: string } }>('/:key', async (req, reply) => {
+    const { key } = req.params;
+    const def = req.kernel.configCenter.getDefinition(key);
+    const row = await app.db.query.configEntries.findFirst({
+      where: eq(configEntries.key, key),
+    });
+
+    if (!def && !row) {
+      return reply.status(404).send({
+        error: { code: 'not_found', message: `Config key "${key}" not found` },
+      });
+    }
+
+    const isSecret = def?.isSecret || (row?.isSecret ?? false);
+    let value: unknown;
+
+    if (isSecret) {
+      if (req.user!.role === 'admin') {
+        value = await req.kernel.configCenter.getSecret(key);
+      } else {
+        value = '••••••••';
+      }
+    } else {
+      value = await req.kernel.configCenter.get(key, def?.defaultValue);
+    }
+
+    let category = 'general';
+    if (def?.category) {
+      category = def.category;
+    } else if (row?.category) {
+      category = row.category;
+    }
+
+    let tags: string[] = [];
+    if (def?.tags) {
+      tags = def.tags;
+    } else if (Array.isArray(row?.tags)) {
+      tags = row.tags;
+    }
+
+    return {
+      key,
+      pluginId: def?.pluginId ?? row?.pluginId ?? null,
+      type: def?.type ?? 'string',
+      isSecret,
+      label: def?.label ?? key,
+      category,
+      description: def?.description ?? row?.description ?? undefined,
+      tags,
+      value,
+      isConfigured: !!row,
+      updatedAt: row?.updatedAt?.toISOString(),
+    };
+  });
+
+  // Set config key (admin only)
+  app.post<{ Params: { key: string } }>('/:key', { preHandler: app.requireAdmin }, async (req) => {
+    const { key } = req.params;
+    const body = setConfigBody.parse(req.body);
+
+    await req.kernel.configCenter.set(key, body.value, {
+      isSecret: body.isSecret,
+      description: body.description,
+      tags: body.tags,
+      userId: req.user!.id,
+    });
+
+    await audit(app.db, req.user!.id, 'config.set', 'system', {
+      key,
+      isSecret: body.isSecret ?? false,
+      tags: body.tags,
+    });
+
+    return { ok: true, key };
+  });
+
+  // Delete config key (admin only)
+  app.delete<{ Params: { key: string } }>('/:key', { preHandler: app.requireAdmin }, async (req) => {
+    const { key } = req.params;
+    await req.kernel.configCenter.delete(key);
+
+    await audit(app.db, req.user!.id, 'config.delete', 'system', { key });
+    return { ok: true, key };
+  });
+};

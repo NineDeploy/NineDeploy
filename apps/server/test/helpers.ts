@@ -6,6 +6,8 @@ import { ZodError } from 'zod';
 import type { DB } from '@ninedeploy/db';
 import { forbidden, unauthorized } from '../src/lib/errors.js';
 import rawBodyPlugin from '../src/plugins/rawBody.js';
+import { NineDeployKernel } from '../src/kernel/kernel.js';
+import { config } from '../src/config.js';
 
 // ── Drizzle table name extraction ─────────────────────────────────────────
 const NAME_SYMBOL = Symbol.for('drizzle:Name');
@@ -239,7 +241,15 @@ export async function buildTestApp(opts: TestAppOpts = {}): Promise<FastifyInsta
   app.decorate('requireAdmin', async (req: FastifyRequest) => {
     if (req.user?.role !== 'admin') throw forbidden('Admin access required');
   });
-  app.decorate('db', opts.db ?? createFakeDb());
+  const testDb = opts.db ?? createFakeDb();
+  app.decorate('db', testDb);
+  const testKernel = new NineDeployKernel(testDb, config);
+  app.decorate('kernel', testKernel);
+  app.decorateRequest('kernel', {
+    getter() {
+      return (this as unknown as { server: FastifyInstance }).server?.kernel ?? testKernel;
+    },
+  });
   app.decorate('stats', {
     raw: () => opts.stats ?? { containers: new Map<string, unknown>(), host: null },
   });
@@ -262,7 +272,17 @@ export async function buildTestApp(opts: TestAppOpts = {}): Promise<FastifyInsta
 // ── Request/WS helpers ────────────────────────────────────────────────────
 
 /** Headers that make the test `authenticate` stub resolve to a user id. */
-export const asUser = (id = 1): Record<string, string> => ({ 'x-test-user': String(id) });
+export const asUser = (
+  idOrOpts: number | { id?: number; role?: 'admin' | 'member' } = 1,
+): Record<string, string> => {
+  if (typeof idOrOpts === 'object' && idOrOpts !== null) {
+    return {
+      'x-test-user': String(idOrOpts.id ?? 1),
+      'x-test-role': idOrOpts.role ?? 'admin',
+    };
+  }
+  return { 'x-test-user': String(idOrOpts), 'x-test-role': 'admin' };
+};
 
 /** Start the app on an ephemeral port and return the port. */
 export async function listen(app: FastifyInstance): Promise<number> {

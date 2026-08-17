@@ -23,7 +23,7 @@ const aboutData = {
   changelog: [
     { version: '0.0.1', date: '2026-01-01', title: 'First release', changes: ['Initial commit', 'More stuff'] },
   ],
-  stats: { services: 3, databases: 2, deployments: 9, users: 1 },
+  stats: { services: 3, databases: 2, deployments: 9, users: 1, plugins: 5 },
 };
 
 describe('About', () => {
@@ -65,6 +65,7 @@ describe('About', () => {
     expect(screen.getByText('9 deploys')).toBeInTheDocument();
     expect(screen.getByText('2 databases')).toBeInTheDocument();
     expect(screen.getByText('1 users')).toBeInTheDocument();
+    expect(screen.getByText('5 plugins')).toBeInTheDocument();
     expect(screen.getByText("What's New — v0.0.1")).toBeInTheDocument();
     expect(screen.getByText('First release')).toBeInTheDocument();
     expect(screen.getByText('Initial commit')).toBeInTheDocument();
