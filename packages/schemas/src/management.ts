@@ -228,3 +228,51 @@ export interface ActivityEntry {
   meta: Record<string, unknown> | null;
   ts: string;
 }
+
+// ── Traefik proxy schemas & types ──────────────────────────────────────────
+export interface TraefikStatus {
+  running: boolean;
+  version: string | null;
+  versionLatest: string | null;
+  outdated: boolean;
+  uptime: string | null;
+  ports: { http: number; https: number };
+  configDir: string;
+}
+
+export interface TraefikCertificate {
+  domain: string;
+  expiresAt: string | null;
+  daysUntilExpiry: number | null;
+  issuer: string | null;
+}
+
+export interface TraefikRouter {
+  name: string;
+  rule: string;
+  service: string;
+  entryPoints: string[];
+  tls: boolean;
+  middleware: string[];
+}
+
+export interface TraefikService {
+  name: string;
+  url: string;
+  loadBalancer: string;
+}
+
+export interface TraefikMiddleware {
+  name: string;
+  type: string;
+  config: Record<string, unknown>;
+}
+
+export interface TraefikInfo {
+  status: TraefikStatus;
+  certificates: TraefikCertificate[];
+  routers: TraefikRouter[];
+  services: TraefikService[];
+  middlewares: TraefikMiddleware[];
+}
+

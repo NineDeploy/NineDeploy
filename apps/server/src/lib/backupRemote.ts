@@ -1,3 +1,4 @@
+import { basename } from 'node:path';
 import { eq } from 'drizzle-orm';
 import { backups, type BackupDestination, type DB } from '@ninedeploy/db';
 import { decrypt } from './crypto.js';
@@ -36,7 +37,7 @@ export async function uploadBackup(
   const dest = await activeDestination(db);
   if (!dest) return;
   const { prefix, ...cfg } = dest;
-  const key = `${prefix.replace(/\/$/, '')}/${localPath.split('/').pop()}`.replace(/^\/+/, '');
+  const key = `${prefix.replace(/\/$/, '')}/${basename(localPath)}`.replace(/^\/+/, '');
   try {
     // readBackupBytes gives the PLAINTEXT; we re-upload the on-disk encrypted
     // envelope so a stolen bucket alone can't leak database contents.

@@ -53,7 +53,10 @@ describe('agent /agent/exec route', () => {
   });
 
   it('executes a typed operation and returns its lines', async () => {
-    spawnMock.mockResolvedValue(0);
+    spawnMock.mockImplementation(async (_exe, _argv, onLine) => {
+      onLine?.('stopping web-3');
+      return 0;
+    });
     const app = await appWith();
     const res = await app.inject({
       method: 'POST', url: '/agent/exec',
@@ -62,6 +65,7 @@ describe('agent /agent/exec route', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(res.json().exitCode).toBe(0);
+    expect(res.json().lines).toEqual(['stopping web-3']);
     expect(res.json().envFile).toBeNull();
     expect(spawnMock).toHaveBeenCalledWith('docker', ['stop', '-t', '5', 'web-3'], expect.any(Function));
   });
@@ -90,6 +94,14 @@ describe('agent /agent/exec route', () => {
       });
       expect(res.statusCode).toBe(200);
       expect(res.json().envFile).toContain('testenv');
+
+      const resDel = await app.inject({
+        method: 'POST', url: '/agent/exec',
+        headers: { 'x-agent-token': TOKEN },
+        payload: { op: 'file.deleteEnv', params: { name: 'testenv' } },
+      });
+      expect(resDel.statusCode).toBe(200);
+      expect(resDel.json().exitCode).toBe(0);
     } finally {
       process.chdir(cwd);
     }
@@ -210,5 +222,10 @@ describe('runOp env-file helpers', () => {
     await expect(
       runOp('file.writeEnv', { name: 'badenv', env: { A: 'x\nB=1' } }, () => {}),
     ).rejects.toThrow('Invalid env value');
+  });
+
+  it('returns -1 for an unknown op in runOp', async () => {
+    const code = await runOp('unknown.op', {}, () => {});
+    expect(code).toBe(-1);
   });
 });

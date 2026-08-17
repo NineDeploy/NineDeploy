@@ -70,7 +70,16 @@ describe('servers routes', () => {
     expect(body.token).toBe('raw-agent-token');
     expect(body.tokenSha256).toMatch(/^[0-9a-f]{64}$/);
     expect(body.agentCommand).toContain('NINEDEPLOY_AGENT=1');
+    expect(body.agentCommand).toContain('-p 4600:4600');
     expect(cryptoMocks.encrypt).toHaveBeenCalledWith('raw-agent-token');
+
+    // With custom port
+    const resCustom = await app.inject({
+      method: 'POST', url: '/servers', headers: asUser(),
+      payload: { name: 'edge-custom', host: '10.0.0.5', port: 4650 },
+    });
+    expect(resCustom.statusCode).toBe(200);
+    expect(resCustom.json().agentCommand).toContain('-p 4650:4600');
   });
 
   it('validates name and host', async () => {
@@ -217,24 +226,186 @@ describe('servers routes', () => {
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ ok: true, id: 5, status: 'pending' });
     expect(cryptoMocks.encrypt).toHaveBeenCalledWith('a'.repeat(32));
+
+    // Re-announce online server
+    const appOnline = await appWith({
+      findFirst: { servers: serverRow({ id: 5, host: '192.168.1.55', port: 4600, status: 'online' }) },
+      update: { servers: [serverRow({ id: 5 })] },
+    });
+    const resOnline = await appOnline.inject({
+      method: 'POST',
+      url: '/servers/announce',
+      payload: { name: 'auto-edge-1', host: '192.168.1.55', port: 4600, token: 'a'.repeat(32) },
+    });
+    expect(resOnline.statusCode).toBe(200);
+    expect(resOnline.json().message).toBe('Server already active and connected');
+
+    // Announce with host:port extracting port
+    const appHostPort = await appWith({
+      findFirst: { servers: undefined },
+      insert: { servers: [serverRow({ id: 6, host: '10.0.0.5', port: 4605, status: 'pending' })] },
+    });
+    const resHostPort = await appHostPort.inject({
+      method: 'POST',
+      url: '/servers/announce',
+      payload: { name: 'node-host-port', host: '10.0.0.5:4605', token: 'd'.repeat(32) },
+    });
+    expect(resHostPort.statusCode).toBe(200);
+    expect(resHostPort.json().id).toBe(6);
+
+    // Announce with host without port falling back to 4600
+    const appFallback = await appWith({
+      findFirst: { servers: undefined },
+      insert: { servers: [serverRow({ id: 7, host: '10.0.0.7', port: 4600, status: 'pending' })] },
+    });
+    const resFallback = await appFallback.inject({
+      method: 'POST',
+      url: '/servers/announce',
+      payload: { name: 'node-fallback', host: '10.0.0.7', token: 'e'.repeat(32) },
+    });
+    expect(resFallback.statusCode).toBe(200);
+    expect(resFallback.json().id).toBe(7);
+
+    // Announce with empty host extracting IPv4 mapped in IPv6
+    const appIpV6 = await appWith({
+      findFirst: { servers: undefined },
+      insert: { servers: [serverRow({ id: 8, host: '192.168.1.88', port: 4600, status: 'pending' })] },
+    });
+    const resIpV6 = await appIpV6.inject({
+      method: 'POST',
+      url: '/servers/announce',
+      remoteAddress: '::ffff:192.168.1.88',
+      payload: { name: 'node-ipv6', token: 'f'.repeat(32) },
+    });
+    expect(resIpV6.statusCode).toBe(200);
+
+    // Announce with loopback ::1
+    const appLoopback = await appWith({
+      findFirst: { servers: undefined },
+      insert: { servers: [serverRow({ id: 9, host: '127.0.0.1', port: 4600, status: 'pending' })] },
+    });
+    const resLoopback = await appLoopback.inject({
+      method: 'POST',
+      url: '/servers/announce',
+      remoteAddress: '::1',
+      payload: { name: 'node-loopback', token: 'g'.repeat(32) },
+    });
+    expect(resLoopback.statusCode).toBe(200);
+
+    // Announce with regular IP
+    const appIp = await appWith({
+      findFirst: { servers: undefined },
+      insert: { servers: [serverRow({ id: 10, host: '10.0.0.99', port: 4600, status: 'pending' })] },
+    });
+    const resIp = await appIp.inject({
+      method: 'POST',
+      url: '/servers/announce',
+      remoteAddress: '10.0.0.99',
+      payload: { name: 'node-ip', token: 'h'.repeat(32) },
+    });
+    expect(resIp.statusCode).toBe(200);
+
+    // Re-announce pending server
+    const appPending = await appWith({
+      findFirst: { servers: serverRow({ id: 5, host: '192.168.1.55', port: 4600, status: 'pending' }) },
+      update: { servers: [serverRow({ id: 5 })] },
+    });
+    const resPending = await appPending.inject({
+      method: 'POST',
+      url: '/servers/announce',
+      payload: { name: 'auto-edge-1', host: '192.168.1.55', port: 4600, token: 'a'.repeat(32) },
+    });
+    expect(resPending.statusCode).toBe(200);
+    expect(resPending.json().message).toBe('Server re-announced. Pending admin approval.');
   });
 
-  it('updates existing server when re-announced', async () => {
+  it('approves a pending server when reachable', async () => {
     const app = await appWith({
-      findFirst: { servers: serverRow({ id: 1, host: '192.168.1.55', port: 4600, status: 'pending' }) },
-      update: { servers: [serverRow({ id: 1 })] },
+      findFirst: { servers: serverRow({ id: 1, status: 'pending' }) },
+      update: { servers: [serverRow({ id: 1, status: 'online' })] },
+    });
+    agentMocks.agentPing.mockResolvedValueOnce({ ok: true, version: '1.0.0' });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/servers/1/approve',
+      headers: asUser(),
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: true, status: 'online' });
+  });
+
+  it('sets server status to error and throws 400 when approve ping fails', async () => {
+    const app = await appWith({
+      findFirst: { servers: serverRow({ id: 1, status: 'pending' }) },
+      update: { servers: [serverRow({ id: 1, status: 'error' })] },
+    });
+    agentMocks.agentPing.mockRejectedValueOnce(new Error('connection refused'));
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/servers/1/approve',
+      headers: asUser(),
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.message).toContain('Agent unreachable: connection refused');
+
+    // Non-Error rejection stringifies
+    agentMocks.agentPing.mockRejectedValueOnce('raw string error');
+    const resString = await app.inject({
+      method: 'POST',
+      url: '/servers/1/approve',
+      headers: asUser(),
+    });
+    expect(resString.statusCode).toBe(400);
+    expect(resString.json().error.message).toContain('Agent unreachable: raw string error');
+  });
+
+  it('rejects a pending server', async () => {
+    const app = await appWith({
+      findFirst: { servers: serverRow({ id: 1, status: 'pending' }) },
+      delete: { servers: [serverRow({ id: 1 })] },
+    });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/servers/1/reject',
+      headers: asUser(),
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: true });
+  });
+
+  it('returns 404 when testing, approving or rejecting a non-existent server', async () => {
+    const app = await appWith({ findFirst: { servers: undefined } });
+
+    const resTest = await app.inject({ method: 'POST', url: '/servers/99/test', headers: asUser() });
+    expect(resTest.statusCode).toBe(404);
+
+    const resApprove = await app.inject({ method: 'POST', url: '/servers/99/approve', headers: asUser() });
+    expect(resApprove.statusCode).toBe(404);
+
+    const resReject = await app.inject({ method: 'POST', url: '/servers/99/reject', headers: asUser() });
+    expect(resReject.statusCode).toBe(404);
+  });
+
+  it('throws 400 when announce insert fails to return a row or when body is empty', async () => {
+    const app = await appWith({
+      findFirst: { servers: undefined },
+      insert: { servers: [] },
     });
     const res = await app.inject({
       method: 'POST',
       url: '/servers/announce',
-      payload: {
-        name: 'auto-edge-renamed',
-        host: '192.168.1.55',
-        port: 4600,
-        token: 'b'.repeat(32),
-      },
+      payload: { name: 'failed-node', host: '10.0.0.1', port: 4600, token: 'c'.repeat(32) },
     });
-    expect(res.statusCode).toBe(200);
-    expect(res.json()).toMatchObject({ ok: true, id: 1 });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.message).toBe('Could not register announced server');
+
+    const resEmpty = await app.inject({
+      method: 'POST',
+      url: '/servers/announce',
+    });
+    expect(resEmpty.statusCode).toBe(400);
   });
 });

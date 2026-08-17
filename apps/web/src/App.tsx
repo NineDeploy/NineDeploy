@@ -25,6 +25,7 @@ import { Users } from './routes/Users.js';
 import { Volumes } from './routes/Volumes.js';
 import { Networks } from './routes/Networks.js';
 import { DockerDashboard } from './routes/Docker.js';
+import { Traefik } from './routes/Traefik.js';
 
 function RequireAuth({ children }: { children: ReactNode }) {
   const { user } = useAuth();
@@ -81,6 +82,7 @@ export default function App() {
         <Route path="settings" element={<Settings />} />
         <Route path="about" element={<About />} />
         <Route path="monitoring" element={<Monitoring />} />
+        <Route path="traefik" element={<Traefik />} />
         <Route path="services/:id" element={<ServiceDetail />} />
       </Route>
       <Route path="*" element={<NotFound />} />

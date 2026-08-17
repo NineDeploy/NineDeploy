@@ -203,4 +203,36 @@ describe('Volumes', () => {
     fireEvent.click(await screen.findByRole('button', { name: /Prune images/ }));
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Prune failed', 'error'));
   });
+
+  it('prunes all retained volumes through confirmation dialog', async () => {
+    mockOf(api.volumes.list).mockResolvedValue(volumes as never);
+    mockOf(api.system.resources).mockResolvedValue({} as never);
+    mockOf(api.volumes.prune).mockResolvedValue({ ok: true, deleted: 1, freedBytes: 100 } as never);
+    renderWithProviders(<Volumes />);
+    fireEvent.click(await screen.findByRole('button', { name: /Prune retained/i }));
+    expect(screen.getByText(/Permanently delete 1 retained volume\(s\) and free 100 B of disk space\?/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Prune all' }));
+    await waitFor(() => expect(api.volumes.prune).toHaveBeenCalled());
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Pruned 1 retained volume(s) (freed 100 B)', 'success'));
+  });
+
+  it('handles prune retained volumes failure', async () => {
+    mockOf(api.volumes.list).mockResolvedValue(volumes as never);
+    mockOf(api.system.resources).mockResolvedValue({} as never);
+    mockOf(api.volumes.prune).mockRejectedValue(new Error('prune lock error') as never);
+    renderWithProviders(<Volumes />);
+    fireEvent.click(await screen.findByRole('button', { name: /Prune retained/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Prune all' }));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('prune lock error', 'error'));
+  });
+
+  it('toasts generic error when prune fails with non-Error', async () => {
+    mockOf(api.volumes.list).mockResolvedValue(volumes as never);
+    mockOf(api.system.resources).mockResolvedValue({} as never);
+    mockOf(api.volumes.prune).mockRejectedValue('prune failed string' as never);
+    renderWithProviders(<Volumes />);
+    fireEvent.click(await screen.findByRole('button', { name: /Prune retained/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Prune all' }));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Prune failed', 'error'));
+  });
 });

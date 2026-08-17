@@ -7,7 +7,9 @@ import { getSettingString } from '../lib/settings.js';
 import { decrypt, encrypt } from '../lib/crypto.js';
 
 export const TRAEFIK_CONTAINER = 'ninedeploy-traefik';
-const TRAEFIK_IMAGE = 'traefik:v3.3';
+// Stay on Traefik v3 major — minor/patch updates are pulled automatically.
+// Pin to a specific version only if you need reproducibility (e.g. "traefik:v3.3").
+export const TRAEFIK_IMAGE = 'traefik:3';
 
 /** Shared Docker network that app + database containers join to reach each other. */
 export const NETWORK = 'ninedeploy';
@@ -415,17 +417,20 @@ export async function writeDynamicConfig(db: DB): Promise<void> {
 
   // Traefik v3's file provider rejects empty sections (`middlewares: {}`
   // fails with "cannot be a standalone element"), so emit each section only
-  // when it has content. A bare `http:\n` is a valid empty config.
+  // when it has content. Also reject a bare `http:\n` — it causes the same error.
   const section = (name: string, blocks: string[]): string =>
     blocks.length ? `  ${name}:\n${blocks.join('\n')}\n` : '';
 
-  const yaml =
-    '# Managed by NineDeploy — regenerated on deploy/domain changes.\n' +
-    'http:\n' +
-    section('routers', routers) +
-    section('middlewares', middlewares) +
-    section('services', svcBlocks) +
-    tlsCerts;
+  // Only emit the http: key when there's at least one section or tls config.
+  const hasContent = routers.length > 0 || middlewares.length > 0 || svcBlocks.length > 0 || tlsCerts.length > 0;
+  const yaml = hasContent
+    ? '# Managed by NineDeploy — regenerated on deploy/domain changes.\n' +
+        'http:\n' +
+        section('routers', routers) +
+        section('middlewares', middlewares) +
+        section('services', svcBlocks) +
+        tlsCerts
+    : '';
 
   writeAtomic(dynamicPath(), yaml);
 }

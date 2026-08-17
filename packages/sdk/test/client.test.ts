@@ -692,6 +692,8 @@ describe('createClient', () => {
       expect(last(calls).url).toBe('/v1/volumes/nd-svc-web-data/files?path=old');
       await client.volumes.listFiles('nd-svc-web-data'); // default path branch
       expect(last(calls).url).toBe('/v1/volumes/nd-svc-web-data/files?path=');
+      await client.volumes.prune();
+      expect(last(calls)).toMatchObject({ url: '/v1/volumes/prune', init: { method: 'POST' } });
 
       await client.users.create({ email: 'x@y.dev', password: '12345678', role: 'admin' });
       expect(last(calls)).toMatchObject({ url: '/v1/users', init: { method: 'POST' } });
@@ -1034,6 +1036,34 @@ describe('createClient', () => {
       expect(last(calls).url).toBe('/v1/databases/1/limits');
       expect(last(calls).init.method).toBe('PATCH');
       expect(JSON.parse(last(calls).init.body ?? '{}')).toEqual({ cpuShares: 256, memLimitMb: 128 });
+    });
+  });
+
+  describe('traefik', () => {
+    it('exercises get, status, certificates, logs, restart and backupCerts', async () => {
+      const { fetchMock, calls } = makeFetch(() => ok({ ok: true }));
+      const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
+
+      await client.traefik.get();
+      expect(last(calls)).toMatchObject({ url: '/v1/traefik', init: { method: 'GET' } });
+
+      await client.traefik.status();
+      expect(last(calls)).toMatchObject({ url: '/v1/traefik/status', init: { method: 'GET' } });
+
+      await client.traefik.certificates();
+      expect(last(calls)).toMatchObject({ url: '/v1/traefik/certificates', init: { method: 'GET' } });
+
+      await client.traefik.logs();
+      expect(last(calls)).toMatchObject({ url: '/v1/traefik/logs?lines=50', init: { method: 'GET' } });
+
+      await client.traefik.logs(100);
+      expect(last(calls)).toMatchObject({ url: '/v1/traefik/logs?lines=100', init: { method: 'GET' } });
+
+      await client.traefik.restart();
+      expect(last(calls)).toMatchObject({ url: '/v1/traefik/restart', init: { method: 'POST' } });
+
+      await client.traefik.backupCerts();
+      expect(last(calls)).toMatchObject({ url: '/v1/traefik/backup-certs', init: { method: 'POST' } });
     });
   });
 

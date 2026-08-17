@@ -217,6 +217,7 @@ export const createDatabase = z.object({
   engine: z.enum(['postgres', 'mysql', 'mariadb', 'redis', 'mongo']),
   version: z.string().optional(),
   projectId: z.number().int().optional(),
+  existingVolume: z.string().optional(),
 });
 export type CreateDatabaseInput = z.input<typeof createDatabase>;
 
@@ -233,6 +234,7 @@ export const managedDatabase = z.object({
   username: z.string().nullable(),
   database: z.string().nullable(),
   connectionString: z.string().nullable(),
+  attachedServices: z.array(z.object({ id: z.number().int(), name: z.string(), slug: z.string() })).optional().default([]),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });

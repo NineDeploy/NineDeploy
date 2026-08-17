@@ -199,7 +199,7 @@ describe('writeDynamicConfig', () => {
     expect(yaml).not.toContain('routers:');
     expect(yaml).not.toContain('middlewares:');
     expect(yaml).not.toContain('services:');
-    expect(yaml).toContain('http:\n');
+    expect(yaml).toBe('');
   });
 
   it('dedupes identical service keys', async () => {
@@ -357,7 +357,7 @@ describe('ensureTraefik', () => {
         // The whole config dir is mounted (single-file mounts pin the inode and
         // would never see atomic rename-based updates).
         '-v', `${traefikDir}:/etc/traefik:ro`,
-        'traefik:v3.3',
+        'traefik:3',
       ],
       {},
       log,

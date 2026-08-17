@@ -48,3 +48,6 @@ backups
 # test coverage artifacts
 coverage
 .mimosa/
+
+.dfmt/
+apps/server/Python/*

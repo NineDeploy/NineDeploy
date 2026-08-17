@@ -305,27 +305,57 @@ export async function restoreDatabase(d: Database, file: string, log: (line: str
   const cn = d.containerName;
   // Validate the engine BEFORE touching the filesystem so an unsupported engine
   // fails with the right error even for a nonexistent path.
-  if (d.engine !== 'postgres' && d.engine !== 'mysql' && d.engine !== 'mariadb' && d.engine !== 'mongo') {
+  if (
+    d.engine !== 'postgres' &&
+    d.engine !== 'mysql' &&
+    d.engine !== 'mariadb' &&
+    d.engine !== 'mongo' &&
+    d.engine !== 'redis'
+  ) {
     throw new Error(`restore not supported for ${d.engine}`);
   }
 
   const staged = stageForRestore(file);
-  await run('docker', ['cp', staged.path, `${cn}:${RESTORE_TMP}`], {}, log);
   try {
-    if (d.engine === 'postgres') {
-      await run('docker', ['exec', cn, 'psql', '-U', cfg.username()!, '-d', cfg.dbName()!, '-f', RESTORE_TMP], {}, log);
-    } else if (d.engine === 'mysql' || d.engine === 'mariadb') {
-      const pass = decrypt(d.passwordEncrypted);
-      const client = d.engine === 'mysql' ? 'mysql' : 'mariadb';
-      await run('docker', ['exec', cn, client, '-uroot', `--password=${pass}`, '-e', `source ${RESTORE_TMP}`], {}, log);
+    if (d.engine === 'redis') {
+      await run('docker', ['cp', staged.path, `${cn}:/data/dump.rdb`], {}, log);
+      await run('docker', ['restart', cn], {}, log);
     } else {
-      // mongo (the engine union was pre-validated above); same auth rules as
-      // the backup path.
-      const pass = decrypt(d.passwordEncrypted);
-      await run('docker', ['exec', cn, 'mongorestore', '-u', cfg.username()!, '-p', pass, '--authenticationDatabase', 'admin', `--archive=${RESTORE_TMP}`, '--gzip', '--drop'], {}, log);
+      await run('docker', ['cp', staged.path, `${cn}:${RESTORE_TMP}`], {}, log);
+      if (d.engine === 'postgres') {
+        await run('docker', ['exec', cn, 'psql', '-U', cfg.username()!, '-d', cfg.dbName()!, '-f', RESTORE_TMP], {}, log);
+      } else if (d.engine === 'mysql' || d.engine === 'mariadb') {
+        const pass = decrypt(d.passwordEncrypted);
+        const client = d.engine === 'mysql' ? 'mysql' : 'mariadb';
+        await run('docker', ['exec', cn, client, '-uroot', `--password=${pass}`, '-e', `source ${RESTORE_TMP}`], {}, log);
+      } else {
+        // mongo
+        const pass = decrypt(d.passwordEncrypted);
+        await run(
+          'docker',
+          [
+            'exec',
+            cn,
+            'mongorestore',
+            '-u',
+            cfg.username()!,
+            '-p',
+            pass,
+            '--authenticationDatabase',
+            'admin',
+            `--archive=${RESTORE_TMP}`,
+            '--gzip',
+            '--drop',
+          ],
+          {},
+          log,
+        );
+      }
     }
   } finally {
     staged.cleanup();
-    await run('docker', ['exec', cn, 'rm', '-f', RESTORE_TMP], {}, swallow).catch(() => undefined);
+    if (d.engine !== 'redis') {
+      await run('docker', ['exec', cn, 'rm', '-f', RESTORE_TMP], {}, swallow).catch(() => undefined);
+    }
   }
 }

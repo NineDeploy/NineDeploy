@@ -53,6 +53,12 @@ describe('agent typed-op argv templates', () => {
     expect(await argvOf('docker.build', { tag: 'app:1', dockerfile: 'Dockerfile', context: '.' })).toEqual(
       ['build', '-t', 'app:1', '-f', 'Dockerfile', '.'],
     );
+    await expect(argvOf('docker.build', { tag: 'app:1', dockerfile: '../Dockerfile', context: '.' })).rejects.toThrow(
+      'Invalid dockerfile',
+    );
+    await expect(argvOf('docker.build', { tag: 'app:1', dockerfile: 'Dockerfile', context: 'foo/../../bar' })).rejects.toThrow(
+      'Invalid context',
+    );
   });
 
   it('docker.run builds the fixed flag block', async () => {

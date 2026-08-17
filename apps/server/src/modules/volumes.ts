@@ -76,6 +76,36 @@ export const volumeRoutes: FastifyPluginAsync = async (app) => {
     return out;
   });
 
+  // Permanently delete all unattached / retained volumes (bulk cleanup).
+  app.post('/prune', { preHandler: [app.requireAdmin] }, async (req) => {
+    let raw = '';
+    try {
+      raw = await capture('docker', ['volume', 'ls', '--format', '{{.Name}}']);
+    } catch {
+      return { ok: true, deleted: 0, freedBytes: 0 };
+    }
+
+    const names = raw
+      .split('\n')
+      .map((n) => n.trim())
+      .filter((n) => n.startsWith('nd-svc-') || n.startsWith('nd-db-'));
+
+    let deletedCount = 0;
+    let freedBytes = 0;
+    for (const name of names) {
+      const owner = await volumeOwner(app.db, name);
+      if (!owner) {
+        const size = await volumeSize(name);
+        await removeVolume(name, (line) => req.log.info(line));
+        freedBytes += size;
+        deletedCount++;
+      }
+    }
+
+    void audit(app.db, req.user!.id, 'volume.prune', `pruned ${deletedCount} retained volume(s)`);
+    return { ok: true, deleted: deletedCount, freedBytes };
+  });
+
   // Permanently delete a retained volume (the real, destructive cleanup).
   // Admin-only + audited: this irreversibly destroys a service's or database's
   // persistent data — so it REFUSES volumes whose owner's container is running

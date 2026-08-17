@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { type FormEvent, useState } from 'react';
 import {
-  ArrowLeft, ArrowRight, Bell, Check, ExternalLink, Mail, MessageCircle,
+  ArrowLeft, ArrowRight, Bell, Check, Mail, MessageCircle,
   Plug, Send, Webhook, X, Zap,
 } from 'lucide-react';
 import { api } from '../lib/api.js';
@@ -120,6 +120,7 @@ export function NotificationWizard({ onClose }: { onClose: () => void }) {
     <Modal
       title={<span className="flex items-center gap-2"><Bell size={18} className="text-indigo-400" /> New Notification</span>}
       onClose={onClose}
+      wide
       footer={
         <>
           <Button type="button" variant="ghost" size="sm" form={WIZARD_FORM_ID} onClick={back} className={cn('mr-auto', step === 0 && 'invisible')}>
@@ -159,28 +160,28 @@ export function NotificationWizard({ onClose }: { onClose: () => void }) {
         {step === 0 && (
           <div>
             <p className="mb-4 text-sm text-slate-400">Where do you want to receive notifications?</p>
-            <div className="space-y-2.5">
+            <div className="grid grid-cols-2 gap-3">
               {TYPES.map((t) => {
                 const Icon = t.icon;
                 const active = type === t.id;
                 return (
                   <button key={t.id} type="button" onClick={() => { setType(t.id); setName(''); setTarget(''); }}
-                    className={cn('group flex w-full items-center gap-4 rounded-xl border p-4 text-left transition', active ? 'border-indigo-500/60 bg-indigo-500/[0.06]' : 'border-white/10 hover:border-white/20 hover:bg-white/[0.02]')}>
-                    <div className={cn('grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-gradient-to-br text-white shadow-lg', t.color)}>
-                      <Icon size={22} />
+                    className={cn('group flex items-center gap-3 rounded-xl border p-3.5 text-left transition', active ? 'border-indigo-500/60 bg-indigo-500/[0.06]' : 'border-white/10 hover:border-white/20 hover:bg-white/[0.02]')}>
+                    <div className={cn('grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-gradient-to-br text-white shadow-lg', t.color)}>
+                      <Icon size={18} />
                     </div>
-                    <div className="flex-1">
-                      <div className="font-semibold text-slate-100">{t.label}</div>
-                      <div className="text-xs text-slate-500">
-                        {t.id === 'telegram' ? 'Get messages via Telegram bot'
-                          : t.id === 'discord' ? 'Send to a Discord channel'
-                          : t.id === 'webhook' ? 'POST to any URL'
-                          : t.id === 'slack' ? 'Send to a Slack channel'
-                          : t.id === 'ntfy' ? 'Push notifications via ntfy'
-                          : 'Send via your SMTP server'}
+                    <div className="min-w-0 flex-1">
+                      <div className="font-medium text-slate-100">{t.label}</div>
+                      <div className="truncate text-[11px] text-slate-500">
+                        {t.id === 'telegram' ? 'Telegram bot'
+                          : t.id === 'discord' ? 'Discord channel'
+                          : t.id === 'webhook' ? 'Any URL'
+                          : t.id === 'slack' ? 'Slack channel'
+                          : t.id === 'ntfy' ? 'ntfy push'
+                          : 'SMTP email'}
                       </div>
                     </div>
-                    {active && <Check size={18} className="text-indigo-400" />}
+                    {active && <Check size={16} className="text-indigo-400 shrink-0" />}
                   </button>
                 );
               })}
@@ -193,19 +194,15 @@ export function NotificationWizard({ onClose }: { onClose: () => void }) {
           <div className="space-y-4">
             {type === 'telegram' && (
               <>
-                <div className="rounded-xl bg-sky-500/[0.06] p-4 ring-1 ring-inset ring-sky-500/20">
-                  <p className="mb-2 text-sm font-medium text-sky-200">Step 1: Create a Telegram bot</p>
-                  <p className="text-xs text-slate-400">Open <a href="https://t.me/BotFather" target="_blank" rel="noreferrer" className="text-sky-400 hover:underline">@BotFather</a> in Telegram and send:</p>
-                  <code className="mt-1.5 block rounded bg-black/30 px-2 py-1 font-mono text-xs text-sky-300">/newbot</code>
-                  <p className="mt-2 text-xs text-slate-400">Follow the prompts, then copy the <strong className="text-slate-300">bot token</strong>.</p>
-                </div>
-                <div className="rounded-xl bg-sky-500/[0.06] p-4 ring-1 ring-inset ring-sky-500/20">
-                  <p className="mb-2 text-sm font-medium text-sky-200">Step 2: Get your Chat ID</p>
-                  <p className="text-xs text-slate-400">Send any message to your new bot, then visit:</p>
-                  <a href="https://api.telegram.org/bot<TOKEN>/getUpdates" target="_blank" rel="noreferrer" className="mt-1.5 flex items-center gap-1 text-xs text-sky-400 hover:underline">
-                    api.telegram.org/bot&lt;TOKEN&gt;/getUpdates <ExternalLink size={10} />
-                  </a>
-                  <p className="mt-1.5 text-xs text-slate-400">Find <code className="text-sky-300">"chat":{"{"}"id": 123456789{"}"}</code></p>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-xl bg-sky-500/[0.06] p-3 ring-1 ring-inset ring-sky-500/20">
+                    <p className="mb-1.5 text-xs font-medium text-sky-200">1. Create bot</p>
+                    <p className="text-[11px] text-slate-400">Open <a href="https://t.me/BotFather" target="_blank" rel="noreferrer" className="text-sky-400 hover:underline">@BotFather</a>, send <code className="rounded bg-black/30 px-1 text-sky-300">/newbot</code></p>
+                  </div>
+                  <div className="rounded-xl bg-sky-500/[0.06] p-3 ring-1 ring-inset ring-sky-500/20">
+                    <p className="mb-1.5 text-xs font-medium text-sky-200">2. Get Chat ID</p>
+                    <p className="text-[11px] text-slate-400">Send message to bot, then visit <a href="https://api.telegram.org/bot<TOKEN>/getUpdates" target="_blank" rel="noreferrer" className="text-sky-400 hover:underline">getUpdates</a></p>
+                  </div>
                 </div>
                 <div>
                   <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-slate-400">Bot token : Chat ID</span>
@@ -215,14 +212,9 @@ export function NotificationWizard({ onClose }: { onClose: () => void }) {
             )}
             {type === 'discord' && (
               <>
-                <div className="rounded-xl bg-indigo-500/[0.06] p-4 ring-1 ring-inset ring-indigo-500/20">
-                  <p className="mb-2 text-sm font-medium text-indigo-200">Create a Discord Webhook</p>
-                  <p className="text-xs text-slate-400">In your Discord server:</p>
-                  <ol className="mt-1.5 list-inside list-decimal space-y-0.5 text-xs text-slate-400">
-                    <li>Channel settings → <strong className="text-slate-300">Integrations</strong></li>
-                    <li>Click <strong className="text-slate-300">Create Webhook</strong></li>
-                    <li>Copy the <strong className="text-slate-300">webhook URL</strong></li>
-                  </ol>
+                <div className="rounded-xl bg-indigo-500/[0.06] p-3 ring-1 ring-inset ring-indigo-500/20">
+                  <p className="mb-1.5 text-xs font-medium text-indigo-200">Create Discord Webhook</p>
+                  <p className="text-[11px] text-slate-400">Channel settings → Integrations → Create Webhook → Copy URL</p>
                 </div>
                 <div>
                   <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-slate-400">Discord Webhook URL</span>
@@ -232,12 +224,9 @@ export function NotificationWizard({ onClose }: { onClose: () => void }) {
             )}
             {type === 'slack' && (
               <>
-                <div className="rounded-xl bg-emerald-500/[0.06] p-4 ring-1 ring-inset ring-emerald-500/20">
-                  <p className="mb-2 text-sm font-medium text-emerald-200">Create a Slack Incoming Webhook</p>
-                  <ol className="mt-1.5 list-inside list-decimal space-y-0.5 text-xs text-slate-400">
-                    <li>api.slack.com/messaging/webhooks → <strong className="text-slate-300">Create your webhook</strong></li>
-                    <li>Pick a channel and copy the <strong className="text-slate-300">webhook URL</strong></li>
-                  </ol>
+                <div className="rounded-xl bg-emerald-500/[0.06] p-3 ring-1 ring-inset ring-emerald-500/20">
+                  <p className="mb-1.5 text-xs font-medium text-emerald-200">Create Slack Webhook</p>
+                  <p className="text-[11px] text-slate-400">api.slack.com/messaging/webhooks → Create your webhook → Copy URL</p>
                 </div>
                 <div>
                   <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-slate-400">Slack Webhook URL</span>
@@ -247,9 +236,9 @@ export function NotificationWizard({ onClose }: { onClose: () => void }) {
             )}
             {type === 'ntfy' && (
               <>
-                <div className="rounded-xl bg-rose-500/[0.06] p-4 ring-1 ring-inset ring-rose-500/20">
-                  <p className="mb-2 text-sm font-medium text-rose-200">ntfy topic</p>
-                  <p className="text-xs text-slate-400">Subscribe to a topic in the ntfy app, then use its URL here (self-hosted servers work too).</p>
+                <div className="rounded-xl bg-rose-500/[0.06] p-3 ring-1 ring-inset ring-rose-500/20">
+                  <p className="mb-1.5 text-xs font-medium text-rose-200">ntfy topic</p>
+                  <p className="text-[11px] text-slate-400">Subscribe to a topic in the ntfy app, then use its URL here.</p>
                 </div>
                 <div>
                   <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-slate-400">Topic URL</span>
@@ -260,15 +249,9 @@ export function NotificationWizard({ onClose }: { onClose: () => void }) {
             {type === 'email' && <EmailFields value={target} onChange={setTarget} />}
             {type === 'webhook' && (
               <>
-                <div className="rounded-xl bg-amber-500/[0.06] p-4 ring-1 ring-inset ring-amber-500/20">
-                  <p className="mb-2 text-sm font-medium text-amber-200">Generic Webhook</p>
-                  <p className="text-xs text-slate-400">NineDeploy will POST JSON to your URL for every matching event:</p>
-                  <pre className="mt-2 overflow-auto rounded bg-black/30 p-2 font-mono text-[10px] text-amber-200/80">{`{
-  "event": "deploy.trigger",
-  "entity": "my-api",
-  "message": "🚀 deploy trigger: my-api",
-  "ts": "2026-01-01T12:00:00Z"
-}`}</pre>
+                <div className="rounded-xl bg-amber-500/[0.06] p-3 ring-1 ring-inset ring-amber-500/20">
+                  <p className="mb-1.5 text-xs font-medium text-amber-200">Generic Webhook</p>
+                  <p className="text-[11px] text-slate-400">NineDeploy will POST JSON for every matching event.</p>
                 </div>
                 <div>
                   <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-slate-400">Webhook URL</span>
@@ -286,19 +269,16 @@ export function NotificationWizard({ onClose }: { onClose: () => void }) {
         {/* Step 3: Event selection — visual toggle cards */}
         {step === 2 && (
           <div>
-            <p className="mb-4 text-sm text-slate-400">Which events should trigger a notification?</p>
-            <div className="grid grid-cols-2 gap-2.5">
+            <p className="mb-3 text-sm text-slate-400">Which events should trigger a notification?</p>
+            <div className="grid grid-cols-3 gap-2">
               {EVENT_GROUPS.map((g) => {
                 const active = selectedEvents.has(g.id);
                 return (
                   <button key={g.id} type="button" onClick={() => toggleEvent(g.id)}
-                    className={cn('flex flex-col gap-1 rounded-xl border p-3 text-left transition', active ? 'border-indigo-500/60 bg-indigo-500/[0.06]' : 'border-white/10 hover:border-white/20')}>
-                    <div className="flex items-center gap-2">
-                      <span className="text-lg">{g.emoji}</span>
-                      <span className={cn('text-sm font-medium', active ? 'text-slate-100' : 'text-slate-400')}>{g.label}</span>
-                      {active && <Check size={14} className="ml-auto text-indigo-400" />}
-                    </div>
-                    <span className="text-[10px] text-slate-500">{g.desc}</span>
+                    className={cn('flex items-center gap-2 rounded-lg border p-2.5 text-left transition', active ? 'border-indigo-500/60 bg-indigo-500/[0.06]' : 'border-white/10 hover:border-white/20')}>
+                    <span className="text-base">{g.emoji}</span>
+                    <span className={cn('flex-1 text-xs font-medium', active ? 'text-slate-100' : 'text-slate-400')}>{g.label}</span>
+                    {active && <Check size={12} className="text-indigo-400 shrink-0" />}
                   </button>
                 );
               })}
@@ -345,34 +325,34 @@ function EmailFields({ value, onChange }: { value: string; onChange: (v: string)
   const set = (key: string, v: string) => onChange(JSON.stringify({ ...cfg, [key]: v }));
   return (
     <div className="space-y-3">
-      <div className="rounded-xl bg-cyan-500/[0.06] p-4 ring-1 ring-inset ring-cyan-500/20">
-        <p className="mb-2 text-sm font-medium text-cyan-200">SMTP settings</p>
-        <p className="text-xs text-slate-400">Credentials are encrypted at rest and only used for delivery.</p>
+      <div className="rounded-xl bg-cyan-500/[0.06] p-3 ring-1 ring-inset ring-cyan-500/20">
+        <p className="mb-1 text-xs font-medium text-cyan-200">SMTP settings</p>
+        <p className="text-[11px] text-slate-400">Credentials are encrypted at rest.</p>
       </div>
       <div className="grid grid-cols-2 gap-2">
         <div>
-          <span className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-400">SMTP host</span>
-          <Input value={cfg['host'] ?? ''} onChange={(e) => set('host', e.target.value)} placeholder="smtp.example.com" className="font-mono text-xs" autoFocus />
+          <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-slate-400">SMTP host</span>
+          <Input value={cfg['host'] ?? ''} onChange={(e) => set('host', e.target.value)} placeholder="smtp.example.com" className="h-8 font-mono text-xs" autoFocus />
         </div>
         <div>
-          <span className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-400">Port</span>
-          <Input value={cfg['port'] ?? ''} onChange={(e) => set('port', e.target.value)} placeholder="587" className="font-mono text-xs" />
+          <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-slate-400">Port</span>
+          <Input value={cfg['port'] ?? ''} onChange={(e) => set('port', e.target.value)} placeholder="587" className="h-8 font-mono text-xs" />
         </div>
         <div>
-          <span className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-400">From</span>
-          <Input value={cfg['from'] ?? ''} onChange={(e) => set('from', e.target.value)} placeholder="ninedeploy@example.com" className="font-mono text-xs" />
+          <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-slate-400">From</span>
+          <Input value={cfg['from'] ?? ''} onChange={(e) => set('from', e.target.value)} placeholder="ninedeploy@example.com" className="h-8 font-mono text-xs" />
         </div>
         <div>
-          <span className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-400">To</span>
-          <Input value={cfg['to'] ?? ''} onChange={(e) => set('to', e.target.value)} placeholder="you@example.com" className="font-mono text-xs" />
+          <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-slate-400">To</span>
+          <Input value={cfg['to'] ?? ''} onChange={(e) => set('to', e.target.value)} placeholder="you@example.com" className="h-8 font-mono text-xs" />
         </div>
         <div>
-          <span className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-400">User (optional)</span>
-          <Input value={cfg['user'] ?? ''} onChange={(e) => set('user', e.target.value)} className="font-mono text-xs" />
+          <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-slate-400">User</span>
+          <Input value={cfg['user'] ?? ''} onChange={(e) => set('user', e.target.value)} className="h-8 font-mono text-xs" />
         </div>
         <div>
-          <span className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-400">Password (optional)</span>
-          <Input type="password" value={cfg['pass'] ?? ''} onChange={(e) => set('pass', e.target.value)} className="font-mono text-xs" />
+          <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-slate-400">Password</span>
+          <Input type="password" value={cfg['pass'] ?? ''} onChange={(e) => set('pass', e.target.value)} className="h-8 font-mono text-xs" />
         </div>
       </div>
     </div>

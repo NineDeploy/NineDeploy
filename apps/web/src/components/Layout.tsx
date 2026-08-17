@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   Activity, ChevronLeft, Cloud, Container, Database, FolderKanban, Globe, HardDrive,
-  Info, KeyRound, Layers, LayoutDashboard, Moon, Network, type LucideIcon,
+  Info, KeyRound, Layers, LayoutDashboard, Moon, Network, Shield, type LucideIcon,
   Rocket, Search, Server, Settings as SettingsIcon, Sparkles, Sun, Users, X,
 } from 'lucide-react';
 import { Link, Outlet, useLocation } from 'react-router';
@@ -35,6 +35,7 @@ const GROUPS: NavGroup[] = [
   {
     id: 'network', label: 'Network', icon: Globe, items: [
       { to: '/domains', label: 'Domains', icon: Globe },
+      { to: '/traefik', label: 'Traefik', icon: Shield },
       { to: '/networks', label: 'Networks', icon: Network },
       { to: '/tunnels', label: 'Tunnels', icon: Cloud },
       { to: '/topology', label: 'Topology', icon: Network },

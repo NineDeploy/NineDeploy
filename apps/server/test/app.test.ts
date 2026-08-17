@@ -48,7 +48,11 @@ async function createUsersTable(app: Awaited<ReturnType<AppModule['buildApp']>>)
 
 afterAll(() => {
   vi.unstubAllEnvs();
-  rmSync(tmp, { recursive: true, force: true });
+  try {
+    rmSync(tmp, { recursive: true, force: true });
+  } catch {
+    /* Windows SQLite file lock */
+  }
 });
 
 describe('buildApp', () => {

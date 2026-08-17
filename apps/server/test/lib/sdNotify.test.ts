@@ -18,7 +18,7 @@ describe('sdNotify', () => {
     stop();
   });
 
-  it('sends READY=1 to the NOTIFY_SOCKET unix socket', { timeout: 5000 }, async () => {
+  it.skipIf(process.platform === 'win32')('sends READY=1 to the NOTIFY_SOCKET unix socket', { timeout: 5000 }, async () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), 'nd-notify-'));
     const sockPath = path.join(dir, 'notify.sock');
     const received: string[] = [];

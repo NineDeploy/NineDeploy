@@ -464,8 +464,10 @@ describe('system resources routes', () => {
     const uploadDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nd-slip-'));
     createdDirs.push(uploadDir);
     const archive = path.join(uploadDir, 'evil.tar.gz');
+    const pyArchive = archive.replace(/\\/g, '/');
+    const py = process.platform === 'win32' ? 'python' : 'python3';
     execSync(
-      `python3 -c "import tarfile;t=tarfile.open('${archive}','w:gz');i=tarfile.TarInfo('../evil');i.size=1;t.addfile(i,__import__('io').BytesIO(b'x'));t.close()"`,
+      `${py} -c "import tarfile;t=tarfile.open('${pyArchive}','w:gz');i=tarfile.TarInfo('../evil');i.size=1;t.addfile(i,__import__('io').BytesIO(b'x'));t.close()"`,
     );
 
     const app = await appWith();

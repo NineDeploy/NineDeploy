@@ -55,7 +55,7 @@ describe('NotificationWizard', () => {
     renderWizard();
     await user.click(screen.getByText('Telegram'));
     await user.click(screen.getByRole('button', { name: /continue/i }));
-    expect(screen.getByText('Step 1: Create a Telegram bot')).toBeInTheDocument();
+    expect(screen.getByText('1. Create bot')).toBeInTheDocument();
     expect(screen.getByPlaceholderText('789123456:AAEx…:987654321')).toBeInTheDocument();
   });
 
@@ -64,7 +64,7 @@ describe('NotificationWizard', () => {
     renderWizard();
     await user.click(screen.getByText('Discord'));
     await user.click(screen.getByRole('button', { name: /continue/i }));
-    expect(screen.getByText('Create a Discord Webhook')).toBeInTheDocument();
+    expect(screen.getByText('Create Discord Webhook')).toBeInTheDocument();
     expect(screen.getByPlaceholderText('https://discord.com/api/webhooks/…')).toBeInTheDocument();
   });
 
@@ -380,7 +380,7 @@ describe('NotificationWizard', () => {
     renderWizard();
     await user.click(screen.getByText('Slack'));
     await user.click(screen.getByRole('button', { name: /continue/i }));
-    expect(screen.getByText('Create a Slack Incoming Webhook')).toBeInTheDocument();
+    expect(screen.getByText('Create Slack Webhook')).toBeInTheDocument();
     await user.type(screen.getByPlaceholderText('https://hooks.slack.com/services/…'), 'https://hooks.slack.com/services/T/B/x');
     await user.click(screen.getByRole('button', { name: /continue/i }));
     await user.click(screen.getByRole('button', { name: /continue/i }));

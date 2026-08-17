@@ -14,7 +14,11 @@ const dbPlugin = (await import('../../src/plugins/db.js')).default;
 
 afterAll(() => {
   vi.unstubAllEnvs();
-  rmSync(tmp, { recursive: true, force: true });
+  try {
+    rmSync(tmp, { recursive: true, force: true });
+  } catch {
+    /* Windows SQLite file lock */
+  }
 });
 
 describe('db plugin', () => {

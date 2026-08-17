@@ -218,4 +218,84 @@ describe('VolumeBrowser', () => {
     fireEvent.click(await screen.findByRole('button', { name: /Folder/ }));
     await waitFor(() => expect(api.volumes.mkdir).toHaveBeenCalledWith('nd-svc-web-data', { path: 'uploads' }));
   });
+
+  it('previews image files and allows downloading', async () => {
+    const imgDir = {
+      path: '',
+      entries: [
+        { name: 'logo.png', type: 'file' as const, sizeBytes: 2048, modifiedAt: null },
+        { name: 'icon.svg', type: 'file' as const, sizeBytes: 512, modifiedAt: null },
+      ],
+    };
+    mockOf(api.volumes.listFiles).mockResolvedValue(imgDir as never);
+    mockOf(api.volumes.readFile).mockResolvedValue({ content: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', encoding: 'base64' } as never);
+
+    renderWithProviders(<VolumeBrowser volume="nd-svc-web-data" onClose={vi.fn()} />);
+    fireEvent.click(await screen.findByText('logo.png'));
+
+    expect(await screen.findByAltText('logo.png')).toBeInTheDocument();
+    expect(screen.getByText('Image Preview · Read-only')).toBeInTheDocument();
+
+    const downloadBtn = screen.getByRole('button', { name: /Download/ });
+    expect(downloadBtn).toBeInTheDocument();
+    fireEvent.click(downloadBtn);
+
+    // Back to listing and open svg
+    fireEvent.click(screen.getByRole('button', { name: /Back/ }));
+    fireEvent.click(await screen.findByText('icon.svg'));
+    expect(await screen.findByAltText('icon.svg')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Download/ }));
+  });
+
+  it('protects binary files from corruption and provides download action', async () => {
+    const binDir = {
+      path: '',
+      entries: [
+        { name: 'data.sqlite', type: 'file' as const, sizeBytes: 16384, modifiedAt: null },
+        { name: 'archive.tar.gz', type: 'file' as const, sizeBytes: 32768, modifiedAt: null },
+        { name: 'Dockerfile', type: 'file' as const, sizeBytes: 120, modifiedAt: null },
+        { name: '.gitignore', type: 'file' as const, sizeBytes: 40, modifiedAt: null },
+        { name: '.env.local', type: 'file' as const, sizeBytes: 50, modifiedAt: null },
+        { name: '.avatar.png', type: 'file' as const, sizeBytes: 1024, modifiedAt: null },
+        { name: '.secret.bin', type: 'file' as const, sizeBytes: 2048, modifiedAt: null },
+      ],
+    };
+    mockOf(api.volumes.listFiles).mockResolvedValue(binDir as never);
+    mockOf(api.volumes.readFile).mockResolvedValue({ content: 'U1FMaXRlIGZvcm1hdCAzAA==', encoding: 'base64' } as never);
+
+    renderWithProviders(<VolumeBrowser volume="nd-svc-web-data" onClose={vi.fn()} />);
+    expect(await screen.findByText('data.sqlite')).toBeInTheDocument();
+    expect(screen.getByText('archive.tar.gz')).toBeInTheDocument();
+    expect(screen.getByText('Dockerfile')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('data.sqlite'));
+    expect(await screen.findByText(/This file is recognized as a binary \/ archive or compiled asset/)).toBeInTheDocument();
+    expect(screen.getByText(/Direct text editing is disabled to protect against data corruption/)).toBeInTheDocument();
+    expect(screen.queryByLabelText('File editor')).toBeNull();
+
+    // Click download button in header and card
+    const downloadBtns = screen.getAllByRole('button', { name: /Download/ });
+    expect(downloadBtns.length).toBe(2);
+    fireEvent.click(downloadBtns[0]);
+    fireEvent.click(downloadBtns[1]);
+  });
+
+  it('handles extensionless and custom files as text', async () => {
+    const customDir = {
+      path: '',
+      entries: [
+        { name: 'entrypoint', type: 'file' as const, sizeBytes: 100, modifiedAt: null },
+        { name: 'custom.xyz', type: 'file' as const, sizeBytes: 200, modifiedAt: null },
+      ],
+    };
+    mockOf(api.volumes.listFiles).mockResolvedValue(customDir as never);
+    mockOf(api.volumes.readFile).mockResolvedValue({ content: btoa('echo 1'), encoding: 'base64' } as never);
+
+    renderWithProviders(<VolumeBrowser volume="nd-svc-web-data" onClose={vi.fn()} />);
+    expect(await screen.findByText('entrypoint')).toBeInTheDocument();
+    expect(screen.getByText('custom.xyz')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('entrypoint'));
+    expect(await screen.findByLabelText('File editor')).toBeInTheDocument();
+  });
 });

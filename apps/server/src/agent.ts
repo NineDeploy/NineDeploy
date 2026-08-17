@@ -209,7 +209,7 @@ export async function runOp(op: string, params: Params, onLine: (l: string) => v
   return spawnValidated(def.exe, argv, onLine);
 }
 
-async function announceToMaster(
+export async function announceToMaster(
   masterUrl: string,
   payload: { name: string; host?: string; port: number; token: string },
 ): Promise<void> {
@@ -226,13 +226,13 @@ async function announceToMaster(
       // eslint-disable-next-line no-console
       console.log(`[NineDeploy Agent] Announced to master at ${masterUrl} (${data.status}). Waiting for admin approval in NineDeploy panel.`);
     } else {
-      const errText = await res.text().catch(() => '');
+      const errText = await res.text();
       // eslint-disable-next-line no-console
       console.warn(`[NineDeploy Agent] Master announce warning (${res.status}): ${errText.slice(0, 200)}`);
     }
   } catch (err) {
     // eslint-disable-next-line no-console
-    console.warn(`[NineDeploy Agent] Could not reach master at ${masterUrl}: ${err instanceof Error ? err.message : err}`);
+    console.warn(`[NineDeploy Agent] Could not reach master at ${masterUrl}: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -264,7 +264,7 @@ async function main(): Promise<void> {
 
   if (masterUrl) {
     const { hostname } = await import('node:os');
-    const nodeName = process.env['NINEDEPLOY_NODE_NAME'] || hostname() || 'edge-node';
+    const nodeName = process.env['NINEDEPLOY_NODE_NAME'] || hostname();
     const advertiseHost = process.env['NINEDEPLOY_ADVERTISE_HOST'] || undefined;
     void announceToMaster(masterUrl, {
       name: nodeName,
@@ -276,13 +276,17 @@ async function main(): Promise<void> {
 
   notifyReady();
   const stopWatchdog = startWatchdog(30_000);
-  const shutdown = () => {
+  const shutdown = async () => {
     stopWatchdog();
     // Hard-exit backstop: a close() that never settles (open sockets) must
     // not keep a SIGTERM'd agent alive indefinitely.
     const force = setTimeout(process.exit, 10_000);
     force.unref();
-    void app.close().finally(() => process.exit(0));
+    try {
+      await app.close();
+    } finally {
+      process.exit(0);
+    }
   };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);

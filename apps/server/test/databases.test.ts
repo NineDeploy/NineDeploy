@@ -35,7 +35,7 @@ describe('databases routes', () => {
       db: createFakeDb({
         findMany: {
           databases: [
-            dbRow({ id: 1, status: 'running' }),
+            { ...dbRow({ id: 1, status: 'running' }), attachments: [{ id: 1, service: { id: 10, name: 'web', slug: 'web' } }, { id: 2, service: null }] },
             dbRow({ id: 2, status: 'stopped', engine: 'redis' }),
           ],
         },
@@ -238,7 +238,10 @@ describe('databases routes', () => {
         findFirst: {
           databases: {
             ...dbRow({ id: 7, name: 'prod-pg' }),
-            attachments: [{ service: { id: 1, name: 'api-svc', slug: 'api-svc' } }],
+            attachments: [
+              { service: { id: 1, name: 'api-svc', slug: 'api-svc' } },
+              { service: null },
+            ],
           },
         },
       }),

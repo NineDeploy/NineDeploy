@@ -13,6 +13,7 @@ export function Volumes() {
   const { toast } = useToast();
   const list = useQuery({ queryKey: ['volumes'], queryFn: () => api.volumes.list() });
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  const [confirmPrune, setConfirmPrune] = useState(false);
   const [browsing, setBrowsing] = useState<string | null>(null);
   const remove = useMutation({
     mutationFn: (name: string) => api.volumes.remove(name),
@@ -22,16 +23,40 @@ export function Volumes() {
     },
     onError: (err) => toast(err instanceof Error ? err.message : 'Delete failed', 'error'),
   });
+  const prune = useMutation({
+    mutationFn: () => api.volumes.prune(),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ['volumes'] });
+      toast(`Pruned ${data.deleted} retained volume(s) (freed ${formatBytes(data.freedBytes)})`, 'success');
+      setConfirmPrune(false);
+    },
+    onError: (err) => toast(err instanceof Error ? err.message : 'Prune failed', 'error'),
+  });
   const total = (list.data ?? []).reduce((s, v) => s + v.sizeBytes, 0);
   const max = Math.max(1, ...(list.data ?? []).map((v) => v.sizeBytes));
-  const retained = (list.data ?? []).filter((v) => !v.owner).length;
+  const retainedList = (list.data ?? []).filter((v) => !v.owner);
+  const retained = retainedList.length;
+  const retainedBytes = retainedList.reduce((s, v) => s + v.sizeBytes, 0);
 
   return (
     <div>
       <PageHeader
         icon={<Layers size={18} />}
         title="Volumes & Storage"
-        subtitle={`${(list.data?.length ?? 0)} volumes · ${formatBytes(total)} used${retained > 0 ? ` · ${retained} retained` : ''}`}
+        subtitle={`${(list.data?.length ?? 0)} volumes · ${formatBytes(total)} used${retained > 0 ? ` · ${retained} retained (${formatBytes(retainedBytes)})` : ''}`}
+        actions={
+          retained > 0 ? (
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => setConfirmPrune(true)}
+              className="text-xs"
+              disabled={prune.isPending}
+            >
+              <Trash2 size={13} /> Prune retained ({retained})
+            </Button>
+          ) : undefined
+        }
       />
 
       <DockerResources />
@@ -114,6 +139,15 @@ export function Volumes() {
         confirmWord={pendingDelete ?? undefined}
         onConfirm={() => pendingDelete && remove.mutate(pendingDelete)}
         onClose={() => setPendingDelete(null)}
+      />
+
+      <ConfirmDialog
+        open={confirmPrune}
+        title="Prune retained volumes"
+        message={`Permanently delete ${retained} retained volume(s) and free ${formatBytes(retainedBytes)} of disk space? This cannot be undone.`}
+        confirmLabel="Prune all"
+        onConfirm={() => prune.mutate()}
+        onClose={() => setConfirmPrune(false)}
       />
     </div>
   );

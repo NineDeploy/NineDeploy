@@ -10,6 +10,7 @@ import {
   jobCreate,
   jobPatch,
   metricQuery,
+  serverAnnounce,
   serverCreate,
   backupWithDb,
   notificationChannelCreate,
@@ -731,6 +732,26 @@ describe('service', () => {
       bad(serverCreate, { name: ' ', host: 'h' });
       bad(serverCreate, { name: 'x', host: 'bad host!' });
       bad(serverCreate, { name: 'x', host: 'h', port: 99999 });
+    });
+
+    it('serverAnnounce accepts a token and coerces the port with a fallback', () => {
+      const data = ok(serverAnnounce, { name: 'edge', host: 'h.example', token: 'a'.repeat(16) });
+      expect(data?.port).toBe(4600);
+      expect(ok(serverAnnounce, { name: 'e', host: 'h', token: 'a'.repeat(16), port: '4601' })?.port).toBe(4601);
+      // A non-numeric port falls back to the default rather than failing.
+      expect(ok(serverAnnounce, { name: 'e', host: 'h', token: 'a'.repeat(16), port: 'abc' })?.port).toBe(4600);
+      // host is optional for server announce
+      const noHost = ok(serverAnnounce, { name: 'no-host', token: 'a'.repeat(16) });
+      expect(noHost?.host).toBeUndefined();
+    });
+
+    it('serverAnnounce rejects bad names, hosts, tokens and ports', () => {
+      bad(serverAnnounce, { host: 'h', token: 'a'.repeat(16) }); // missing name
+      bad(serverAnnounce, { name: ' ', host: 'h', token: 'a'.repeat(16) }); // bad name
+      bad(serverAnnounce, { name: 'x', host: 'bad host!', token: 'a'.repeat(16) }); // bad host
+      bad(serverAnnounce, { name: 'x', host: 'h', token: 'a'.repeat(15) }); // token too short
+      bad(serverAnnounce, { name: 'x', host: 'h', token: 'a'.repeat(257) }); // token too long
+      bad(serverAnnounce, { name: 'x', host: 'h', port: 99999, token: 'a'.repeat(16) }); // port out of range
     });
 
     it('jobCreate applies defaults and normalizes command/enabled', () => {

@@ -311,4 +311,37 @@ describe('volume routes', () => {
     expect(res.statusCode).toBe(200);
     expect(dbEngineMocks.removeVolume).toHaveBeenCalled();
   });
+
+  describe('prune', () => {
+    it('prunes all retained / unowned volumes and skips active owned ones', async () => {
+      execMocks.capture.mockImplementation((_cmd: string, args: string[]) => {
+        if (args[0] === 'volume' && args[1] === 'ls') {
+          return Promise.resolve('nd-db-old-data\nnd-svc-active-data\nignored-volume\n');
+        }
+        return Promise.resolve('2048 /v\n');
+      });
+      const app = await buildTestApp({
+        db: createFakeDb({
+          select: {
+            services: [svcRow({ id: 1, slug: 'active', name: 'Active', runtimeId: 'active-1' })],
+            databases: [],
+          },
+        }),
+      });
+      await app.register(volumeRoutes);
+      const res = await app.inject({ method: 'POST', url: '/prune', headers: asUser() });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toMatchObject({ ok: true, deleted: 1, freedBytes: 2048 });
+      expect(dbEngineMocks.removeVolume).toHaveBeenCalledWith('nd-db-old-data', expect.any(Function));
+    });
+
+    it('handles volume ls command failure gracefully', async () => {
+      execMocks.capture.mockRejectedValueOnce(new Error('docker dead'));
+      const app = await buildTestApp({ db: createFakeDb() });
+      await app.register(volumeRoutes);
+      const res = await app.inject({ method: 'POST', url: '/prune', headers: asUser() });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ ok: true, deleted: 0, freedBytes: 0 });
+    });
+  });
 });

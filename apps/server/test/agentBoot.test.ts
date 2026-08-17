@@ -72,7 +72,8 @@ afterEach(() => {
 async function importAgent() {
   vi.resetModules();
   process.env['NINEDEPLOY_AGENT'] = '1';
-  await import('../src/agent.js');
+  const mod = await import('../src/agent.js');
+  return mod;
 }
 
 describe('agent bootstrap', () => {
@@ -81,8 +82,9 @@ describe('agent bootstrap', () => {
     // process.exit is mocked (doesn't halt), so main would continue — give it
     // a fake app to register against so the run stays clean.
     state.buildApp.mockResolvedValue(fakeApp());
-    await importAgent();
-    expect(state.exitCalls).toContain(1);
+    const mod = await importAgent();
+    await vi.waitFor(() => expect(state.exitCalls).toContain(1));
+    await mod.agentMode.main();
   });
 
   it('boots, listens on the agent port and shuts down on SIGTERM', async () => {
@@ -90,13 +92,18 @@ describe('agent bootstrap', () => {
     process.env['NINEDEPLOY_AGENT_PORT'] = '4699';
     const app = fakeApp();
     state.buildApp.mockResolvedValue(app);
-    await importAgent();
+    const mod = await importAgent();
     await vi.waitFor(() => expect(app.listen).toHaveBeenCalledWith({ host: '0.0.0.0', port: 4699 }));
     expect(app.register).toHaveBeenCalledWith(expect.anything(), { tokenHash: 'a'.repeat(64) });
-    // SIGTERM → graceful close.
-    state.signalListeners['SIGTERM']!();
+    expect(mod.agentMode.OPS).toBeDefined();
+
+    // SIGTERM & SIGINT → graceful close.
+    await state.signalListeners['SIGTERM']!();
     await vi.waitFor(() => expect(app.close).toHaveBeenCalled());
-    expect(state.exitCalls).toContain(0);
+    await vi.waitFor(() => expect(state.exitCalls).toContain(0));
+
+    await state.signalListeners['SIGINT']!();
+    await vi.waitFor(() => expect(state.exitCalls.length).toBeGreaterThanOrEqual(2));
   });
 
   it('does not boot when the agent flag is absent', async () => {
@@ -104,7 +111,115 @@ describe('agent bootstrap', () => {
     state.buildApp.mockResolvedValue(app);
     vi.resetModules();
     delete process.env['NINEDEPLOY_AGENT'];
-    await import('../src/agent.js');
+    const mod = await import('../src/agent.js');
     expect(app.listen).not.toHaveBeenCalled();
+    expect(mod.agentMode.OPS).toBeDefined();
+  });
+
+  it('generates token and announces to master when NINEDEPLOY_MASTER_URL is present', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ status: 'pending', message: 'Announced' }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    process.env['NINEDEPLOY_MASTER_URL'] = 'http://127.0.0.1:4000';
+    process.env['NINEDEPLOY_NODE_NAME'] = 'edge-custom-name';
+    process.env['NINEDEPLOY_ADVERTISE_HOST'] = '192.168.1.100';
+    delete process.env['NINEDEPLOY_AGENT_TOKEN'];
+    delete process.env['NINEDEPLOY_AGENT_RAW_TOKEN'];
+
+    const app = fakeApp();
+    state.buildApp.mockResolvedValue(app);
+    await importAgent();
+
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://127.0.0.1:4000/v1/servers/announce',
+      expect.objectContaining({
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    const body = JSON.parse(fetchMock.mock.calls[0]![1].body as string);
+    expect(body.name).toBe('edge-custom-name');
+    expect(body.host).toBe('192.168.1.100');
+    expect(body.token).toHaveLength(64);
+
+    delete process.env['NINEDEPLOY_MASTER_URL'];
+    delete process.env['NINEDEPLOY_NODE_NAME'];
+    delete process.env['NINEDEPLOY_ADVERTISE_HOST'];
+    vi.unstubAllGlobals();
+  });
+
+  it('handles master announce HTTP error and network failure gracefully', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        text: async () => 'Internal Error',
+      })
+      .mockRejectedValueOnce(new Error('connection refused'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    process.env['NINEDEPLOY_MASTER_URL'] = 'http://127.0.0.1:4000';
+    process.env['NINEDEPLOY_AGENT_TOKEN'] = 'b'.repeat(64);
+    process.env['NINEDEPLOY_AGENT_RAW_TOKEN'] = 'b'.repeat(64);
+
+    const app = fakeApp();
+    state.buildApp.mockResolvedValue(app);
+    await importAgent();
+
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+    // Second import with non-Error network failure and hostname fallback
+    delete process.env['NINEDEPLOY_NODE_NAME'];
+    fetchMock.mockRejectedValueOnce('raw string connection failure');
+    const app2 = fakeApp();
+    state.buildApp.mockResolvedValue(app2);
+    await importAgent();
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+
+    delete process.env['NINEDEPLOY_MASTER_URL'];
+    delete process.env['NINEDEPLOY_AGENT_TOKEN'];
+    delete process.env['NINEDEPLOY_AGENT_RAW_TOKEN'];
+    vi.unstubAllGlobals();
+  });
+
+  it('announceToMaster handles success, warnings, and errors directly', async () => {
+    const { announceToMaster } = await import('../src/agent.js');
+
+    // Success
+    const fetchOk = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ status: 'pending', message: 'Announced' }),
+    });
+    vi.stubGlobal('fetch', fetchOk);
+    await announceToMaster('http://master.local:4000', { name: 'n1', port: 4600, token: 'tok' });
+    expect(fetchOk).toHaveBeenCalledTimes(1);
+
+    // Warning / HTTP error
+    const fetchWarn = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+      text: async () => 'Invalid payload',
+    });
+    vi.stubGlobal('fetch', fetchWarn);
+    await announceToMaster('http://master.local:4000', { name: 'n2', port: 4600, token: 'tok' });
+    expect(fetchWarn).toHaveBeenCalledTimes(1);
+
+    // Network Error
+    const fetchErr = vi.fn().mockRejectedValue(new Error('dns lookup failed'));
+    vi.stubGlobal('fetch', fetchErr);
+    await announceToMaster('http://master.local:4000', { name: 'n3', port: 4600, token: 'tok' });
+    expect(fetchErr).toHaveBeenCalledTimes(1);
+
+    // Non-Error rejection
+    const fetchStringErr = vi.fn().mockRejectedValue('raw socket error');
+    vi.stubGlobal('fetch', fetchStringErr);
+    await announceToMaster('http://master.local:4000', { name: 'n4', port: 4600, token: 'tok' });
+    expect(fetchStringErr).toHaveBeenCalledTimes(1);
+
+    vi.unstubAllGlobals();
   });
 });

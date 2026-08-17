@@ -41,6 +41,9 @@ import type {
   Template,
   TemplateSummary,
   TopologyGraph,
+  TraefikCertificate,
+  TraefikInfo,
+  TraefikStatus,
   TunnelEntry,
   UserCreate,
   VolumeFileEntry,
@@ -163,6 +166,7 @@ export interface NineDeployClient {
   volumes: {
     list: () => Promise<VolumeEntry[]>;
     remove: (name: string) => Promise<void>;
+    prune: () => Promise<{ ok: boolean; deleted: number; freedBytes: number }>;
     /** File manager: list a directory inside the volume. */
     listFiles: (name: string, path?: string) => Promise<{ path: string; entries: VolumeFileEntry[] }>;
     /** File manager: read a file (base64 content). */
@@ -275,7 +279,7 @@ export interface NineDeployClient {
     list: (query?: string) => Promise<ManagedDatabase[]>;
     create: (input: CreateDatabaseInput) => Promise<ManagedDatabase>;
     get: (id: number) => Promise<ManagedDatabase>;
-    remove: (id: number) => Promise<void>;
+    remove: (id: number, options?: { force?: boolean }) => Promise<void>;
   };
   attachments: {
     list: (serviceId: number) => Promise<Attachment[]>;
@@ -339,8 +343,10 @@ export interface NineDeployClient {
     list: () => Promise<Array<{ id: number; name: string; host: string; port: number; status: string; lastSeenAt: string | null }>>;
     /** Register a server — the agent token + its sha256 are returned exactly once. */
     create: (input: { name: string; host: string; port?: number }) => Promise<{ id: number; token: string; tokenSha256: string; agentCommand: string }>;
-    remove: (id: number) => Promise<{ ok: boolean }>;
+    remove: (id: number, options?: { force?: boolean }) => Promise<{ ok: boolean }>;
     test: (id: number) => Promise<{ ok: boolean; status: string }>;
+    approve: (id: number) => Promise<{ ok: boolean; status: string }>;
+    reject: (id: number) => Promise<{ ok: boolean }>;
   };
   templates: {
     list: () => Promise<TemplateSummary[]>;
@@ -350,6 +356,14 @@ export interface NineDeployClient {
   limits: {
     setService: (serviceId: number, input: SetLimitsInput) => Promise<{ cpuShares: number; memLimitMb: number }>;
     setDatabase: (databaseId: number, input: SetLimitsInput) => Promise<{ cpuShares: number; memLimitMb: number }>;
+  };
+  traefik: {
+    get: () => Promise<TraefikInfo>;
+    status: () => Promise<TraefikStatus>;
+    certificates: () => Promise<TraefikCertificate[]>;
+    logs: (lines?: number) => Promise<{ logs: string[] }>;
+    restart: () => Promise<{ ok: boolean; message?: string }>;
+    backupCerts: () => Promise<{ ok: boolean; message?: string; filename?: string }>;
   };
   health: () => Promise<HealthStatus>;
 }
@@ -511,6 +525,7 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
       remove: async (name) => {
         await request(`/v1/volumes/${encodeURIComponent(name)}`, { method: 'DELETE' });
       },
+      prune: () => send<{ ok: boolean; deleted: number; freedBytes: number }>('POST', '/v1/volumes/prune'),
     },
     system: {
       resources: () => get<DockerResources>('/v1/system/resources'),
@@ -624,8 +639,8 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
       list: (query) => get<ManagedDatabase[]>(`/v1/databases${query ?? ''}`),
       create: (input) => send<ManagedDatabase>('POST', '/v1/databases', input),
       get: (id) => get<ManagedDatabase>(`/v1/databases/${id}`),
-      remove: async (id) => {
-        await request(`/v1/databases/${id}`, { method: 'DELETE' });
+      remove: async (id, opts) => {
+        await request(`/v1/databases/${id}${opts?.force ? '?force=true' : ''}`, { method: 'DELETE' });
       },
     },
     attachments: {
@@ -702,14 +717,24 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
     servers: {
       list: () => get('/v1/servers'),
       create: (input) => send('POST', '/v1/servers', input),
-      remove: (id) => send<{ ok: boolean }>('DELETE', `/v1/servers/${id}`),
+      remove: (id, opts) => send<{ ok: boolean }>('DELETE', `/v1/servers/${id}${opts?.force ? '?force=true' : ''}`),
       test: (id) => send<{ ok: boolean; status: string }>('POST', `/v1/servers/${id}/test`),
+      approve: (id) => send<{ ok: boolean; status: string }>('POST', `/v1/servers/${id}/approve`),
+      reject: (id) => send<{ ok: boolean }>('POST', `/v1/servers/${id}/reject`),
     },
     limits: {
       setService: (serviceId, input) =>
         send<{ cpuShares: number; memLimitMb: number }>('PATCH', `/v1/services/${serviceId}/limits`, input),
       setDatabase: (databaseId, input) =>
         send<{ cpuShares: number; memLimitMb: number }>('PATCH', `/v1/databases/${databaseId}/limits`, input),
+    },
+    traefik: {
+      get: () => get<TraefikInfo>('/v1/traefik'),
+      status: () => get<TraefikStatus>('/v1/traefik/status'),
+      certificates: () => get<TraefikCertificate[]>('/v1/traefik/certificates'),
+      logs: (lines = 50) => get<{ logs: string[] }>(`/v1/traefik/logs?lines=${lines}`),
+      restart: () => send<{ ok: boolean; message: string }>('POST', '/v1/traefik/restart'),
+      backupCerts: () => send<{ ok: boolean; message: string; filename?: string }>('POST', '/v1/traefik/backup-certs'),
     },
     health: () => get<HealthStatus>('/health'),
   };

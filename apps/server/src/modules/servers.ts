@@ -29,8 +29,7 @@ export const serverRoutes: FastifyPluginAsync = async (app) => {
   // It is placed in 'pending' status until the admin clicks "Approve & Connect".
   app.post('/announce', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (req) => {
     const { name, host: providedHost, port, token } = serverAnnounce.parse(req.body ?? {});
-    const rawIp = req.ip || '127.0.0.1';
-    const host = providedHost || (rawIp === '::1' || rawIp === '127.0.0.1' ? '127.0.0.1' : rawIp.replace(/^::ffff:/, ''));
+    const host = providedHost || (req.ip === '::1' || req.ip === '127.0.0.1' ? '127.0.0.1' : req.ip.replace(/^::ffff:/, ''));
 
     const existing = await app.db.query.servers.findFirst({
       where: and(eq(servers.host, host), eq(servers.port, port)),
@@ -97,7 +96,7 @@ export const serverRoutes: FastifyPluginAsync = async (app) => {
       void audit(authed.db, req.user!.id, 'server.register', name);
       const { createHash } = await import('node:crypto');
       const tokenSha256 = createHash('sha256').update(token).digest('hex');
-      const agentCommand = `docker run -d --name ninedeploy-agent --restart unless-stopped -p ${port || 4600}:4600 -v /var/run/docker.sock:/var/run/docker.sock -e NINEDEPLOY_AGENT=1 -e NINEDEPLOY_AGENT_TOKEN=${tokenSha256} -e NINEDEPLOY_AGENT_PORT=4600 ghcr.io/ninedeploy/server:latest`;
+      const agentCommand = `docker run -d --name ninedeploy-agent --restart unless-stopped -p ${port}:4600 -v /var/run/docker.sock:/var/run/docker.sock -e NINEDEPLOY_AGENT=1 -e NINEDEPLOY_AGENT_TOKEN=${tokenSha256} -e NINEDEPLOY_AGENT_PORT=4600 ghcr.io/ninedeploy/server:latest`;
       return {
         ...serialize(row),
         token,

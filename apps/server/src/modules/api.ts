@@ -28,6 +28,7 @@ import { systemRoutes } from './resources.js';
 import { templateRoutes } from './templates.js';
 import { topologyRoutes } from './topology.js';
 import { tunnelRoutes } from './tunnels.js';
+import { traefikRoutes } from './traefik.js';
 import { userRoutes } from './users.js';
 import { volumeRoutes } from './volumes.js';
 
@@ -76,4 +77,5 @@ export const apiRoutes: FastifyPluginAsync = async (app) => {
   await app.register(serverRoutes, { prefix: '/servers' });
   await app.register(metricRoutes, { prefix: '/services' });
   await app.register(serviceMigrationRoutes, { prefix: '/services' });
+  await app.register(traefikRoutes, { prefix: '' });
 };

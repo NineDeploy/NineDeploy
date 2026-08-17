@@ -540,6 +540,15 @@ describe('restoreDatabase', () => {
     ], {}, log);
   });
 
+  it('restores redis via docker cp to /data/dump.rdb + docker restart', async () => {
+    const log = vi.fn();
+    const file = encFile('REDIS');
+    await restoreDatabase(dbRow({ engine: 'redis' }), file, log);
+    expect(h.run).toHaveBeenCalledWith('docker', ['cp', `${file}.dec`, 'c:/data/dump.rdb'], {}, log);
+    expect(h.run).toHaveBeenCalledWith('docker', ['restart', 'c'], {}, log);
+    expect(existsSyncMock(`${file}.dec`)).toBe(false);
+  });
+
   it('removes the staged restore file and decrypted sibling afterwards', async () => {
     const file = encFile('x');
     await restoreDatabase(dbRow({ engine: 'postgres' }), file, vi.fn());
@@ -556,8 +565,7 @@ describe('restoreDatabase', () => {
     expect(h.run).toHaveBeenCalledWith('docker', ['exec', 'c', 'rm', '-f', '/tmp/ninedeploy-restore'], {}, expect.any(Function));
   });
 
-  it('rejects redis restores and non-runnable databases', async () => {
-    await expect(restoreDatabase(dbRow({ engine: 'redis' }), '/f', vi.fn())).rejects.toThrow('restore not supported for redis');
+  it('rejects unsupported engines and non-runnable databases', async () => {
     await expect(restoreDatabase(dbRow({ engine: 'oracle' }), '/f', vi.fn())).rejects.toThrow('database not runnable');
     await expect(restoreDatabase(dbRow({ containerName: null }), '/f', vi.fn())).rejects.toThrow('database not runnable');
   });
@@ -565,6 +573,17 @@ describe('restoreDatabase', () => {
   it('hits the unsupported fallback for a non-owned engine key', async () => {
     await expect(restoreDatabase(dbRow({ engine: 'toString', containerName: 'c' }), '/f', vi.fn())).rejects.toThrow(
       'restore not supported for toString',
+    );
+  });
+
+  it('restores a mariadb database using the mariadb CLI client', async () => {
+    const file = encFile('mariadb-backup');
+    await restoreDatabase(dbRow({ engine: 'mariadb', passwordEncrypted: 'enc-pass' }), file, vi.fn());
+    expect(h.run).toHaveBeenCalledWith(
+      'docker',
+      ['exec', 'c', 'mariadb', '-uroot', '--password=pw:enc-pass', '-e', 'source /tmp/ninedeploy-restore'],
+      {},
+      expect.any(Function),
     );
   });
 });
