@@ -85,7 +85,7 @@ export function createFakeApiModule() {
     deploys: { trigger: vi.fn(), list: vi.fn(), rollback: vi.fn(), cancel: vi.fn(), configDiff: vi.fn() },
     domains: { list: vi.fn(), create: vi.fn(), remove: vi.fn(), all: vi.fn(), setSsl: vi.fn(), update: vi.fn() },
     volumes: { list: vi.fn(), remove: vi.fn(), prune: vi.fn(), listFiles: vi.fn(), readFile: vi.fn(), writeFile: vi.fn(), mkdir: vi.fn(), deleteFile: vi.fn() },
-    containers: { listFiles: vi.fn(), readFile: vi.fn(), writeFile: vi.fn(), mkdir: vi.fn(), deleteFile: vi.fn() },
+    containers: { inspect: vi.fn(), compose: vi.fn(), listFiles: vi.fn(), readFile: vi.fn(), writeFile: vi.fn(), mkdir: vi.fn(), deleteFile: vi.fn() },
     system: { resources: vi.fn(), pruneImages: vi.fn(), exportUrl: vi.fn(), updateCheck: vi.fn(), dockerEvents: vi.fn() },
     networks: { list: vi.fn(), create: vi.fn(), remove: vi.fn(), attach: vi.fn(), detach: vi.fn() },
     tunnels: { list: vi.fn(), create: vi.fn(), remove: vi.fn() },

@@ -1,7 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
-import { Container, Cpu, ImageIcon, Radio } from 'lucide-react';
+import { useState } from 'react';
+import { Check, Code2, Container, Copy, Cpu, FileCode, ImageIcon, Radio, RefreshCw, Search, Shield, Terminal, X } from 'lucide-react';
 import { api } from '../lib/api.js';
-import { Card, EmptyState, PageHeader, Skeleton } from '../components/ui.js';
+import { Button, Card, EmptyState, Input, PageHeader, Skeleton } from '../components/ui.js';
 
 function fmtEventTime(raw: string): string {
   const seconds = Number(raw);
@@ -9,30 +10,75 @@ function fmtEventTime(raw: string): string {
   return Number.isNaN(date.getTime()) ? raw : date.toLocaleTimeString();
 }
 
-/** Unified Docker dashboard: disk/images (system resources) + daemon event feed. */
+/** Unified Docker dashboard: disk/images + live container inspector + daemon event feed. */
 export function DockerDashboard() {
+  const [selectedContainer, setSelectedContainer] = useState<string | null>(null);
+  const [manualContainer, setManualContainer] = useState('');
+  const [copiedYaml, setCopiedYaml] = useState(false);
+  const [copiedJson, setCopiedJson] = useState(false);
+  const [activeSubTab, setActiveSubTab] = useState<'compose' | 'traefik' | 'inspect'>('compose');
+
   const resources = useQuery({
     queryKey: ['docker-resources'],
     queryFn: () => api.system.resources(),
     refetchInterval: 30000,
   });
+
+  const stats = useQuery({
+    queryKey: ['docker-stats-snapshot'],
+    queryFn: () => api.stats.snapshot(),
+    refetchInterval: 10000,
+  });
+
   const events = useQuery({
     queryKey: ['docker-events'],
     queryFn: () => api.system.dockerEvents(60),
     refetchInterval: 20000,
   });
 
+  const composeQuery = useQuery({
+    queryKey: ['container-compose', selectedContainer],
+    queryFn: () => (selectedContainer ? api.containers.compose(selectedContainer) : null),
+    enabled: Boolean(selectedContainer),
+    retry: 1,
+  });
+
+  const inspectQuery = useQuery({
+    queryKey: ['container-inspect', selectedContainer],
+    queryFn: () => (selectedContainer ? api.containers.inspect(selectedContainer) : null),
+    enabled: Boolean(selectedContainer),
+    retry: 1,
+  });
+
   const r = resources.data;
+  const containerStats = stats.data?.containers ?? [];
+  const composeData = composeQuery.data;
+  const inspectData = inspectQuery.data ?? composeData?.inspect;
+  const traefikTags = inspectData?.traefikTags ?? {};
+
+  const handleCopyYaml = () => {
+    if (!composeData?.yaml) return;
+    navigator.clipboard.writeText(composeData.yaml);
+    setCopiedYaml(true);
+    setTimeout(() => setCopiedYaml(false), 2000);
+  };
+
+  const handleCopyJson = () => {
+    if (!inspectData?.raw) return;
+    navigator.clipboard.writeText(JSON.stringify(inspectData.raw, null, 2));
+    setCopiedJson(true);
+    setTimeout(() => setCopiedJson(false), 2000);
+  };
 
   return (
-    <div>
+    <div className="space-y-6">
       <PageHeader
         icon={<Container size={18} />}
         title="Docker Dashboard"
-        subtitle="Host-level images, disk usage and the live daemon event feed"
+        subtitle="Host-level images, disk usage, live container inspect manifests and the daemon event feed"
       />
 
-      <div className="mb-5 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card className="p-5">
           <div className="flex items-center gap-2 text-xs text-slate-500"><Container size={13} /> Containers</div>
           <div className="mt-2 text-2xl font-semibold text-slate-100">{r ? r.containers : <Skeleton className="h-8 w-16" />}</div>
@@ -59,6 +105,194 @@ export function DockerDashboard() {
           <div className="mt-2 truncate font-mono text-lg text-slate-300">{r?.network ?? '—'}</div>
         </Card>
       </div>
+
+      {/* Live Containers & Quick Inspect Section */}
+      <Card className="p-5">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-100">Live Containers & Diagnostics</h2>
+            <p className="text-xs text-slate-400">Inspect container runtime manifest, dynamic Traefik tags, and raw Docker inspect state</p>
+          </div>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (manualContainer.trim()) {
+                setSelectedContainer(manualContainer.trim());
+              }
+            }}
+            className="flex items-center gap-2"
+          >
+            <Input
+              value={manualContainer}
+              onChange={(e) => setManualContainer(e.target.value)}
+              placeholder="Inspect container name…"
+              className="h-8 w-48 text-xs font-mono"
+            />
+            <Button type="submit" variant="secondary" size="sm" className="h-8 text-xs">
+              <Search size={13} className="mr-1" /> Inspect
+            </Button>
+          </form>
+        </div>
+
+        {stats.isLoading ? (
+          <Skeleton className="h-24 w-full" />
+        ) : containerStats.length === 0 ? (
+          <p className="text-xs text-slate-500">No active containers found on host daemon.</p>
+        ) : (
+          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
+            {containerStats.map((c) => (
+              <div
+                key={c.name}
+                className={`flex items-center justify-between rounded-xl border p-3 transition ${
+                  selectedContainer === c.name
+                    ? 'border-indigo-500/50 bg-indigo-500/10'
+                    : 'border-white/5 bg-white/[0.02] hover:border-white/10'
+                }`}
+              >
+                <div className="min-w-0 flex-1 pr-2">
+                  <div className="flex items-center gap-1.5">
+                    <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-400" />
+                    <span className="truncate font-mono text-xs font-medium text-slate-200">{c.name}</span>
+                    <span className="rounded bg-white/5 px-1.5 py-0.5 text-[9px] font-mono text-slate-400 uppercase">{c.kind}</span>
+                  </div>
+                  <div className="mt-1 flex items-center gap-3 text-[10px] text-slate-500 font-mono">
+                    <span>CPU: {c.cpuPct.toFixed(1)}%</span>
+                    <span>RAM: {Math.round(c.memMb)}MB</span>
+                  </div>
+                </div>
+                <Button
+                  variant={selectedContainer === c.name ? 'primary' : 'secondary'}
+                  size="sm"
+                  onClick={() => setSelectedContainer(c.name)}
+                  className="h-7 text-[11px]"
+                >
+                  <FileCode size={12} className="mr-1" /> Inspect
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+
+      {/* Selected Container Inspector Drawer / Card */}
+      {selectedContainer && (
+        <Card className="border border-indigo-500/30 bg-slate-900/90 shadow-2xl p-5 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 pb-4">
+            <div className="flex items-center gap-3">
+              <div className="grid h-10 w-10 place-items-center rounded-xl bg-indigo-500/20 text-indigo-400 border border-indigo-500/30">
+                <FileCode size={20} />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-semibold text-slate-100">{selectedContainer}</h3>
+                  {inspectData && (
+                    <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-400 border border-emerald-500/20">
+                      {inspectData.state.status.toUpperCase()}
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-slate-400">Generated Docker Compose YAML, Traefik tags, and Docker inspect output</p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  composeQuery.refetch();
+                  inspectQuery.refetch();
+                }}
+                disabled={composeQuery.isFetching}
+              >
+                <RefreshCw size={13} className={composeQuery.isFetching ? 'animate-spin mr-1' : 'mr-1'} /> Refresh
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => setSelectedContainer(null)}>
+                <X size={15} />
+              </Button>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 border-b border-white/[0.08] pb-2">
+            <button
+              type="button"
+              onClick={() => setActiveSubTab('compose')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition ${
+                activeSubTab === 'compose'
+                  ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Code2 size={13} /> Compose Manifest
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveSubTab('traefik')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition ${
+                activeSubTab === 'traefik'
+                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Shield size={13} /> Traefik Tags ({Object.keys(traefikTags).length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveSubTab('inspect')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition ${
+                activeSubTab === 'inspect'
+                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Terminal size={13} /> Docker Inspect
+            </button>
+          </div>
+
+          {activeSubTab === 'compose' && (
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-mono text-slate-400">docker-compose.runtime.yml</span>
+                <Button variant="secondary" size="sm" onClick={handleCopyYaml} className="h-7 text-xs">
+                  {copiedYaml ? <><Check size={12} className="mr-1 text-emerald-400" /> Copied</> : <><Copy size={12} className="mr-1" /> Copy Compose</>}
+                </Button>
+              </div>
+              <pre className="p-4 text-xs font-mono text-slate-300 overflow-x-auto leading-relaxed bg-black/50 rounded-xl border border-white/5 max-h-80 overflow-y-auto">
+                {composeData?.yaml || '# Loading or unavailable'}
+              </pre>
+            </div>
+          )}
+
+          {activeSubTab === 'traefik' && (
+            <div className="space-y-2 max-h-80 overflow-y-auto">
+              {Object.keys(traefikTags).length === 0 ? (
+                <p className="text-xs text-slate-500 p-4 text-center">No Traefik tags discovered on container labels.</p>
+              ) : (
+                Object.entries(traefikTags).map(([key, value]) => (
+                  <div key={key} className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 rounded-lg border border-white/5 bg-black/40 p-2.5 font-mono text-xs">
+                    <span className="text-amber-300 font-semibold">{key}</span>
+                    <span className="text-slate-300 break-all bg-black/40 px-2 py-0.5 rounded">{value}</span>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+
+          {activeSubTab === 'inspect' && (
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-mono text-slate-400">docker-inspect.json</span>
+                <Button variant="secondary" size="sm" onClick={handleCopyJson} className="h-7 text-xs">
+                  {copiedJson ? <><Check size={12} className="mr-1 text-emerald-400" /> Copied</> : <><Copy size={12} className="mr-1" /> Copy JSON</>}
+                </Button>
+              </div>
+              <pre className="p-4 text-xs font-mono text-slate-300 overflow-x-auto leading-relaxed bg-black/50 rounded-xl border border-white/5 max-h-80 overflow-y-auto">
+                {inspectData?.raw ? JSON.stringify(inspectData.raw, null, 2) : '// Loading or unavailable'}
+              </pre>
+            </div>
+          )}
+        </Card>
+      )}
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
         <Card className="p-5">
