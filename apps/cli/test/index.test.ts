@@ -119,6 +119,11 @@ const h = vi.hoisted(() => {
   configCenterSet: vi.fn(),
   configCenterDelete: vi.fn(),
   demoSeed: vi.fn(),
+  workspacesList: vi.fn(),
+  workspacesGet: vi.fn(),
+  workspacesCreate: vi.fn(),
+  workspacesDelete: vi.fn(),
+  housekeepingPrune: vi.fn(),
   };
 });
 
@@ -128,6 +133,15 @@ vi.mock('../src/config.js', () => ({ loadConfig: h.loadConfig, saveConfig: h.sav
 vi.mock('../src/commands/login.js', () => ({ loginAction: h.loginAction }));
 vi.mock('../src/commands/setup.js', () => ({ setupAction: h.setupAction }));
 vi.mock('../src/commands/demo.js', () => ({ demoSeed: h.demoSeed }));
+vi.mock('../src/commands/workspaces.js', () => ({
+  workspacesList: h.workspacesList,
+  workspacesGet: h.workspacesGet,
+  workspacesCreate: h.workspacesCreate,
+  workspacesDelete: h.workspacesDelete,
+}));
+vi.mock('../src/commands/housekeeping.js', () => ({
+  housekeepingPrune: h.housekeepingPrune,
+}));
 vi.mock('../src/commands/services.js', () => ({
   servicesCreate: h.servicesCreate,
   servicesDelete: h.servicesDelete,
@@ -249,14 +263,15 @@ describe('program registration', () => {
       'setup', 'login', 'logout', 'whoami', 'config',
       'services', 'databases', 'templates', 'deploys', 'token', 'system',
       'env', 'domains', 'volumes', 'networks', 'sessions', 'backups', 'alerts', 'users',
-      'reset-link <idOrEmail>', 'activity', 'plugins', 'config-center', 'demo',
+      'reset-link <idOrEmail>', 'activity', 'plugins', 'config-center', 'workspaces', 'demo',
     ]);
     expect(findCommand('services').children).toHaveLength(10);
     expect(findCommand('databases').children).toHaveLength(2);
     expect(findCommand('templates').children).toHaveLength(2);
     expect(findCommand('deploys').children).toHaveLength(3);
     expect(findCommand('token').children).toHaveLength(2);
-    expect(findCommand('system').children).toHaveLength(5);
+    expect(findCommand('system').children).toHaveLength(6);
+    expect(findCommand('workspaces').children).toHaveLength(4);
     expect(findCommand('env').children).toHaveLength(3);
     expect(findCommand('domains').children).toHaveLength(3);
     expect(findCommand('volumes').children).toHaveLength(2);
@@ -265,7 +280,7 @@ describe('program registration', () => {
     expect(findCommand('plugins').children).toHaveLength(8);
     expect(findCommand('config-center').children).toHaveLength(4);
     expect(findCommand('demo').children).toHaveLength(1);
-    expect(h.FakeCommand.instances).toHaveLength(81);
+    expect(h.FakeCommand.instances).toHaveLength(87);
     // argv length > 2 → no banner, no exit
     expect(h.banner).not.toHaveBeenCalled();
     expect(h.exit).not.toHaveBeenCalled();
@@ -666,5 +681,18 @@ describe('delegating actions', () => {
     const demo = findCommand('demo');
     await demo.children.find((c) => c.cmdName === 'seed')!.actionFn!();
     expect(h.demoSeed).toHaveBeenCalledWith(client);
+
+    const workspaces = findCommand('workspaces');
+    await workspaces.children.find((c) => c.cmdName === 'list')!.actionFn!();
+    expect(h.workspacesList).toHaveBeenCalledWith(client);
+    await workspaces.children.find((c) => c.cmdName === 'get <id>')!.actionFn!('1');
+    expect(h.workspacesGet).toHaveBeenCalledWith(client, '1');
+    await workspaces.children.find((c) => c.cmdName === 'create <name>')!.actionFn!('Team Beta', { desc: 'Desc' });
+    expect(h.workspacesCreate).toHaveBeenCalledWith(client, 'Team Beta', { description: 'Desc' });
+    await workspaces.children.find((c) => c.cmdName === 'delete <id>')!.actionFn!('1');
+    expect(h.workspacesDelete).toHaveBeenCalledWith(client, '1');
+
+    await findCommand('system').children.find((c) => c.cmdName === 'prune')!.actionFn!();
+    expect(h.housekeepingPrune).toHaveBeenCalledWith(client);
   });
 });

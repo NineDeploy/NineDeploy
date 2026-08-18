@@ -31,6 +31,10 @@ import {
   configCenterList, configCenterGet, configCenterSet, configCenterDelete,
 } from './commands/configCenter.js';
 import { demoSeed } from './commands/demo.js';
+import {
+  workspacesList, workspacesGet, workspacesCreate, workspacesDelete,
+} from './commands/workspaces.js';
+import { housekeepingPrune } from './commands/housekeeping.js';
 
 const program = new Command();
 
@@ -264,6 +268,18 @@ configCenter.command('set <key> <value>').description('Set or update a configura
   .option('-t, --tags <tags>', 'Comma-separated tags')
   .action((key: string, value: string, opts: any) => configCenterSet(getClient(), key, value, opts));
 configCenter.command('delete <key>').description('Delete a custom configuration key').action((key: string) => configCenterDelete(getClient(), key));
+
+// ── Workspaces & Teams ──────────────────────────────────────────────────────
+const workspaces = program.command('workspaces').description('Manage workspaces and team organizations');
+workspaces.command('list').description('List accessible workspaces').action(() => workspacesList(getClient()));
+workspaces.command('get <id>').description('Get workspace details and team members').action((id: string) => workspacesGet(getClient(), id));
+workspaces.command('create <name>').description('Create a new workspace')
+  .option('-d, --desc <description>', 'Workspace description')
+  .action((name: string, opts: { desc?: string }) => workspacesCreate(getClient(), name, { description: opts.desc }));
+workspaces.command('delete <id>').description('Delete a workspace').action((id: string) => workspacesDelete(getClient(), id));
+
+// ── Housekeeping ────────────────────────────────────────────────────────────
+system.command('prune').description('Run system housekeeping prune (images, containers, build artifacts)').action(() => housekeepingPrune(getClient()));
 
 // ── Demo Mode ──────────────────────────────────────────────────────────────
 const demo = program.command('demo').description('Demo mode operations');
