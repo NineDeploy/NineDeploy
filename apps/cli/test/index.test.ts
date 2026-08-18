@@ -126,6 +126,11 @@ const h = vi.hoisted(() => {
   workspacesCreate: vi.fn(),
   workspacesDelete: vi.fn(),
   housekeepingPrune: vi.fn(),
+  serverStartAction: vi.fn(),
+  serverStopAction: vi.fn(),
+  serverStatusAction: vi.fn(),
+  serverLogsAction: vi.fn(),
+  doctorAction: vi.fn(),
   };
 });
 
@@ -134,7 +139,14 @@ vi.mock('../src/client.js', () => ({ getClient: h.getClient }));
 vi.mock('../src/config.js', () => ({ loadConfig: h.loadConfig, saveConfig: h.saveConfig }));
 vi.mock('../src/commands/login.js', () => ({ loginAction: h.loginAction }));
 vi.mock('../src/commands/setup.js', () => ({ setupAction: h.setupAction }));
+vi.mock('../src/commands/doctor.js', () => ({ doctorAction: h.doctorAction }));
 vi.mock('../src/commands/demo.js', () => ({ demoSeed: h.demoSeed }));
+vi.mock('../src/commands/server.js', () => ({
+  serverStartAction: h.serverStartAction,
+  serverStopAction: h.serverStopAction,
+  serverStatusAction: h.serverStatusAction,
+  serverLogsAction: h.serverLogsAction,
+}));
 vi.mock('../src/commands/workspaces.js', () => ({
   workspacesList: h.workspacesList,
   workspacesGet: h.workspacesGet,
@@ -264,11 +276,12 @@ describe('program registration', () => {
     expect(root.cmdName).toBe('ninedeploy');
     expect(root.desc).toContain('NineDeploy');
     expect(root.children.map((c) => c.cmdName)).toEqual([
-      'setup', 'login', 'logout', 'whoami', 'config',
+      'init', 'setup', 'login', 'logout', 'whoami', 'config',
       'services', 'databases', 'templates', 'deploys', 'token', 'system',
       'env', 'domains', 'volumes', 'networks', 'sessions', 'backups', 'alerts', 'users',
-      'reset-link <idOrEmail>', 'activity', 'plugins', 'config-center', 'workspaces', 'demo',
+      'reset-link <idOrEmail>', 'activity', 'plugins', 'config-center', 'workspaces', 'demo', 'server', 'doctor',
     ]);
+    expect(findCommand('server').children).toHaveLength(4);
     expect(findCommand('services').children).toHaveLength(12);
     expect(findCommand('databases').children).toHaveLength(2);
     expect(findCommand('templates').children).toHaveLength(2);
@@ -284,7 +297,7 @@ describe('program registration', () => {
     expect(findCommand('plugins').children).toHaveLength(8);
     expect(findCommand('config-center').children).toHaveLength(4);
     expect(findCommand('demo').children).toHaveLength(1);
-    expect(h.FakeCommand.instances).toHaveLength(89);
+    expect(h.FakeCommand.instances).toHaveLength(96);
     // argv length > 2 → no banner, no exit
     expect(h.banner).not.toHaveBeenCalled();
     expect(h.exit).not.toHaveBeenCalled();
@@ -704,5 +717,21 @@ describe('delegating actions', () => {
 
     await findCommand('system').children.find((c) => c.cmdName === 'prune')!.actionFn!();
     expect(h.housekeepingPrune).toHaveBeenCalledWith(client);
+
+    const server = findCommand('server');
+    await server.children.find((c) => c.cmdName === 'start')!.actionFn!({ port: '3000' });
+    expect(h.serverStartAction).toHaveBeenCalledWith({ port: '3000' });
+    await server.children.find((c) => c.cmdName === 'stop')!.actionFn!({ name: 'ninedeploy' });
+    expect(h.serverStopAction).toHaveBeenCalledWith({ name: 'ninedeploy' });
+    await server.children.find((c) => c.cmdName === 'status')!.actionFn!({ port: '3000' });
+    expect(h.serverStatusAction).toHaveBeenCalledWith({ port: '3000' });
+    await server.children.find((c) => c.cmdName === 'logs')!.actionFn!({ lines: '50' });
+    expect(h.serverLogsAction).toHaveBeenCalledWith({ lines: '50' });
+
+    await findCommand('init').actionFn!();
+    expect(h.setupAction).toHaveBeenCalled();
+
+    await findCommand('doctor').actionFn!();
+    expect(h.doctorAction).toHaveBeenCalledWith(client);
   });
 });

@@ -106,14 +106,17 @@ For in-depth guides, operational workflows, and configuration references:
 # Install CLI globally
 npm install -g ninedeploy
 
-# Authenticate with your instance
-ninedeploy login
+# 1-Click setup & auto-start local Docker server
+ninedeploy init
 
-# Manage infrastructure
-ninedeploy services
-ninedeploy deploy my-api
-ninedeploy logs my-api --follow
-ninedeploy system status
+# Check health & diagnostics
+ninedeploy doctor
+
+# Manage infrastructure & services
+ninedeploy services list
+ninedeploy services create
+ninedeploy services deploy <service-id>
+ninedeploy system dashboard
 ```
 
 ---

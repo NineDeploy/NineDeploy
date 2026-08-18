@@ -6,7 +6,7 @@ const state = vi.hoisted(() => ({
   signalListeners: {} as Record<string, () => void>,
 }));
 
-vi.mock('../src/app.js', () => ({ buildApp: state.buildApp }));
+vi.mock('../src/agentApp.js', () => ({ buildAgentApp: state.buildApp }));
 vi.mock('../src/lib/sdNotify.js', () => ({
   notifyReady: vi.fn(),
   startWatchdog: vi.fn(() => () => undefined),

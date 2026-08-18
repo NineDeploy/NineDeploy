@@ -63,3 +63,60 @@ Common operational edge cases, recovery steps, and diagnostic procedures for Nin
 1. Verify DNS records: Ensure both apex and subdomains point directly to your server's public IP address (`A` record).
 2. Ensure port `80` and `443` are open and not blocked by cloud provider firewalls / security groups (AWS Security Groups, Hetzner Firewall, UFW).
 3. If using Cloudflare proxy (orange cloud), ensure SSL mode is set to **Full (Strict)**.
+
+---
+
+## 🔌 5. CLI Connection & Server Discovery Failures
+
+**Symptoms**:
+- Running `ninedeploy services list` or `ninedeploy init` prints `fetch failed` or `ECONNREFUSED`.
+
+**Resolution**:
+1. Run `ninedeploy doctor` to test network and socket connectivity.
+2. Check configured target server URL:
+   ```bash
+   ninedeploy config
+   ```
+3. If connecting to a remote server, update the base URL:
+   ```bash
+   ninedeploy config --server https://panel.yourdomain.com
+   ```
+4. If connecting locally, check if the Docker container is active:
+   ```bash
+   ninedeploy server status
+   ninedeploy server start
+   ```
+
+---
+
+## 🐳 6. Local Server Container Conflicts & Port Collisions
+
+**Symptoms**:
+- `ninedeploy server start` fails with `port is already allocated` or `Conflict. The container name "/ninedeploy" is already in use`.
+
+**Resolution**:
+1. **Port in use**: If another service occupies port 3000, specify a custom port:
+   ```bash
+   ninedeploy server start --port 3001
+   ninedeploy config --server http://localhost:3001
+   ```
+2. **Container conflict**: Remove stale or orphaned containers:
+   ```bash
+   docker rm -f ninedeploy
+   ninedeploy server start
+   ```
+
+---
+
+## 🩺 7. Running Full Health Diagnostics
+
+Whenever encountering unexpected behavior, run the built-in doctor utility:
+```bash
+ninedeploy doctor
+```
+This inspects:
+- Node.js runtime and architecture
+- Docker daemon status and server container state
+- NineDeploy HTTP API response and latency
+- Local session token validity and user roles
+

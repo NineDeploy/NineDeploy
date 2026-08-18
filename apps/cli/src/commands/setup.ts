@@ -1,11 +1,48 @@
 import { createClient, NineDeployError } from '@ninedeploy/sdk';
 import { loadConfig, saveConfig } from '../config.js';
 import { prompt, promptHidden } from '../prompts.js';
+import {
+  isDockerAvailable,
+  isServerReachable,
+  normalizeServerUrl,
+  startServerContainer,
+  waitForServerReady,
+} from '../lib/serverRunner.js';
+import { spinner, success } from '../lib/format.js';
 
 /** `ninedeploy setup` — create the first admin user on a fresh instance. */
 export async function setupAction(): Promise<void> {
   const existing = loadConfig();
-  const baseUrl = await prompt('Server URL', existing.baseUrl);
+  const rawUrl = await prompt('Server URL', existing.baseUrl);
+  const baseUrl = normalizeServerUrl(rawUrl);
+
+  // If local host and not currently reachable, check if user wants to bootstrap it via Docker
+  const isLocal = baseUrl.includes('localhost') || baseUrl.includes('127.0.0.1');
+  if (isLocal) {
+    const reachable = await isServerReachable(baseUrl, 600);
+    if (!reachable) {
+      const dockerOk = await isDockerAvailable();
+      if (dockerOk) {
+        console.log(`\n  ℹ No NineDeploy server detected at ${baseUrl}`);
+        const startDocker = (await prompt('  Start a local NineDeploy server with Docker now? (Y/n)', 'Y')).toLowerCase().startsWith('y');
+        if (startDocker) {
+          try {
+            await spinner('Starting local NineDeploy server container', async () => {
+              const url = new URL(baseUrl);
+              const port = url.port ? Number(url.port) : 3000;
+              await startServerContainer({ port });
+              const ready = await waitForServerReady(baseUrl, 30, 1000);
+              if (!ready) throw new Error('Server container did not become ready in 30s');
+            });
+            success(`Server is ready at ${baseUrl}\n`);
+          } catch (err) {
+            console.error(`  ✗ Failed to start Docker container: ${err instanceof Error ? err.message : String(err)}`);
+          }
+        }
+      }
+    }
+  }
+
   const email = await prompt('Admin email');
   if (!email) {
     console.error('Email is required.');

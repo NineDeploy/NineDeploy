@@ -74,6 +74,7 @@ describe('deploys config diff route', () => {
     let calls = 0;
     const db = createFakeDb({
       findFirst: {
+        services: svcRow({ id: 1 }),
         deployments: () => {
           calls++;
           return calls % 2 === 1 ? current : prev;
@@ -94,7 +95,7 @@ describe('deploys config diff route', () => {
   it('reports an unchanged diff when no snapshots exist', async () => {
     let seen = 0;
     const db = createFakeDb({
-      findFirst: { deployments: () => (++seen === 1 ? depRow({ id: 3, configSnapshot: null }) : undefined) },
+      findFirst: { services: svcRow({ id: 1 }), deployments: () => (++seen === 1 ? depRow({ id: 3, configSnapshot: null }) : undefined) },
     });
     const app = await buildTestApp({ db });
     await app.register(deploysRoutes);
@@ -153,6 +154,7 @@ describe('deploys routes', () => {
   it('lists deployments for a service', async () => {
     const app = await buildTestApp({
       db: createFakeDb({
+        findFirst: { services: svcRow({ id: 1 }) },
         findMany: {
           deployments: [
             depRow({ id: 1, startedAt: new Date('2026-01-01T00:01:00Z'), finishedAt: new Date('2026-01-01T00:02:00Z') }),
@@ -178,7 +180,7 @@ describe('deploys routes', () => {
   it('rolls back to a previous deployment', async () => {
     const app = await buildTestApp({
       db: createFakeDb({
-        findFirst: { deployments: depRow({ id: 9, serviceId: 1, commitSha: 'oldsha' }) },
+        findFirst: { services: svcRow({ id: 1 }), deployments: depRow({ id: 9, serviceId: 1, commitSha: 'oldsha' }) },
         insert: { deployments: [depRow({ id: 10, status: 'queued' })] },
       }),
     });
@@ -191,7 +193,7 @@ describe('deploys routes', () => {
   it('rolls back to a deployment without a commit sha', async () => {
     const app = await buildTestApp({
       db: createFakeDb({
-        findFirst: { deployments: depRow({ id: 9, serviceId: 1, commitSha: null }) },
+        findFirst: { services: svcRow({ id: 1 }), deployments: depRow({ id: 9, serviceId: 1, commitSha: null }) },
         insert: { deployments: [depRow({ id: 10, status: 'queued' })] },
       }),
     });
@@ -211,7 +213,7 @@ describe('deploys routes', () => {
   it('cancels a queued deployment', async () => {
     const app = await buildTestApp({
       db: createFakeDb({
-        findFirst: { deployments: depRow({ id: 9, serviceId: 1, status: 'queued' }) },
+        findFirst: { services: svcRow({ id: 1 }), deployments: depRow({ id: 9, serviceId: 1, status: 'queued' }) },
         update: { deployments: [{ id: 9 }] },
       }),
     });
@@ -224,7 +226,7 @@ describe('deploys routes', () => {
   it('cancels an in-flight (building) deployment', async () => {
     const app = await buildTestApp({
       db: createFakeDb({
-        findFirst: { deployments: depRow({ id: 11, serviceId: 1, status: 'building' }) },
+        findFirst: { services: svcRow({ id: 1 }), deployments: depRow({ id: 11, serviceId: 1, status: 'building' }) },
         update: { deployments: [{ id: 11 }] },
       }),
     });
@@ -238,7 +240,7 @@ describe('deploys routes', () => {
 
   it('rejects cancelling a finished deployment', async () => {
     const app = await buildTestApp({
-      db: createFakeDb({ findFirst: { deployments: depRow({ id: 12, serviceId: 1, status: 'running' }) } }),
+      db: createFakeDb({ findFirst: { services: svcRow({ id: 1 }), deployments: depRow({ id: 12, serviceId: 1, status: 'running' }) } }),
     });
     await app.register(deploysRoutes, { prefix: '/services' });
     const res = await app.inject({ method: 'POST', url: '/services/1/deploys/12/cancel', headers: asUser() });
@@ -265,7 +267,7 @@ describe('deploys routes', () => {
     // The row read says building, but the conditional update matches nothing.
     const app = await buildTestApp({
       db: createFakeDb({
-        findFirst: { deployments: depRow({ id: 13, serviceId: 1, status: 'building' }) },
+        findFirst: { services: svcRow({ id: 1 }), deployments: depRow({ id: 13, serviceId: 1, status: 'building' }) },
         update: { deployments: [] },
       }),
     });
@@ -285,7 +287,7 @@ describe('deploys routes', () => {
 
   it('streams the log backlog and live lines over websocket', async () => {
     logBus.publish(5, 'backlog line');
-    const app = await buildTestApp({ websocket: true, db: createFakeDb() });
+    const app = await buildTestApp({ websocket: true, db: createFakeDb({ findFirst: { services: svcRow({ id: 1 }) } }) });
     await app.register(deploysRoutes, { prefix: '/services' });
     const port = await listen(app);
     const ws = await openWs(wsUrl(port, '/services/1/deploys/5/logs?token=valid'));

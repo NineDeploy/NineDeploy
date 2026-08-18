@@ -16,6 +16,10 @@ const h = vi.hoisted(() => {
     saveConfig: vi.fn(),
     prompt: vi.fn(),
     promptHidden: vi.fn(),
+    isDockerAvailable: vi.fn(),
+    isServerReachable: vi.fn(),
+    startServerContainer: vi.fn(),
+    waitForServerReady: vi.fn(),
   };
 });
 
@@ -25,6 +29,13 @@ vi.mock('@ninedeploy/sdk', () => ({
 }));
 vi.mock('../src/config.js', () => ({ loadConfig: h.loadConfig, saveConfig: h.saveConfig }));
 vi.mock('../src/prompts.js', () => ({ prompt: h.prompt, promptHidden: h.promptHidden }));
+vi.mock('../src/lib/serverRunner.js', () => ({
+  isDockerAvailable: h.isDockerAvailable,
+  isServerReachable: h.isServerReachable,
+  startServerContainer: h.startServerContainer,
+  waitForServerReady: h.waitForServerReady,
+  normalizeServerUrl: (u: string) => u || 'http://default:3000',
+}));
 
 let logSpy: ReturnType<typeof vi.spyOn>;
 let errorSpy: ReturnType<typeof vi.spyOn>;
@@ -41,6 +52,10 @@ beforeEach(() => {
     .mockResolvedValueOnce('Ada');
   h.promptHidden.mockResolvedValue('secret-pass');
   h.createClient.mockReturnValue({ auth: { setup: vi.fn() } });
+  h.isDockerAvailable.mockResolvedValue(true);
+  h.isServerReachable.mockResolvedValue(true);
+  h.startServerContainer.mockResolvedValue({ port: 3000, newlyCreated: true });
+  h.waitForServerReady.mockResolvedValue(true);
 });
 
 afterEach(() => {
@@ -162,5 +177,153 @@ describe('setupAction', () => {
     expect(errorSpy).toHaveBeenCalledWith('✗ Setup failed:', 'fetch failed');
     expect(errorSpy).toHaveBeenCalledWith('  Could not connect to NineDeploy server at http://srv:3000. Ensure the server is running.');
     expect(process.exitCode).toBe(1);
+  });
+
+  it('prompts to start Docker container when local server is unreachable and starts it on Y', async () => {
+    h.isServerReachable.mockResolvedValue(false);
+    h.isDockerAvailable.mockResolvedValue(true);
+    h.waitForServerReady.mockResolvedValue(true);
+    h.prompt.mockReset()
+      .mockResolvedValueOnce('http://localhost:3000')
+      .mockResolvedValueOnce('Y')
+      .mockResolvedValueOnce('admin@x.io')
+      .mockResolvedValueOnce('Ada');
+
+    const setup = vi.fn().mockResolvedValue({
+      tokens: { accessToken: 'tok123' },
+      user: { email: 'admin@x.io', role: 'admin' },
+    });
+    h.createClient.mockReturnValue({ auth: { setup } });
+
+    await setupAction();
+
+    expect(h.startServerContainer).toHaveBeenCalledWith({ port: 3000 });
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Server is ready'));
+    expect(setup).toHaveBeenCalled();
+  });
+
+  it('skips starting Docker when user enters n', async () => {
+    h.isServerReachable.mockResolvedValue(false);
+    h.isDockerAvailable.mockResolvedValue(true);
+    h.prompt.mockReset()
+      .mockResolvedValueOnce('http://localhost:3000')
+      .mockResolvedValueOnce('n')
+      .mockResolvedValueOnce('admin@x.io')
+      .mockResolvedValueOnce('Ada');
+
+    const setup = vi.fn().mockResolvedValue({
+      tokens: { accessToken: 'tok123' },
+      user: { email: 'admin@x.io', role: 'admin' },
+    });
+    h.createClient.mockReturnValue({ auth: { setup } });
+
+    await setupAction();
+
+    expect(h.startServerContainer).not.toHaveBeenCalled();
+    expect(setup).toHaveBeenCalled();
+  });
+
+  it('handles Docker start failure gracefully and continues', async () => {
+    h.isServerReachable.mockResolvedValue(false);
+    h.isDockerAvailable.mockResolvedValue(true);
+    h.startServerContainer.mockRejectedValue(new Error('daemon dead'));
+    h.prompt.mockReset()
+      .mockResolvedValueOnce('http://localhost:3000')
+      .mockResolvedValueOnce('Y')
+      .mockResolvedValueOnce('admin@x.io')
+      .mockResolvedValueOnce('Ada');
+
+    const setup = vi.fn().mockResolvedValue({
+      tokens: { accessToken: 'tok123' },
+      user: { email: 'admin@x.io', role: 'admin' },
+    });
+    h.createClient.mockReturnValue({ auth: { setup } });
+
+    await setupAction();
+
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Failed to start Docker container: daemon dead'));
+    expect(setup).toHaveBeenCalled();
+  });
+
+  it('handles server container timeout in setupAction', async () => {
+    h.isServerReachable.mockResolvedValue(false);
+    h.isDockerAvailable.mockResolvedValue(true);
+    h.waitForServerReady.mockResolvedValue(false);
+    h.prompt.mockReset()
+      .mockResolvedValueOnce('http://localhost:3000')
+      .mockResolvedValueOnce('Y')
+      .mockResolvedValueOnce('admin@x.io')
+      .mockResolvedValueOnce('Ada');
+
+    const setup = vi.fn().mockResolvedValue({
+      tokens: { accessToken: 'tok123' },
+      user: { email: 'admin@x.io', role: 'admin' },
+    });
+    h.createClient.mockReturnValue({ auth: { setup } });
+
+    await setupAction();
+
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Server container did not become ready in 30s'));
+  });
+
+  it('skips Docker bootstrap when Docker is not installed', async () => {
+    h.isServerReachable.mockResolvedValue(false);
+    h.isDockerAvailable.mockResolvedValue(false);
+    h.prompt.mockReset()
+      .mockResolvedValueOnce('http://localhost:3000')
+      .mockResolvedValueOnce('admin@x.io')
+      .mockResolvedValueOnce('Ada');
+
+    const setup = vi.fn().mockResolvedValue({
+      tokens: { accessToken: 'tok123' },
+      user: { email: 'admin@x.io', role: 'admin' },
+    });
+    h.createClient.mockReturnValue({ auth: { setup } });
+
+    await setupAction();
+
+    expect(h.startServerContainer).not.toHaveBeenCalled();
+    expect(setup).toHaveBeenCalled();
+  });
+
+  it('handles url without port and non-Error start rejection', async () => {
+    h.isServerReachable.mockResolvedValue(false);
+    h.isDockerAvailable.mockResolvedValue(true);
+    h.startServerContainer.mockRejectedValue('unknown docker error');
+    h.prompt.mockReset()
+      .mockResolvedValueOnce('http://localhost')
+      .mockResolvedValueOnce('Y')
+      .mockResolvedValueOnce('admin@x.io')
+      .mockResolvedValueOnce('Ada');
+
+    const setup = vi.fn().mockResolvedValue({
+      tokens: { accessToken: 'tok123' },
+      user: { email: 'admin@x.io', role: 'admin' },
+    });
+    h.createClient.mockReturnValue({ auth: { setup } });
+
+    await setupAction();
+
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Failed to start Docker container: unknown docker error'));
+    expect(setup).toHaveBeenCalled();
+  });
+
+  it('skips Docker bootstrap prompt when localhost server is already reachable', async () => {
+    h.isServerReachable.mockResolvedValue(true);
+    h.prompt.mockReset()
+      .mockResolvedValueOnce('http://localhost:3000')
+      .mockResolvedValueOnce('admin@x.io')
+      .mockResolvedValueOnce('Ada');
+
+    const setup = vi.fn().mockResolvedValue({
+      tokens: { accessToken: 'tok123' },
+      user: { email: 'admin@x.io', role: 'admin' },
+    });
+    h.createClient.mockReturnValue({ auth: { setup } });
+
+    await setupAction();
+
+    expect(h.startServerContainer).not.toHaveBeenCalled();
+    expect(setup).toHaveBeenCalled();
   });
 });

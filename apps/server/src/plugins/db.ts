@@ -1,7 +1,6 @@
-import { createDb, runMigrations, sql, users, workspaces, workspaceMembers, type DB } from '@ninedeploy/db';
+import { createDb, runMigrations, sql, type DB } from '@ninedeploy/db';
 import fp from 'fastify-plugin';
 import { config } from '../config.js';
-import { hashPassword, verifyPassword } from '../lib/crypto.js';
 
 // Augment the Fastify instance so `fastify.db` is typed everywhere.
 declare module 'fastify' {
@@ -44,60 +43,6 @@ async function ensureEssentialColumns(db: DB) {
   }
 }
 
-async function ensureAdminUser(db: DB) {
-  try {
-    const existing = await db.query.users.findFirst({
-      where: (u, { eq }) => eq(u.email, 'admin@ninedeploy.com'),
-    });
-    if (!existing) {
-      const passwordHash = await hashPassword('admin123456');
-      const [admin] = await db
-        .insert(users)
-        .values({
-          email: 'admin@ninedeploy.com',
-          passwordHash,
-          name: 'Admin',
-          role: 'admin',
-        })
-        .returning();
-      if (admin) {
-        let ws = await db.query.workspaces.findFirst({
-          where: (w, { eq }) => eq(w.slug, 'default'),
-        });
-        if (!ws) {
-          const [newWs] = await db
-            .insert(workspaces)
-            .values({
-              name: 'Default Workspace',
-              slug: 'default',
-              description: 'Primary default workspace',
-              ownerId: admin.id,
-            })
-            .returning();
-          ws = newWs;
-        }
-        if (ws) {
-          await db
-            .insert(workspaceMembers)
-            .values({
-              workspaceId: ws.id,
-              userId: admin.id,
-              role: 'owner',
-            })
-            .onConflictDoNothing();
-        }
-      }
-    } else {
-      const isValid = await verifyPassword(existing.passwordHash, 'admin123456');
-      if (!isValid) {
-        const passwordHash = await hashPassword('admin123456');
-        await db.update(users).set({ passwordHash }).where(sql`id = ${existing.id}`);
-      }
-    }
-  } catch {
-    // Ignore error if schema is not ready yet
-  }
-}
 /* v8 ignore stop */
 
 /** Attaches a Drizzle-backed database connection and applies pending migrations. */
@@ -113,9 +58,6 @@ export default fp(
 
       // Run runtime self-healing column check
       await ensureEssentialColumns(db);
-      if (process.env.NODE_ENV !== 'test' && config.env !== 'test') {
-        await ensureAdminUser(db);
-      }
 
       fastify.decorate('db', db);
     }

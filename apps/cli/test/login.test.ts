@@ -25,6 +25,9 @@ vi.mock('@ninedeploy/sdk', () => ({
 }));
 vi.mock('../src/config.js', () => ({ loadConfig: h.loadConfig, saveConfig: h.saveConfig }));
 vi.mock('../src/prompts.js', () => ({ prompt: h.prompt, promptHidden: h.promptHidden }));
+vi.mock('../src/lib/serverRunner.js', () => ({
+  normalizeServerUrl: (u: string) => u || 'http://default:3000',
+}));
 
 let logSpy: ReturnType<typeof vi.spyOn>;
 let errorSpy: ReturnType<typeof vi.spyOn>;

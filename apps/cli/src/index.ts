@@ -35,6 +35,10 @@ import {
   workspacesList, workspacesGet, workspacesCreate, workspacesDelete,
 } from './commands/workspaces.js';
 import { housekeepingPrune } from './commands/housekeeping.js';
+import {
+  serverStartAction, serverStopAction, serverStatusAction, serverLogsAction,
+} from './commands/server.js';
+import { doctorAction } from './commands/doctor.js';
 
 const program = new Command();
 
@@ -45,6 +49,11 @@ program
   .helpOption('-h, --help', 'Display this help');
 
 // ── Auth ──────────────────────────────────────────────────────────────────
+program
+  .command('init')
+  .description('Initialize local instance and setup admin user (alias for setup)')
+  .action(() => setupAction());
+
 program
   .command('setup')
   .description('Create the first admin user on a fresh instance')
@@ -289,6 +298,32 @@ system.command('prune').description('Run system housekeeping prune (images, cont
 const demo = program.command('demo').description('Demo mode operations');
 demo.command('seed').description('Seed Next.js Docker + PM2 demo environment with PostgreSQL database').action(() => demoSeed(getClient()));
 
+// ── Server Management (Local Docker) ───────────────────────────────────────
+const serverCmd = program.command('server').description('Manage local NineDeploy Docker server');
+serverCmd.command('start')
+  .description('Start local NineDeploy server container')
+  .option('-p, --port <port>', 'Host port to bind', '3000')
+  .option('-i, --image <image>', 'Docker image tag', 'ghcr.io/ninedeploy/ninedeploy:latest')
+  .option('-n, --name <name>', 'Container name', 'ninedeploy')
+  .action((opts: { port?: string; image?: string; name?: string }) => serverStartAction(opts));
+
+serverCmd.command('stop')
+  .description('Stop local NineDeploy server container')
+  .option('-n, --name <name>', 'Container name', 'ninedeploy')
+  .action((opts: { name?: string }) => serverStopAction(opts));
+
+serverCmd.command('status')
+  .description('Check local server container and health status')
+  .option('-p, --port <port>', 'Host port', '3000')
+  .option('-n, --name <name>', 'Container name', 'ninedeploy')
+  .action((opts: { port?: string; name?: string }) => serverStatusAction(opts));
+
+serverCmd.command('logs')
+  .description('View local server container logs')
+  .option('-n, --lines <lines>', 'Number of lines to show', '50')
+  .option('-c, --name <name>', 'Container name', 'ninedeploy')
+  .action((opts: { lines?: string; name?: string }) => serverLogsAction(opts));
+
 // ── System export/import + deploy log streaming ────────────────────────────
 system.command('export [file]').description('Export the full system state as JSON').action((file?: string) => systemExport(file));
 
@@ -296,10 +331,18 @@ system.command('import <file>').description('Import a system bundle (destructive
 
 deploys.command('watch <serviceId> <deployId>').description('Stream a deployment\'s build logs live').action((svcId: string, depId: string) => deploysWatch(svcId, depId));
 
+// ── Diagnostics ───────────────────────────────────────────────────────────
+program
+  .command('doctor')
+  .description('Run system, Docker, server connectivity, and auth diagnostics')
+  .action(() => doctorAction(getClient()));
+
 // ── Banner on bare `ninedeploy` ───────────────────────────────────────────
 if (process.argv.length <= 2) {
   banner();
-  console.log(`  ${'Quick start:'.padEnd(20)} ninedeploy setup`);
+  console.log(`  ${'Quick start:'.padEnd(20)} ninedeploy init`);
+  console.log(`  ${'Server management:'.padEnd(20)} ninedeploy server start`);
+  console.log(`  ${'Diagnostics:'.padEnd(20)} ninedeploy doctor`);
   console.log(`  ${'Browse templates:'.padEnd(20)} ninedeploy templates list`);
   console.log(`  ${'Deploy a service:'.padEnd(20)} ninedeploy services create`);
   console.log(`  ${'View dashboard:'.padEnd(20)} ninedeploy system dashboard`);

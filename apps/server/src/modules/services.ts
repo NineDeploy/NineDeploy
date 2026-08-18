@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import type { FastifyPluginAsync } from 'fastify';
 import { buildConfigs, services, type Service } from '@ninedeploy/db';
 import { createService, setLimits, updateService } from '@ninedeploy/schemas';
@@ -6,6 +6,7 @@ import { capture, run } from '../lib/exec.js';
 import { audit } from '../lib/audit.js';
 import { config } from '../config.js';
 import { badRequest, notFound, parseId as num } from '../lib/errors.js';
+import { loadServiceForUser } from '../lib/serviceAccess.js';
 import { slugify } from '../lib/slug.js';
 import { composeBuilder } from '../engine/builders/compose.js';
 import { dockerBuilder } from '../engine/builders/docker.js';
@@ -29,6 +30,7 @@ function serialize(s: Service) {
     composeService: s.composeService,
     commitSha: s.commitSha,
     runtimeId: s.runtimeId,
+    serverId: s.serverId ?? null,
     healthPath: s.healthPath,
     port: s.port,
     publishedPort: s.publishedPort ?? null,
@@ -72,9 +74,16 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
     // Optional project scoping for the global project switcher (?projectId=).
     const projectId = Number((req.query as { projectId?: string }).projectId);
     const scoped = Number.isInteger(projectId) && projectId > 0 ? projectId : null;
+    // Members only see their own services; admins see every service on the
+    // instance (operator-level access).
+    const conditions = [];
+    if (req.user?.role !== 'admin') conditions.push(eq(services.ownerUserId, req.user!.id));
+    if (scoped != null) conditions.push(eq(services.projectId, scoped));
     const rows = await app.db.query.services.findMany({
       orderBy: (s, { desc }) => [desc(s.id)],
-      ...(scoped != null && { where: (s, { eq }) => eq(s.projectId, scoped) }),
+      ...(conditions.length > 0 && {
+        where: conditions.length === 1 ? conditions[0]! : and(...conditions),
+      }),
     });
     // List view omits the build config (detail endpoint joins it); keep the shape stable.
     return rows.map((s) => ({ ...serialize(s), build: null }));
@@ -92,6 +101,7 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
       .insert(services)
       .values({
         projectId: input.projectId ?? null,
+        ownerUserId: req.user!.id,
         name: input.name,
         slug,
         type: input.type,
@@ -101,6 +111,7 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
         image: input.image ?? null,
         volumeMount: input.volumeMount ?? null,
         composeService: input.composeService ?? null,
+        serverId: input.serverId ?? null,
         cpuShares: input.cpuShares ?? 0,
         memLimitMb: input.memLimitMb ?? 0,
         port: input.port ?? null,
@@ -134,14 +145,14 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
 
   app.get('/:id', async (req) => {
     const id = num((req.params as { id: string }).id);
-    const svc = await app.db.query.services.findFirst({ where: eq(services.id, id) });
-    if (!svc) throw notFound('Service not found');
+    const svc = await loadServiceForUser(app.db, id, req.user!);
     const build = await app.db.query.buildConfigs.findFirst({ where: eq(buildConfigs.serviceId, id) });
     return { ...serialize(svc), build: build ? serializeBuild(build) : null };
   });
 
   app.patch('/:id', async (req) => {
     const id = num((req.params as { id: string }).id);
+    await loadServiceForUser(app.db, id, req.user!);
     const { build, ...patch } = updateService.parse(req.body ?? {});
     // Build-config keys are optional; null out omitted-but-cleared ones via `set` semantics.
     const [svc] = await app.db.update(services).set(patch).where(eq(services.id, id)).returning();
@@ -169,8 +180,7 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
 
   app.delete('/:id', async (req, reply) => {
     const id = num((req.params as { id: string }).id);
-    const svc = await app.db.query.services.findFirst({ where: eq(services.id, id) });
-    if (!svc) throw notFound('Service not found');
+    const svc = await loadServiceForUser(app.db, id, req.user!);
     // Row first (a single DELETE is atomic; FK cascade removes the build
     // config, env vars, domains and deployments) — a failed delete must never
     // leave a live row whose runtime has already been destroyed.
@@ -200,6 +210,7 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
   // Resource limits (applied on next deploy).
   app.patch('/:id/limits', async (req) => {
     const id = num((req.params as { id: string }).id);
+    await loadServiceForUser(app.db, id, req.user!);
     const input = setLimits.parse(req.body);
     const updateData: { cpuShares?: number; memLimitMb?: number } = {};
     if (input.cpuShares !== undefined) {
@@ -218,7 +229,7 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
   // managed through it — `docker stop/start/restart` would silently no-op on a
   // PM2 process name. Docker services are managed through the docker CLI.
   app.post('/:id/stop', async (req) => {
-    const svc = await app.db.query.services.findFirst({ where: eq(services.id, num((req.params as { id: string }).id)) });
+    const svc = await loadServiceForUser(app.db, num((req.params as { id: string }).id), req.user!);
     if (!svc?.runtimeId) throw notFound('Service not found or not deployed');
     // PM2 and Docker have disjoint runtimes — an unknown type must not silently
     // misroute to the docker CLI (which would no-op on a PM2 process name).
@@ -238,7 +249,7 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.post('/:id/start', async (req) => {
-    const svc = await app.db.query.services.findFirst({ where: eq(services.id, num((req.params as { id: string }).id)) });
+    const svc = await loadServiceForUser(app.db, num((req.params as { id: string }).id), req.user!);
     if (!svc?.runtimeId) throw notFound('Service not found or not deployed');
     if (svc.type === 'pm2') {
       await pm2Start(svc.runtimeId).catch((err) =>
@@ -256,7 +267,7 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.post('/:id/restart', async (req) => {
-    const svc = await app.db.query.services.findFirst({ where: eq(services.id, num((req.params as { id: string }).id)) });
+    const svc = await loadServiceForUser(app.db, num((req.params as { id: string }).id), req.user!);
     if (!svc?.runtimeId) throw notFound('Service not found or not deployed');
     if (svc.type === 'pm2') {
       await pm2Restart(svc.runtimeId).catch((err) =>
@@ -274,7 +285,7 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
 
   // Runtime logs: PM2 reads the daemon's log files; Docker reads container logs.
   app.get('/:id/logs', async (req) => {
-    const svc = await app.db.query.services.findFirst({ where: eq(services.id, num((req.params as { id: string }).id)) });
+    const svc = await loadServiceForUser(app.db, num((req.params as { id: string }).id), req.user!);
     if (!svc?.runtimeId) throw notFound('Service not found or not deployed');
     if (svc.type === 'pm2') {
       try {
@@ -294,8 +305,7 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
   app.post('/:id/clone', async (req) => {
     const id = num((req.params as { id: string }).id);
     const body = (req.body as { name?: string; slug?: string } | undefined) ?? {};
-    const svc = await app.db.query.services.findFirst({ where: eq(services.id, id) });
-    if (!svc) throw notFound('Service not found');
+    const svc = await loadServiceForUser(app.db, id, req.user!);
 
     const newName = body.name?.trim() || `${svc.name} (Copy)`;
     let newSlug = body.slug?.trim() ? slugify(body.slug) : slugify(newName);

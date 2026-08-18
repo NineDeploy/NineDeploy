@@ -277,6 +277,7 @@ if [ "$(uname -s)" = "Linux" ]; then
 fi
 echo ""
 echo -e "  ${CYAN}CLI:${NC}"
-echo -e "  npx ninedeploy setup    # create admin via CLI"
+echo -e "  npx ninedeploy init      # complete initial admin setup"
+echo -e "  npx ninedeploy doctor    # run diagnostic check"
 echo -e "  npx ninedeploy services list"
 echo ""

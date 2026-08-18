@@ -281,12 +281,12 @@ async function getTraefikConfig(): Promise<{ routers: TraefikRouter[]; services:
 /** Traefik API routes */
 export const traefikRoutes: FastifyPluginAsync = async (app) => {
   // Genel bilgi
-  app.get('/traefik', async () => {
+  app.get('/traefik', { preHandler: [app.authenticate] }, async () => {
     const [status, config] = await Promise.all([
       getTraefikContainerInfo(),
       getTraefikConfig(),
     ]);
-    
+
     return {
       status,
       certificates: processCertificates(),
@@ -297,24 +297,24 @@ export const traefikRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // Sadece status
-  app.get('/traefik/status', async () => {
+  app.get('/traefik/status', { preHandler: [app.authenticate] }, async () => {
     return getTraefikContainerInfo();
   });
 
   // Sertifikalar
-  app.get('/traefik/certificates', async () => {
+  app.get('/traefik/certificates', { preHandler: [app.authenticate] }, async () => {
     return processCertificates();
   });
 
   // Loglar
-  app.get('/traefik/logs', async (req) => {
+  app.get('/traefik/logs', { preHandler: [app.authenticate, app.requireAdmin] }, async (req) => {
     const lines = Number((req.query as { lines?: string })?.lines) || 100;
     const logs = await getTraefikLogs(Math.min(lines, 500));
     return { logs };
   });
 
   // Konfigürasyon
-  app.get('/traefik/config', async () => {
+  app.get('/traefik/config', { preHandler: [app.authenticate, app.requireAdmin] }, async () => {
     return getTraefikConfig();
   });
 
@@ -343,7 +343,7 @@ export const traefikRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // Traefik versiyonunu kontrol et
-  app.get('/traefik/version', async () => {
+  app.get('/traefik/version', { preHandler: [app.authenticate] }, async () => {
     const latest = await getLatestTraefikVersion();
     const current = await getTraefikContainerInfo();
     return {

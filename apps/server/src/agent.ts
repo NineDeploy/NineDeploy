@@ -1,4 +1,4 @@
-import { buildApp } from './app.js';
+import { buildAgentApp } from './agentApp.js';
 import { tokenMatches } from './lib/agentClient.js';
 import { spawnValidated } from './lib/spawnValidated.js';
 import { notifyReady, startWatchdog } from './lib/sdNotify.js';
@@ -255,7 +255,7 @@ async function main(): Promise<void> {
   }
   const port = Number(process.env['NINEDEPLOY_AGENT_PORT'] ?? 4600);
 
-  const app = await buildApp();
+  const app = await buildAgentApp();
   await app.register(agentRoutes, { tokenHash });
 
   await app.listen({ host: '0.0.0.0', port });

@@ -1,9 +1,10 @@
 import { and, desc, eq } from 'drizzle-orm';
-import { jobRuns, scheduledJobs, services } from '@ninedeploy/db';
+import { jobRuns, scheduledJobs } from '@ninedeploy/db';
 import { jobCreate, jobPatch } from '@ninedeploy/schemas';
 import type { FastifyPluginAsync } from 'fastify';
 import { Cron } from 'croner';
 import { audit } from '../lib/audit.js';
+import { loadServiceForUser } from '../lib/serviceAccess.js';
 import { badRequest, forbidden, notFound, parseId } from '../lib/errors.js';
 import { runJob } from '../lib/jobRunner.js';
 
@@ -36,6 +37,7 @@ export const jobRoutes: FastifyPluginAsync = async (app) => {
 
   app.get('/:id/jobs', async (req) => {
     const id = parseId((req.params as { id: string }).id);
+    await loadServiceForUser(app.db, id, req.user!);
     const rows = await app.db.query.scheduledJobs.findMany({
       where: eq(scheduledJobs.serviceId, id),
       orderBy: desc(scheduledJobs.createdAt),
@@ -45,8 +47,7 @@ export const jobRoutes: FastifyPluginAsync = async (app) => {
 
   app.post('/:id/jobs', async (req) => {
     const id = parseId((req.params as { id: string }).id);
-    const svc = await app.db.query.services.findFirst({ where: eq(services.id, id) });
-    if (!svc) throw notFound('Service not found');
+    await loadServiceForUser(app.db, id, req.user!);
     const input = jobCreate.parse(req.body ?? {});
     assertCron(input.cron);
     if (input.kind === 'exec' && !input.command) throw badRequest('command is required for exec jobs');
@@ -75,7 +76,15 @@ export const jobRoutes: FastifyPluginAsync = async (app) => {
   app.patch('/:id/jobs/:jobId', async (req) => {
     const id = parseId((req.params as { id: string }).id);
     const jobId = parseId((req.params as { jobId: string }).jobId);
+    await loadServiceForUser(app.db, id, req.user!);
     const input = jobPatch.parse(req.body ?? {});
+    // The admin gate must consider the STORED job too: patching only `command`
+    // on an existing exec job (no `kind` in the request body) is still editing
+    // an arbitrary-container-command job.
+    const existingJob = await app.db.query.scheduledJobs.findFirst({
+      where: and(eq(scheduledJobs.id, jobId), eq(scheduledJobs.serviceId, id)),
+    });
+    if (!existingJob) throw notFound('Job not found');
     const values: Partial<typeof scheduledJobs.$inferInsert> = {};
     if (input.name?.trim()) values.name = input.name.trim();
     if (input.cron?.trim()) {
@@ -85,8 +94,9 @@ export const jobRoutes: FastifyPluginAsync = async (app) => {
     if (input.kind !== undefined) values.kind = input.kind;
     if (input.command !== undefined) values.command = input.command.trim() || null;
     if (input.enabled !== undefined) values.enabled = input.enabled;
-    // Switching to (or editing) an exec job means arbitrary container commands — admin-only.
-    if (values.kind === 'exec' && req.user?.role !== 'admin') {
+    // Creating, switching to, or editing an exec job means arbitrary container
+    // commands — admin-only.
+    if ((values.kind === 'exec' || existingJob.kind === 'exec') && req.user?.role !== 'admin') {
       throw forbidden('Admin access required');
     }
     const [row] = await app.db
@@ -102,6 +112,7 @@ export const jobRoutes: FastifyPluginAsync = async (app) => {
   app.delete('/:id/jobs/:jobId', async (req) => {
     const id = parseId((req.params as { id: string }).id);
     const jobId = parseId((req.params as { jobId: string }).jobId);
+    await loadServiceForUser(app.db, id, req.user!);
     await app.db.delete(scheduledJobs).where(and(eq(scheduledJobs.id, jobId), eq(scheduledJobs.serviceId, id)));
     void audit(app.db, req.user!.id, 'job.delete', `#${jobId}`);
     return { ok: true };
@@ -111,6 +122,7 @@ export const jobRoutes: FastifyPluginAsync = async (app) => {
   app.post('/:id/jobs/:jobId/run', async (req) => {
     const id = parseId((req.params as { id: string }).id);
     const jobId = parseId((req.params as { jobId: string }).jobId);
+    await loadServiceForUser(app.db, id, req.user!);
     const job = await app.db.query.scheduledJobs.findFirst({
       where: and(eq(scheduledJobs.id, jobId), eq(scheduledJobs.serviceId, id)),
     });
@@ -125,6 +137,8 @@ export const jobRoutes: FastifyPluginAsync = async (app) => {
 
   // Run history for one job (latest 20).
   app.get('/:id/jobs/:jobId/runs', async (req) => {
+    const id = parseId((req.params as { id: string }).id);
+    await loadServiceForUser(app.db, id, req.user!);
     const jobId = parseId((req.params as { jobId: string }).jobId);
     const rows = await app.db.query.jobRuns.findMany({
       where: eq(jobRuns.jobId, jobId),

@@ -28,7 +28,7 @@ describe('jobs routes', () => {
   });
 
   it('lists jobs for a service', async () => {
-    const app = await appWith({ findMany: { scheduledJobs: [jobRow({ id: 3, name: 'nightly' })] } });
+    const app = await appWith({ findFirst: { services: svcRow() }, findMany: { scheduledJobs: [jobRow({ id: 3, name: 'nightly' })] } });
     const res = await app.inject({ method: 'GET', url: '/services/1/jobs', headers: asUser() });
     expect(res.statusCode).toBe(200);
     expect(res.json()[0]).toMatchObject({ id: 3, name: 'nightly', kind: 'deploy' });
@@ -74,7 +74,7 @@ describe('jobs routes', () => {
   });
 
   it('forbids exec job creation for members (container command execution)', async () => {
-    const app = await appWith({ findFirst: { services: svcRow() } });
+    const app = await appWith({ findFirst: { services: svcRow({ ownerUserId: 1 }) } });
     const res = await app.inject({
       method: 'POST', url: '/services/1/jobs',
       headers: { ...asUser(), 'x-test-role': 'member' },
@@ -106,21 +106,21 @@ describe('jobs routes', () => {
     const member = { ...asUser(), 'x-test-role': 'member' };
     const harmless = 'uptime';
 
-    const createApp = await appWith({ findFirst: { services: svcRow() } });
+    const createApp = await appWith({ findFirst: { services: svcRow({ ownerUserId: 1 }) } });
     const create = await createApp.inject({
       method: 'POST', url: '/services/1/jobs', headers: member,
       payload: { name: 'x', cron: '* * * * *', kind: 'exec', command: harmless },
     });
     expect(create.statusCode).toBe(403);
 
-    const patchApp = await appWith({ findFirst: { scheduledJobs: jobRow({ id: 3, kind: 'deploy' }) } });
+    const patchApp = await appWith({ findFirst: { services: svcRow({ ownerUserId: 1 }), scheduledJobs: jobRow({ id: 3, kind: 'deploy' }) } });
     const patch = await patchApp.inject({
       method: 'PATCH', url: '/services/1/jobs/3', headers: member,
       payload: { kind: 'exec', command: harmless },
     });
     expect(patch.statusCode).toBe(403);
 
-    const runApp = await appWith({ findFirst: { scheduledJobs: jobRow({ id: 3, kind: 'exec', command: harmless }) } });
+    const runApp = await appWith({ findFirst: { services: svcRow({ ownerUserId: 1 }), scheduledJobs: jobRow({ id: 3, kind: 'exec', command: harmless }) } });
     const run = await runApp.inject({ method: 'POST', url: '/services/1/jobs/3/run', headers: member });
     expect(run.statusCode).toBe(403);
   });
@@ -159,7 +159,10 @@ describe('jobs routes', () => {
   });
 
   it('patches name, cron and enabled', async () => {
-    const app = await appWith({ update: { scheduled_jobs: [jobRow({ id: 3, name: 'renamed', enabled: false })] } });
+    const app = await appWith({
+      findFirst: { services: svcRow(), scheduledJobs: jobRow({ id: 3, kind: 'exec' }) },
+      update: { scheduled_jobs: [jobRow({ id: 3, name: 'renamed', enabled: false })] },
+    });
     const res = await app.inject({
       method: 'PATCH', url: '/services/1/jobs/3', headers: asUser(),
       payload: { name: 'renamed', cron: '30 4 * * *', kind: 'exec', command: 'true', enabled: false },
@@ -169,7 +172,10 @@ describe('jobs routes', () => {
   });
 
   it('rejects a patch with an invalid cron and ignores blank fields', async () => {
-    const app = await appWith({ update: { scheduled_jobs: [jobRow()] } });
+    const app = await appWith({
+      findFirst: { services: svcRow(), scheduledJobs: jobRow() },
+      update: { scheduled_jobs: [jobRow()] },
+    });
     const bad = await app.inject({
       method: 'PATCH', url: '/services/1/jobs/3', headers: asUser(),
       payload: { cron: 'nonsense' },
@@ -183,13 +189,19 @@ describe('jobs routes', () => {
   });
 
   it('accepts an empty body on patch (no changes)', async () => {
-    const app = await appWith({ update: { scheduled_jobs: [jobRow()] } });
+    const app = await appWith({
+      findFirst: { services: svcRow(), scheduledJobs: jobRow() },
+      update: { scheduled_jobs: [jobRow()] },
+    });
     const res = await app.inject({ method: 'PATCH', url: '/services/1/jobs/3', headers: asUser() });
     expect(res.statusCode).toBe(200);
   });
 
   it('rejects a patch with invalid field types', async () => {
-    const app = await appWith({ update: { scheduled_jobs: [jobRow()] } });
+    const app = await appWith({
+      findFirst: { services: svcRow(), scheduledJobs: jobRow() },
+      update: { scheduled_jobs: [jobRow()] },
+    });
     const badKind = await app.inject({
       method: 'PATCH', url: '/services/1/jobs/3', headers: asUser(),
       payload: { kind: 'once' },
@@ -208,7 +220,7 @@ describe('jobs routes', () => {
   });
 
   it('deletes a job', async () => {
-    const app = await appWith({});
+    const app = await appWith({ findFirst: { services: svcRow() } });
     const res = await app.inject({ method: 'DELETE', url: '/services/1/jobs/3', headers: asUser() });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ ok: true });
@@ -216,7 +228,7 @@ describe('jobs routes', () => {
 
   it('runs a job immediately', async () => {
     const app = await appWith({
-      findFirst: { scheduledJobs: jobRow({ id: 3 }) },
+      findFirst: { services: svcRow(), scheduledJobs: jobRow({ id: 3 }) },
       insert: { deployments: [{ id: 55 }] },
       update: { scheduledJobs: [{}] },
     });
@@ -233,6 +245,7 @@ describe('jobs routes', () => {
 
   it('lists run history', async () => {
     const app = await appWith({
+      findFirst: { services: svcRow() },
       findMany: {
         jobRuns: [{
           id: 9, jobId: 3, status: 'completed', output: 'ok', exitCode: 0,
@@ -245,6 +258,7 @@ describe('jobs routes', () => {
     expect(res.json()[0]).toMatchObject({ id: 9, status: 'completed', output: 'ok' });
     // Rows without timestamps serialize to null.
     const app2 = await appWith({
+      findFirst: { services: svcRow() },
       findMany: {
         jobRuns: [{ id: 10, jobId: 3, status: 'running', output: '', exitCode: null, startedAt: null, finishedAt: null, createdAt: new Date(0) }],
       },

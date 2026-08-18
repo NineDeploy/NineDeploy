@@ -5,8 +5,9 @@ import { webhookCreate } from '@ninedeploy/schemas';
 import { config } from '../config.js';
 import { decrypt, encrypt, randomToken } from '../lib/crypto.js';
 import { matchesAny, parseWatchPaths } from '../lib/glob.js';
-import { notFound, parseId, unauthorized } from '../lib/errors.js';
+import { parseId, unauthorized } from '../lib/errors.js';
 import { isPing, isPullRequest, parsePullRequest, parsePush, verifyWebhook } from '../lib/webhooks.js';
+import { loadServiceForUser } from '../lib/serviceAccess.js';
 import { dockerBuilder } from '../engine/builders/docker.js';
 import { pm2Builder } from '../engine/builders/pm2.js';
 import { composeBuilder } from '../engine/builders/compose.js';
@@ -265,6 +266,7 @@ export const webhookMgmtRoutes: FastifyPluginAsync = async (app) => {
 
   app.get('/:id/webhooks', async (req) => {
     const id = parseId((req.params as { id: string }).id);
+    await loadServiceForUser(app.db, id, req.user!);
     const rows = await app.db.query.webhooks.findMany({ where: eq(webhooks.serviceId, id) });
     return rows.map((w) => ({
       id: w.id,
@@ -279,8 +281,7 @@ export const webhookMgmtRoutes: FastifyPluginAsync = async (app) => {
   app.post('/:id/webhooks', async (req) => {
     const id = parseId((req.params as { id: string }).id);
     const input = webhookCreate.parse(req.body ?? {});
-    const svc = await app.db.query.services.findFirst({ where: eq(services.id, id) });
-    if (!svc) throw notFound('Service not found');
+    const svc = await loadServiceForUser(app.db, id, req.user!);
     const branch = input.branch?.trim() || svc.branch;
     const secret = randomToken(24);
     const [w] = await app.db
@@ -300,6 +301,7 @@ export const webhookMgmtRoutes: FastifyPluginAsync = async (app) => {
   app.delete('/:id/webhooks/:hookId', async (req) => {
     const id = parseId((req.params as { id: string }).id);
     const hookId = parseId((req.params as { hookId: string }).hookId);
+    await loadServiceForUser(app.db, id, req.user!);
     await app.db.delete(webhooks).where(and(eq(webhooks.id, hookId), eq(webhooks.serviceId, id)));
     return { ok: true };
   });

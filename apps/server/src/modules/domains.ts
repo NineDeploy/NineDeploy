@@ -1,10 +1,11 @@
 import { and, eq } from 'drizzle-orm';
 import { audit } from "../lib/audit.js";
-import { domains, services, type Domain } from '@ninedeploy/db';
+import { domains, type Domain } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { createDomain, domainPatch } from '@ninedeploy/schemas';
 import { parseHeaders, writeDynamicConfig } from '../engine/proxy.js';
 import { createDnsRecord, deleteDnsRecord, detectPublicIp, getDnsRecordsConfig } from '../lib/cloudflare.js';
+import { loadServiceForUser } from '../lib/serviceAccess.js';
 import { conflict, notFound, parseId as num } from '../lib/errors.js';
 
 function serialize(d: Domain) {
@@ -32,6 +33,7 @@ export const domainsRoutes: FastifyPluginAsync = async (app) => {
 
   app.get('/:id/domains', async (req) => {
     const id = num((req.params as { id: string }).id);
+    await loadServiceForUser(app.db, id, req.user!);
     const rows = await app.db.query.domains.findMany({ where: eq(domains.serviceId, id) });
     return rows.map(serialize);
   });
@@ -39,8 +41,7 @@ export const domainsRoutes: FastifyPluginAsync = async (app) => {
   app.post('/:id/domains', async (req) => {
     const id = num((req.params as { id: string }).id);
     const input = createDomain.parse(req.body);
-    const svc = await app.db.query.services.findFirst({ where: eq(services.id, id) });
-    if (!svc) throw notFound('Service not found');
+    await loadServiceForUser(app.db, id, req.user!);
 
     const [d] = await app.db
       .insert(domains)
@@ -90,6 +91,7 @@ export const domainsRoutes: FastifyPluginAsync = async (app) => {
   app.patch('/:id/domains/:domainId', async (req) => {
     const id = num((req.params as { id: string }).id);
     const domainId = num((req.params as { domainId: string }).domainId);
+    await loadServiceForUser(app.db, id, req.user!);
     const input = domainPatch.parse(req.body ?? {});
     // Validate early so a malformed headers array never reaches Traefik.
     const values: Partial<typeof domains.$inferInsert> = {};
@@ -117,6 +119,7 @@ export const domainsRoutes: FastifyPluginAsync = async (app) => {
   app.delete('/:id/domains/:domainId', async (req) => {
     const id = num((req.params as { id: string }).id);
     const domainId = num((req.params as { domainId: string }).domainId);
+    await loadServiceForUser(app.db, id, req.user!);
     const existing = await app.db.query.domains.findFirst({
       where: and(eq(domains.id, domainId), eq(domains.serviceId, id)),
     });

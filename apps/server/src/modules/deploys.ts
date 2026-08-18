@@ -7,14 +7,14 @@ import { capture } from '../lib/exec.js';
 import { audit } from '../lib/audit.js';
 import { logBus } from '../engine/logs.js';
 import { resolveUser } from '../lib/auth.js';
+import { loadServiceForUser } from '../lib/serviceAccess.js';
 import { badRequest, notFound, parseId as num } from '../lib/errors.js';
 
 export const deploysRoutes: FastifyPluginAsync = async (app) => {
   // Trigger a new deployment (enqueues a `queued` row the worker picks up).
   app.post('/:id/deploys', { onRequest: [app.authenticate] }, async (req) => {
     const id = num((req.params as { id: string }).id);
-    const svc = await app.db.query.services.findFirst({ where: eq(services.id, id) });
-    if (!svc) throw notFound('Service not found');
+    const svc = await loadServiceForUser(app.db, id, req.user!);
     // In-progress dedup: a service with a queued/building deploy gets that
     // deployment returned instead of another queue entry (button-hammering
     // must not flood unbounded queued rows for one service).
@@ -37,6 +37,7 @@ export const deploysRoutes: FastifyPluginAsync = async (app) => {
   // List deployments for a service.
   app.get('/:id/deploys', { onRequest: [app.authenticate] }, async (req) => {
     const id = num((req.params as { id: string }).id);
+    await loadServiceForUser(app.db, id, req.user!);
     const rows = await app.db.query.deployments.findMany({
       where: eq(deployments.serviceId, id),
       // id is monotonic and unambiguous — createdAt is second-precision, so
@@ -63,6 +64,7 @@ export const deploysRoutes: FastifyPluginAsync = async (app) => {
   app.post('/:id/deploys/:depId/rollback', { onRequest: [app.authenticate] }, async (req) => {
     const id = num((req.params as { id: string }).id);
     const depId = num((req.params as { depId: string }).depId);
+    await loadServiceForUser(app.db, id, req.user!);
     const old = await app.db.query.deployments.findFirst({ where: eq(deployments.id, depId) });
     if (!old || old.serviceId !== id) throw notFound('Deployment not found');
     void audit(app.db, req.user!.id, 'deploy.rollback', `#${depId} → ${old.commitSha?.slice(0, 7) ?? old.imageDigest?.slice(0, 15) ?? '—'}`);
@@ -86,6 +88,7 @@ export const deploysRoutes: FastifyPluginAsync = async (app) => {
   app.post('/:id/deploys/:depId/cancel', { onRequest: [app.authenticate] }, async (req) => {
     const id = num((req.params as { id: string }).id);
     const depId = num((req.params as { depId: string }).depId);
+    await loadServiceForUser(app.db, id, req.user!);
     const dep = await app.db.query.deployments.findFirst({ where: eq(deployments.id, depId) });
     if (!dep || dep.serviceId !== id) throw notFound('Deployment not found');
     if (!['queued', 'building', 'deploying'].includes(dep.status)) {
@@ -114,6 +117,7 @@ export const deploysRoutes: FastifyPluginAsync = async (app) => {
   app.get('/:id/deploys/:depId/diff', { onRequest: [app.authenticate] }, async (req) => {
     const id = num((req.params as { id: string }).id);
     const depId = num((req.params as { depId: string }).depId);
+    await loadServiceForUser(app.db, id, req.user!);
     const dep = await app.db.query.deployments.findFirst({ where: eq(deployments.id, depId) });
     if (!dep || dep.serviceId !== id) throw notFound('Deployment not found');
     // The nearest OLDER deployment of the same service with a snapshot.
@@ -138,9 +142,19 @@ export const deploysRoutes: FastifyPluginAsync = async (app) => {
   // Live log stream over WebSocket. Auth via ?token= (ws can't set headers easily).
   app.get('/:id/deploys/:depId/logs', { websocket: true }, async (socket, req) => {
     const token = (req.query as { token?: string }).token;
+    const id = num((req.params as { id: string; depId: string }).id);
     const depId = num((req.params as { id: string; depId: string }).depId);
-    if (!token || !(await resolveUser(app.db, token))) {
+    const user = token ? await resolveUser(app.db, token) : null;
+    if (!user) {
       socket.close(1008, 'unauthorized');
+      return;
+    }
+    // Ownership check mirrors the HTTP routes: a member may only stream logs
+    // of their own services.
+    try {
+      await loadServiceForUser(app.db, id, user);
+    } catch {
+      socket.close(1008, 'not found');
       return;
     }
 

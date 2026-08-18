@@ -1,11 +1,13 @@
 import { createClient, NineDeployError } from '@ninedeploy/sdk';
 import { loadConfig, saveConfig } from '../config.js';
 import { prompt, promptHidden } from '../prompts.js';
+import { normalizeServerUrl } from '../lib/serverRunner.js';
 
 /** `ninedeploy login` — authenticate and persist the access token locally. */
 export async function loginAction(): Promise<void> {
   const existing = loadConfig();
-  const baseUrl = await prompt('Server URL', existing.baseUrl);
+  const rawUrl = await prompt('Server URL', existing.baseUrl);
+  const baseUrl = normalizeServerUrl(rawUrl);
   const email = await prompt('Email');
   if (!email) {
     console.error('Email is required.');

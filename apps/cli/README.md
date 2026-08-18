@@ -66,14 +66,14 @@ npm install -g ninedeploy
 
 ### Step 3: Initial Setup & Login
 
-If you just started a fresh instance, create the first administrator account:
+If you just started, create your administrator account:
 
 ```bash
 ninedeploy setup
 ```
-*Prompts for Server URL (default: `http://localhost:3000`), admin email, and password.*
+> 💡 **Automatic Docker Bootstrapping**: If you don't have a NineDeploy server running yet, `ninedeploy setup` will automatically detect Docker and offer to start a local server container for you!
 
-Or connect to an existing server:
+Or connect to an existing remote server:
 
 ```bash
 # Point to your server URL (if not localhost:3000)
@@ -91,6 +91,14 @@ ninedeploy whoami
 ---
 
 ## 🛠️ CLI Commands Overview
+
+### 🖥️ Local Server Management (Docker)
+```bash
+ninedeploy server start               # Start local NineDeploy server container
+ninedeploy server stop                # Stop local server container
+ninedeploy server status              # Check local container and HTTP API health
+ninedeploy server logs                # Stream local server container logs
+```
 
 ### 🚀 Applications & Services
 ```bash
@@ -136,8 +144,9 @@ ninedeploy domains add <serviceId> app.domain.com  # Route domain with automatic
 ninedeploy domains rm <serviceId> <domainId>       # Remove domain rule
 ```
 
-### 📊 System Health & Monitoring
+### 📊 System Health, Diagnostics & Monitoring
 ```bash
+ninedeploy doctor                      # Run full diagnostics (Node, Docker, Server, Auth)
 ninedeploy system info                 # Display system version, tech stack & telemetry
 ninedeploy system dashboard            # Interactive live terminal dashboard
 ninedeploy system update-check         # Check for newer releases

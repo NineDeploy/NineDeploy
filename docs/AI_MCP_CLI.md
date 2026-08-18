@@ -39,19 +39,28 @@ NineDeploy includes an official stdio MCP server exposing **35 dedicated tools**
 # Global installation
 npm install -g ninedeploy
 
-# Login to your instance
-ninedeploy login
+# 1-Click setup & auto-start local Docker server
+ninedeploy init
 
-# List and deploy services
-ninedeploy services
-ninedeploy deploy <service-id-or-name>
+# Local Docker server management
+ninedeploy server start
+ninedeploy server status
+ninedeploy server stop
+ninedeploy server logs
 
-# Stream live container logs
-ninedeploy logs <service-name> --follow
+# System health & diagnostics
+ninedeploy doctor
+ninedeploy system dashboard
 
-# Inspect system status and trigger autoprune
-ninedeploy status
-ninedeploy system autoprune
+# List, create and deploy services
+ninedeploy services list
+ninedeploy services create
+ninedeploy services deploy <service-id>
+ninedeploy services logs <service-id>
+
+# Databases and Templates
+ninedeploy databases list
+ninedeploy templates list
 ```
 
 ---

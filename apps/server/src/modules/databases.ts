@@ -1,7 +1,7 @@
 import { existsSync, unlinkSync } from 'node:fs';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { audit } from "../lib/audit.js";
-import { backups, databaseAttachments, databases, services, type Database } from '@ninedeploy/db';
+import { backups, databaseAttachments, databases, type Database } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { createAttachment, createDatabase, setLimits } from '@ninedeploy/schemas';
 import {
@@ -16,8 +16,13 @@ import {
   stopDatabaseStudio,
 } from '../engine/database.js';
 import { decrypt, encrypt, randomToken } from '../lib/crypto.js';
+import { loadServiceForUser } from '../lib/serviceAccess.js';
 import { badRequest, notFound, parseId as num } from '../lib/errors.js';
 import { slugify } from '../lib/slug.js';
+
+/** Docker volume names only: prevents `existingVolume` from becoming a bind
+ *  mount operand (`/etc`, `/:/x`) in `docker run -v <name>:<path>`. */
+const DOCKER_VOLUME_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
 
 function serialize(
   d: Database & {
@@ -25,6 +30,7 @@ function serialize(
       service?: { id: number; name: string; slug: string } | null;
     }>;
   },
+  opts: { isAdmin: boolean } = { isAdmin: true },
 ) {
   const cfg = ENGINES[d.engine];
   const attachedServices =
@@ -44,7 +50,9 @@ function serialize(
     port: d.internalPort,
     username: cfg?.username() ?? null,
     database: cfg?.dbName() ?? null,
-    connectionString: d.status === 'running' ? connectionString(d) : null,
+    // The password-embedded URI is admin-only; members reveal credentials via
+    // the dedicated /credentials endpoint (also admin-gated).
+    connectionString: opts.isAdmin && d.status === 'running' ? connectionString(d) : null,
     containerName: d.containerName,
     volumeName: d.volumeName,
     cpuShares: d.cpuShares,
@@ -66,6 +74,7 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
     // Optional project scoping for the global project switcher (?projectId=).
     const projectId = Number((req.query as { projectId?: string }).projectId);
     const scoped = Number.isInteger(projectId) && projectId > 0 ? projectId : null;
+    const isAdmin = req.user?.role === 'admin';
     const rows = await app.db.query.databases.findMany({
       orderBy: (d, { desc }) => [desc(d.id)],
       with: {
@@ -77,7 +86,7 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
       },
       ...(scoped != null && { where: (d, { eq }) => eq(d.projectId, scoped) }),
     });
-    return rows.map(serialize);
+    return rows.map((d) => serialize(d, { isAdmin }));
   });
 
   app.post('/', async (req) => {
@@ -87,7 +96,14 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
     if (!cfg) throw badRequest(`Unknown engine: ${input.engine}`);
     const password = randomToken(18);
     const containerName = `nd-db-${slug}`;
-    const volumeName = input.existingVolume?.trim() ? input.existingVolume.trim() : `nd-db-${slug}-data`;
+    // An attacker-chosen `existingVolume` reaches `docker run -v <name>:<path>`
+    // verbatim; anything with a `:` or leading `/` would become a HOST bind
+    // mount. Accept managed docker volume names only.
+    const existingVolume = input.existingVolume?.trim();
+    if (existingVolume && !DOCKER_VOLUME_NAME.test(existingVolume)) {
+      throw badRequest('existingVolume must be a docker volume name (letters, digits, dot, dash, underscore)');
+    }
+    const volumeName = existingVolume || `nd-db-${slug}-data`;
     const version = input.extensions?.includes('pgvector') && input.engine === 'postgres' ? 'vector' : (input.version ?? null);
 
     const [created] = await app.db
@@ -126,7 +142,7 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
       with: { attachments: { with: { service: true } } },
     });
     void audit(app.db, req.user!.id, 'database.create', input.name);
-    return serialize(updated!);
+    return serialize(updated!, { isAdmin: req.user?.role === 'admin' });
   });
 
   app.get('/:id', async (req) => {
@@ -135,15 +151,20 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
       with: { attachments: { with: { service: true } } },
     });
     if (!d) throw notFound('Database not found');
-    return serialize(d);
+    return serialize(d, { isAdmin: req.user?.role === 'admin' });
   });
 
-  // Start Web Studio (Adminer / Redis Commander GUI) for this database
-  app.post('/:id/studio', async (req) => {
+  // Start Web Studio (Adminer / Redis Commander GUI) for this database.
+  // Admin-only: it binds a host port serving a database GUI.
+  app.post('/:id/studio', { preHandler: [app.requireAdmin] }, async (req) => {
     const id = num((req.params as { id: string }).id);
     const d = await app.db.query.databases.findFirst({ where: eq(databases.id, id) });
     if (!d) throw notFound('Database not found');
-    const port = (req.body as { port?: number })?.port ?? (d.webGuiPort || (18000 + (d.id % 1000)));
+    const bodyPort = (req.body as { port?: number } | undefined)?.port;
+    if (bodyPort !== undefined && (!Number.isInteger(bodyPort) || bodyPort < 1024 || bodyPort > 65535)) {
+      throw badRequest('port must be an integer between 1024 and 65535');
+    }
+    const port = bodyPort ?? (d.webGuiPort || (18000 + (d.id % 1000)));
     await startDatabaseStudio(d, port, (line) => app.log.info({ component: 'database-studio' }, line));
     await app.db.update(databases).set({ webGuiEnabled: true, webGuiPort: port }).where(eq(databases.id, d.id));
     void audit(app.db, req.user!.id, 'database.studio.start', `${d.name} on :${port}`);
@@ -271,13 +292,15 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
     return { logs };
   });
 
-  app.get('/:id/credentials', async (req) => {
+  // Credential reveal (password + full URI) — admin-only, audited surface.
+  app.get('/:id/credentials', { preHandler: [app.requireAdmin] }, async (req) => {
     const id = num((req.params as { id: string }).id);
     const d = await app.db.query.databases.findFirst({ where: eq(databases.id, id) });
     if (!d) throw notFound('Database not found');
     const cfg = ENGINES[d.engine];
     const password = d.passwordEncrypted ? decrypt(d.passwordEncrypted) : '';
     const connStr = connectionString(d);
+    void audit(app.db, req.user!.id, 'database.credentials.reveal', d.name);
     return {
       engine: d.engine,
       username: cfg?.username() ?? d.username,
@@ -301,6 +324,7 @@ export const attachmentRoutes: FastifyPluginAsync = async (app) => {
 
   app.get('/:id/attachments', async (req) => {
     const id = num((req.params as { id: string }).id);
+    await loadServiceForUser(app.db, id, req.user!);
     const rows = await app.db.query.databaseAttachments.findMany({ where: eq(databaseAttachments.serviceId, id) });
     const out = [];
     for (const a of rows) {
@@ -316,8 +340,7 @@ export const attachmentRoutes: FastifyPluginAsync = async (app) => {
     // like `MY ALIAS` would otherwise be injected verbatim into the service's
     // runtime env and break `docker run --env-file` at deploy time.
     const input = createAttachment.parse(req.body ?? {});
-    const svc = await app.db.query.services.findFirst({ where: eq(services.id, id) });
-    if (!svc) throw notFound('Service not found');
+    await loadServiceForUser(app.db, id, req.user!);
     const d = await app.db.query.databases.findFirst({ where: eq(databases.id, input.databaseId) });
     if (!d) throw notFound('Database not found');
     const envAlias = input.envAlias ?? aliasFor(d.engine);
@@ -331,8 +354,14 @@ export const attachmentRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.delete('/:id/attachments/:attId', async (req) => {
+    const id = num((req.params as { id: string }).id);
     const attId = num((req.params as { attId: string }).attId);
-    await app.db.delete(databaseAttachments).where(eq(databaseAttachments.id, attId));
+    await loadServiceForUser(app.db, id, req.user!);
+    const deleted = await app.db
+      .delete(databaseAttachments)
+      .where(and(eq(databaseAttachments.id, attId), eq(databaseAttachments.serviceId, id)))
+      .returning({ id: databaseAttachments.id });
+    if (deleted.length === 0) throw notFound('Attachment not found');
     return { ok: true };
   });
 };

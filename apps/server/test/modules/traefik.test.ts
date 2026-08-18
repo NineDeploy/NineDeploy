@@ -393,6 +393,29 @@ tcp:
     expect(resMwOnly.json().middlewares).toHaveLength(1);
   });
 
+  it('K3: Traefik GET routes reject anonymous requests', async () => {
+    const app = await makeTraefikApp();
+    for (const url of ['/traefik', '/traefik/status', '/traefik/certificates', '/traefik/logs', '/traefik/config', '/traefik/version']) {
+      const res = await app.inject({ method: 'GET', url });
+      expect(res.statusCode, `GET ${url} without auth must not be 200`).toBe(401);
+    }
+  });
+
+  it('K3: Traefik logs/config require admin; the overview routes accept members', async () => {
+    const app = await makeTraefikApp();
+    vi.mocked(exec.capture).mockRejectedValue(new Error('no such container'));
+
+    const member = asUser({ id: 7, role: 'member' });
+    for (const url of ['/traefik', '/traefik/status', '/traefik/certificates', '/traefik/version']) {
+      const res = await app.inject({ method: 'GET', url, headers: member });
+      expect(res.statusCode, `GET ${url} as member`).toBe(200);
+    }
+    for (const url of ['/traefik/logs', '/traefik/config']) {
+      const res = await app.inject({ method: 'GET', url, headers: member });
+      expect(res.statusCode, `GET ${url} as member must be admin-only`).toBe(403);
+    }
+  });
+
   it('POST /traefik/restart restarts Traefik container', async () => {
     const app = await makeTraefikApp();
     vi.mocked(exec.capture).mockResolvedValue('ninedeploy-traefik\n');
