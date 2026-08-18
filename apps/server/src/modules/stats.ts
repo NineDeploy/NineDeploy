@@ -104,7 +104,7 @@ export const metricRoutes: FastifyPluginAsync = async (app) => {
 
     let points = rows.map((r) => ({
       ts: r.ts.toISOString(),
-      value: kind === 'memory' ? Math.round(r.value / (1024 * 1024)) : Math.round(r.value) / 100,
+      value: kind === 'memory' ? Math.round(r.value / (1024 * 1024)) : +(r.value / 100).toFixed(1),
     }));
 
     // If historical samples haven't been stored yet, fallback to the latest live snapshot
@@ -132,7 +132,7 @@ export const metricRoutes: FastifyPluginAsync = async (app) => {
           points = [
             {
               ts: new Date().toISOString(),
-              value: kind === 'memory' ? Math.round(st.memBytes / (1024 * 1024)) : st.cpuPct,
+              value: kind === 'memory' ? Math.round(st.memBytes / (1024 * 1024)) : +st.cpuPct.toFixed(1),
             },
           ];
         }

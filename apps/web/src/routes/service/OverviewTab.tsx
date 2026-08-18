@@ -24,6 +24,15 @@ export function OverviewTab({ serviceId, svc }: { serviceId: number; svc: Servic
 
 // ── Metrics (CPU / memory sparklines) ─────────────────────────────────────
 function MetricsCard({ serviceId, svc }: { serviceId: number; svc: Service }) {
+  const isOnline = svc.status === 'running';
+
+  const snapshot = useQuery({
+    queryKey: ['live-stats-snapshot'],
+    queryFn: () => api.stats.snapshot(),
+    refetchInterval: 3000,
+    enabled: isOnline,
+  });
+
   const cpu = useQuery({
     queryKey: ['svc-metrics', serviceId, 'cpu'],
     queryFn: () => api.stats.metrics(serviceId, { kind: 'cpu', minutes: 60 }),
@@ -35,24 +44,23 @@ function MetricsCard({ serviceId, svc }: { serviceId: number; svc: Service }) {
     refetchInterval: 5000,
   });
 
+  const liveStat = snapshot.data?.containers.find((c) => c.refId === serviceId && c.kind === 'service');
   const latest = (series: typeof cpu.data) => series?.points.at(-1)?.value ?? null;
-  const isOnline = svc.status === 'running';
   const cpuPoints = (cpu.data?.points ?? []).map((p) => p.value);
   const memPoints = (mem.data?.points ?? []).map((p) => p.value);
 
-  const displayCpu =
-    latest(cpu.data) != null
-      ? `${latest(cpu.data)}%`
-      : isOnline
-        ? '0.0%'
-        : 'Offline';
+  const currentCpu = liveStat?.cpuPct ?? latest(cpu.data) ?? (isOnline ? 0 : null);
+  const currentMem = liveStat?.memMb ?? latest(mem.data) ?? (isOnline ? 0 : null);
+  const memLimit = liveStat?.memLimitMb || svc.memLimitMb || 0;
 
-  const displayMem =
-    latest(mem.data) != null
-      ? `${latest(mem.data)} MiB`
-      : isOnline
-        ? '0.0 MiB'
-        : 'Offline';
+  const displayCpu = currentCpu != null ? `${currentCpu.toFixed(1)}%` : isOnline ? '0.0%' : 'Offline';
+  const displayMem = currentMem != null
+    ? memLimit > 0
+      ? `${currentMem.toFixed(1)} / ${memLimit} MiB`
+      : `${currentMem.toFixed(1)} MiB`
+    : isOnline
+      ? '0.0 MiB'
+      : 'Offline';
 
   return (
     <Card>

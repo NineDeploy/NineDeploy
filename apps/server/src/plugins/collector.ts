@@ -80,7 +80,7 @@ export default fp(
         const snapshots: MetricSnapshot[] = rows.map((r) => ({
           serviceId: r.serviceId,
           kind: r.kind,
-          value: r.kind === 'memory' ? Math.round(r.value / (1024 * 1024)) : r.value,
+          value: r.kind === 'memory' ? Math.round(r.value / (1024 * 1024)) : +(r.value / 100).toFixed(1),
         }));
         if (cache.host) {
           const h = cache.host;
