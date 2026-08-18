@@ -83,6 +83,23 @@ describe('DatabaseDetail', () => {
       value: { writeText: vi.fn().mockResolvedValue(undefined) },
       configurable: true,
     });
+    mockOf(api.containers.compose).mockResolvedValue({
+      yaml: 'services:\n  nd-db-prod-postgres:\n    image: postgres:16',
+      inspect: {
+        id: 'db1',
+        name: 'nd-db-prod-postgres',
+        state: { status: 'running', running: true },
+        traefikTags: {},
+        raw: { Id: 'db1' },
+      },
+    } as never);
+    mockOf(api.containers.inspect).mockResolvedValue({
+      id: 'db1',
+      name: 'nd-db-prod-postgres',
+      state: { status: 'running', running: true },
+      traefikTags: {},
+      raw: { Id: 'db1' },
+    } as never);
   });
 
   it('renders loading skeleton', () => {
@@ -516,5 +533,33 @@ describe('DatabaseDetail', () => {
     renderRoute(<DatabaseDetail />, { path: '/databases/:id', route: '/databases/99' });
     fireEvent.click(await screen.findByRole('tab', { name: 'Files' }));
     expect(await screen.findByText('nd-db-fallback-pg')).toBeInTheDocument();
+  });
+
+  it('renders the Manifest & Inspect tab with live compose and inspect data for database', async () => {
+    mockOf(api.databases.get).mockResolvedValue(sampleDb as any);
+    mockOf(api.containers.compose).mockResolvedValue({
+      yaml: 'services:\n  nd-db-prod-postgres:\n    image: postgres:16',
+      inspect: {
+        id: 'db1',
+        name: 'nd-db-prod-postgres',
+        state: { status: 'running', running: true },
+        traefikTags: {},
+        raw: { Id: 'db1' },
+      },
+    } as never);
+    mockOf(api.containers.inspect).mockResolvedValue({
+      id: 'db1',
+      name: 'nd-db-prod-postgres',
+      state: { status: 'running', running: true },
+      traefikTags: {},
+      raw: { Id: 'db1' },
+    } as never);
+
+    renderRoute(<DatabaseDetail />, { path: '/databases/:id', route: '/databases/1' });
+    await screen.findByText('prod-postgres');
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Manifest & Inspect' }));
+    expect(await screen.findByText('docker-compose.runtime.yml')).toBeInTheDocument();
+    expect(screen.getByText(/image: postgres:16/)).toBeInTheDocument();
   });
 });

@@ -5,8 +5,14 @@ import { api } from '../../lib/api.js';
 import type { Service } from '@ninedeploy/sdk';
 import { Button, Card, CardBody, Skeleton } from '../../components/ui.js';
 
-export function ManifestTab({ service }: { service: Service }) {
-  const containerName = service.runtimeId || `nd-svc-${service.slug}-1`;
+export function ManifestTab({
+  service,
+  containerName: customContainerName,
+}: {
+  service?: Service;
+  containerName?: string;
+}) {
+  const containerName = customContainerName || (service ? service.runtimeId || `nd-svc-${service.slug}-1` : '');
   const [copiedYaml, setCopiedYaml] = useState(false);
   const [copiedJson, setCopiedJson] = useState(false);
   const [activeSubTab, setActiveSubTab] = useState<'compose' | 'traefik' | 'inspect'>('compose');

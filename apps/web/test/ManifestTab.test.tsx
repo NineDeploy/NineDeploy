@@ -97,4 +97,34 @@ describe('ManifestTab', () => {
     fireEvent.click(screen.getByRole('button', { name: /copy json/i }));
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(expect.stringContaining('"Id": "cid1"'));
   });
+
+  it('supports direct containerName prop for databases or custom containers', async () => {
+    apiMock.api.containers.compose.mockResolvedValueOnce({
+      yaml: 'services:\n  nd-db-postgres-1:\n    image: postgres:16',
+      inspect: {
+        id: 'db-cid',
+        name: 'nd-db-postgres-1',
+        state: { status: 'running', running: true },
+        traefikTags: {},
+        raw: { Id: 'db-cid' },
+      },
+    });
+    apiMock.api.containers.inspect.mockResolvedValueOnce({
+      id: 'db-cid',
+      name: 'nd-db-postgres-1',
+      state: { status: 'running', running: true },
+      traefikTags: {},
+      raw: { Id: 'db-cid' },
+    });
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ManifestTab containerName="nd-db-postgres-1" />
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText('nd-db-postgres-1')).toBeInTheDocument();
+    expect(screen.getByText(/image: postgres:16/i)).toBeInTheDocument();
+  });
 });

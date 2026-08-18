@@ -38,9 +38,9 @@ import {
   cn,
 } from '../components/ui.js';
 import { downloadBlob, formatBytes, formatDateTime, useCopy } from '../lib/format.js';
-
 import { ContainerFileBrowser } from '../components/ContainerFileBrowser.js';
 import { DatabaseTopologyTab } from './database/DatabaseTopologyTab.js';
+import { ManifestTab } from './service/ManifestTab.js';
 
 const ENGINE_LABEL: Record<string, string> = {
   postgres: 'PostgreSQL',
@@ -60,7 +60,7 @@ export function DatabaseDetail() {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const { toast } = useToast();
-  const [activeTab, setActiveTab] = useState<'overview' | 'topology' | 'files' | 'backups' | 'logs' | 'settings'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'topology' | 'manifest' | 'files' | 'backups' | 'logs' | 'settings'>('overview');
 
   const dbQuery = useQuery({
     queryKey: ['database-detail', id],
@@ -226,6 +226,7 @@ export function DatabaseDetail() {
         tabs={[
           { id: 'overview', label: 'Overview' },
           { id: 'topology', label: 'Topology' },
+          { id: 'manifest', label: 'Manifest & Inspect' },
           { id: 'files', label: 'Files' },
           { id: 'backups', label: 'Backups' },
           { id: 'logs', label: 'Logs' },
@@ -243,6 +244,11 @@ export function DatabaseDetail() {
         />
       )}
       {activeTab === 'topology' && <DatabaseTopologyTab db={db} />}
+      {activeTab === 'manifest' && (
+        <div className="mt-5">
+          <ManifestTab containerName={db.containerName ?? `nd-db-${db.slug}`} />
+        </div>
+      )}
       {activeTab === 'files' && (
         <div className="mt-5">
           <ContainerFileBrowser container={db.containerName ?? `nd-db-${db.slug}`} />
