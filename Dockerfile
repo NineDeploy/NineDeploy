@@ -38,6 +38,8 @@ COPY apps/cli/package.json apps/cli/
 COPY packages/db/package.json packages/db/
 COPY packages/schemas/package.json packages/schemas/
 COPY packages/sdk/package.json packages/sdk/
+COPY packages/plugin-sdk/package.json packages/plugin-sdk/
+COPY packages/mcp/package.json packages/mcp/
 RUN pnpm install --frozen-lockfile
 
 # Copy the rest and build (tsc for server/packages, vite for web).
@@ -67,6 +69,8 @@ COPY --from=build /app/apps/cli/package.json apps/cli/
 COPY --from=build /app/packages/db/package.json packages/db/
 COPY --from=build /app/packages/schemas/package.json packages/schemas/
 COPY --from=build /app/packages/sdk/package.json packages/sdk/
+COPY --from=build /app/packages/plugin-sdk/package.json packages/plugin-sdk/
+COPY --from=build /app/packages/mcp/package.json packages/mcp/
 RUN pnpm install --frozen-lockfile --prod --filter @ninedeploy/server... 
 
 # Compiled output (the templates registry compiles into dist; the web dashboard
@@ -79,6 +83,8 @@ COPY --from=build /app/packages/db/dist packages/db/dist
 COPY --from=build /app/packages/db/src/migrations packages/db/src/migrations
 COPY --from=build /app/packages/schemas/dist packages/schemas/dist
 COPY --from=build /app/packages/sdk/dist packages/sdk/dist
+COPY --from=build /app/packages/plugin-sdk/dist packages/plugin-sdk/dist
+COPY --from=build /app/packages/mcp/dist packages/mcp/dist
 
 # Non-root user; /data is the volume mount point for db/repos/logs/backups.
 RUN useradd --system --create-home ninedeploy && mkdir -p /data && chown ninedeploy /data

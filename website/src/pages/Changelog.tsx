@@ -19,7 +19,7 @@ const releases = [
           "Microkernel event bus and waterfall hook pipeline (deploy.before / deploy.after)",
           "Central Configuration Center with Dual-Vault AES-256-GCM encryption",
           "Plugin SDK with MenuRegistry and ServiceRegistry driver interchange",
-          "26-tool Model Context Protocol (MCP) server for AI assistants",
+          "35-tool Model Context Protocol (MCP) server for AI assistants",
         ],
       },
       {

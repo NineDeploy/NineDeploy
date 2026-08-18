@@ -24,7 +24,7 @@ Deploy from a Git repository, a container image, or the built-in template hub wi
 - 🔒 **Security-first** — Argon2id, Passkeys (WebAuthn), JWT + TOTP 2FA, AES-256-GCM secrets with key rotation, IP allowlisting, Rate Limiting
 - 🌐 **Automatic HTTPS & Ingress** — Traefik ingress with wildcard certificates via ACME DNS-01, custom middlewares, Cloudflare Tunnels
 - 📦 **Multi-server & SSH Provisioning** — register and bootstrap remote hosts running the NineDeploy agent
-- 🤖 **Clients & AI** — web dashboard, `ninedeploy` CLI, TypeScript SDK, and an MCP server (26 tools) for AI assistants
+- 🤖 **Clients & AI** — web dashboard, `ninedeploy` CLI, TypeScript SDK, and an MCP server (35 tools) for AI assistants
 
 ## Contents
 

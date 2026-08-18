@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 #
 # NineDeploy — one-click installer
-# https://github.com/ninedeploy/ninedeploy
+# https://github.com/NineDeploy/NineDeploy
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/ninedeploy/ninedeploy/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/NineDeploy/NineDeploy/main/install.sh | bash
 #
 # Or from a clone:
 #   ./install.sh
@@ -24,7 +24,7 @@ warn()  { echo -e "${YELLOW}⚠${NC}  $*"; }
 fail()  { echo -e "${RED}✗${NC}  $*"; exit 1; }
 
 INSTALL_DIR="${NINEDEPLOY_INSTALL_DIR:-$HOME/ninedeploy}"
-REPO_URL="https://github.com/ninedeploy/ninedeploy.git"
+REPO_URL="https://github.com/NineDeploy/NineDeploy.git"
 NEEDS_CLONE=false
 
 echo ""

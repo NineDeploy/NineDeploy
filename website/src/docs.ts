@@ -23,7 +23,7 @@ export const docs: Doc[] = [
     blocks: [
       {
         kind: "p",
-        text: "NineDeploy is a self-hosted deployment platform and PaaS. It wraps PM2 and Docker behind a sleek web dashboard, a fast CLI and a 26-tool MCP server, fronts everything with Traefik, and handles webhooks, managed databases, monitoring, alerts, notifications, and backups. All state lives in a single SQLite database on your server — zero external database dependencies.",
+        text: "NineDeploy is a self-hosted deployment platform and PaaS. It wraps PM2 and Docker behind a sleek web dashboard, a fast CLI and a 35-tool MCP server, fronts everything with Traefik, and handles webhooks, managed databases, monitoring, alerts, notifications, and backups. All state lives in a single SQLite database on your server — zero external database dependencies.",
       },
       { kind: "h2", text: "The shape of the system" },
       {
@@ -373,12 +373,12 @@ await nd.deploys.trigger(1);`,
   {
     slug: "mcp",
     title: "MCP server (AI Agents)",
-    description: "26 Model Context Protocol tools for AI assistants.",
+    description: "35 Model Context Protocol tools for AI assistants.",
     group: "Interfaces",
     blocks: [
       {
         kind: "p",
-        text: "NineDeploy includes an official Model Context Protocol (MCP) stdio server. AI agents (Claude Desktop, Cursor, Antigravity, Cline) can query metrics, trigger deployments, inspect build logs, configure databases, and manage extensions.",
+        text: "NineDeploy includes an official Model Context Protocol (MCP) stdio server. AI agents (Claude Desktop, Cursor, Antigravity, Cline) can query metrics, trigger deployments, inspect build logs, configure databases, manage workspaces, and operate extensions using 35 dedicated tools.",
       },
       {
         kind: "code",
