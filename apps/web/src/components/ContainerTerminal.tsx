@@ -243,6 +243,17 @@ export function ContainerTerminal({ serviceId, serviceName, onClose }: Container
     return () => clearTimeout(timer);
   }, [fullscreen]);
 
+  // Escape to exit fullscreen
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && fullscreen) {
+        setFullscreen(false);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [fullscreen]);
+
   const handleClear = () => {
     if (termRef.current) {
       termRef.current.clear();
@@ -250,15 +261,15 @@ export function ContainerTerminal({ serviceId, serviceName, onClose }: Container
     }
   };
 
-  return (
+  const terminalBody = (
     <div
       className={cn(
         'overflow-hidden rounded-2xl border border-white/15 bg-[#0a101b] shadow-2xl transition-all duration-200 flex flex-col',
-        fullscreen ? 'fixed inset-4 z-50 rounded-2xl' : 'w-full',
+        fullscreen ? 'h-[94vh] w-[96vw] max-w-7xl' : 'w-full',
       )}
     >
       {/* Terminal Titlebar */}
-      <div className="flex items-center justify-between border-b border-white/10 bg-[#0f172a]/90 px-4 py-2.5 select-none backdrop-blur-md">
+      <div className="flex items-center justify-between border-b border-white/10 bg-[#0f172a]/95 px-4 py-2.5 select-none backdrop-blur-md">
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1.5">
             <span className="h-3 w-3 rounded-full bg-rose-500/80 ring-1 ring-inset ring-rose-500/30" />
@@ -324,7 +335,7 @@ export function ContainerTerminal({ serviceId, serviceName, onClose }: Container
             size="sm"
             variant="ghost"
             onClick={() => setFullscreen((v) => !v)}
-            title={fullscreen ? 'Restore window size' : 'Expand full screen'}
+            title={fullscreen ? 'Restore window size (Esc)' : 'Expand full screen'}
             className="h-7 px-2 text-xs text-slate-400 hover:text-slate-200"
           >
             {fullscreen ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
@@ -359,9 +370,19 @@ export function ContainerTerminal({ serviceId, serviceName, onClose }: Container
         ref={containerRef}
         className={cn(
           'p-3 focus:outline-none overflow-hidden flex-1',
-          fullscreen ? 'h-[calc(100vh-8rem)]' : 'h-80',
+          fullscreen ? 'h-[calc(94vh-4rem)]' : 'h-80',
         )}
       />
     </div>
   );
+
+  if (fullscreen) {
+    return (
+      <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-4 backdrop-blur-md nd-fade">
+        {terminalBody}
+      </div>
+    );
+  }
+
+  return terminalBody;
 }
