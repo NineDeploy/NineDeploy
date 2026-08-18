@@ -277,6 +277,11 @@ describe('createClient', () => {
       await client.services.logs(1);
       expect(last(calls)).toMatchObject({ url: '/v1/services/1/logs', init: { method: 'GET' } });
 
+      await client.services.clone(1, { name: 'clone-app' });
+      expect(last(calls).url).toBe('/v1/services/1/clone');
+      expect(last(calls).init.method).toBe('POST');
+      expect(JSON.parse(last(calls).init.body ?? '{}')).toEqual({ name: 'clone-app' });
+
       await client.services.importBundle({ repo: 'https://github.com/a/b.git' });
       expect(last(calls).url).toBe('/v1/services/import');
       expect(last(calls).init.method).toBe('POST');

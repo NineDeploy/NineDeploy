@@ -198,6 +198,7 @@ export interface NineDeployClient {
     start: (id: number) => Promise<{ ok: boolean; status: string }>;
     restart: (id: number) => Promise<{ ok: boolean; status: string }>;
     logs: (id: number) => Promise<{ lines: string }>;
+    clone: (id: number, input?: { name?: string; slug?: string }) => Promise<Service>;
     exportUrl: (id: number) => string;
     importBundle: (bundle: unknown) => Promise<{ ok: boolean; serviceId: number; slug: string; message: string }>;
   };
@@ -657,6 +658,7 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
       start: (id) => send<{ ok: boolean; status: string }>('POST', `/v1/services/${id}/start`),
       restart: (id) => send<{ ok: boolean; status: string }>('POST', `/v1/services/${id}/restart`),
       logs: (id) => get<{ lines: string }>(`/v1/services/${id}/logs`),
+      clone: (id, input) => send<Service>('POST', `/v1/services/${id}/clone`, input ?? {}),
       exportUrl: (id) => `/v1/services/${id}/export`,
       importBundle: (bundle) => send('POST', '/v1/services/import', bundle),
     },

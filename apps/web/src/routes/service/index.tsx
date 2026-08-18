@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import {
-  ArrowLeft, Download, ExternalLink, GitBranch, Play, Rocket, RotateCcw, Square, Terminal,
+  ArrowLeft, Copy, Download, ExternalLink, GitBranch, Play, Rocket, RotateCcw, Square, Terminal,
 } from 'lucide-react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { api, authedFetch } from '../../lib/api.js';
@@ -85,6 +85,16 @@ export function ServiceDetail() {
       navigate('/services');
     },
     onError: () => toast('Delete failed', 'error'),
+  });
+
+  const cloneMutation = useMutation({
+    mutationFn: () => api.services.clone(id),
+    onSuccess: (cloned) => {
+      qc.invalidateQueries({ queryKey: ['services'] });
+      toast(`Service cloned: ${cloned.name}`, 'success');
+      navigate(`/services/${cloned.id}`);
+    },
+    onError: () => toast('Clone failed', 'error'),
   });
 
   const [showRuntimeLogs, setShowRuntimeLogs] = useState(false);
@@ -176,6 +186,15 @@ export function ServiceDetail() {
         <div className="flex flex-wrap items-center gap-2">
           <Button onClick={() => trigger.mutate()} disabled={trigger.isPending}>
             <Rocket size={16} /> {trigger.isPending ? 'Triggering…' : 'Deploy'}
+          </Button>
+          <Button
+            variant="secondary"
+            size="md"
+            onClick={() => cloneMutation.mutate()}
+            disabled={cloneMutation.isPending}
+            title="Clone service configuration and environment variables"
+          >
+            <Copy size={15} /> {cloneMutation.isPending ? 'Cloning…' : 'Clone'}
           </Button>
           {svc.status === 'running' && (
             <>

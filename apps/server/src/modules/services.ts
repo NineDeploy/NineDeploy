@@ -283,4 +283,82 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
       return { lines: '' };
     }
   });
+
+  app.post('/:id/clone', async (req) => {
+    const id = num((req.params as { id: string }).id);
+    const body = (req.body as { name?: string; slug?: string } | undefined) ?? {};
+    const svc = await app.db.query.services.findFirst({ where: eq(services.id, id) });
+    if (!svc) throw notFound('Service not found');
+
+    const newName = body.name?.trim() || `${svc.name} (Copy)`;
+    let newSlug = body.slug?.trim() ? slugify(body.slug) : slugify(newName);
+
+    // Ensure unique slug
+    let counter = 1;
+    while (await app.db.query.services.findFirst({ where: eq(services.slug, newSlug) })) {
+      newSlug = `${slugify(newName)}-${counter++}`;
+    }
+
+    const [created] = await app.db
+      .insert(services)
+      .values({
+        projectId: svc.projectId,
+        ownerUserId: req.user!.id,
+        name: newName,
+        slug: newSlug,
+        type: svc.type,
+        status: 'idle',
+        repoUrl: svc.repoUrl,
+        branch: svc.branch,
+        sourceId: svc.sourceId,
+        image: svc.image,
+        volumeMount: svc.volumeMount,
+        composeService: svc.composeService,
+        healthPath: svc.healthPath,
+        port: svc.port,
+        publishedPort: null, // do not collide host port
+        cpuShares: svc.cpuShares,
+        memLimitMb: svc.memLimitMb,
+        previewDeploymentsEnabled: svc.previewDeploymentsEnabled,
+        previewAutoDestroyOnClose: svc.previewAutoDestroyOnClose,
+        previewDomainPattern: svc.previewDomainPattern,
+        previewMaxActive: svc.previewMaxActive,
+      })
+      .returning();
+
+    // Clone build config if exists
+    const b = await app.db.query.buildConfigs.findFirst({ where: eq(buildConfigs.serviceId, svc.id) });
+    if (b) {
+      await app.db.insert(buildConfigs).values({
+        serviceId: created!.id,
+        buildPack: b.buildPack,
+        baseDir: b.baseDir,
+        installCmd: b.installCmd,
+        buildCmd: b.buildCmd,
+        startCmd: b.startCmd,
+        dockerfilePath: b.dockerfilePath,
+        preDeployCmd: b.preDeployCmd,
+        postDeployCmd: b.postDeployCmd,
+        preStopCmd: b.preStopCmd,
+        restartPolicy: b.restartPolicy,
+        stopGraceSeconds: b.stopGraceSeconds,
+      });
+    }
+
+    // Clone env vars
+    const { envVars } = await import('@ninedeploy/db');
+    const envs = await app.db.query.envVars.findMany({ where: eq(envVars.serviceId, svc.id) });
+    for (const env of envs) {
+      await app.db.insert(envVars).values({
+        serviceId: created!.id,
+        key: env.key,
+        valueEncrypted: env.valueEncrypted,
+        scope: env.scope,
+        scopeKey: env.scopeKey,
+      });
+    }
+
+    void audit(app.db, req.user!.id, 'service.clone', `${svc.name} -> ${created!.name}`);
+    return serialize(created!);
+  });
 };
