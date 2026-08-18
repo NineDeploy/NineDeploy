@@ -142,7 +142,7 @@ export function Layout({
 
                   <div className="mt-4 pt-3 border-t border-[#dbe4ee] dark:border-line flex items-center justify-between gap-4">
                     <span className="font-mono text-xs text-[#4a5c73] dark:text-zinc-500">
-                      14 pages · updated for v0.2.0
+                      14 pages · updated for v0.2.1
                     </span>
                     <DropdownMenu.Item asChild>
                       <Link
@@ -260,7 +260,7 @@ export function Layout({
             <div className="tag mb-3">status</div>
             <ul className="space-y-2 text-[#4a5c73] dark:text-zinc-400">
               <li className="flex items-center gap-2">
-                <span className="w-2 h-2 bg-phosphor-dim animate-pulse" /> v0.2.0 GA
+                <span className="w-2 h-2 bg-phosphor-dim animate-pulse" /> v0.2.1 GA
               </li>
               <li>100% test coverage</li>
               <li>SQLite core · Zero external DB</li>

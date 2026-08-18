@@ -1,8 +1,23 @@
 const releases = [
   {
-    version: "0.2.0",
+    version: "0.2.1",
     date: "2026-08",
     status: "current",
+    notes: [
+      {
+        t: "NPM Distribution & CLI Packaging",
+        items: [
+          "Published CLI package as `ninedeploy` to npm registry for instant npx execution",
+          "Public packaging for @ninedeploy/sdk, @ninedeploy/schemas, @ninedeploy/plugin-sdk, and @ninedeploy/mcp",
+          "Streamlined monorepo release automation and multi-package dependency publishing",
+        ],
+      },
+    ],
+  },
+  {
+    version: "0.2.0",
+    date: "2026-08",
+    status: "stable",
     notes: [
       {
         t: "Workspaces & SSO",

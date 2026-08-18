@@ -1,4 +1,4 @@
-export const VERSION = '0.2.0';
+export const VERSION = '0.2.1';
 
 export interface ChangelogEntry {
   version: string;
@@ -8,6 +8,17 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.2.1',
+    date: '2026-08-18',
+    title: 'CLI Package Rename & NPM Distribution Release',
+    changes: [
+      'Official npm publication setup for CLI and monorepo packages',
+      'Renamed CLI package to ninedeploy for seamless `npx ninedeploy` and global npm install',
+      'Public npm packaging configuration for @ninedeploy/sdk, @ninedeploy/schemas, @ninedeploy/plugin-sdk, and @ninedeploy/mcp',
+      'Updated workspace release automation scripts and package dependency resolution',
+    ],
+  },
   {
     version: '0.2.0',
     date: '2026-08-18',
