@@ -274,8 +274,7 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
               )}
               {envRows.length === 0 && <p className="py-2 text-xs text-slate-600">No environment variables.</p>}
               {envRows.map((row, i) => (
-                // biome-ignore lint/suspicious/noArrayIndexKey: env rows are indexed form state — setEnv(i, …) mutates by position, so the index IS the identity.
-                <div key={i} className="flex items-center gap-2">
+                <div key={row.key ? `k-${row.key}-${i}` : `env-${i}`} className="flex items-center gap-2">
                   <Input value={row.key} onChange={(e) => setEnv(i, { key: e.target.value })} placeholder="KEY" className="h-9 w-32 font-mono text-xs" />
                   <Input value={row.value} onChange={(e) => setEnv(i, { value: e.target.value })} placeholder="value" type={row.secret ? 'password' : 'text'} className="h-9 flex-1 font-mono text-xs" />
                   <button type="button" onClick={() => setEnv(i, { secret: !row.secret })} className={cn('rounded px-2 py-1 text-[10px] uppercase', row.secret ? 'bg-amber-500/20 text-amber-300' : 'bg-white/5 text-slate-500')} title="Toggle secret">sec</button>

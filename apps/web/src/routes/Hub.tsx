@@ -168,158 +168,152 @@ export function Hub() {
       </div>
 
       {/* Content Rendering: Templates Tab */}
-      {activeTab === 'templates' && (
-        <>
-          {list.isLoading ? (
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {[0, 1, 2, 3].map((i) => (
-                <Card key={i} className="p-5">
-                  <Skeleton className="h-16 w-full" />
-                </Card>
-              ))}
-            </div>
-          ) : list.isError ? (
-            <ErrorCard title="Couldn't load templates" error={list.error} onRetry={() => list.refetch()} />
-          ) : filteredTemplates.length === 0 ? (
-            <Card>
-              <EmptyState
-                icon={<Search size={26} />}
-                title="No templates match"
-                hint={
-                  query
-                    ? `Nothing matches "${query}" in ${category === 'All' ? 'any category' : category}.`
-                    : `No templates in ${category}.`
-                }
-              />
-            </Card>
-          ) : (
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {filteredTemplates.map((t) => (
-                <Card
-                  key={t.id}
-                  interactive
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => setSelected(t.id)}
-                  className="group p-5"
-                >
-                  <div className="flex items-start gap-3">
-                    <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-white/[0.05] text-2xl ring-1 ring-inset ring-white/10">
-                      {t.emoji}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="font-semibold text-slate-100">{t.name}</span>
-                        {t.featured && (
-                          <span className="rounded bg-indigo-500/15 px-1.5 py-0.5 text-[9px] font-medium uppercase text-indigo-300">
-                            featured
-                          </span>
-                        )}
-                      </div>
-                      <p className="mt-0.5 line-clamp-2 text-xs text-slate-400">{t.tagline}</p>
+      {activeTab === 'templates' &&
+        (list.isLoading ? (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {[0, 1, 2, 3].map((i) => (
+              <Card key={i} className="p-5">
+                <Skeleton className="h-16 w-full" />
+              </Card>
+            ))}
+          </div>
+        ) : list.isError ? (
+          <ErrorCard title="Couldn't load templates" error={list.error} onRetry={() => list.refetch()} />
+        ) : filteredTemplates.length === 0 ? (
+          <Card>
+            <EmptyState
+              icon={<Search size={26} />}
+              title="No templates match"
+              hint={
+                query
+                  ? `Nothing matches "${query}" in ${category === 'All' ? 'any category' : category}.`
+                  : `No templates in ${category}.`
+              }
+            />
+          </Card>
+        ) : (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {filteredTemplates.map((t) => (
+              <Card
+                key={t.id}
+                interactive
+                role="button"
+                tabIndex={0}
+                onClick={() => setSelected(t.id)}
+                className="group p-5"
+              >
+                <div className="flex items-start gap-3">
+                  <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-white/[0.05] text-2xl ring-1 ring-inset ring-white/10">
+                    {t.emoji}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold text-slate-100">{t.name}</span>
+                      {t.featured && (
+                        <span className="rounded bg-indigo-500/15 px-1.5 py-0.5 text-[9px] font-medium uppercase text-indigo-300">
+                          featured
+                        </span>
+                      )}
                     </div>
+                    <p className="mt-0.5 line-clamp-2 text-xs text-slate-400">{t.tagline}</p>
                   </div>
-                  <div className="mt-3 flex items-center justify-between">
-                    <span className="rounded-md bg-white/[0.04] px-2 py-0.5 text-[10px] text-slate-400">
-                      {t.category}
-                    </span>
-                    <span className="flex items-center gap-1 text-xs text-indigo-300 opacity-0 transition group-hover:opacity-100">
-                      <Rocket size={12} /> Deploy
-                    </span>
-                  </div>
-                </Card>
-              ))}
-            </div>
-          )}
-        </>
-      )}
+                </div>
+                <div className="mt-3 flex items-center justify-between">
+                  <span className="rounded-md bg-white/[0.04] px-2 py-0.5 text-[10px] text-slate-400">
+                    {t.category}
+                  </span>
+                  <span className="flex items-center gap-1 text-xs text-indigo-300 opacity-0 transition group-hover:opacity-100">
+                    <Rocket size={12} /> Deploy
+                  </span>
+                </div>
+              </Card>
+            ))}
+          </div>
+        ))}
 
       {/* Content Rendering: Marketplace Tab */}
-      {activeTab === 'marketplace' && (
-        <>
-          {marketplace.isLoading ? (
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {[0, 1, 2].map((i) => (
-                <Card key={i} className="p-5">
-                  <Skeleton className="h-20 w-full" />
-                </Card>
-              ))}
-            </div>
-          ) : marketplace.isError ? (
-            <ErrorCard title="Couldn't load marketplace" error={marketplace.error} onRetry={() => marketplace.refetch()} />
-          ) : filteredMarketplace.length === 0 ? (
-            <Card>
-              <EmptyState
-                icon={<Store size={26} />}
-                title="No extensions match"
-                hint={query ? `Nothing matches "${query}" in extensions.` : 'No extensions found.'}
-              />
-            </Card>
-          ) : (
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {filteredMarketplace.map((m) => (
-                <Card key={m.id} className="flex flex-col justify-between p-5">
-                  <div>
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex items-center gap-2.5">
-                        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-500/10 text-indigo-400 ring-1 ring-inset ring-indigo-500/20">
-                          <Layers size={18} />
-                        </div>
-                        <div>
-                          <h3 className="font-semibold text-slate-100">{m.name}</h3>
-                          <span className="text-[11px] text-slate-500">v{m.version} · {m.author}</span>
-                        </div>
+      {activeTab === 'marketplace' &&
+        (marketplace.isLoading ? (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {[0, 1, 2].map((i) => (
+              <Card key={i} className="p-5">
+                <Skeleton className="h-20 w-full" />
+              </Card>
+            ))}
+          </div>
+        ) : marketplace.isError ? (
+          <ErrorCard title="Couldn't load marketplace" error={marketplace.error} onRetry={() => marketplace.refetch()} />
+        ) : filteredMarketplace.length === 0 ? (
+          <Card>
+            <EmptyState
+              icon={<Store size={26} />}
+              title="No extensions match"
+              hint={query ? `Nothing matches "${query}" in extensions.` : 'No extensions found.'}
+            />
+          </Card>
+        ) : (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {filteredMarketplace.map((m) => (
+              <Card key={m.id} className="flex flex-col justify-between p-5">
+                <div>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2.5">
+                      <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-500/10 text-indigo-400 ring-1 ring-inset ring-indigo-500/20">
+                        <Layers size={18} />
                       </div>
-                      {m.isOfficial ? (
-                        <span className="inline-flex items-center gap-1 rounded bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400 ring-1 ring-inset ring-emerald-500/20">
-                          <ShieldCheck size={10} /> Official
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 rounded bg-slate-500/10 px-1.5 py-0.5 text-[10px] font-medium text-slate-400 ring-1 ring-inset ring-white/10">
-                          Community
-                        </span>
-                      )}
+                      <div>
+                        <h3 className="font-semibold text-slate-100">{m.name}</h3>
+                        <span className="text-[11px] text-slate-500">v{m.version} · {m.author}</span>
+                      </div>
                     </div>
-                    <p className="mt-3 text-xs leading-relaxed text-slate-400">{m.description}</p>
-                    <div className="mt-3 flex flex-wrap gap-1">
-                      <span className="rounded bg-white/[0.04] px-1.5 py-0.5 text-[10px] text-slate-400">{m.category}</span>
-                      {m.configSchema && m.configSchema.length > 0 && (
-                        <span className="rounded bg-white/[0.04] px-1.5 py-0.5 text-[10px] text-slate-400">
-                          {m.configSchema.length} settings
-                        </span>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="mt-4 flex items-center justify-end border-t border-white/[0.06] pt-3">
-                    {m.isInstalled ? (
-                      <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-400">
-                        <CheckCircle2 size={13} /> Installed
+                    {m.isOfficial ? (
+                      <span className="inline-flex items-center gap-1 rounded bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400 ring-1 ring-inset ring-emerald-500/20">
+                        <ShieldCheck size={10} /> Official
                       </span>
                     ) : (
-                      <Button
-                        size="sm"
-                        disabled={!isAdmin || installMutation.isPending}
-                        onClick={() => installMutation.mutate(m.id)}
-                      >
-                        {installingId === m.id ? (
-                          <>
-                            <RefreshCw size={12} className="animate-spin" /> Installing…
-                          </>
-                        ) : (
-                          <>
-                            <Download size={12} /> Install
-                          </>
-                        )}
-                      </Button>
+                      <span className="inline-flex items-center gap-1 rounded bg-slate-500/10 px-1.5 py-0.5 text-[10px] font-medium text-slate-400 ring-1 ring-inset ring-white/10">
+                        Community
+                      </span>
                     )}
                   </div>
-                </Card>
-              ))}
-            </div>
-          )}
-        </>
-      )}
+                  <p className="mt-3 text-xs leading-relaxed text-slate-400">{m.description}</p>
+                  <div className="mt-3 flex flex-wrap gap-1">
+                    <span className="rounded bg-white/[0.04] px-1.5 py-0.5 text-[10px] text-slate-400">{m.category}</span>
+                    {m.configSchema && m.configSchema.length > 0 && (
+                      <span className="rounded bg-white/[0.04] px-1.5 py-0.5 text-[10px] text-slate-400">
+                        {m.configSchema.length} settings
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="mt-4 flex items-center justify-end border-t border-white/[0.06] pt-3">
+                  {m.isInstalled ? (
+                    <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-400">
+                      <CheckCircle2 size={13} /> Installed
+                    </span>
+                  ) : (
+                    <Button
+                      size="sm"
+                      disabled={!isAdmin || installMutation.isPending}
+                      onClick={() => installMutation.mutate(m.id)}
+                    >
+                      {installingId === m.id ? (
+                        <>
+                          <RefreshCw size={12} className="animate-spin" /> Installing…
+                        </>
+                      ) : (
+                        <>
+                          <Download size={12} /> Install
+                        </>
+                      )}
+                    </Button>
+                  )}
+                </div>
+              </Card>
+            ))}
+          </div>
+        ))}
 
       {selected && (
         <TemplateDetail

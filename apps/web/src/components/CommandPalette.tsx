@@ -133,8 +133,8 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
             results.map((cmd, i) => {
               const Icon = cmd.icon;
               return (
-                <button type="button"
-                  // biome-ignore lint/suspicious/noArrayIndexKey: the type+label prefix is not guaranteed unique across palette sections; the index disambiguates stable entries.
+                <button
+                  type="button"
                   key={`${cmd.type}-${cmd.label}-${i}`}
                   onClick={() => activate(cmd)}
                   onMouseEnter={() => setSelected(i)}

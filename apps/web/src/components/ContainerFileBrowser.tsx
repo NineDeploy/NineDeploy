@@ -241,7 +241,7 @@ export function ContainerFileBrowser({
             /
           </button>
           {segments.map((seg, i) => {
-            const targetPath = '/' + segments.slice(0, i + 1).join('/');
+            const targetPath = `/${segments.slice(0, i + 1).join('/')}`;
             const isLast = i === segments.length - 1;
             return (
               <span key={targetPath} className="flex items-center gap-1.5">
