@@ -369,12 +369,14 @@ describe('dockerBuilder.buildAndRun', () => {
     );
   });
 
-  it('fails fast with an actionable error when nixpacks is not installed', async () => {
+  it('falls back to ghcr.io/railwayapp/nixpacks container when nixpacks CLI is not installed', async () => {
     h2.exists.mockReturnValue(false);
     h.capture.mockRejectedValueOnce(new Error('ENOENT'));
     const ctx = makeCtx({ buildConfig: { buildPack: 'nixpacks' } });
 
-    await expect(dockerBuilder.buildAndRun(ctx as never)).rejects.toThrow(/nixpacks is not installed/);
+    await dockerBuilder.buildAndRun(ctx as never);
+    const dockerNixCall = h.run.mock.calls.find((c) => c[0] === 'docker' && c[1]?.includes('ghcr.io/railwayapp/nixpacks:latest'));
+    expect(dockerNixCall).toBeDefined();
   });
 });
 

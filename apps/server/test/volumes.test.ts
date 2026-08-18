@@ -136,8 +136,8 @@ describe('volume routes', () => {
     const res = await app.inject({ method: 'GET', url: '/', headers: asUser() });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual([
-      { name: 'nd-svc-web', sizeBytes: 2048, owner: { kind: 'service', name: 'Web' }, inUse: false },
-      { name: 'nd-db-pg', sizeBytes: 2048, owner: { kind: 'database', name: 'PG', engine: 'postgres' }, inUse: false },
+      { name: 'nd-svc-web', sizeBytes: 2048, owner: { id: 1, kind: 'service', name: 'Web' }, inUse: false },
+      { name: 'nd-db-pg', sizeBytes: 2048, owner: { id: 2, kind: 'database', name: 'PG', engine: 'postgres' }, inUse: false },
       { name: 'nd-svc-orphan', sizeBytes: 2048, owner: null, inUse: false },
       { name: 'nd-db-lonely', sizeBytes: 2048, owner: null, inUse: false },
     ]);

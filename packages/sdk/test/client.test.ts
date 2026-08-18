@@ -873,6 +873,12 @@ describe('createClient', () => {
 
       await client.sources.remove(1);
       expect(last(calls)).toMatchObject({ url: '/v1/sources/1', init: { method: 'DELETE' } });
+
+      await client.sources.repos(1);
+      expect(last(calls)).toMatchObject({ url: '/v1/sources/1/repos', init: { method: 'GET' } });
+
+      await client.sources.branches(1, 'owner/repo');
+      expect(last(calls)).toMatchObject({ url: '/v1/sources/1/branches?repo=owner%2Frepo', init: { method: 'GET' } });
     });
   });
 
