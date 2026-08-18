@@ -1,7 +1,19 @@
 {
   "name": "@ninedeploy/plugin-sdk",
   "version": "0.1.0",
-  "private": true,
+  "description": "Plugin development kit for NineDeploy microkernel and driver registries",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/NineDeploy/NineDeploy.git",
+    "directory": "packages/plugin-sdk"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist"
+  ],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

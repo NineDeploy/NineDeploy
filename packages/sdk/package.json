@@ -1,7 +1,19 @@
 {
   "name": "@ninedeploy/sdk",
   "version": "0.1.0",
-  "private": true,
+  "description": "Official TypeScript SDK for NineDeploy PaaS",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/NineDeploy/NineDeploy.git",
+    "directory": "packages/sdk"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist"
+  ],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

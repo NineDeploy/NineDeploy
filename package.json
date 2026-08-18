@@ -18,7 +18,8 @@
     "db:generate": "pnpm --filter @ninedeploy/db db:generate",
     "db:migrate": "pnpm --filter @ninedeploy/db db:migrate",
     "db:studio": "pnpm --filter @ninedeploy/db db:studio",
-    "clean": "turbo run clean && rm -rf node_modules"
+    "clean": "turbo run clean && rm -rf node_modules",
+    "packages:publish": "pnpm -r --filter \"./packages/*\" --filter \"./apps/cli\" publish --access public"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.8",

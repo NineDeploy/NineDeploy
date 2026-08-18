@@ -1,7 +1,19 @@
 {
   "name": "@ninedeploy/cli",
   "version": "0.1.0",
-  "private": true,
+  "description": "Interactive CLI for NineDeploy self-hosted PaaS",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/NineDeploy/NineDeploy.git",
+    "directory": "apps/cli"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist"
+  ],
   "type": "module",
   "bin": {
     "ninedeploy": "./dist/index.js"
