@@ -822,7 +822,7 @@ describe('Config Center & Plugins Frontend Components', () => {
       });
 
       // Edit secret item (plugin:smtp:password) at index 5
-      let editBtns = await screen.findAllByTitle('Edit Value');
+      const editBtns = await screen.findAllByTitle('Edit Value');
       fireEvent.click(editBtns[5]!);
       await waitFor(() => {
         expect(screen.getByText('Edit Config: plugin:smtp:password')).toBeInTheDocument();

@@ -68,44 +68,45 @@ ninedeploy/                       pnpm 11 workspace + Turborepo
 │   ├── server/                    Fastify 5 API + deploy engine
 │   │   ├── src/
 │   │   │   ├── engine/            pipeline, builders (docker/pm2/compose),
-│   │   │   │                      database, proxy (traefik), tunnel, logs
-│   │   │   ├── modules/           route handlers (30 modules incl. settings,
-│   │   │   │                      projects, servers, jobs)
+│   │   │   │                      database, proxy (traefik), tunnel, logs,
+│   │   │   │                      containerFiles, logDrainManager, autoPrune,
+│   │   │   │                      serverProvisioner
+│   │   │   ├── modules/           route handlers (workspaces, oidc, containers,
+│   │   │   │                      logDrains, housekeeping, demo, settings,
+│   │   │   │                      projects, servers, jobs, etc.)
 │   │   │   ├── plugins/           fastify plugins (db, auth, worker, traefik,
 │   │   │   │                      collector, backupScheduler, jobScheduler,
-│   │   │   │                      housekeeping, rateLimit, rawBody)
+│   │   │   │                      housekeeping, rateLimit, rawBody, kernel)
 │   │   │   ├── lib/               crypto (key ring), jwt, totp, loginLockout,
-│   │   │   │                      passwordReset, keyRotation, agentClient,
-│   │   │   │                      spawnValidated, sdNotify, exec (timeout+
-│   │   │   │                      tree-kill, env whitelist), git, settings,
-│   │   │   │                      audit, events, notifier, alerting, s3,
-│   │   │   │                      backupRemote, webhooks, jobRunner, updateCheck,
-│   │   │   │                      errors
+│   │   │   │                      oauth (OIDC/SSO), passwordReset, keyRotation,
+│   │   │   │                      agentClient, spawnValidated, sdNotify,
+│   │   │   │                      exec, git, settings, audit, events, notifier,
+│   │   │   │                      alerting, s3, backupRemote, webhooks, errors
 │   │   │   ├── templates/         48-entry template registry (schema-validated
 │   │   │   │                      bundle; DB/env source override)
 │   │   │   ├── agent.ts           remote-host agent mode (NINEDEPLOY_AGENT=1)
 │   │   │   └── version.ts         VERSION + changelog
 │   │   ├── test/                  unit/route tests (~1 250 cases, 100% coverage)
 │   │   └── test/integration/      testcontainers (real PostgreSQL/MySQL/Redis/
-│   │                              MongoDB + deploy e2e), RUN_INTEGRATION=1
+│   │                              MongoDB/Valkey/ClickHouse + deploy e2e)
 │   │
 │   ├── web/                       React 19.2 + Vite 8 + Tailwind v4.3
 │   │   ├── src/routes/            pages (Dashboard, Hub, Services,
-│   │   │                          ServiceDetail (tabbed: Overview/Deploys/
-│   │   │                          Environment/Network/Settings/Activity/
-│   │   │                          DangerZone), Databases, Domains, Tunnels,
-│   │   │                          Volumes, Topology, Backups, Sources,
-│   │   │                          Servers, Users, Monitoring, Settings,
-│   │   │                          About, Login, ForgotPassword, ResetPassword,
-│   │   │                          NotFound)
-│   │   ├── src/components/        Layout (icon rail + groups), DeployWizard,
-│   │   │                          DatabaseWizard, NotificationWizard,
-│   │   │                          CommandPalette (Ctrl-K), ContainerTerminal
-│   │   │                          (xterm.js 6), AttachmentsCard, EnvCard,
-│   │   │                          Sparkline, StorageGauge, Toast, ui.tsx
+│   │   │                          ServiceDetail (Overview/Deploys/Environment/
+│   │   │                          Network/Settings/Activity/Architecture/DangerZone),
+│   │   │                          Databases (Topology/Backups), Workspaces,
+│   │   │                          Domains, Tunnels, Volumes, Topology, Backups,
+│   │   │                          Sources, Servers, Users, Monitoring, Settings
+│   │   │                          (SsoSection, LogDrainsSection, StorageSection),
+│   │   │                          About, Login, ForgotPassword, ResetPassword)
+│   │   ├── src/components/        Layout (WorkspaceSwitcher, icon rail + groups),
+│   │   │                          DeployWizard, DatabaseWizard, NotificationWizard,
+│   │   │                          CommandPalette (Ctrl-K), ContainerTerminal,
+│   │   │                          ContainerFileBrowser, VolumeBrowser,
+│   │   │                          AttachmentsCard, EnvCard, Sparkline, Toast, ui.tsx
 │   │   └── src/lib/               api (SDK + 401→refresh→retry), auth,
-│   │                              projects (project-scope context), theme
-│   │                              (dark/light + 6 accents via data-accent),
+│   │                              workspace (WorkspaceProvider context),
+│   │                              projects (project-scope context), theme,
 │   │                              useDeployLogs (WS)
 │   │
 │   └── cli/                       `ninedeploy` CLI (commander 15, ws for

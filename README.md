@@ -16,12 +16,15 @@ Deploy from a Git repository, a container image, or the built-in template hub wi
 
 **Highlights**
 
-- 🚀 **Zero-downtime deploys** — blue-green Docker releases with health-gated switch and automatic rollback (exact commit or pinned image digest)
-- 🗄️ **Managed databases** — PostgreSQL, MySQL, MariaDB, Redis, MongoDB with encrypted credentials, auto-injected connection strings, and encrypted backups to S3-compatible destinations
-- 🔒 **Security-first** — Argon2id, JWT + TOTP 2FA, AES-256-GCM secrets with key rotation, RBAC, audit log, rate limiting
-- 🌐 **Automatic HTTPS** — Traefik ingress with wildcard certificates via ACME DNS-01 (Cloudflare, DuckDNS, …)
-- 📦 **Multi-server** — register remote hosts running the NineDeploy agent; typed-operation protocol, never raw shell commands
-- 🤖 **Three clients, one API** — web dashboard, `ninedeploy` CLI, and an MCP server for AI assistants
+- 🚀 **Zero-downtime deploys** — blue-green Docker releases with health-gated switch, ephemeral PR previews, and automatic rollback
+- 🏢 **Multi-workspace & Team RBAC** — organize applications across scoped workspaces with team invitations and granular roles
+- 🔑 **SSO & OIDC Authentication** — one-click login with Google, GitHub, Okta, and generic OpenID Connect providers
+- 🗄️ **Managed databases** — PostgreSQL (pgvector), MySQL, MariaDB, Redis, Valkey, ClickHouse, Meilisearch, RabbitMQ, MongoDB with encrypted credentials, auto-injected connection strings, and encrypted backups to S3
+- 📁 **Live Container File Manager & Log Drains** — explore container filesystems with drag & drop, forward structured logs to Syslog/HTTP/Datadog
+- 🔒 **Security-first** — Argon2id, Passkeys (WebAuthn), JWT + TOTP 2FA, AES-256-GCM secrets with key rotation, IP allowlisting, Rate Limiting
+- 🌐 **Automatic HTTPS & Ingress** — Traefik ingress with wildcard certificates via ACME DNS-01, custom middlewares, Cloudflare Tunnels
+- 📦 **Multi-server & SSH Provisioning** — register and bootstrap remote hosts running the NineDeploy agent
+- 🤖 **Clients & AI** — web dashboard, `ninedeploy` CLI, TypeScript SDK, and an MCP server for AI assistants
 
 ## Contents
 
