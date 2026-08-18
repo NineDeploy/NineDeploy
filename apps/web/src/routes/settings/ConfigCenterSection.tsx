@@ -5,8 +5,12 @@ import {
 import { useMemo, useState } from 'react';
 import type { ConfigItem } from '@ninedeploy/sdk';
 import { Button, Card, CardBody, Input, Modal, Skeleton, cn } from '../../components/ui.js';
+import { useToast } from '../../components/Toast.js';
 import { api } from '../../lib/api.js';
 import { useAuth } from '../../lib/auth.js';
+
+/** Placeholder the server returns for unrevealed secrets. */
+const SECRET_MASK = '••••••••';
 
 function formatConfigValue(val: unknown): string {
   if (val === null || val === undefined) return '';
@@ -60,6 +64,7 @@ export function ConfigCenterSection() {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
   const queryClient = useQueryClient();
+  const { toast } = useToast();
 
   const [revealSecrets, setRevealSecrets] = useState(false);
   const [pluginFilter, setPluginFilter] = useState<string>('all');
@@ -85,7 +90,7 @@ export function ConfigCenterSection() {
   });
 
   const saveMutation = useMutation({
-    mutationFn: ({ key, value, isSecret, description, tags }: { key: string; value: unknown; isSecret?: boolean; description?: string; tags?: string[] }) =>
+    mutationFn: ({ key, value, isSecret, description, tags }: { key: string; value?: unknown; isSecret?: boolean; description?: string; tags?: string[] }) =>
       api.config.set(key, { value, isSecret, description, tags }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['config-entries'] });
@@ -93,6 +98,7 @@ export function ConfigCenterSection() {
       setIsAddModalOpen(false);
       resetNewForm();
     },
+    onError: (err) => toast(err instanceof Error ? err.message : 'Failed to save setting', 'error'),
   });
 
   const deleteMutation = useMutation({
@@ -100,6 +106,7 @@ export function ConfigCenterSection() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['config-entries'] });
     },
+    onError: (err) => toast(err instanceof Error ? err.message : 'Failed to delete setting', 'error'),
   });
 
   function resetNewForm() {
@@ -356,7 +363,11 @@ export function ConfigCenterSection() {
                                 type="button"
                                 onClick={() => {
                                   setEditingItem(item);
-                                  setEditValue(formatConfigValue(item.value));
+                                  // Never prefill the mask: saving it back would
+                                  // destroy the stored secret. An unrevealed
+                                  // secret starts blank; blank keeps the current
+                                  // value (server-side keep-current).
+                                  setEditValue(formatConfigValue(item.value) === SECRET_MASK ? '' : formatConfigValue(item.value));
                                 }}
                                 className="rounded-lg p-1.5 text-slate-400 hover:bg-white/[0.08] hover:text-slate-200 transition-colors"
                                 title="Edit Value"
@@ -403,7 +414,11 @@ export function ConfigCenterSection() {
                 type={editingItem.isSecret && !revealSecrets ? 'password' : 'text'}
                 value={editValue}
                 onChange={(e) => setEditValue(e.target.value)}
-                placeholder="Enter value"
+                placeholder={
+                  editingItem.isSecret && editValue === ''
+                    ? 'Leave blank to keep the current value'
+                    : 'Enter value'
+                }
                 autoFocus
               />
             </div>
@@ -418,6 +433,8 @@ export function ConfigCenterSection() {
                 variant="primary"
                 disabled={saveMutation.isPending}
                 onClick={() => {
+                  // Blank secret edit = keep the current value; send no value.
+                  const keepCurrent = editingItem.isSecret && editValue === '';
                   let val: unknown = editValue;
                   if (editingItem.type === 'number') val = Number(editValue);
                   if (editingItem.type === 'boolean') val = editValue === 'true' || editValue === '1';
@@ -431,7 +448,7 @@ export function ConfigCenterSection() {
                   }
                   saveMutation.mutate({
                     key: editingItem.key,
-                    value: val,
+                    ...(keepCurrent ? {} : { value: val }),
                     isSecret: editingItem.isSecret,
                     description: editingItem.description,
                     tags: editingItem.tags,

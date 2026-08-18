@@ -7,6 +7,7 @@ describe('env routes (src/modules/env.ts)', () => {
   it('lists env vars, decrypting non-secret values and masking secrets', async () => {
     const app = await buildTestApp({
       db: createFakeDb({
+        findFirst: { services: { id: 1 } },
         findMany: {
           envVars: [
             envVarRow({ id: 1, key: 'PORT', valueEncrypted: encrypt('8080'), isSecret: false }),
@@ -55,7 +56,7 @@ describe('env routes (src/modules/env.ts)', () => {
 
   it('updates an env var', async () => {
     const app = await buildTestApp({
-      db: createFakeDb({ update: { env_vars: [envVarRow({ id: 3, key: 'PORT', isSecret: true, valueEncrypted: encrypt('9999') })] } }),
+      db: createFakeDb({ findFirst: { services: { id: 1 } }, update: { env_vars: [envVarRow({ id: 3, key: 'PORT', isSecret: true, valueEncrypted: encrypt('9999') })] } }),
     });
     await app.register(envRoutes);
     const res = await app.inject({
@@ -92,7 +93,7 @@ describe('env routes (src/modules/env.ts)', () => {
   });
 
   it('deletes an env var', async () => {
-    const app = await buildTestApp({ db: createFakeDb() });
+    const app = await buildTestApp({ db: createFakeDb({ findFirst: { services: { id: 1 } } }) });
     await app.register(envRoutes);
     const res = await app.inject({ method: 'DELETE', url: '/1/env/3', headers: asUser() });
     expect(res.statusCode).toBe(200);
@@ -113,7 +114,7 @@ describe('env routes (src/modules/env.ts)', () => {
   });
 
   it('rejects env keys whose charset would break docker --env-file', async () => {
-    const app = await buildTestApp({ db: createFakeDb() });
+    const app = await buildTestApp({ db: createFakeDb({ findFirst: { services: { id: 1 } } }) });
     await app.register(envRoutes);
     const create = await app.inject({
       method: 'POST', url: '/1/env', headers: asUser(), payload: { key: 'MY VAR', value: 'x' },

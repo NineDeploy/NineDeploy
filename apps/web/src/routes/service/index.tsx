@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   Activity, ArrowLeft, Copy, Download, ExternalLink, FileCode2, FolderTree, GitBranch, Globe, HardDrive, KeyRound, LayoutDashboard, Network, Play, Rocket, RotateCcw, Settings, ShieldAlert, Square, Terminal,
 } from 'lucide-react';
-import { Link, useNavigate, useParams } from 'react-router';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { api, authedFetch } from '../../lib/api.js';
 import { ContainerTerminal } from '../../components/ContainerTerminal.js';
 import { useToast } from '../../components/Toast.js';
@@ -45,7 +45,12 @@ export function ServiceDetail() {
   const qc = useQueryClient();
   const { toast } = useToast();
   const [activeDeploy, setActiveDeploy] = useState<number | null>(null);
-  const [tab, setTab] = useState<TabId>('overview');
+  const [searchParams] = useSearchParams();
+  // Deep links like /services/1?tab=deploys select the starting tab.
+  const [tab, setTab] = useState<TabId>(() => {
+    const q = searchParams.get('tab');
+    return (TABS.some((t) => t.id === q) ? q : 'overview') as TabId;
+  });
   const navigate = useNavigate();
 
   // A non-numeric :id (e.g. /services/abc) must not leak NaN into every
@@ -79,6 +84,7 @@ export function ServiceDetail() {
       qc.invalidateQueries({ queryKey: ['deploys', id] });
       qc.invalidateQueries({ queryKey: ['service', id] });
     },
+    onError: (err) => toast(err instanceof Error ? `Deploy failed: ${err.message}` : 'Deploy failed', 'error'),
   });
 
   const lifecycle = useMutation({

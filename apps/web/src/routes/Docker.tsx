@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Check, Code2, Container, Copy, Cpu, FileCode, ImageIcon, Radio, RefreshCw, Search, Shield, Terminal, X } from 'lucide-react';
 import { api } from '../lib/api.js';
+import { useAuth } from '../lib/auth.js';
 import { Button, Card, EmptyState, Input, PageHeader, Skeleton } from '../components/ui.js';
 
 function fmtEventTime(raw: string): string {
@@ -12,11 +13,17 @@ function fmtEventTime(raw: string): string {
 
 /** Unified Docker dashboard: disk/images + live container inspector + daemon event feed. */
 export function DockerDashboard() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const [selectedContainer, setSelectedContainer] = useState<string | null>(null);
   const [manualContainer, setManualContainer] = useState('');
   const [copiedYaml, setCopiedYaml] = useState(false);
   const [copiedJson, setCopiedJson] = useState(false);
   const [activeSubTab, setActiveSubTab] = useState<'compose' | 'traefik' | 'inspect'>('compose');
+
+  // The inspector reveals container env vars (incl. DB credentials) — the API
+  // is admin-only, so hide the inspector for members instead of erroring.
+  const canInspect = isAdmin;
 
   const resources = useQuery({
     queryKey: ['docker-resources'],
@@ -39,14 +46,14 @@ export function DockerDashboard() {
   const composeQuery = useQuery({
     queryKey: ['container-compose', selectedContainer],
     queryFn: () => (selectedContainer ? api.containers.compose(selectedContainer) : null),
-    enabled: Boolean(selectedContainer),
+    enabled: canInspect && Boolean(selectedContainer),
     retry: 1,
   });
 
   const inspectQuery = useQuery({
     queryKey: ['container-inspect', selectedContainer],
     queryFn: () => (selectedContainer ? api.containers.inspect(selectedContainer) : null),
-    enabled: Boolean(selectedContainer),
+    enabled: canInspect && Boolean(selectedContainer),
     retry: 1,
   });
 
@@ -58,14 +65,14 @@ export function DockerDashboard() {
 
   const handleCopyYaml = () => {
     if (!composeData?.yaml) return;
-    navigator.clipboard.writeText(composeData.yaml);
+    void navigator.clipboard?.writeText(composeData.yaml).catch(() => undefined);
     setCopiedYaml(true);
     setTimeout(() => setCopiedYaml(false), 2000);
   };
 
   const handleCopyJson = () => {
     if (!inspectData?.raw) return;
-    navigator.clipboard.writeText(JSON.stringify(inspectData.raw, null, 2));
+    void navigator.clipboard?.writeText(JSON.stringify(inspectData.raw, null, 2)).catch(() => undefined);
     setCopiedJson(true);
     setTimeout(() => setCopiedJson(false), 2000);
   };
@@ -113,25 +120,31 @@ export function DockerDashboard() {
             <h2 className="text-sm font-semibold text-slate-100">Live Containers & Diagnostics</h2>
             <p className="text-xs text-slate-400">Inspect container runtime manifest, dynamic Traefik tags, and raw Docker inspect state</p>
           </div>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (manualContainer.trim()) {
-                setSelectedContainer(manualContainer.trim());
-              }
-            }}
-            className="flex items-center gap-2"
-          >
-            <Input
-              value={manualContainer}
-              onChange={(e) => setManualContainer(e.target.value)}
-              placeholder="Inspect container name…"
-              className="h-8 w-48 text-xs font-mono"
-            />
-            <Button type="submit" variant="secondary" size="sm" className="h-8 text-xs">
-              <Search size={13} className="mr-1" /> Inspect
-            </Button>
-          </form>
+          {canInspect ? (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (manualContainer.trim()) {
+                  setSelectedContainer(manualContainer.trim());
+                }
+              }}
+              className="flex items-center gap-2"
+            >
+              <Input
+                value={manualContainer}
+                onChange={(e) => setManualContainer(e.target.value)}
+                placeholder="Inspect container name…"
+                className="h-8 w-48 text-xs font-mono"
+              />
+              <Button type="submit" variant="secondary" size="sm" className="h-8 text-xs">
+                <Search size={13} className="mr-1" /> Inspect
+              </Button>
+            </form>
+          ) : (
+            <span className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.02] px-2.5 py-1 text-[11px] text-slate-400">
+              <Shield size={12} /> Admin access required for the inspector
+            </span>
+          )}
         </div>
 
         {stats.isLoading ? (
@@ -163,6 +176,7 @@ export function DockerDashboard() {
                 <Button
                   variant={selectedContainer === c.name ? 'primary' : 'secondary'}
                   size="sm"
+                  disabled={!canInspect}
                   onClick={() => setSelectedContainer(c.name)}
                   className="h-7 text-[11px]"
                 >
@@ -175,7 +189,7 @@ export function DockerDashboard() {
       </Card>
 
       {/* Selected Container Inspector Drawer / Card */}
-      {selectedContainer && (
+      {canInspect && selectedContainer && (
         <Card className="border border-indigo-500/30 bg-slate-900/90 shadow-2xl p-5 space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 pb-4">
             <div className="flex items-center gap-3">

@@ -244,4 +244,90 @@ describe('Config Center HTTP API', () => {
 
     await app.close();
   });
+
+  it('K8: never persists the mask as a secret value, and an omitted value keeps the current one', async () => {
+    const store = new Map<string, any>();
+    const findEntry = (args: any) => {
+      if (!args) return undefined;
+      for (const [k, v] of store.entries()) {
+        if (args === k || args?.where === k) return v;
+        const chunks = args?.where?.queryChunks ?? args?.queryChunks;
+        if (Array.isArray(chunks)) {
+          for (const chunk of chunks) {
+            if (chunk === k || chunk?.value === k || (Array.isArray(chunk?.value) && chunk.value.includes(k))) return v;
+          }
+        }
+        if (args?.where?.value === k || args?.where?.right?.value === k || args?.where?.left?.value === k) return v;
+        try {
+          if (JSON.stringify(args).includes(k)) return v;
+        } catch {}
+      }
+      return undefined;
+    };
+    const fakeDb = createFakeDb({
+      findFirst: { configEntries: ((args: any) => findEntry(args)) as any },
+      findMany: { configEntries: (() => Array.from(store.values())) as any },
+      insert: {
+        configEntries: ((val: any) => {
+          store.set(val.key, val);
+          return [val];
+        }) as any,
+        config_entries: ((val: any) => {
+          store.set(val.key, val);
+          return [val];
+        }) as any,
+      },
+    });
+
+    const app = await buildTestApp({ db: fakeDb });
+    await app.register(configCenterRoutes);
+    app.kernel.configCenter.registerDefinition({
+      key: 'plugin:smtp:password',
+      pluginId: 'smtp',
+      type: 'string',
+      isSecret: true,
+      label: 'SMTP Password',
+      category: 'plugin:smtp',
+    });
+
+    // Store a real secret.
+    const setRes = await app.inject({
+      method: 'POST',
+      url: '/plugin:smtp:password',
+      headers: asUser({ role: 'admin' }),
+      payload: { value: 'real-smtp-secret', isSecret: true },
+    });
+    expect(setRes.statusCode).toBe(200);
+
+    // Saving the displayed mask back must be refused — the old code silently
+    // replaced the real credential with '••••••••'.
+    const maskRes = await app.inject({
+      method: 'POST',
+      url: '/plugin:smtp:password',
+      headers: asUser({ role: 'admin' }),
+      payload: { value: '••••••••', isSecret: true },
+    });
+    expect(maskRes.statusCode).toBe(400);
+    expect(maskRes.json().error.code).toBe('masked_secret_rejected');
+
+    // An omitted value (blank edit in the UI) is a metadata-only update: the
+    // stored secret survives untouched.
+    const keepRes = await app.inject({
+      method: 'POST',
+      url: '/plugin:smtp:password',
+      headers: asUser({ role: 'admin' }),
+      payload: { isSecret: true, description: 'updated description' },
+    });
+    expect(keepRes.statusCode).toBe(200);
+    const revealRes = await app.inject({
+      method: 'GET',
+      url: '/?reveal=true',
+      headers: asUser({ role: 'admin' }),
+    });
+    const revealed = revealRes.json().entries.find((e: any) => e.key === 'plugin:smtp:password');
+    expect(revealed.value).toBe('real-smtp-secret');
+    expect(revealed.description).toBe('updated description');
+
+    await app.close();
+  });
 });

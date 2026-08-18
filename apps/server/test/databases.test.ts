@@ -511,6 +511,7 @@ describe('attachment routes', () => {
         },
         // First lookup (databaseId 2) resolves; second (databaseId 99) is missing.
         findFirst: {
+          services: svcRow(),
           databases: (() => {
             let n = 0;
             return () => (n++ === 0 ? dbRow({ id: 2, name: 'pg', engine: 'postgres' }) : undefined);
@@ -635,10 +636,19 @@ describe('attachment routes', () => {
   });
 
   it('detaches a database', async () => {
-    const app = await buildTestApp({ db: createFakeDb() });
+    const app = await buildTestApp({ db: createFakeDb({ findFirst: { services: svcRow() } }) });
     await app.register(attachmentRoutes);
     const res = await app.inject({ method: 'DELETE', url: '/1/attachments/5', headers: asUser() });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ ok: true });
+  });
+
+  it('404s when detaching an unknown attachment', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({ findFirst: { services: svcRow() }, delete: { database_attachments: [] } }),
+    });
+    await app.register(attachmentRoutes);
+    const res = await app.inject({ method: 'DELETE', url: '/1/attachments/99', headers: asUser() });
+    expect(res.statusCode).toBe(404);
   });
 });

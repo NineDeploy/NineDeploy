@@ -392,7 +392,7 @@ describe('OIDC and OAuth2 SSO endpoints', () => {
         } as never)
         .mockResolvedValueOnce({
           ok: true,
-          json: async () => ({ sub: 'g_user_99', email: 'sam@google.test' }),
+          json: async () => ({ sub: 'g_user_99', email: 'sam@google.test', email_verified: true }),
         } as never);
 
       const res = await app.inject({
@@ -402,6 +402,109 @@ describe('OIDC and OAuth2 SSO endpoints', () => {
 
       expect(res.statusCode).toBe(302);
       expect(res.headers.location).toContain('/settings/profile#access_token=');
+    });
+
+    it('K7: never accepts preferred_username as an email claim', async () => {
+      const state = generateOAuthState('google', '/');
+      const mockToken = `at-${Date.now()}`;
+
+      globalThis.fetch = vi
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            authorization_endpoint: 'https://accounts.google.com/o/oauth2/v2/auth',
+            token_endpoint: 'https://oauth2.googleapis.com/token',
+            userinfo_endpoint: 'https://openidconnect.googleapis.com/v1/userinfo',
+          }),
+        } as never)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ access_token: mockToken }),
+        } as never)
+        .mockResolvedValueOnce({
+          // A self-chosen handle that looks like the victim's email address.
+          ok: true,
+          json: async () => ({ sub: 'attacker_1', preferred_username: 'member@oidc.test' }),
+        } as never);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/v1/auth/oidc/google/callback',
+        payload: { code: 'valid_code', state },
+      });
+      expect(res.statusCode).toBeGreaterThanOrEqual(400);
+      // No session was issued for the impersonated address.
+      const body = res.json();
+      expect(body.user?.email ?? body.tokens?.accessToken).toBeUndefined();
+    });
+
+    it('K7: refuses to link an IdP-reported unverified email to an existing account', async () => {
+      const state = generateOAuthState('google', '/');
+      const mockToken = `at-${Date.now()}`;
+
+      globalThis.fetch = vi
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            authorization_endpoint: 'https://accounts.google.com/o/oauth2/v2/auth',
+            token_endpoint: 'https://oauth2.googleapis.com/token',
+            userinfo_endpoint: 'https://openidconnect.googleapis.com/v1/userinfo',
+          }),
+        } as never)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ access_token: mockToken }),
+        } as never)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ sub: 'attacker_2', email: 'member@oidc.test', email_verified: false }),
+        } as never);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/v1/auth/oidc/google/callback',
+        payload: { code: 'valid_code', state },
+      });
+      // Rejected — either by the userinfo fetch (IdP says unverified) or by the
+      // link guard. Either way NO session may be issued for the victim account.
+      expect(res.statusCode).toBeGreaterThanOrEqual(400);
+      expect(JSON.stringify(res.body)).not.toContain('accessToken');
+    });
+
+    it('K7: sanitizes a protocol-relative returnTo (open redirect with tokens)', async () => {
+      const state = generateOAuthState('google', '//evil.example.com');
+      const mockToken = `at-${Date.now()}`;
+
+      globalThis.fetch = vi
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            authorization_endpoint: 'https://accounts.google.com/o/oauth2/v2/auth',
+            token_endpoint: 'https://oauth2.googleapis.com/token',
+            userinfo_endpoint: 'https://openidconnect.googleapis.com/v1/userinfo',
+          }),
+        } as never)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ access_token: mockToken }),
+        } as never)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ sub: 'g_user_pr', email: 'proto@rel.test', email_verified: true }),
+        } as never);
+
+      const res = await app.inject({
+        method: 'GET',
+        url: `/v1/auth/oidc/google/callback?code=valid_code&state=${encodeURIComponent(state)}`,
+      });
+      expect(res.statusCode).toBe(302);
+      const location = res.headers.location as string;
+      // Redirected back to the app root, never to the attacker origin.
+      expect(location.startsWith('/#access_token=')).toBe(true);
+      expect(location).not.toContain('evil.example.com');
     });
 
     it('creates admin user if first user in database registers via SSO', async () => {

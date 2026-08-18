@@ -1,4 +1,4 @@
-import { createHmac, randomBytes } from 'node:crypto';
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { config } from '../config.js';
 
 export interface OidcTokenResponse {
@@ -10,6 +10,8 @@ export interface OidcTokenResponse {
 export interface OidcUserInfo {
   sub: string;
   email: string;
+  /** True when the IdP attests the email (or it is GitHub's verified primary). */
+  emailVerified: boolean;
   name?: string | null;
 }
 
@@ -21,14 +23,16 @@ export function generateOAuthState(providerSlug: string, returnTo?: string): str
   return `${Buffer.from(payload).toString('base64url')}.${signature}`;
 }
 
-/** Verify a signed state parameter */
+/** Verify a signed state parameter (constant-time signature compare) */
 export function verifyOAuthState(state: string): { slug: string; returnTo: string } | null {
   try {
     const [payloadB64, signature] = state.split('.');
     if (!payloadB64 || !signature) return null;
     const payloadJson = Buffer.from(payloadB64, 'base64url').toString('utf8');
     const expectedSig = createHmac('sha256', config.jwt.secret).update(payloadJson).digest('base64url');
-    if (signature !== expectedSig) return null;
+    const a = Buffer.from(signature);
+    const b = Buffer.from(expectedSig);
+    if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
     const data = JSON.parse(payloadJson);
     // 15 minute TTL on OAuth login initiation
     if (Date.now() - data.ts > 15 * 60 * 1000) return null;
@@ -90,14 +94,22 @@ export async function fetchOidcUserInfo(userinfoEndpoint: string, accessToken: s
   }
 
   const json = (await res.json()) as Record<string, unknown>;
-  const email = (json['email'] as string) || (json['preferred_username'] as string);
+  // Only a real `email` claim may identify the user. `preferred_username` is
+  // typically a self-chosen handle — accepting it as an email lets an attacker
+  // set it to a victim's address and log in as them.
+  const email = json['email'] as string | undefined;
   if (!email) {
     throw new Error('OIDC userinfo did not contain an email address');
+  }
+  // An IdP-attested unverified address must never link to a local account.
+  if (json['email_verified'] === false) {
+    throw new Error('OIDC email address is not verified');
   }
 
   return {
     sub: String(json['sub'] ?? email),
     email: email.toLowerCase().trim(),
+    emailVerified: json['email_verified'] === true,
     name: (json['name'] as string) ?? null,
   };
 }
@@ -146,6 +158,7 @@ export async function exchangeGitHubCode(
 
   const userProfile = (await userRes.json()) as { id: number; login: string; name?: string | null; email?: string | null };
   let email = userProfile.email;
+  let emailVerified = Boolean(email);
 
   if (!email) {
     // Fetch user verified primary email
@@ -159,17 +172,26 @@ export async function exchangeGitHubCode(
     if (emailsRes.ok) {
       const emailList = (await emailsRes.json()) as Array<{ email: string; primary: boolean; verified: boolean }>;
       const primary = emailList.find((e) => e.primary && e.verified) ?? emailList.find((e) => e.verified) ?? emailList[0];
-      if (primary) email = primary.email;
+      if (primary) {
+        email = primary.email;
+        emailVerified = primary.verified === true;
+      }
     }
   }
 
   if (!email) {
+    // Synthetic namespace (no public email): NOT a verified address. The SSO
+    // callback must never link this to a pre-existing local account — an
+    // attacker who pre-registers `victim@github.user` would otherwise share
+    // the real GitHub user's account.
     email = `${userProfile.login}@github.user`;
+    emailVerified = false;
   }
 
   return {
     sub: String(userProfile.id),
     email: email.toLowerCase().trim(),
+    emailVerified,
     name: userProfile.name ?? userProfile.login,
   };
 }

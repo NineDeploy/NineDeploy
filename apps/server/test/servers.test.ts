@@ -215,6 +215,27 @@ describe('servers routes', () => {
     expect(res2.statusCode).toBe(404);
   });
 
+  it('HIGH: a public announce with a wrong token can never take over an existing server', async () => {
+    let updatedValues: Record<string, unknown> | null = null;
+    const app = await appWith({
+      findFirst: { servers: serverRow({ id: 3, host: '10.0.0.5', port: 4600, status: 'online' }) },
+      update: {
+        servers: (v: Record<string, unknown>) => {
+          updatedValues = v;
+          return [serverRow({ id: 3 })];
+        },
+      },
+    });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/servers/announce',
+      payload: { name: 'attacker-node', host: '10.0.0.5', port: 4600, token: 'attacker-forged-token-1' },
+    });
+    expect(res.statusCode).toBe(401);
+    // The registry was not touched: no token/name overwrite happened.
+    expect(updatedValues).toBeNull();
+  });
+
   it('allows unauthenticated edge agent announcement to register as pending', async () => {
     const app = await appWith({
       findFirst: { servers: undefined },
@@ -234,15 +255,15 @@ describe('servers routes', () => {
     expect(res.json()).toMatchObject({ ok: true, id: 5, status: 'pending' });
     expect(cryptoMocks.encrypt).toHaveBeenCalledWith('a'.repeat(32));
 
-    // Re-announce online server
+    // Re-announce online server (with the MATCHING stored token)
     const appOnline = await appWith({
-      findFirst: { servers: serverRow({ id: 5, host: '192.168.1.55', port: 4600, status: 'online' }) },
+      findFirst: { servers: serverRow({ id: 5, host: '192.168.1.55', port: 4600, status: 'online', tokenEncrypted: 'enc:edge-agent-token-12345' }) },
       update: { servers: [serverRow({ id: 5 })] },
     });
     const resOnline = await appOnline.inject({
       method: 'POST',
       url: '/servers/announce',
-      payload: { name: 'auto-edge-1', host: '192.168.1.55', port: 4600, token: 'a'.repeat(32) },
+      payload: { name: 'auto-edge-1', host: '192.168.1.55', port: 4600, token: 'edge-agent-token-12345' },
     });
     expect(resOnline.statusCode).toBe(200);
     expect(resOnline.json().message).toBe('Server already active and connected');
@@ -312,15 +333,15 @@ describe('servers routes', () => {
     });
     expect(resIp.statusCode).toBe(200);
 
-    // Re-announce pending server
+    // Re-announce pending server (matching stored token)
     const appPending = await appWith({
-      findFirst: { servers: serverRow({ id: 5, host: '192.168.1.55', port: 4600, status: 'pending' }) },
+      findFirst: { servers: serverRow({ id: 5, host: '192.168.1.55', port: 4600, status: 'pending', tokenEncrypted: 'enc:pending-agent-token-1' }) },
       update: { servers: [serverRow({ id: 5 })] },
     });
     const resPending = await appPending.inject({
       method: 'POST',
       url: '/servers/announce',
-      payload: { name: 'auto-edge-1', host: '192.168.1.55', port: 4600, token: 'a'.repeat(32) },
+      payload: { name: 'auto-edge-1', host: '192.168.1.55', port: 4600, token: 'pending-agent-token-1' },
     });
     expect(resPending.statusCode).toBe(200);
     expect(resPending.json().message).toBe('Server re-announced. Pending admin approval.');

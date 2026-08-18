@@ -29,13 +29,16 @@ export const containerRoutes: FastifyPluginAsync = async (app) => {
   };
 
   // ── Get detailed inspect metadata and Traefik tags ────────────────────────
-  app.get('/:container/inspect', async (req) => {
+  // Admin-only: the inspect payload includes the container's full env (injected
+  // DATABASE_URL/REDIS_URL credentials) — same power as the exec terminal.
+  app.get('/:container/inspect', { preHandler: [app.requireAdmin] }, async (req) => {
     const container = guardContainer((req.params as { container: string }).container);
     return inspectContainer(container);
   });
 
   // ── Get runtime generated Docker Compose YAML manifest ───────────────────
-  app.get('/:container/compose', async (req) => {
+  // Admin-only: the manifest renders every env var of the container.
+  app.get('/:container/compose', { preHandler: [app.requireAdmin] }, async (req) => {
     const container = guardContainer((req.params as { container: string }).container);
     return getContainerComposeManifest(container);
   });

@@ -282,7 +282,7 @@ describe('services routes', () => {
 
   it('patches a service with an empty body', async () => {
     const app = await buildTestApp({
-      db: createFakeDb({ update: { services: [svcRow({ id: 1 })] } }),
+      db: createFakeDb({ findFirst: { services: svcRow({ id: 1 }) }, update: { services: [svcRow({ id: 1 })] } }),
     });
     await app.register(servicesRoutes);
     const res = await app.inject({ method: 'PATCH', url: '/1', headers: asUser() });
@@ -365,7 +365,7 @@ describe('services routes', () => {
 
   it('updates limits', async () => {
     const app = await buildTestApp({
-      db: createFakeDb({ update: { services: [svcRow({ id: 1, cpuShares: 512, memLimitMb: 1024 })] } }),
+      db: createFakeDb({ findFirst: { services: svcRow({ id: 1 }) }, update: { services: [svcRow({ id: 1, cpuShares: 512, memLimitMb: 1024 })] } }),
     });
     await app.register(servicesRoutes);
     const res = await app.inject({

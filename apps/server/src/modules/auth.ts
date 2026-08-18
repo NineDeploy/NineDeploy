@@ -596,7 +596,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     const origin = `${req.protocol}://${req.hostname}`;
     const redirectUri = `${origin}/v1/auth/oidc/${slug}/callback`;
 
-    let userInfo: { sub: string; email: string; name?: string | null };
+    let userInfo: { sub: string; email: string; emailVerified: boolean; name?: string | null };
 
     if (slug === 'github' || (!provider.issuerUrl && slug.includes('github'))) {
       userInfo = await exchangeGitHubCode(provider.clientId, clientSecret, query.code, redirectUri);
@@ -609,6 +609,13 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     }
 
     let user = await app.db.query.users.findFirst({ where: eq(users.email, userInfo.email) });
+    if (user && userInfo.emailVerified === false) {
+      // Never link an unverified (e.g. synthetic-namespace) SSO identity to a
+      // pre-existing local account: an attacker who pre-registered the address
+      // would otherwise silently share the real SSO user's account. Refusing
+      // (fail closed) turns a takeover into, at worst, a denial of service.
+      throw forbidden('SSO email address is not verified; refusing to link an existing account');
+    }
     if (!user) {
       if (!provider.autoEnroll) {
         throw forbidden('Auto-enrollment is disabled for this SSO provider');
@@ -644,8 +651,13 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       return { user: toUser(user), tokens };
     }
 
-    // Redirect browser with tokens in hash fragment
-    const returnTo = stateData.returnTo.startsWith('/') ? stateData.returnTo : '/';
+    // Redirect browser with tokens in hash fragment. The returnTo target must
+    // stay same-origin: a protocol-relative "//evil.com" (or "/\evil.com",
+    // which browsers normalize the same way) passes a naive startsWith('/')
+    // check and would carry the tokens in the fragment to the attacker's site.
+    const rawReturnTo = stateData.returnTo;
+    const returnToSafe = rawReturnTo.startsWith('/') && !rawReturnTo.startsWith('//') && !rawReturnTo.startsWith('/\\');
+    const returnTo = returnToSafe ? rawReturnTo : '/';
     return reply.redirect(`${returnTo}#access_token=${tokens.accessToken}&refresh_token=${tokens.refreshToken}`);
   };
 

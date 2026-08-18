@@ -23,7 +23,8 @@ export const configListSchema = z.object({
 export type ConfigListResponse = z.infer<typeof configListSchema>;
 
 export const setConfigSchema = z.object({
-  value: z.unknown(),
+  // Optional: an omitted value keeps the current one (metadata-only update).
+  value: z.unknown().optional(),
   isSecret: z.boolean().optional(),
   description: z.string().max(500).optional(),
   tags: z.array(z.string().max(50)).optional(),

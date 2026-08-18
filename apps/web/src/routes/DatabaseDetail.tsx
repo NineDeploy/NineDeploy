@@ -18,7 +18,6 @@ import {
   Square,
   Terminal,
   Trash2,
-  Upload,
 } from 'lucide-react';
 import { Link, useNavigate, useParams } from 'react-router';
 import type { DatabaseDetail as IDatabaseDetail } from '@ninedeploy/sdk';
@@ -64,27 +63,6 @@ export function DatabaseDetail() {
   const { toast } = useToast();
   const [activeTab, setActiveTab] = useState<'overview' | 'topology' | 'manifest' | 'files' | 'backups' | 'logs' | 'settings'>('overview');
   const [embeddedStudioUrl, setEmbeddedStudioUrl] = useState<string | null>(null);
-  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
-  const [importFile, setImportFile] = useState<File | null>(null);
-  const [importing, setImporting] = useState(false);
-
-  const handleImport = async () => {
-    if (!importFile) return;
-    setImporting(true);
-    try {
-      await importFile.text();
-      // Execute import
-      await api.databases.logs(id); // verify alive
-      toast(`SQL dump imported successfully (${importFile.name})`, 'success');
-      setIsImportModalOpen(false);
-      setImportFile(null);
-      qc.invalidateQueries({ queryKey: ['database-detail', id] });
-    } catch (err) {
-      toast(err instanceof Error ? err.message : 'Import failed', 'error');
-    } finally {
-      setImporting(false);
-    }
-  };
 
   const dbQuery = useQuery({
     queryKey: ['database-detail', id],
@@ -233,17 +211,6 @@ export function DatabaseDetail() {
             </Button>
 
             <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => setIsImportModalOpen(true)}
-              disabled={!isRunning}
-              title="Import SQL/dump file into database"
-            >
-              <Upload size={13} />
-              Import SQL
-            </Button>
-
-            <Button
               size="sm"
               onClick={() => backupMutation.mutate()}
               disabled={backupMutation.isPending || !isRunning}
@@ -327,63 +294,6 @@ export function DatabaseDetail() {
             />
           </div>
         </div>
-      )}
-      {/* Import SQL Dump Modal */}
-      {isImportModalOpen && (
-        <Modal
-          title={`Import SQL Dump — ${db.name}`}
-          onClose={() => {
-            setIsImportModalOpen(false);
-            setImportFile(null);
-          }}
-          footer={
-            <>
-              <Button
-                variant="secondary"
-                onClick={() => {
-                  setIsImportModalOpen(false);
-                  setImportFile(null);
-                }}
-              >
-                Cancel
-              </Button>
-              <Button
-                variant="primary"
-                onClick={handleImport}
-                disabled={!importFile || importing}
-              >
-                {importing ? 'Importing…' : 'Execute Import'}
-              </Button>
-            </>
-          }
-        >
-          <div className="space-y-4">
-            <p className="text-xs text-slate-400">
-              Select a <code>.sql</code>, <code>.dump</code>, or text file to execute directly into <b>{db.name}</b> ({db.engine}).
-            </p>
-
-            <div className="rounded-xl border-2 border-dashed border-white/10 p-6 text-center hover:border-indigo-500/50 transition">
-              <Upload size={28} className="mx-auto mb-2 text-indigo-400 opacity-80" />
-              <input
-                type="file"
-                id="sql-file-input"
-                accept=".sql,.dump,.txt,.tar,.gz"
-                className="hidden"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) setImportFile(file);
-                }}
-              />
-              <label
-                htmlFor="sql-file-input"
-                className="cursor-pointer text-xs font-semibold text-indigo-400 hover:text-indigo-300"
-              >
-                {importFile ? `Selected: ${importFile.name} (${formatBytes(importFile.size)})` : 'Click to choose SQL / dump file'}
-              </label>
-              <p className="text-[11px] text-slate-500 mt-1">Supports standard SQL script files</p>
-            </div>
-          </div>
-        </Modal>
       )}
     </div>
   );

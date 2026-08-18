@@ -4,7 +4,7 @@ import { serverAnnounce, serverCreate, serverSshBootstrap, serverSshTest } from 
 import type { FastifyPluginAsync } from 'fastify';
 import { audit } from '../lib/audit.js';
 import { decrypt, encrypt } from '../lib/crypto.js';
-import { badRequest, notFound, parseId } from '../lib/errors.js';
+import { badRequest, notFound, parseId, unauthorized } from '../lib/errors.js';
 import { agentPing, generateAgentToken } from '../lib/agentClient.js';
 import { bootstrapServer, getBootstrapLogs, testSshConnection } from '../engine/serverProvisioner.js';
 
@@ -37,11 +37,19 @@ export const serverRoutes: FastifyPluginAsync = async (app) => {
     });
 
     if (existing) {
+      // Token takeover guard: the announce route is public, so an existing
+      // (possibly approved) server's stored token may only be touched by an
+      // announce presenting the SAME token. A different token never overwrites
+      // the registry — that would break every subsequent agentOp deploy.
+      const storedToken = existing.tokenEncrypted ? decrypt(existing.tokenEncrypted) : '';
+      if (storedToken !== token) {
+        throw unauthorized(`A server is already registered at ${host}:${port}; token mismatch`);
+      }
       await app.db
         .update(servers)
         .set({
           name,
-          tokenEncrypted: encrypt(token),
+          lastSeenAt: new Date(),
           updatedAt: new Date(),
         })
         .where(eq(servers.id, existing.id));

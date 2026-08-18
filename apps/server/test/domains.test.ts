@@ -79,7 +79,7 @@ describe('domains routes (Cloudflare integration)', () => {
 
   it('skips record deletion when the integration is disabled', async () => {
     // Default cfMocks state: enabled false.
-    const db = createFakeDb({ findFirst: { domains: domainRow({ dnsRecordId: 'rec-7' }) } });
+    const db = createFakeDb({ findFirst: { services: svcRow(), domains: domainRow({ dnsRecordId: 'rec-7' }) } });
     const app = await buildTestApp({ db });
     await app.register(domainsRoutes);
     const res = await app.inject({ method: 'DELETE', url: '/1/domains/1', headers: asUser() });
@@ -119,7 +119,7 @@ describe('domains routes (Cloudflare integration)', () => {
   it('deletes the DNS record alongside the domain', async () => {
     cfMocks.getDnsRecordsConfig.mockResolvedValueOnce({ enabled: true, token: 'tok', content: null });
     const db = createFakeDb({
-      findFirst: { domains: domainRow({ dnsRecordId: 'rec-9', hostname: 'app.example.com' }) },
+      findFirst: { services: svcRow(), domains: domainRow({ dnsRecordId: 'rec-9', hostname: 'app.example.com' }) },
     });
     const app = await buildTestApp({ db });
     await app.register(domainsRoutes);
@@ -132,7 +132,7 @@ describe('domains routes (Cloudflare integration)', () => {
     cfMocks.getDnsRecordsConfig.mockResolvedValueOnce({ enabled: true, token: 'tok', content: null });
     cfMocks.deleteDnsRecord.mockRejectedValueOnce(new Error('api down'));
     const db = createFakeDb({
-      findFirst: { domains: domainRow({ dnsRecordId: 'rec-9' }) },
+      findFirst: { services: svcRow(), domains: domainRow({ dnsRecordId: 'rec-9' }) },
     });
     const app = await buildTestApp({ db });
     await app.register(domainsRoutes);
@@ -144,7 +144,7 @@ describe('domains routes (Cloudflare integration)', () => {
 describe('domains routes', () => {
   it('lists domains for a service', async () => {
     const app = await buildTestApp({
-      db: createFakeDb({ findMany: { domains: [domainRow({ id: 2, hostname: 'a.example.com', ssl: true })] } }),
+      db: createFakeDb({ findFirst: { services: svcRow() }, findMany: { domains: [domainRow({ id: 2, hostname: 'a.example.com', ssl: true })] } }),
     });
     await app.register(domainsRoutes);
     const res = await app.inject({ method: 'GET', url: '/1/domains', headers: asUser() });
@@ -219,7 +219,7 @@ describe('domains routes', () => {
   });
 
   it('deletes a domain and regenerates the proxy config', async () => {
-    const app = await buildTestApp({ db: createFakeDb() });
+    const app = await buildTestApp({ db: createFakeDb({ findFirst: { services: svcRow() } }) });
     await app.register(domainsRoutes);
     const res = await app.inject({ method: 'DELETE', url: '/1/domains/3', headers: asUser() });
     expect(res.statusCode).toBe(200);
@@ -244,6 +244,7 @@ describe('domains routes', () => {
   it('patches ssl, redirectWww and headers together', async () => {
     const app = await buildTestApp({
       db: createFakeDb({
+        findFirst: { services: svcRow() },
         update: {
           domains: [domainRow({ id: 3, ssl: true, redirectWww: true, headers: '[{"name":"X-Frame-Options","value":"DENY"}]' })],
         },
@@ -265,6 +266,7 @@ describe('domains routes', () => {
   it('patches basicAuth, ipAllowlist, and rateLimit', async () => {
     const app = await buildTestApp({
       db: createFakeDb({
+        findFirst: { services: svcRow() },
         update: {
           domains: [
             domainRow({
@@ -340,6 +342,7 @@ describe('domains routes', () => {
   it('sanitizes a hostile headers payload on patch', async () => {
     const app = await buildTestApp({
       db: createFakeDb({
+        findFirst: { services: svcRow() },
         update: { domains: [domainRow({ id: 3, headers: '[{"name":"BadName","value":"ok"}]' })] },
       }),
     });
@@ -367,14 +370,14 @@ describe('domains routes', () => {
   });
 
   it('accepts an empty patch body', async () => {
-    const app = await buildTestApp({ db: createFakeDb({ update: { domains: [domainRow({ id: 3 })] } }) });
+    const app = await buildTestApp({ db: createFakeDb({ findFirst: { services: svcRow() }, update: { domains: [domainRow({ id: 3 })] } }) });
     await app.register(domainsRoutes);
     const res = await app.inject({ method: 'PATCH', url: '/1/domains/3', headers: asUser() });
     expect(res.statusCode).toBe(200);
   });
 
   it('rejects an invalid patch payload', async () => {
-    const app = await buildTestApp({ db: createFakeDb() });
+    const app = await buildTestApp({ db: createFakeDb({ findFirst: { services: svcRow() } }) });
     await app.register(domainsRoutes);
     const res = await app.inject({
       method: 'PATCH',

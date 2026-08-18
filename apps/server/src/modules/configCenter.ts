@@ -3,9 +3,13 @@ import { eq } from 'drizzle-orm';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { audit } from '../lib/audit.js';
+import { badRequest } from '../lib/errors.js';
+
+/** Placeholder returned for unrevealed secrets — can never be a real value. */
+const SECRET_MASK = '••••••••';
 
 const setConfigBody = z.object({
-  value: z.unknown(),
+  value: z.unknown().optional(),
   isSecret: z.boolean().optional(),
   description: z.string().max(500).optional(),
   tags: z.array(z.string().max(50)).optional(),
@@ -159,8 +163,26 @@ export const configCenterRoutes: FastifyPluginAsync = async (app) => {
   app.post<{ Params: { key: string } }>('/:key', { preHandler: app.requireAdmin }, async (req) => {
     const { key } = req.params;
     const body = setConfigBody.parse(req.body);
+    const def = req.kernel.configCenter.getDefinition(key);
+    const row = await app.db.query.configEntries.findFirst({ where: eq(configEntries.key, key) });
+    const isSecret = body.isSecret ?? def?.isSecret ?? row?.isSecret ?? false;
 
-    await req.kernel.configCenter.set(key, body.value, {
+    // The mask is what the UI displays for an unrevealed secret; saving it
+    // back would silently destroy the stored credential.
+    if (isSecret && body.value === SECRET_MASK) {
+      throw badRequest(
+        'Refusing to save the masked placeholder as a secret value — reveal the secret or enter a new value',
+        'masked_secret_rejected',
+      );
+    }
+
+    // Omitted value on an existing entry = keep the current value (metadata-only update).
+    let value = body.value;
+    if (value === undefined && row) {
+      value = row.isSecret ? await req.kernel.configCenter.getSecret(key) : await req.kernel.configCenter.get(key);
+    }
+
+    await req.kernel.configCenter.set(key, value, {
       isSecret: body.isSecret,
       description: body.description,
       tags: body.tags,

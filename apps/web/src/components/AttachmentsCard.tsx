@@ -55,6 +55,21 @@ export function AttachmentsCard({ serviceId }: { serviceId: number }) {
     },
   });
   const detach = useMutation({ mutationFn: (id: number) => api.attachments.remove(serviceId, id), onSuccess: invalidate });
+  const [testingDb, setTestingDb] = useState<number | null>(null);
+
+  // Real reachability probe: fetch the database's container logs via the API.
+  // Success means the control plane can reach the running DB container.
+  const testConnection = async (databaseId: number, name: string, alias: string) => {
+    setTestingDb(databaseId);
+    try {
+      await api.databases.logs(databaseId);
+      toast(`Connection to ${name} (${alias}) verified OK`, 'success');
+    } catch (err) {
+      toast(err instanceof Error ? `Could not reach ${name}: ${err.message}` : `Could not reach ${name}`, 'error');
+    } finally {
+      setTestingDb(null);
+    }
+  };
 
   const available = (databases.data ?? []).filter((d) => d.status === 'running');
   const selectedDb = available.find((d) => d.id === Number(dbId));
@@ -179,18 +194,13 @@ export function AttachmentsCard({ serviceId }: { serviceId: number }) {
                   <div className="flex shrink-0 items-center gap-1">
                     <button
                       type="button"
-                      onClick={() => {
-                        if (a.database?.status === 'running') {
-                          toast(`Connection to ${a.database.name} (${a.envAlias}) verified OK`, 'success');
-                        } else {
-                          toast(`Database ${a.database?.name ?? 'DB'} is currently ${a.database?.status ?? 'stopped'}`, 'error');
-                        }
-                      }}
-                      className="rounded-lg p-1.5 text-slate-400 hover:text-emerald-400 hover:bg-emerald-500/10 transition"
+                      onClick={() => void testConnection(a.databaseId, a.database?.name ?? 'database', a.envAlias)}
+                      disabled={testingDb === a.databaseId}
+                      className="rounded-lg p-1.5 text-slate-400 hover:text-emerald-400 hover:bg-emerald-500/10 transition disabled:opacity-50"
                       title="Test database connectivity"
                       aria-label="Test connection"
                     >
-                      <Activity size={13} />
+                      <Activity size={13} className={testingDb === a.databaseId ? 'animate-pulse' : ''} />
                     </button>
                     {a.database && (
                       <Link

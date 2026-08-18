@@ -23,8 +23,11 @@ describe('version', () => {
   it('ABOUT links to the changelog and the current release entry', () => {
     expect(ABOUT.changelog).toBe(CHANGELOG);
     expect(CHANGELOG.length).toBeGreaterThan(0);
+    // The newest entry always documents the running version; its title changes
+    // per release, so only assert it is a non-empty string.
     expect(CHANGELOG[0]?.version).toBe(VERSION);
-    expect(CHANGELOG[0]?.title).toBe('Initial pre-release');
+    expect(typeof CHANGELOG[0]?.title).toBe('string');
+    expect(CHANGELOG[0]!.title!.length).toBeGreaterThan(0);
     expect(CHANGELOG[0]?.changes.length).toBeGreaterThan(0);
   });
 
