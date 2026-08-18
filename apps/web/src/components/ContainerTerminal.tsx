@@ -77,9 +77,86 @@ export function ContainerTerminal({ serviceId, serviceName, onClose }: Container
         term.focus();
       }, 50);
 
+      let currentLine = '';
+      const history: string[] = [];
+      let historyIndex = -1;
+
       term.onData((data) => {
-        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-          wsRef.current.send(data);
+        if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+
+        // Enter key
+        if (data === '\r' || data === '\n') {
+          term.write('\r\n');
+          wsRef.current.send(`${currentLine}\n`);
+          if (currentLine.trim()) {
+            history.push(currentLine);
+            historyIndex = history.length;
+          }
+          currentLine = '';
+          return;
+        }
+
+        // Backspace
+        if (data === '\x7f' || data === '\b') {
+          if (currentLine.length > 0) {
+            currentLine = currentLine.slice(0, -1);
+            term.write('\b \b');
+          }
+          return;
+        }
+
+        // Ctrl+C
+        if (data === '\x03') {
+          term.write('^C\r\n');
+          wsRef.current.send('\x03');
+          currentLine = '';
+          return;
+        }
+
+        // Ctrl+L (Clear screen)
+        if (data === '\x0c') {
+          term.clear();
+          return;
+        }
+
+        // Arrow Up (History Prev)
+        if (data === '\x1b[A') {
+          if (history.length > 0 && historyIndex > 0) {
+            historyIndex--;
+            while (currentLine.length > 0) {
+              term.write('\b \b');
+              currentLine = currentLine.slice(0, -1);
+            }
+            currentLine = history[historyIndex] ?? '';
+            term.write(currentLine);
+          }
+          return;
+        }
+
+        // Arrow Down (History Next)
+        if (data === '\x1b[B') {
+          if (historyIndex < history.length - 1) {
+            historyIndex++;
+            while (currentLine.length > 0) {
+              term.write('\b \b');
+              currentLine = currentLine.slice(0, -1);
+            }
+            currentLine = history[historyIndex] ?? '';
+            term.write(currentLine);
+          } else if (historyIndex === history.length - 1) {
+            historyIndex = history.length;
+            while (currentLine.length > 0) {
+              term.write('\b \b');
+              currentLine = currentLine.slice(0, -1);
+            }
+          }
+          return;
+        }
+
+        // Printable characters
+        if (data >= ' ' || data.length > 1) {
+          currentLine += data;
+          term.write(data);
         }
       });
     }
