@@ -17,7 +17,8 @@ import {
 } from '../engine/volumeFiles.js';
 
 interface VolumeOwner {
-  kind: string;
+  kind: 'service' | 'database';
+  id: number;
   name: string;
   engine?: string;
   containerName: string | null;
@@ -32,7 +33,7 @@ async function volumeOwner(db: FastifyInstance['db'], name: string): Promise<Vol
   const [svcs, dbs] = await Promise.all([db.select().from(services), db.select().from(databases)]);
   const owner = resolveVolumeOwner(svcs, dbs, name);
   if (!owner) return null;
-  return { kind: owner.kind, name: owner.name, engine: owner.engine, containerName: owner.containerName };
+  return { kind: owner.kind, id: owner.refId, name: owner.name, engine: owner.engine, containerName: owner.containerName };
 }
 
 /** Volume size for a named Docker volume (bytes), via a throwaway alpine container. */
@@ -62,14 +63,14 @@ export const volumeRoutes: FastifyPluginAsync = async (app) => {
       .map((n) => n.trim())
       .filter((n) => n.startsWith('nd-svc-') || n.startsWith('nd-db-'));
 
-    const out: Array<{ name: string; sizeBytes: number; owner: { kind: string; name: string; engine?: string } | null; inUse: boolean }> = [];
+    const out: Array<{ name: string; sizeBytes: number; owner: { kind: 'service' | 'database'; id: number; name: string; engine?: string } | null; inUse: boolean }> = [];
     for (const name of names) {
       const owner = await volumeOwner(app.db, name);
       const inUse = owner ? await containerRunning(owner.containerName) : false;
       out.push({
         name,
         sizeBytes: await volumeSize(name),
-        owner: owner ? { kind: owner.kind, name: owner.name, engine: owner.engine } : null,
+        owner: owner ? { kind: owner.kind, id: owner.id, name: owner.name, engine: owner.engine } : null,
         inUse,
       });
     }

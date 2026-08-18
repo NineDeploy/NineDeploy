@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import { Database, FolderOpen, HardDrive, Layers, Lock, Package, Server, Trash2 } from 'lucide-react';
+import { ArrowUpRight, Database, ExternalLink, FolderOpen, HardDrive, Layers, Lock, Package, Server, Trash2 } from 'lucide-react';
 import { Link } from 'react-router';
 import { api } from '../lib/api.js';
 import { useToast } from '../components/Toast.js';
@@ -74,50 +74,82 @@ export function Volumes() {
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {list.data.map((v) => {
             const isRetained = !v.owner;
+            const ownerHref = v.owner?.id
+              ? v.owner.kind === 'database'
+                ? `/databases/${v.owner.id}`
+                : `/services/${v.owner.id}`
+              : null;
+
             return (
-              <Card key={v.name} interactive className="p-5">
-                <div className="flex items-start justify-between">
-                  <div className="flex items-center gap-2.5">
-                    <span className={cn('grid h-9 w-9 place-items-center rounded-xl ring-1 ring-inset ring-white/10', isRetained ? 'bg-amber-500/10 text-amber-300' : v.owner?.kind === 'database' ? 'bg-emerald-500/10 text-emerald-300' : 'bg-indigo-500/10 text-indigo-300')}>
-                      {isRetained ? <HardDrive size={16} /> : v.owner?.kind === 'database' ? <Database size={16} /> : <Server size={16} />}
-                    </span>
-                    <div>
-                      <div className="font-medium leading-tight text-slate-100">{v.owner?.name ?? 'Retained'}</div>
-                      <div className="font-mono text-[10px] text-slate-500">
-                        {isRetained ? 'no active owner' : `${v.owner!.kind}${v.owner!.engine ? ` · ${v.owner!.engine}` : ''}`}
+              <Card key={v.name} interactive className="p-5 flex flex-col justify-between">
+                <div>
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <span className={cn('grid h-9 w-9 place-items-center rounded-xl ring-1 ring-inset ring-white/10 shrink-0', isRetained ? 'bg-amber-500/10 text-amber-300' : v.owner?.kind === 'database' ? 'bg-emerald-500/10 text-emerald-300' : 'bg-indigo-500/10 text-indigo-300')}>
+                        {isRetained ? <HardDrive size={16} /> : v.owner?.kind === 'database' ? <Database size={16} /> : <Server size={16} />}
+                      </span>
+                      <div className="min-w-0">
+                        {ownerHref ? (
+                          <Link
+                            to={ownerHref}
+                            className="group inline-flex items-center gap-1 font-semibold leading-tight text-slate-100 transition hover:text-indigo-400"
+                            title={`Navigate to ${v.owner?.kind}: ${v.owner?.name}`}
+                          >
+                            <span className="truncate">{v.owner?.name}</span>
+                            <ArrowUpRight size={13} className="text-slate-400 opacity-80 group-hover:text-indigo-400 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform shrink-0" />
+                          </Link>
+                        ) : (
+                          <div className="font-semibold leading-tight text-slate-100">{v.owner?.name ?? 'Retained'}</div>
+                        )}
+                        <div className="font-mono text-[10px] text-slate-500">
+                          {isRetained ? 'no active owner' : `${v.owner!.kind}${v.owner!.engine ? ` · ${v.owner!.engine}` : ''}`}
+                        </div>
                       </div>
                     </div>
+                    <span className="text-sm font-semibold tabular-nums text-slate-200 shrink-0">{formatBytes(v.sizeBytes)}</span>
                   </div>
-                  <span className="text-sm font-semibold tabular-nums text-slate-200">{formatBytes(v.sizeBytes)}</span>
+
+                  <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/5">
+                    <div className={cn('h-full rounded-full transition-all', isRetained ? 'bg-amber-500/70' : 'bg-indigo-500/70')} style={{ width: `${Math.max(3, (v.sizeBytes / max) * 100)}%` }} />
+                  </div>
                 </div>
-                <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/5">
-                  <div className={cn('h-full rounded-full transition-all', isRetained ? 'bg-amber-500/70' : 'bg-indigo-500/70')} style={{ width: `${Math.max(3, (v.sizeBytes / max) * 100)}%` }} />
-                </div>
-                <div className="mt-2 flex items-center justify-between">
-                  <span className={cn('rounded px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide', v.inUse ? 'bg-rose-500/10 text-rose-300' : isRetained ? 'bg-amber-500/15 text-amber-300' : 'bg-emerald-500/10 text-emerald-300/80')}>
-                    {v.inUse ? 'in use · locked' : isRetained ? 'retained · reusable' : 'attached · stopped'}
-                  </span>
+
+                <div className="mt-4 pt-3 border-t border-white/[0.06] flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className={cn('rounded px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide', v.inUse ? 'bg-rose-500/10 text-rose-300' : isRetained ? 'bg-amber-500/15 text-amber-300' : 'bg-emerald-500/10 text-emerald-300/80')}>
+                      {v.inUse ? 'in use · locked' : isRetained ? 'retained · reusable' : 'attached · stopped'}
+                    </span>
+                    {ownerHref && (
+                      <Link
+                        to={ownerHref}
+                        className="inline-flex items-center gap-1 text-[11px] font-medium text-indigo-400 hover:text-indigo-300 transition"
+                      >
+                        <span>{v.owner?.kind === 'database' ? 'DB' : 'Service'}</span>
+                        <ExternalLink size={10} />
+                      </Link>
+                    )}
+                  </div>
+
                   <div className="flex items-center gap-2">
                     <button type="button"
                       onClick={() => setBrowsing(v.name)}
-                      className="text-slate-600 transition hover:text-[var(--nd-accent)]"
+                      className="rounded-lg p-1.5 text-slate-500 transition hover:bg-white/5 hover:text-[var(--nd-accent)]"
                       title="Browse files in this volume"
                     >
-                      <FolderOpen size={13} />
+                      <FolderOpen size={14} />
                     </button>
                     {!v.inUse && (
                       <button type="button"
                         onClick={() => setPendingDelete(v.name)}
-                        className="text-slate-600 transition hover:text-rose-400"
+                        className="rounded-lg p-1.5 text-slate-500 transition hover:bg-rose-500/10 hover:text-rose-400"
                         title="Delete volume (destructive)"
                       >
-                        <Trash2 size={13} />
+                        <Trash2 size={14} />
                       </button>
                     )}
+                    {v.inUse && <span title={`Attached to a running ${v.owner?.kind ?? 'workload'} — stop it first`}><Lock size={13} className="text-slate-600 ml-1" /></span>}
                   </div>
-                  {v.inUse && <span title={`Attached to a running ${v.owner?.kind ?? 'workload'} — stop it first`}><Lock size={13} className="text-slate-600" /></span>}
                 </div>
-                <div className="mt-1 truncate font-mono text-[10px] text-slate-600">{v.name}</div>
               </Card>
             );
           })}

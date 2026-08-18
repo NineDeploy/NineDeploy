@@ -475,7 +475,7 @@ export type DomainEntry = z.infer<typeof domainEntry>;
 export const volumeEntry = z.object({
   name: z.string(),
   sizeBytes: z.number().int(),
-  owner: z.object({ kind: z.string(), name: z.string(), engine: z.string().optional() }).nullable(),
+  owner: z.object({ kind: z.string(), id: z.number().int().optional(), name: z.string(), engine: z.string().optional() }).nullable(),
   /** True when the owner's container is running — deletion is refused (409). */
   inUse: z.boolean(),
 });
