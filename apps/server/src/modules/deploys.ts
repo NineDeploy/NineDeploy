@@ -169,6 +169,7 @@ export const deploysRoutes: FastifyPluginAsync = async (app) => {
   // otherwise we fall back to the legacy pipe mode (works, just less shell-like).
   // Probed per connection (~30ms) — cheap next to a WS handshake.
   const isPtyAvailable = async (): Promise<boolean> => {
+    if (process.platform === 'win32') return false;
     try {
       await capture('python3', ['-c', 'import pty']);
       return true;
@@ -190,31 +191,94 @@ export const deploysRoutes: FastifyPluginAsync = async (app) => {
       return;
     }
     const svc = await app.db.query.services.findFirst({ where: eq(services.id, id) });
-    if (!svc?.runtimeId) {
-      socket.close(1008, 'no running container');
+    if (!svc) {
+      socket.close(1008, 'service not found');
       return;
     }
+    const targetContainer = svc.runtimeId || `nd-app-${svc.slug}`;
     void audit(app.db, user.id, 'service.exec', svc.name);
+
+    socket.send(`\x1b[36m⚡ Attached to container shell [${targetContainer}]\x1b[0m\r\n`);
 
     // The container name reaches python via the environment — never through
     // the command string — so a hostile-looking runtimeId can't inject options.
     // Both docker invocations use `--` before the dynamic container name.
-    const child = (await isPtyAvailable())
+    const hasPty = await isPtyAvailable();
+    const child = hasPty
       ? spawn(
           'python3',
           ['-c', 'import os,pty; pty.spawn(["docker","exec","-i","-t","--",os.environ["ND_EXEC_CONTAINER"],"sh"])'],
-          { env: { ...process.env, ND_EXEC_CONTAINER: svc.runtimeId } },
+          {
+            env: { ...process.env, ND_EXEC_CONTAINER: targetContainer },
+            windowsHide: true,
+            stdio: ['pipe', 'pipe', 'pipe'],
+          },
         )
-      : spawn('docker', ['exec', '-i', '--', svc.runtimeId, 'sh'], {});
+      : spawn('docker', ['exec', '-i', '--', targetContainer, 'sh'], {
+          windowsHide: true,
+          stdio: ['pipe', 'pipe', 'pipe'],
+        });
+
     // Absorb EPIPE on stdin: a keystroke racing the child's exit must never
     // crash the process (unhandled 'error' on a stream is fatal).
     child.stdin.on('error', () => { /* child already gone */ });
-    child.on('error', () => { try { socket.close(); } catch { /* already closed */ } });
-    socket.on('message', (data) => { child.stdin.write(data as Buffer); });
-    child.stdout.on('data', (data) => { try { socket.send(data); } catch { /* closed */ } });
-    child.stderr.on('data', (data) => { try { socket.send(data); } catch { /* closed */ } });
-    socket.on('close', () => child.kill());
-    socket.on('error', () => child.kill());
-    child.on('exit', () => { try { socket.close(); } catch { /* already closed */ } });
+    child.on('error', (err) => {
+      try {
+        socket.send(`\r\n\x1b[31m✕ Failed to spawn container shell: ${err.message}\x1b[0m\r\n`);
+        socket.close();
+      } catch {
+        /* already closed */
+      }
+    });
+
+    socket.on('message', (data) => {
+      if (child.stdin && !child.stdin.destroyed) {
+        try {
+          child.stdin.write(data as Buffer);
+        } catch {
+          // ignore
+        }
+      }
+    });
+
+    child.stdout.on('data', (data) => {
+      try {
+        socket.send(data);
+      } catch {
+        /* closed */
+      }
+    });
+
+    child.stderr.on('data', (data) => {
+      try {
+        socket.send(data);
+      } catch {
+        /* closed */
+      }
+    });
+
+    socket.on('close', () => {
+      try {
+        child.kill();
+      } catch {
+        // ignore
+      }
+    });
+
+    socket.on('error', () => {
+      try {
+        child.kill();
+      } catch {
+        // ignore
+      }
+    });
+
+    child.on('exit', () => {
+      try {
+        socket.close();
+      } catch {
+        /* already closed */
+      }
+    });
   });
 };
