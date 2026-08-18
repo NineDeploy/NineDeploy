@@ -1,12 +1,40 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import { Database, Link2, Trash2 } from 'lucide-react';
+import { Database, ExternalLink, Plus, Trash2 } from 'lucide-react';
+import { Link } from 'react-router';
 import { api } from '../lib/api.js';
-import { Button, Card, CardBody, Input, Select, Skeleton, StatusBadge } from './ui.js';
+import { Button, Card, CardBody, Input, Select, Skeleton, StatusBadge, cn } from './ui.js';
 
 function aliasFor(engine: string | undefined): string {
-  return engine === 'redis' ? 'REDIS_URL' : 'DATABASE_URL';
+  if (!engine) return 'DATABASE_URL';
+  switch (engine.toLowerCase()) {
+    case 'redis':
+    case 'valkey':
+      return 'REDIS_URL';
+    case 'mongo':
+    case 'mongodb':
+      return 'MONGODB_URI';
+    case 'mysql':
+    case 'mariadb':
+      return 'MYSQL_URL';
+    case 'clickhouse':
+      return 'CLICKHOUSE_URL';
+    default:
+      return 'DATABASE_URL';
+  }
 }
+
+const ENGINE_COLORS: Record<string, string> = {
+  postgres: 'text-indigo-400 bg-indigo-500/10 border-indigo-500/20',
+  postgresql: 'text-indigo-400 bg-indigo-500/10 border-indigo-500/20',
+  mysql: 'text-sky-400 bg-sky-500/10 border-sky-500/20',
+  mariadb: 'text-sky-400 bg-sky-500/10 border-sky-500/20',
+  redis: 'text-rose-400 bg-rose-500/10 border-rose-500/20',
+  valkey: 'text-rose-400 bg-rose-500/10 border-rose-500/20',
+  mongo: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20',
+  mongodb: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20',
+  clickhouse: 'text-amber-400 bg-amber-500/10 border-amber-500/20',
+};
 
 export function AttachmentsCard({ serviceId }: { serviceId: number }) {
   const qc = useQueryClient();
@@ -27,17 +55,41 @@ export function AttachmentsCard({ serviceId }: { serviceId: number }) {
   const detach = useMutation({ mutationFn: (id: number) => api.attachments.remove(serviceId, id), onSuccess: invalidate });
 
   const available = (databases.data ?? []).filter((d) => d.status === 'running');
+  const selectedDb = available.find((d) => d.id === Number(dbId));
+  const defaultPlaceholder = dbId ? aliasFor(selectedDb?.engine) : 'DATABASE_URL';
 
   return (
     <Card>
-      <CardBody>
-        <div className="mb-3 flex items-center gap-2 text-sm font-medium text-slate-300">
-          <Link2 size={15} className="text-slate-500" /> Databases
+      <CardBody className="space-y-4">
+        <div className="flex items-center justify-between border-b border-slate-100 dark:border-white/[0.06] pb-3">
+          <div className="flex items-center gap-2">
+            <div className="grid h-7 w-7 place-items-center rounded-lg bg-emerald-500/10 text-emerald-400 ring-1 ring-inset ring-emerald-500/20">
+              <Database size={15} />
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-200">Attached Databases</h3>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                Directly inject connection strings into this application container.
+              </p>
+            </div>
+          </div>
+          <Link
+            to="/databases"
+            className="inline-flex items-center gap-1 text-[11px] font-medium text-indigo-400 hover:text-indigo-300 transition"
+          >
+            <Plus size={12} /> New DB
+          </Link>
         </div>
 
-        {available.length > 0 && (
-          <div className="mb-3 flex gap-2">
-            <Select value={dbId} onChange={(e) => setDbId(e.target.value)} className="h-9 flex-1 text-xs">
+        {/* Attachment form */}
+        <div className="rounded-xl border border-slate-200 dark:border-white/[0.08] bg-slate-50/50 dark:bg-white/[0.02] p-3 space-y-2">
+          <div className="flex flex-col sm:flex-row gap-2">
+            <Select
+              value={dbId}
+              onChange={(e) => setDbId(e.target.value)}
+              className="h-9 flex-1 text-xs"
+              aria-label="Select database to attach"
+            >
               <option value="">Select database…</option>
               {available.map((d) => (
                 <option key={d.id} value={d.id}>
@@ -45,40 +97,104 @@ export function AttachmentsCard({ serviceId }: { serviceId: number }) {
                 </option>
               ))}
             </Select>
-            <Input
-              value={alias}
-              onChange={(e) => setAlias(e.target.value)}
-              placeholder={dbId ? aliasFor(available.find((d) => d.id === Number(dbId))?.engine) : 'ALIAS'}
-              className="h-28 w-32 shrink-0 font-mono text-xs"
-            />
-            <Button size="sm" variant="secondary" disabled={!dbId || attach.isPending} onClick={() => attach.mutate()}>
-              Attach
-            </Button>
-          </div>
-        )}
-
-        <div className="space-y-1.5">
-          {attachments.isLoading ? (
-            <Skeleton className="h-8 w-full" />
-          ) : !attachments.data || attachments.data.length === 0 ? (
-            <p className="py-2 text-xs text-slate-600">No databases attached.</p>
-          ) : (
-            attachments.data.map((a) => (
-              <div
-                key={a.id}
-                className="flex items-center justify-between rounded-lg bg-white/[0.02] px-3 py-2 ring-1 ring-inset ring-white/5"
+            <div className="flex gap-2">
+              <Input
+                value={alias}
+                onChange={(e) => setAlias(e.target.value)}
+                placeholder={defaultPlaceholder}
+                className="h-9 w-36 shrink-0 font-mono text-xs"
+                title="Environment variable alias (e.g. DATABASE_URL, REDIS_URL)"
+              />
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={!dbId || attach.isPending}
+                onClick={() => attach.mutate()}
+                className="shrink-0"
               >
-                <div className="flex min-w-0 items-center gap-2">
-                  <Database size={13} className="shrink-0 text-indigo-400" />
-                  <span className="truncate text-xs text-slate-300">{a.database?.name ?? 'database'}</span>
-                  {a.database && <StatusBadge status={a.database.status} />}
-                  <code className="rounded bg-black/30 px-1.5 py-0.5 font-mono text-[10px] text-emerald-300/80">{a.envAlias}</code>
+                Attach
+              </Button>
+            </div>
+          </div>
+          {available.length === 0 && (
+            <p className="text-[11px] text-amber-500/90 dark:text-amber-300/90 flex items-center gap-1.5">
+              <span>⚠️</span> No active databases running. Launch a database in the Databases tab first.
+            </p>
+          )}
+        </div>
+
+        {/* Attached databases list */}
+        <div className="space-y-2">
+          {attachments.isLoading ? (
+            <div className="space-y-2">
+              <Skeleton className="h-12 w-full" />
+              <Skeleton className="h-12 w-full" />
+            </div>
+          ) : !attachments.data || attachments.data.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-slate-200 dark:border-white/10 p-4 text-center">
+              <Database size={20} className="mx-auto text-slate-400 dark:text-slate-600 mb-1" />
+              <p className="text-xs font-medium text-slate-600 dark:text-slate-400">No databases attached.</p>
+              <p className="text-[11px] text-slate-400 dark:text-slate-500">
+                Attach a managed database above to auto-wire connection environment variables.
+              </p>
+            </div>
+          ) : (
+            attachments.data.map((a) => {
+              const engine = a.database?.engine?.toLowerCase();
+              const badgeClass = (engine && ENGINE_COLORS[engine]) || 'text-slate-400 bg-slate-500/10 border-slate-500/20';
+              return (
+                <div
+                  key={a.id}
+                  className="group flex items-center justify-between rounded-xl border border-slate-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.02] p-3 shadow-sm dark:shadow-none transition hover:border-indigo-500/30"
+                >
+                  <div className="flex min-w-0 items-center gap-2.5">
+                    <Database size={15} className="shrink-0 text-indigo-400" />
+                    {a.database ? (
+                      <Link
+                        to={`/databases/${a.databaseId}`}
+                        className="truncate text-xs font-semibold text-slate-800 dark:text-slate-200 hover:text-indigo-400 transition"
+                      >
+                        {a.database.name}
+                      </Link>
+                    ) : (
+                      <span className="truncate text-xs font-semibold text-slate-800 dark:text-slate-200">database</span>
+                    )}
+                    {a.database && <StatusBadge status={a.database.status} />}
+                    {engine && (
+                      <span className={cn('rounded border px-1.5 py-0.2 font-mono text-[9px] uppercase font-medium', badgeClass)}>
+                        {engine}
+                      </span>
+                    )}
+                    <span className="font-mono text-[10px] text-slate-400">→</span>
+                    <code className="rounded bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 font-mono text-[10px] text-emerald-600 dark:text-emerald-300 font-bold">
+                      {a.envAlias}
+                    </code>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {a.database && (
+                      <Link
+                        to={`/databases/${a.databaseId}`}
+                        className="rounded-lg p-1.5 text-slate-400 hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-white/5 transition"
+                        title="Open database details"
+                      >
+                        <ExternalLink size={13} />
+                      </Link>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => detach.mutate(a.id)}
+                      disabled={detach.isPending}
+                      className="rounded-lg p-1.5 text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition"
+                      title="Detach"
+                      aria-label="Detach"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
                 </div>
-                <button type="button" onClick={() => detach.mutate(a.id)} className="text-slate-600 transition hover:text-rose-400" title="Detach">
-                  <Trash2 size={13} />
-                </button>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
       </CardBody>
