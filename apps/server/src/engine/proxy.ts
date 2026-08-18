@@ -134,6 +134,7 @@ entryPoints:
     address: ":80"
   websecure:
     address: ":443"
+    http3: {}
 providers:
   file:
     filename: /etc/traefik/dynamic.yml
