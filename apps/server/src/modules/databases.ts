@@ -219,10 +219,10 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
     const input = setLimits.parse(req.body);
     const updateData: { cpuShares?: number; memLimitMb?: number } = {};
     if (input.cpuShares !== undefined) {
-      updateData.cpuShares = input.cpuShares && input.cpuShares > 0 ? input.cpuShares : 0;
+      updateData.cpuShares = input.cpuShares ? Math.max(0, input.cpuShares) : 0;
     }
     if (input.memLimitMb !== undefined) {
-      updateData.memLimitMb = input.memLimitMb && input.memLimitMb > 0 ? input.memLimitMb : 0;
+      updateData.memLimitMb = input.memLimitMb ? Math.max(0, input.memLimitMb) : 0;
     }
     const [updated] = await app.db.update(databases).set(updateData).where(eq(databases.id, d.id)).returning();
     if (updated && updated.status === 'running') {

@@ -169,7 +169,6 @@ export const deploysRoutes: FastifyPluginAsync = async (app) => {
   // otherwise we fall back to the legacy pipe mode (works, just less shell-like).
   // Probed per connection (~30ms) — cheap next to a WS handshake.
   const isPtyAvailable = async (): Promise<boolean> => {
-    if (process.platform === 'win32') return false;
     try {
       await capture('python3', ['-c', 'import pty']);
       return true;
@@ -195,7 +194,11 @@ export const deploysRoutes: FastifyPluginAsync = async (app) => {
       socket.close(1008, 'service not found');
       return;
     }
-    const targetContainer = svc.runtimeId || `nd-app-${svc.slug}`;
+    if (!svc.runtimeId) {
+      socket.close(1008, 'container is not running');
+      return;
+    }
+    const targetContainer = svc.runtimeId;
     void audit(app.db, user.id, 'service.exec', svc.name);
 
     socket.send(`\x1b[36m⚡ Attached to container shell [${targetContainer}]\x1b[0m\r\n`);

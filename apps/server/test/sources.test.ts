@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { sourcesRoutes } from '../src/modules/sources.js';
+import { encrypt } from '../src/lib/crypto.js';
 import { asUser, buildTestApp, createFakeDb, sourceRow } from './helpers.js';
 
 describe('sources routes', () => {
@@ -149,5 +150,238 @@ describe('sources routes', () => {
       headers: { ...asUser(), 'x-test-role': 'member' },
     });
     expect(res.statusCode).toBe(403);
+  });
+
+  it('lists github repos for a configured source', async () => {
+    const originalFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = async (input: string | URL | Request) => {
+        const u = typeof input === 'string' ? input : (input as any).url || input.toString();
+        if (u.includes('github.com/user/repos')) {
+          return {
+            ok: true,
+            json: async () => [
+              { name: 'app', full_name: 'acme/app', clone_url: 'https://github.com/acme/app.git', default_branch: '', private: true },
+            ],
+          } as any;
+        }
+        return { ok: false } as any;
+      };
+
+      const app = await buildTestApp({
+        db: createFakeDb({
+          findFirst: {
+            sources: sourceRow({ id: 1, type: 'github', tokenEncrypted: encrypt('ghp_test') }),
+          },
+        }),
+      });
+      await app.register(sourcesRoutes);
+
+      const resGh = await app.inject({ method: 'GET', url: '/1/repos', headers: asUser() });
+      expect(resGh.statusCode).toBe(200);
+      expect(resGh.json()).toEqual([
+        { name: 'app', fullName: 'acme/app', url: 'https://github.com/acme/app.git', defaultBranch: 'main', isPrivate: true },
+      ]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('lists gitlab repos for a configured source', async () => {
+    const originalFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = async (input: string | URL | Request) => {
+        const u = typeof input === 'string' ? input : (input as any).url || input.toString();
+        if (u.includes('gitlab.com/api/v4/projects')) {
+          return {
+            ok: true,
+            json: async () => [
+              { name: 'gl-app', path_with_namespace: 'acme/gl-app', http_url_to_repo: 'https://gitlab.com/acme/gl-app.git', default_branch: '', visibility: 'public' },
+            ],
+          } as any;
+        }
+        return { ok: false } as any;
+      };
+
+      const appGl = await buildTestApp({
+        db: createFakeDb({
+          findFirst: {
+            sources: sourceRow({ id: 2, type: 'gitlab', tokenEncrypted: encrypt('glpat_test') }),
+          },
+        }),
+      });
+      await appGl.register(sourcesRoutes);
+
+      const resGl = await appGl.inject({ method: 'GET', url: '/2/repos', headers: asUser() });
+      expect(resGl.statusCode).toBe(200);
+      expect(resGl.json()).toEqual([
+        { name: 'gl-app', fullName: 'acme/gl-app', url: 'https://gitlab.com/acme/gl-app.git', defaultBranch: 'main', isPrivate: false },
+      ]);
+
+      // Custom source type repos (returns empty)
+      const appCustom = await buildTestApp({
+        db: createFakeDb({
+          findFirst: {
+            sources: sourceRow({ id: 3, type: 'custom', tokenEncrypted: encrypt('custom_key') }),
+          },
+        }),
+      });
+      await appCustom.register(sourcesRoutes);
+      const resCustom = await appCustom.inject({ method: 'GET', url: '/3/repos', headers: asUser() });
+      expect(resCustom.statusCode).toBe(200);
+      expect(resCustom.json()).toEqual([]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('lists branches for a given github repository and other sources', async () => {
+    const originalFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = async () => ({
+        ok: true,
+        json: async () => [{ name: 'main' }, { name: 'feat/test' }],
+      } as any);
+
+      const app = await buildTestApp({
+        db: createFakeDb({
+          findFirst: {
+            sources: sourceRow({ id: 1, type: 'github', tokenEncrypted: encrypt('ghp_test') }),
+          },
+        }),
+      });
+      await app.register(sourcesRoutes);
+
+      const res = await app.inject({
+        method: 'GET',
+        url: '/1/branches?repo=https://github.com/acme/app.git',
+        headers: asUser(),
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual(['main', 'feat/test']);
+
+      // Non-github source branches
+      const appCustom = await buildTestApp({
+        db: createFakeDb({
+          findFirst: {
+            sources: sourceRow({ id: 3, type: 'custom', tokenEncrypted: encrypt('custom_key') }),
+          },
+        }),
+      });
+      await appCustom.register(sourcesRoutes);
+      const resCustom = await appCustom.inject({ method: 'GET', url: '/3/branches?repo=foo', headers: asUser() });
+      expect(resCustom.statusCode).toBe(200);
+      expect(resCustom.json()).toEqual(['main', 'master']);
+
+      // No repo query -> returns default
+      const resDef = await app.inject({ method: 'GET', url: '/1/branches', headers: asUser() });
+      expect(resDef.statusCode).toBe(200);
+      expect(resDef.json()).toEqual(['main', 'master']);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('handles non-ok responses from upstream git providers', async () => {
+    const originalFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = async () => ({
+        ok: false,
+        status: 401,
+      } as any);
+
+      const app = await buildTestApp({
+        db: createFakeDb({
+          findFirst: {
+            sources: sourceRow({ id: 1, type: 'github', tokenEncrypted: encrypt('ghp_bad') }),
+          },
+        }),
+      });
+      await app.register(sourcesRoutes);
+
+      const resGh = await app.inject({ method: 'GET', url: '/1/repos', headers: asUser() });
+      expect(resGh.statusCode).toBe(200);
+      expect(resGh.json()).toEqual([]);
+
+      const appGl = await buildTestApp({
+        db: createFakeDb({
+          findFirst: {
+            sources: sourceRow({ id: 2, type: 'gitlab', tokenEncrypted: encrypt('glpat_bad') }),
+          },
+        }),
+      });
+      await appGl.register(sourcesRoutes);
+      const resGl = await appGl.inject({ method: 'GET', url: '/2/repos', headers: asUser() });
+      expect(resGl.statusCode).toBe(200);
+      expect(resGl.json()).toEqual([]);
+
+      const resBr = await app.inject({ method: 'GET', url: '/1/branches?repo=acme/app', headers: asUser() });
+      expect(resBr.statusCode).toBe(200);
+      expect(resBr.json()).toEqual(['main', 'master']);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('handles source errors gracefully when fetching repos and branches', async () => {
+    const originalFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = async () => {
+        throw new Error('network down');
+      };
+
+      const appErr = await buildTestApp({
+        db: createFakeDb({
+          findFirst: {
+            sources: sourceRow({ id: 1, type: 'github', tokenEncrypted: encrypt('ghp_test') }),
+          },
+        }),
+      });
+      await appErr.register(sourcesRoutes);
+      const resErr = await appErr.inject({ method: 'GET', url: '/1/repos', headers: asUser() });
+      expect(resErr.statusCode).toBe(200);
+      expect(resErr.json()).toEqual([]);
+
+      const appGlErr = await buildTestApp({
+        db: createFakeDb({
+          findFirst: {
+            sources: sourceRow({ id: 2, type: 'gitlab', tokenEncrypted: encrypt('glpat_test') }),
+          },
+        }),
+      });
+      await appGlErr.register(sourcesRoutes);
+      const resGlErr = await appGlErr.inject({ method: 'GET', url: '/2/repos', headers: asUser() });
+      expect(resGlErr.statusCode).toBe(200);
+      expect(resGlErr.json()).toEqual([]);
+
+      const resBrErr = await appErr.inject({ method: 'GET', url: '/1/branches?repo=acme/app', headers: asUser() });
+      expect(resBrErr.statusCode).toBe(200);
+      expect(resBrErr.json()).toEqual(['main', 'master']);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: {
+          sources: sourceRow({ id: 1, type: 'custom', tokenEncrypted: null }),
+        },
+      }),
+    });
+    await app.register(sourcesRoutes);
+
+    const resRepos = await app.inject({ method: 'GET', url: '/1/repos', headers: asUser() });
+    expect(resRepos.statusCode).toBe(200);
+    expect(resRepos.json()).toEqual([]);
+
+    const resBranches = await app.inject({ method: 'GET', url: '/1/branches', headers: asUser() });
+    expect(resBranches.statusCode).toBe(200);
+    expect(resBranches.json()).toEqual(['main', 'master']);
+
+    // Missing source 404
+    const app404 = await buildTestApp({ db: createFakeDb({ findFirst: { sources: null } }) });
+    await app404.register(sourcesRoutes);
+    const res404 = await app404.inject({ method: 'GET', url: '/99/repos', headers: asUser() });
+    expect(res404.statusCode).toBe(404);
   });
 });

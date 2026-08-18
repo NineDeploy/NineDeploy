@@ -282,6 +282,11 @@ describe('createClient', () => {
       expect(last(calls).init.method).toBe('POST');
       expect(JSON.parse(last(calls).init.body ?? '{}')).toEqual({ name: 'clone-app' });
 
+      await client.services.clone(1);
+      expect(last(calls).url).toBe('/v1/services/1/clone');
+      expect(last(calls).init.method).toBe('POST');
+      expect(JSON.parse(last(calls).init.body ?? '{}')).toEqual({});
+
       await client.services.importBundle({ repo: 'https://github.com/a/b.git' });
       expect(last(calls).url).toBe('/v1/services/import');
       expect(last(calls).init.method).toBe('POST');

@@ -92,4 +92,23 @@ describe('metric routes', () => {
     expect(res.statusCode).toBe(200);
     expect(res.json().kind).toBe('cpu');
   });
+
+  it('falls back to live container stats when no metrics are in db', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findMany: { metrics: [] },
+        findFirst: { services: svcRow({ id: 1, runtimeId: 'c1' }) },
+      }),
+      stats: { containers, host: null },
+    });
+    await app.register(metricRoutes);
+    const res = await app.inject({ method: 'GET', url: '/1/metrics?kind=cpu', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().points).toHaveLength(1);
+    expect(res.json().points[0].value).toBe(0.5);
+
+    const resMem = await app.inject({ method: 'GET', url: '/1/metrics?kind=memory', headers: asUser() });
+    expect(resMem.statusCode).toBe(200);
+    expect(resMem.json().points[0].value).toBe(120);
+  });
 });

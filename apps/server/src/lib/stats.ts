@@ -77,7 +77,7 @@ export async function collectContainerStats(): Promise<Map<string, ContainerStat
       'stats',
       '--no-stream',
       '--format',
-      '{{.ID}}|{{.Name}}|{{.CPUPerc}}|{{.MemUsage}}',
+      '{{.Name}}|{{.CPUPerc}}|{{.MemUsage}}',
     ]);
   } catch {
     return out;
@@ -85,27 +85,18 @@ export async function collectContainerStats(): Promise<Map<string, ContainerStat
 
   for (const line of raw.split('\n')) {
     if (!line.trim()) continue;
-    const [id, name, cpu, mem] = line.split('|');
-    if (!id && !name) continue;
-    const cleanId = (id ?? '').trim();
+    const [name, cpu, mem] = line.split('|');
     const cleanName = (name ?? '').trim().replace(/^\//, '');
+    if (!cleanName) continue;
     const [used] = (mem ?? ' / ').split('/');
-    const configured = limits.get(cleanName) ?? limits.get(cleanId);
+    const configured = limits.get(cleanName);
     const stat: ContainerStat = {
-      name: cleanName || cleanId,
+      name: cleanName,
       cpuPct: Number((cpu ?? '0').replace('%', '').trim()) || 0,
       memBytes: parseBytes(used!),
-      // Only the operator-configured limit counts; unlimited containers must
-      // not read as "host total" (docker stats' fallback), which faked high
-      // memory use on every service.
-      memLimitBytes: configured !== undefined && configured > 0 ? configured : 0,
+      memLimitBytes: configured ?? 0,
     };
-
-    if (cleanName) out.set(cleanName, stat);
-    if (cleanId) {
-      out.set(cleanId, stat);
-      if (cleanId.length >= 12) out.set(cleanId.slice(0, 12), stat);
-    }
+    out.set(cleanName, stat);
   }
   return out;
 }

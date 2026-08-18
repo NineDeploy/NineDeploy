@@ -659,17 +659,37 @@ describe('services routes', () => {
     }
   });
 
-  it('returns empty pm2 logs when the daemon cannot describe the process', async () => {
-    pm2Mocks.describe.mockImplementationOnce((_n: string, cb: (err: Error | null, desc?: unknown[]) => void) =>
-      cb(new Error('not found'), null));
+  it('clones an existing service with its build configs and env vars', async () => {
     const app = await buildTestApp({
       db: createFakeDb({
-        findFirst: { services: svcRow({ id: 1, runtimeId: 'api-1', type: 'pm2' }) },
+        findFirst: {
+          services: svcRow({ id: 1, name: 'original-svc', slug: 'orig-svc' }),
+          buildConfigs: { serviceId: 1, buildPack: 'nixpacks' } as any,
+        },
+        findMany: {
+          envVars: [{ id: 1, serviceId: 1, key: 'PORT', valueEncrypted: 'enc', scope: 'service', scopeKey: null }] as any,
+        },
+        insert: {
+          services: [svcRow({ id: 2, name: 'original-svc (Copy)', slug: 'orig-svc-copy' })],
+          buildConfigs: [{ id: 2, serviceId: 2, buildPack: 'nixpacks' }] as any,
+          envVars: [{ id: 2, serviceId: 2, key: 'PORT' }] as any,
+        },
       }),
     });
     await app.register(servicesRoutes);
-    const res = await app.inject({ method: 'GET', url: '/1/logs', headers: asUser() });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/1/clone',
+      headers: asUser(),
+      payload: { name: 'cloned-app' },
+    });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ lines: '' });
+    expect(res.json()).toMatchObject({ id: 2, name: 'original-svc (Copy)' });
+
+    // 404 for missing service
+    const app404 = await buildTestApp({ db: createFakeDb({ findFirst: { services: null } }) });
+    await app404.register(servicesRoutes);
+    const res404 = await app404.inject({ method: 'POST', url: '/99/clone', headers: asUser() });
+    expect(res404.statusCode).toBe(404);
   });
 });

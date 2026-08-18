@@ -338,8 +338,12 @@ describe('deploys routes', () => {
     sockets.push(ws);
     const messages = collectMessages(ws);
     await waitFor(() => childProc.children.length === 1);
-    const child = childProc.children[0];
-    expect(childProc.spawn).toHaveBeenCalledWith('docker', ['exec', '-i', '--', 'c1', 'sh'], {});
+    const child = childProc.children[0]!;
+    expect(childProc.spawn).toHaveBeenCalledWith(
+      'docker',
+      ['exec', '-i', '-e', 'TERM=xterm', '--', 'c1', 'sh', '-i'],
+      { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] },
+    );
 
     child.stdout.emit('data', 'hello from container');
     await waitFor(() => messages.some((m) => m.includes('hello from container')));
