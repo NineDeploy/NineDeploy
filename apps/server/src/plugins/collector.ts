@@ -54,8 +54,22 @@ export default fp(
         const now = new Date();
         const rows: Array<{ serviceId: number; kind: string; value: number; ts: Date }> = [];
         for (const s of all) {
-          if (!s.runtimeId) continue;
-          const st = containers.get(s.runtimeId);
+          const candidates = [
+            s.runtimeId,
+            `nd-app-${s.slug}`,
+            `nd-svc-${s.slug}`,
+            s.slug,
+            s.name,
+          ].filter(Boolean) as string[];
+          let st = candidates.map((c) => containers.get(c)).find(Boolean);
+          if (!st && s.runtimeId) {
+            for (const [k, v] of containers.entries()) {
+              if (k.startsWith(s.runtimeId) || s.runtimeId.startsWith(k)) {
+                st = v;
+                break;
+              }
+            }
+          }
           if (!st) continue;
           rows.push({ serviceId: s.id, kind: 'cpu', value: Math.round(st.cpuPct * 100), ts: now });
           rows.push({ serviceId: s.id, kind: 'memory', value: st.memBytes, ts: now });

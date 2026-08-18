@@ -12,7 +12,7 @@ export function OverviewTab({ serviceId, svc }: { serviceId: number; svc: Servic
     <div className="mt-5 space-y-5">
       {/* Top Quick Status & Metrics Bar */}
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
-        <MetricsCard serviceId={serviceId} />
+        <MetricsCard serviceId={serviceId} svc={svc} />
         <RuntimeInfoCard svc={svc} />
       </div>
 
@@ -23,19 +23,36 @@ export function OverviewTab({ serviceId, svc }: { serviceId: number; svc: Servic
 }
 
 // ── Metrics (CPU / memory sparklines) ─────────────────────────────────────
-function MetricsCard({ serviceId }: { serviceId: number }) {
+function MetricsCard({ serviceId, svc }: { serviceId: number; svc: Service }) {
   const cpu = useQuery({
     queryKey: ['svc-metrics', serviceId, 'cpu'],
     queryFn: () => api.stats.metrics(serviceId, { kind: 'cpu', minutes: 60 }),
-    refetchInterval: 15000,
+    refetchInterval: 5000,
   });
   const mem = useQuery({
     queryKey: ['svc-metrics', serviceId, 'memory'],
     queryFn: () => api.stats.metrics(serviceId, { kind: 'memory', minutes: 60 }),
-    refetchInterval: 15000,
+    refetchInterval: 5000,
   });
 
   const latest = (series: typeof cpu.data) => series?.points.at(-1)?.value ?? null;
+  const isOnline = svc.status === 'running';
+  const cpuPoints = (cpu.data?.points ?? []).map((p) => p.value);
+  const memPoints = (mem.data?.points ?? []).map((p) => p.value);
+
+  const displayCpu =
+    latest(cpu.data) != null
+      ? `${latest(cpu.data)}%`
+      : isOnline
+        ? '0.0%'
+        : 'Offline';
+
+  const displayMem =
+    latest(mem.data) != null
+      ? `${latest(mem.data)} MiB`
+      : isOnline
+        ? '0.0 MiB'
+        : 'Offline';
 
   return (
     <Card>
@@ -46,7 +63,7 @@ function MetricsCard({ serviceId }: { serviceId: number }) {
             <span className="text-sm font-semibold text-slate-100">Live Resource Telemetry</span>
           </div>
           <span className="rounded-full bg-white/[0.04] px-2 py-0.5 font-mono text-[10px] text-slate-400">
-            Last 60m
+            {isOnline ? 'Live 5s' : 'Container Offline'}
           </span>
         </div>
 
@@ -56,12 +73,15 @@ function MetricsCard({ serviceId }: { serviceId: number }) {
               <span className="flex items-center gap-1.5 text-slate-400 font-medium">
                 <Cpu size={13} className="text-indigo-400" /> CPU Load
               </span>
-              <span className="font-mono text-xs font-semibold text-slate-100">
-                {latest(cpu.data) != null ? `${latest(cpu.data)}%` : '—'}
-              </span>
+              <span className="font-mono text-xs font-semibold text-slate-100">{displayCpu}</span>
             </div>
             <div className="overflow-hidden rounded-lg">
-              <Sparkline points={(cpu.data?.points ?? []).map((p) => p.value)} color="#818cf8" width={220} height={44} />
+              <Sparkline
+                points={cpuPoints.length > 0 ? cpuPoints : [0, 0]}
+                color="#818cf8"
+                width={220}
+                height={44}
+              />
             </div>
           </div>
 
@@ -70,12 +90,15 @@ function MetricsCard({ serviceId }: { serviceId: number }) {
               <span className="flex items-center gap-1.5 text-slate-400 font-medium">
                 <MemoryStick size={13} className="text-emerald-400" /> Memory Usage
               </span>
-              <span className="font-mono text-xs font-semibold text-slate-100">
-                {latest(mem.data) != null ? `${latest(mem.data)} MiB` : '—'}
-              </span>
+              <span className="font-mono text-xs font-semibold text-slate-100">{displayMem}</span>
             </div>
             <div className="overflow-hidden rounded-lg">
-              <Sparkline points={(mem.data?.points ?? []).map((p) => p.value)} color="#34d399" width={220} height={44} />
+              <Sparkline
+                points={memPoints.length > 0 ? memPoints : [0, 0]}
+                color="#34d399"
+                width={220}
+                height={44}
+              />
             </div>
           </div>
         </div>

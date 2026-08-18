@@ -113,7 +113,7 @@ export default fp(
 
       // Run runtime self-healing column check
       await ensureEssentialColumns(db);
-      if (process.env.NODE_ENV !== 'test' && !config.isTest) {
+      if (process.env.NODE_ENV !== 'test' && config.env !== 'test') {
         await ensureAdminUser(db);
       }
 

@@ -77,8 +77,6 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
 const fallbackToastContext: ToastContextValue = {
   toast: () => {},
-  dismiss: () => {},
-  toasts: [],
 };
 
 export function useToast(): ToastContextValue {
