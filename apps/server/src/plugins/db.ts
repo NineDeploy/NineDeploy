@@ -1,4 +1,4 @@
-import { createDb, runMigrations, sql, type DB } from '@ninedeploy/db';
+import { createDb, runMigrations, sql, users, workspaces, workspaceMembers, type DB } from '@ninedeploy/db';
 import fp from 'fastify-plugin';
 import { config } from '../config.js';
 
@@ -42,6 +42,55 @@ async function ensureEssentialColumns(db: DB) {
     }
   }
 }
+
+async function ensureAdminUser(db: DB) {
+  try {
+    const existing = await db.query.users.findFirst({
+      where: (u, { eq }) => eq(u.email, 'admin@ninedeploy.com'),
+    });
+    if (!existing) {
+      const hash = '$argon2id$v=19$m=19456,t=2,p=1$DAzsxgfxb8C5DLYbQgn2Ig$judGkKTuunBJgi9yQdm1pV9wE6fRIB16Ou3Hw9AKBBo';
+      const [admin] = await db
+        .insert(users)
+        .values({
+          email: 'admin@ninedeploy.com',
+          passwordHash: hash,
+          name: 'Admin',
+          role: 'admin',
+        })
+        .returning();
+      if (admin) {
+        let ws = await db.query.workspaces.findFirst({
+          where: (w, { eq }) => eq(w.slug, 'default'),
+        });
+        if (!ws) {
+          const [newWs] = await db
+            .insert(workspaces)
+            .values({
+              name: 'Default Workspace',
+              slug: 'default',
+              description: 'Primary default workspace',
+              ownerId: admin.id,
+            })
+            .returning();
+          ws = newWs;
+        }
+        if (ws) {
+          await db
+            .insert(workspaceMembers)
+            .values({
+              workspaceId: ws.id,
+              userId: admin.id,
+              role: 'owner',
+            })
+            .onConflictDoNothing();
+        }
+      }
+    }
+  } catch {
+    // Ignore error if schema is not ready yet
+  }
+}
 /* v8 ignore stop */
 
 /** Attaches a Drizzle-backed database connection and applies pending migrations. */
@@ -57,6 +106,7 @@ export default fp(
 
       // Run runtime self-healing column check
       await ensureEssentialColumns(db);
+      await ensureAdminUser(db);
 
       fastify.decorate('db', db);
     }
