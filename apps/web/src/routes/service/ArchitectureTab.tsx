@@ -6,6 +6,7 @@ import {
   BackgroundVariant,
   Controls,
   Handle,
+  MiniMap,
   Position,
   ReactFlow,
   type Edge,
@@ -510,8 +511,20 @@ export function ArchitectureTab({ service }: { service: Service }) {
               proOptions={{ hideAttribution: true }}
               defaultEdgeOptions={{ style: { stroke: '#475569' } }}
             >
-              <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#334155" />
-              <Controls className="!border-white/10 !bg-slate-900/90" showInteractive={false} />
+              <Background variant={BackgroundVariant.Dots} gap={20} size={1.2} color="#334155" />
+              <Controls className="!border-white/10 !bg-slate-900/90 !rounded-xl overflow-hidden shadow-xl" showInteractive={false} />
+              <MiniMap
+                nodeColor={(n) => {
+                  if (n.type === 'svcMain') return '#6366f1';
+                  if (n.type === 'svcDb') return '#10b981';
+                  if (n.type === 'svcGateway') return '#0ea5e9';
+                  if (n.type === 'svcStorage') return '#f59e0b';
+                  if (n.type === 'svcDomain') return '#38bdf8';
+                  return '#64748b';
+                }}
+                className="!bg-slate-950/80 !border-white/10 !rounded-2xl !overflow-hidden !shadow-2xl hidden md:block"
+                maskColor="rgba(15, 23, 42, 0.75)"
+              />
             </ReactFlow>
           </ReactFlowProvider>
         </div>
