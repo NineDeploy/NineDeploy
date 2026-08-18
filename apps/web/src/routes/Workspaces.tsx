@@ -2,6 +2,9 @@ import { useState, type FormEvent } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Building2,
+  HelpCircle,
+  Search,
+  ShieldCheck,
   Trash2,
   UserMinus,
   UserPlus,
@@ -27,6 +30,8 @@ export function Workspaces() {
   const queryClient = useQueryClient();
   const { workspaces, currentWorkspace, switchWorkspace, refreshWorkspaces } = useWorkspace();
 
+  const [memberSearch, setMemberSearch] = useState('');
+  const [showRoleMatrix, setShowRoleMatrix] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState<WorkspaceRole>('member');
@@ -226,7 +231,7 @@ export function Workspaces() {
 
       {/* Team Members Management */}
       <Card className="p-6">
-        <div className="flex items-center justify-between mb-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-5">
           <div className="flex items-center gap-2">
             <Users size={18} className="text-indigo-400" />
             <h2 className="text-base font-semibold text-white">Team Members</h2>
@@ -235,100 +240,168 @@ export function Workspaces() {
             </span>
           </div>
 
-          {isAdmin && (
+          <div className="flex items-center gap-2">
+            {/* Search filter */}
+            <div className="relative w-48">
+              <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
+              <Input
+                type="text"
+                placeholder="Search member..."
+                value={memberSearch}
+                onChange={(e) => setMemberSearch(e.target.value)}
+                className="pl-7 h-8 text-xs font-mono"
+              />
+            </div>
+
             <Button
+              variant="secondary"
               size="sm"
-              onClick={() => {
-                setError(null);
-                setInviteOpen(true);
-              }}
+              onClick={() => setShowRoleMatrix(!showRoleMatrix)}
+              title="View workspace role permissions guide"
+              className="text-xs h-8"
             >
-              <UserPlus size={14} />
-              <span>Invite Member</span>
+              <HelpCircle size={13} />
+              <span>Roles Guide</span>
             </Button>
-          )}
+
+            {isAdmin && (
+              <Button
+                size="sm"
+                className="h-8"
+                onClick={() => {
+                  setError(null);
+                  setInviteOpen(true);
+                }}
+              >
+                <UserPlus size={14} />
+                <span>Invite Member</span>
+              </Button>
+            )}
+          </div>
         </div>
 
+        {/* Role Matrix Explainer Banner */}
+        {showRoleMatrix && (
+          <div className="mb-5 rounded-xl border border-indigo-500/20 bg-indigo-500/[0.04] p-4 text-xs space-y-3 nd-fade">
+            <div className="flex items-center justify-between">
+              <span className="font-semibold text-indigo-200 flex items-center gap-1.5">
+                <ShieldCheck size={14} /> Workspace Role &amp; Permissions Matrix
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowRoleMatrix(false)}
+                className="text-slate-400 hover:text-slate-200"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 pt-1 font-mono text-[11px]">
+              <div className="rounded-lg bg-black/40 p-2.5 border border-white/5 space-y-1">
+                <div className="font-bold text-indigo-300">👑 Owner</div>
+                <p className="text-slate-400 text-[10px] font-sans">Full ownership, workspace deletion, transfers, billing &amp; all admin privileges.</p>
+              </div>
+              <div className="rounded-lg bg-black/40 p-2.5 border border-white/5 space-y-1">
+                <div className="font-bold text-emerald-300">🛡️ Admin</div>
+                <p className="text-slate-400 text-[10px] font-sans">Can create/delete projects, services &amp; databases, invite members and change roles.</p>
+              </div>
+              <div className="rounded-lg bg-black/40 p-2.5 border border-white/5 space-y-1">
+                <div className="font-bold text-sky-300">⚙️ Member</div>
+                <p className="text-slate-400 text-[10px] font-sans">Can deploy applications, edit environment variables, launch shells and view logs.</p>
+              </div>
+              <div className="rounded-lg bg-black/40 p-2.5 border border-white/5 space-y-1">
+                <div className="font-bold text-slate-300">👁️ Viewer</div>
+                <p className="text-slate-400 text-[10px] font-sans">Read-only access. Can inspect service status, topologies, metrics and logs.</p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {isLoading ? (
-          <div className="py-8 text-center text-sm text-slate-500">Loading members…</div>
+          <div className="py-8 text-center text-sm text-slate-500 font-mono">Loading team members…</div>
         ) : (
           <div className="divide-y divide-white/5">
-            {detail?.members?.map((m) => {
-              const isMe = m.userId === user?.id;
-              const isWsOwner = m.role === 'owner';
+            {detail?.members
+              ?.filter((m) => {
+                if (!memberSearch.trim()) return true;
+                const q = memberSearch.toLowerCase();
+                return (m.name?.toLowerCase().includes(q) ?? false) || m.email.toLowerCase().includes(q);
+              })
+              .map((m) => {
+                const isMe = m.userId === user?.id;
+                const isWsOwner = m.role === 'owner';
 
-              return (
-                <div
-                  key={m.id}
-                  className="flex flex-col sm:flex-row sm:items-center justify-between py-3.5 gap-3"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="grid h-9 w-9 place-items-center rounded-full bg-indigo-500/15 text-sm font-semibold text-indigo-300 ring-1 ring-inset ring-indigo-500/20">
-                      {(m.name || m.email || '?')[0]?.toUpperCase()}
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium text-slate-200">
-                          {m.name || m.email}
-                        </span>
-                        {isMe && (
-                          <Badge tone="neutral" className="text-[10px] py-0 px-1.5">
-                            You
-                          </Badge>
-                        )}
+                return (
+                  <div
+                    key={m.id}
+                    className="flex flex-col sm:flex-row sm:items-center justify-between py-3.5 gap-3"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="grid h-9 w-9 place-items-center rounded-full bg-indigo-500/15 text-sm font-semibold text-indigo-300 ring-1 ring-inset ring-indigo-500/20">
+                        {(m.name || m.email || '?')[0]?.toUpperCase()}
                       </div>
-                      <div className="text-xs text-slate-500">{m.email}</div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium text-slate-200">
+                            {m.name || m.email}
+                          </span>
+                          {isMe && (
+                            <Badge tone="neutral" className="text-[10px] py-0 px-1.5">
+                              You
+                            </Badge>
+                          )}
+                        </div>
+                        <div className="text-xs text-slate-500">{m.email}</div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      {/* Role Selector or Badge */}
+                      {isAdmin && !isWsOwner ? (
+                        <Select
+                          value={m.role}
+                          onChange={(e) =>
+                            updateRoleMutation.mutate({
+                              memberId: m.id,
+                              role: e.target.value as WorkspaceRole,
+                            })
+                          }
+                          className="h-7 text-xs w-28"
+                        >
+                          <option value="admin">Admin</option>
+                          <option value="member">Member</option>
+                          <option value="viewer">Viewer</option>
+                          {isOwner && <option value="owner">Transfer Owner</option>}
+                        </Select>
+                      ) : (
+                        <Badge
+                          tone={m.role === 'owner' ? 'indigo' : m.role === 'admin' ? 'emerald' : 'neutral'}
+                          className="capitalize text-xs"
+                        >
+                          {m.role}
+                        </Badge>
+                      )}
+
+                      {/* Member Removal / Leave */}
+                      {(isAdmin || isMe) && !isWsOwner && (
+                        <Button
+                          variant="danger"
+                          size="sm"
+                          className="h-7 px-2"
+                          title={isMe ? 'Leave Workspace' : 'Remove Member'}
+                          onClick={() => {
+                            if (confirm(isMe ? 'Leave this workspace?' : `Remove ${m.email}?`)) {
+                              removeMemberMutation.mutate(m.id);
+                            }
+                          }}
+                        >
+                          <UserMinus size={13} />
+                          <span className="text-xs">{isMe ? 'Leave' : 'Remove'}</span>
+                        </Button>
+                      )}
                     </div>
                   </div>
-
-                  <div className="flex items-center gap-3">
-                    {/* Role Selector or Badge */}
-                    {isAdmin && !isWsOwner ? (
-                      <Select
-                        value={m.role}
-                        onChange={(e) =>
-                          updateRoleMutation.mutate({
-                            memberId: m.id,
-                            role: e.target.value as WorkspaceRole,
-                          })
-                        }
-                        className="h-7 text-xs w-28"
-                      >
-                        <option value="admin">Admin</option>
-                        <option value="member">Member</option>
-                        <option value="viewer">Viewer</option>
-                        {isOwner && <option value="owner">Transfer Owner</option>}
-                      </Select>
-                    ) : (
-                      <Badge
-                        tone={m.role === 'owner' ? 'indigo' : m.role === 'admin' ? 'emerald' : 'neutral'}
-                        className="capitalize text-xs"
-                      >
-                        {m.role}
-                      </Badge>
-                    )}
-
-                    {/* Member Removal / Leave */}
-                    {(isAdmin || isMe) && !isWsOwner && (
-                      <Button
-                        variant="danger"
-                        size="sm"
-                        className="h-7 px-2"
-                        title={isMe ? 'Leave Workspace' : 'Remove Member'}
-                        onClick={() => {
-                          if (confirm(isMe ? 'Leave this workspace?' : `Remove ${m.email}?`)) {
-                            removeMemberMutation.mutate(m.id);
-                          }
-                        }}
-                      >
-                        <UserMinus size={13} />
-                        <span className="text-xs">{isMe ? 'Leave' : 'Remove'}</span>
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
+                );
+              })}
           </div>
         )}
       </Card>
