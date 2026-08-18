@@ -1,4 +1,4 @@
-export const VERSION = '0.1.0';
+export const VERSION = '0.2.0';
 
 export interface ChangelogEntry {
   version: string;
@@ -8,6 +8,24 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.2.0',
+    date: '2026-08-18',
+    title: 'Workspaces, OIDC SSO, Microkernel & MCP Engine',
+    changes: [
+      'Multi-tenant Workspaces with 4-tier RBAC (Owner, Admin, Member, Viewer)',
+      'Enterprise Single Sign-On via OpenID Connect (Google, GitHub, Keycloak, Okta)',
+      'Hardware-backed Passkeys (WebAuthn / FIDO2) biometric authentication',
+      'Microkernel event bus and waterfall hook pipeline (deploy.before / deploy.after)',
+      'Central Configuration Center with Dual-Vault AES-256-GCM encryption & key rotation',
+      'Plugin SDK with MenuRegistry and ServiceRegistry driver interchange',
+      '35-tool Model Context Protocol (MCP) server for AI coding assistants (Claude, Cursor, Antigravity, Cline)',
+      '100+ verified 1-click application templates with automated dependency resolution',
+      'Live Container File Browser with drag-and-drop file operations',
+      'Real-time Log Drains forwarding structured logs to Syslog, HTTP, and Datadog',
+      'Ephemeral PR preview staging environments and 1-click demo stack',
+    ],
+  },
   {
     version: '0.1.0',
     date: '2026-08-14',

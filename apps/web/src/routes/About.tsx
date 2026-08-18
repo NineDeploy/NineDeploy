@@ -139,9 +139,9 @@ export function About() {
           )}
           <p className="text-xs text-slate-500">To upgrade, re-run the installer (defaults to the latest release tag):</p>
           <pre className="mt-2 overflow-auto rounded-lg bg-black/30 p-3 font-mono text-xs text-slate-300 ring-1 ring-inset ring-white/5">
-{`curl -fsSL https://raw.githubusercontent.com/ninedeploy/ninedeploy/main/install.sh | bash
+{`curl -fsSL https://raw.githubusercontent.com/NineDeploy/NineDeploy/main/install.sh | bash
 # or, on an existing install:
-./install.sh --version v0.1.0   # pin   |   --channel main   # edge`}
+./install.sh --version v0.2.0   # pin   |   --channel main   # edge`}
           </pre>
         </CardBody>
       </Card>

@@ -142,14 +142,14 @@ export function Layout({
 
                   <div className="mt-4 pt-3 border-t border-[#dbe4ee] dark:border-line flex items-center justify-between gap-4">
                     <span className="font-mono text-xs text-[#4a5c73] dark:text-zinc-500">
-                      9 pages · updated for v0.1.0
+                      14 pages · updated for v0.2.0
                     </span>
                     <DropdownMenu.Item asChild>
                       <Link
                         to="/docs/introduction"
                         className="font-mono text-xs font-bold border-2 border-ink bg-ink text-white dark:border-phosphor dark:bg-phosphor dark:text-void px-3 py-1.5 outline-none data-[highlighted]:opacity-80"
                       >
-                        start reading →
+                        All docs →
                       </Link>
                     </DropdownMenu.Item>
                   </div>
@@ -260,11 +260,11 @@ export function Layout({
             <div className="tag mb-3">status</div>
             <ul className="space-y-2 text-[#4a5c73] dark:text-zinc-400">
               <li className="flex items-center gap-2">
-                <span className="w-2 h-2 bg-phosphor-dim animate-pulse" /> v0.1.0 pre-release
+                <span className="w-2 h-2 bg-phosphor-dim animate-pulse" /> v0.2.0 GA
               </li>
-              <li>2,100+ tests · 100% coverage</li>
-              <li>26 tables · SQLite core</li>
-              <li>48 verified templates</li>
+              <li>100% test coverage</li>
+              <li>SQLite core · Zero external DB</li>
+              <li>100+ verified templates</li>
             </ul>
           </div>
         </div>
