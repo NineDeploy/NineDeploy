@@ -79,7 +79,11 @@ export function DeploysTab({
               </span>
             )}
           </div>
-          <LogPanel serviceId={serviceId} deploymentId={activeId} />
+          <LogPanel
+            serviceId={serviceId}
+            deploymentId={activeId}
+            deployStatus={activeDeployRow?.status}
+          />
         </CardBody>
       </Card>
 

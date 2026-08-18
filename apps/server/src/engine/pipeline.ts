@@ -181,6 +181,7 @@ export async function runDeployment(db: DB, deploymentId: number): Promise<void>
     // Cancel checkpoint: the route may have flipped the row between claim and here.
     if (await isCancelled(db, deploymentId)) throw new DeploymentCancelled();
 
+    log('##[stage:PREPARE:running] Resolving repository, sources and workspace');
     // Image-based deploys skip git entirely; repo-based deploys resolve creds + checkout.
     if (service.image) {
       log(`Image deploy from ${service.image}`);
@@ -199,6 +200,7 @@ export async function runDeployment(db: DB, deploymentId: number): Promise<void>
       sha = await checkoutCommit(service.repoUrl ?? '', service.branch, dep.commitSha ?? undefined, workDir, log, creds);
       await db.update(deployments).set({ commitSha: sha }).where(eq(deployments.id, deploymentId));
     }
+    log('##[stage:PREPARE:success]');
 
     // Cancel checkpoint: checkout can take minutes on big repos.
     if (await isCancelled(db, deploymentId)) throw new DeploymentCancelled();
@@ -227,15 +229,20 @@ export async function runDeployment(db: DB, deploymentId: number): Promise<void>
       await runHook(buildConfig.preDeployCmd, workDir, ctx.env, log);
     }
 
+    log('##[stage:BUILD:running] Building image and compiling dependencies');
     runtime = await builder.buildAndRun(ctx, previous);
+    log('##[stage:BUILD:success]');
+    log('##[stage:BOOT:success] Container runtime launched in isolated sandbox');
 
     // Cancel checkpoint: the build finished, but the healthcheck (up to 5 min)
     // is the most likely place for a user-initiated cancel to land.
     if (await isCancelled(db, deploymentId)) throw new DeploymentCancelled();
 
+    log('##[stage:HEALTHCHECK:running] Probing container HTTP healthcheck');
     log('Running healthcheck …');
     const healthy = await builder.isHealthy(runtime, 300_000, 10_000, log);
     if (!healthy) throw new Error('Healthcheck failed — service did not become ready in time');
+    log('##[stage:HEALTHCHECK:success]');
 
     if (buildConfig?.postDeployCmd) {
       log(`▶ Running Post-Deploy Hook: ${buildConfig.postDeployCmd} …`);
@@ -251,6 +258,7 @@ export async function runDeployment(db: DB, deploymentId: number): Promise<void>
   } catch (err) {
     const cancelled = err instanceof DeploymentCancelled;
     log(cancelled ? '⏹ Deployment cancelled' : `✗ Deployment failed: ${msg(err)}`);
+    log('##[stage:ERROR:failed]');
 
     // Clean up the failed/cancelled NEW runtime (if one was created).
     if (runtime) await builder.stop(runtime.runtimeId).catch(() => undefined);
@@ -336,8 +344,10 @@ export async function runDeployment(db: DB, deploymentId: number): Promise<void>
   // otherwise we'd kill the still-serving old version and cause an outage.
   let routingFlipped = false;
   try {
+    log('##[stage:PROXY_SWAP:running] Updating Traefik dynamic router & shifting live traffic');
     await writeDynamicConfig(db);
     routingFlipped = true;
+    log('##[stage:PROXY_SWAP:success]');
   } catch (err) {
     log(`proxy warning: ${msg(err)}`);
   }
@@ -346,6 +356,7 @@ export async function runDeployment(db: DB, deploymentId: number): Promise<void>
     // the new one — otherwise we'd stop the still-serving version and cause an
     // outage. If the config write failed, leave the previous container live.
     if (routingFlipped) {
+      log('##[stage:CLEANUP:running] Graceful shutdown of old container instance');
       if (buildConfig?.preStopCmd) {
         log(`▶ Running Pre-Stop Hook: ${buildConfig.preStopCmd} …`);
         await runHook(buildConfig.preStopCmd, workDir, await loadRuntimeEnv(db, service), log).catch((err) =>
@@ -359,9 +370,13 @@ export async function runDeployment(db: DB, deploymentId: number): Promise<void>
       await builder
         .stop(previous.runtimeId, { graceSeconds: buildConfig?.stopGraceSeconds })
         .catch((err) => log(`finalize warning (previous stop): ${msg(err)}`));
+      log('##[stage:CLEANUP:success]');
     } else {
       log('↩ finalize skipped: routing did not flip, the previous container stays live');
     }
+  } else {
+    log('##[stage:CLEANUP:success]');
   }
+  log('##[stage:COMPLETE:success] Service is live and healthy on production');
   log('✓ Deployment successful');
 }
