@@ -15,8 +15,9 @@ import { cn } from './ui.js';
 import { CommandPalette } from './CommandPalette.js';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher.js';
 import { ModeToggle } from './ModeToggle.js';
+import { useExperienceMode } from '../lib/mode.js';
 
-interface NavItem { to: string; label: string; icon: LucideIcon }
+interface NavItem { to: string; label: string; icon: LucideIcon; advancedOnly?: boolean }
 
 interface NavGroup { id: string; label: string; icon: LucideIcon; items: NavItem[] }
 
@@ -56,8 +57,8 @@ const GROUPS: NavGroup[] = [
     id: 'network', label: 'Network', icon: Globe, items: [
       { to: '/domains', label: 'Domains', icon: Globe },
       { to: '/traefik', label: 'Traefik', icon: Shield },
-      { to: '/networks', label: 'Networks', icon: Network },
-      { to: '/tunnels', label: 'Tunnels', icon: Cloud },
+      { to: '/networks', label: 'Networks', icon: Network, advancedOnly: true },
+      { to: '/tunnels', label: 'Tunnels', icon: Cloud, advancedOnly: true },
       { to: '/topology', label: 'Topology', icon: Network },
     ],
   },
@@ -66,9 +67,9 @@ const GROUPS: NavGroup[] = [
       { to: '/workspaces', label: 'Workspaces', icon: Building2 },
       { to: '/activity', label: 'Activity', icon: Clock },
       { to: '/monitoring', label: 'Monitoring', icon: Activity },
-      { to: '/docker', label: 'Docker', icon: Container },
+      { to: '/docker', label: 'Docker', icon: Container, advancedOnly: true },
       { to: '/sources', label: 'Sources', icon: KeyRound },
-      { to: '/servers', label: 'Servers', icon: HardDrive },
+      { to: '/servers', label: 'Servers', icon: HardDrive, advancedOnly: true },
       { to: '/users', label: 'Users', icon: Users },
       { to: '/settings', label: 'Settings', icon: SettingsIcon },
       { to: '/about', label: 'About', icon: Info },
@@ -92,6 +93,7 @@ function findGroup(pathname: string, groups: NavGroup[] = GROUPS): string | null
 export function Layout() {
   const { user, logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
+  const { isSimple } = useExperienceMode();
   const location = useLocation();
 
   const menus = useQuery({
@@ -107,16 +109,21 @@ export function Layout() {
   });
 
   const navGroups = useMemo(() => {
+    const rawGroups = GROUPS.map((g) => ({
+      ...g,
+      items: isSimple ? g.items.filter((item) => !item.advancedOnly) : g.items,
+    }));
+
     const extensionItems: NavItem[] = (menus.data ?? []).map((m) => ({
       to: m.route,
       label: m.label,
       icon: m.icon && ICON_MAP[m.icon.toLowerCase()] ? ICON_MAP[m.icon.toLowerCase()]! : Globe,
     }));
 
-    if (extensionItems.length === 0) return GROUPS;
+    if (extensionItems.length === 0) return rawGroups;
 
     return [
-      ...GROUPS,
+      ...rawGroups,
       {
         id: 'extensions',
         label: 'Extensions',
@@ -124,7 +131,7 @@ export function Layout() {
         items: extensionItems,
       },
     ];
-  }, [menus.data]);
+  }, [menus.data, isSimple]);
 
   const [activeGroup, setActiveGroup] = useState<string | null>(() => findGroup(location.pathname, GROUPS));
   const [drawerOpen, setDrawerOpen] = useState(false);

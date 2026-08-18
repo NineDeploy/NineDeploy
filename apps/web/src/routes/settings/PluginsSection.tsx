@@ -19,9 +19,11 @@ import type { InstallPluginInput, MarketplacePluginItem } from '@ninedeploy/sdk'
 import { Button, Card, CardBody, Input, Modal, Skeleton } from '../../components/ui.js';
 import { api } from '../../lib/api.js';
 import { useAuth } from '../../lib/auth.js';
+import { useExperienceMode } from '../../lib/mode.js';
 
 export function PluginsSection() {
   const { user } = useAuth();
+  const { isSimple } = useExperienceMode();
   const isAdmin = user?.role === 'admin';
   const queryClient = useQueryClient();
 
@@ -188,112 +190,89 @@ export function PluginsSection() {
             </CardBody>
           </Card>
         ) : (
-          plugins.map((p) => (
-            <Card key={p.id} className="transition-all hover:border-white/20">
-              <CardBody>
-                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="flex items-start gap-3.5 min-w-0">
-                    <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-white/[0.04] text-indigo-400 ring-1 ring-inset ring-white/10">
-                      <Layers size={20} />
-                    </div>
-                    <div className="space-y-1 min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-sm font-semibold text-slate-200">{p.name}</span>
-                        <span className="font-mono text-[10px] text-slate-400 bg-white/[0.04] px-1.5 py-0.5 rounded">
-                          v{p.version}
-                        </span>
-                        {p.isOfficial ? (
-                          <span className="inline-flex items-center gap-1 rounded bg-indigo-500/10 px-1.5 py-0.5 text-[10px] font-medium text-indigo-400 border border-indigo-500/20">
-                            <ShieldCheck size={10} /> Official
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 rounded bg-slate-800 px-1.5 py-0.5 text-[10px] font-medium text-slate-400">
-                            <Globe size={10} /> Community
-                          </span>
-                        )}
-                        {p.status === 'active' && (
-                          <span className="inline-flex items-center gap-1 rounded bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400 border border-emerald-500/20">
-                            <CheckCircle2 size={10} /> Active
-                          </span>
-                        )}
-                        {p.status === 'disabled' && (
-                          <span className="inline-flex items-center gap-1 rounded bg-slate-800 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">
-                            Disabled
-                          </span>
-                        )}
-                        {p.status === 'errored' && (
-                          <span className="inline-flex items-center gap-1 rounded bg-rose-500/10 px-1.5 py-0.5 text-[10px] font-medium text-rose-400 border border-rose-500/20">
-                            <AlertTriangle size={10} /> Errored
-                          </span>
-                        )}
-                      </div>
+          (() => {
+            const isCore = (p: typeof plugins[0]) => (p as any).source === 'builtin' || p.id.startsWith('core-') || p.id === 'traefik' || p.id === 'docker' || p.isOfficial;
+            const coreList = plugins.filter(isCore);
+            const extList = plugins.filter((p) => !isCore(p));
 
-                      {p.description && (
-                        <p className="text-xs text-slate-400">{p.description}</p>
-                      )}
-
-                      {p.dependencies && p.dependencies.length > 0 && (
-                        <div className="flex items-center gap-1 text-[10px] text-slate-500">
-                          <span>Depends on:</span>
-                          {p.dependencies.map((dep) => (
-                            <span key={dep} className="font-mono bg-white/[0.04] px-1 rounded text-slate-400">
-                              {dep}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-
-                      {p.error && (
-                        <p className="text-xs text-rose-400 bg-rose-500/10 p-2 rounded border border-rose-500/20 font-mono">
-                          {p.error}
-                        </p>
-                      )}
-                    </div>
+            return (
+              <div className="space-y-6">
+                {/* Optional / Installed Extensions */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                      Installed Extensions & Add-ons ({extList.length})
+                    </h3>
                   </div>
+                  {extList.length === 0 ? (
+                    <div className="rounded-xl border border-white/5 bg-white/[0.01] p-6 text-center text-xs text-slate-500">
+                      No optional extensions installed. Built-in core services are actively powering the platform.
+                    </div>
+                  ) : (
+                    extList.map((p) => (
+                      <PluginCard
+                        key={p.id}
+                        plugin={p}
+                        isAdmin={isAdmin}
+                        onInspect={() => setInspectPluginId(p.id)}
+                        onToggle={(enabled) => toggleMutation.mutate({ id: p.id, enabled })}
+                        onReload={() => reloadMutation.mutate(p.id)}
+                        onUninstall={() => uninstallMutation.mutate(p.id)}
+                        isTogglePending={toggleMutation.isPending}
+                        isReloadPending={reloadMutation.isPending}
+                        isUninstallPending={uninstallMutation.isPending}
+                        isCore={false}
+                      />
+                    ))
+                  )}
+                </div>
 
-                  <div className="flex items-center gap-2 self-end sm:self-auto">
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => setInspectPluginId(p.id)}
-                    >
-                      <Info size={14} className="mr-1.5" />
-                      Inspect
-                    </Button>
-                    {isAdmin && (
-                      <>
-                        <Button
-                          variant={p.enabled ? 'secondary' : 'primary'}
-                          size="sm"
-                          disabled={toggleMutation.isPending}
-                          onClick={() => toggleMutation.mutate({ id: p.id, enabled: !p.enabled })}
-                        >
-                          <Power size={14} className="mr-1.5" />
-                          {p.enabled ? 'Disable' : 'Enable'}
-                        </Button>
-                        {!p.isOfficial && (
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            title="Uninstall Plugin"
-                            disabled={uninstallMutation.isPending}
-                            onClick={() => {
-                              if (confirm(`Are you sure you want to uninstall plugin "${p.name}"?`)) {
-                                uninstallMutation.mutate(p.id);
-                              }
-                            }}
-                            className="hover:text-rose-400 hover:bg-rose-500/10 border-rose-500/20"
-                          >
-                            <Trash2 size={14} />
-                          </Button>
-                        )}
-                      </>
+                {/* Built-in Core Plugins */}
+                {coreList.length > 0 && (
+                  <div className="space-y-3 pt-2">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-xs font-semibold uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
+                        <ShieldCheck size={14} /> Built-in Core Drivers & Kernel ({coreList.length})
+                      </h3>
+                      <span className="text-[10px] text-slate-500 font-mono">Always Active</span>
+                    </div>
+                    {isSimple ? (
+                      <div className="flex items-center justify-between rounded-xl border border-emerald-500/20 bg-emerald-500/[0.03] p-4">
+                        <div className="flex items-center gap-3">
+                          <div className="grid h-8 w-8 place-items-center rounded-lg bg-emerald-500/10 text-emerald-400">
+                            <ShieldCheck size={18} />
+                          </div>
+                          <div>
+                            <div className="text-xs font-semibold text-slate-200">Core Kernel & Service Drivers Active</div>
+                            <div className="text-[11px] text-slate-400">Traefik reverse proxy, Docker monitoring, TLS issuance and database drivers are running seamlessly.</div>
+                          </div>
+                        </div>
+                        <span className="rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-[10px] font-semibold text-emerald-400 border border-emerald-500/30">
+                          Nominal
+                        </span>
+                      </div>
+                    ) : (
+                      coreList.map((p) => (
+                        <PluginCard
+                          key={p.id}
+                          plugin={p}
+                          isAdmin={isAdmin}
+                          onInspect={() => setInspectPluginId(p.id)}
+                          onToggle={() => {}}
+                          onReload={() => reloadMutation.mutate(p.id)}
+                          onUninstall={() => {}}
+                          isTogglePending={false}
+                          isReloadPending={reloadMutation.isPending}
+                          isUninstallPending={false}
+                          isCore={true}
+                        />
+                      ))
                     )}
                   </div>
-                </div>
-              </CardBody>
-            </Card>
-          ))
+                )}
+              </div>
+            );
+          })()
         )}
       </div>
 
@@ -713,5 +692,152 @@ function PluginInspectModal({
         </div>
       )}
     </Modal>
+  );
+}
+
+interface PluginCardProps {
+  plugin: any;
+  isAdmin: boolean;
+  onInspect: () => void;
+  onToggle: (enabled: boolean) => void;
+  onReload: () => void;
+  onUninstall: () => void;
+  isTogglePending: boolean;
+  isReloadPending: boolean;
+  isUninstallPending: boolean;
+  isCore: boolean;
+}
+
+function PluginCard({
+  plugin: p,
+  isAdmin,
+  onInspect,
+  onToggle,
+  onReload,
+  onUninstall,
+  isTogglePending,
+  isReloadPending,
+  isUninstallPending,
+  isCore,
+}: PluginCardProps) {
+  return (
+    <Card className="transition-all hover:border-white/20">
+      <CardBody>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-start gap-3.5 min-w-0">
+            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-white/[0.04] text-indigo-400 ring-1 ring-inset ring-white/10">
+              <Layers size={20} />
+            </div>
+            <div className="space-y-1 min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm font-semibold text-slate-200">{p.name}</span>
+                <span className="font-mono text-[10px] text-slate-400 bg-white/[0.04] px-1.5 py-0.5 rounded">
+                  v{p.version}
+                </span>
+                {isCore ? (
+                  <span className="inline-flex items-center gap-1 rounded bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400 border border-emerald-500/20">
+                    <ShieldCheck size={10} /> Core Built-in
+                  </span>
+                ) : p.isOfficial ? (
+                  <span className="inline-flex items-center gap-1 rounded bg-indigo-500/10 px-1.5 py-0.5 text-[10px] font-medium text-indigo-400 border border-indigo-500/20">
+                    <ShieldCheck size={10} /> Official
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 rounded bg-slate-800 px-1.5 py-0.5 text-[10px] font-medium text-slate-400">
+                    <Globe size={10} /> Community
+                  </span>
+                )}
+                {p.status === 'active' && (
+                  <span className="inline-flex items-center gap-1 rounded bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400 border border-emerald-500/20">
+                    <CheckCircle2 size={10} /> Active
+                  </span>
+                )}
+                {p.status === 'disabled' && (
+                  <span className="inline-flex items-center gap-1 rounded bg-slate-800 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">
+                    Disabled
+                  </span>
+                )}
+                {p.status === 'errored' && (
+                  <span className="inline-flex items-center gap-1 rounded bg-rose-500/10 px-1.5 py-0.5 text-[10px] font-medium text-rose-400 border border-rose-500/20">
+                    <AlertTriangle size={10} /> Errored
+                  </span>
+                )}
+              </div>
+
+              {p.description && (
+                <p className="text-xs text-slate-400">{p.description}</p>
+              )}
+
+              {p.dependencies && p.dependencies.length > 0 && (
+                <div className="flex items-center gap-1 text-[10px] text-slate-500">
+                  <span>Depends on:</span>
+                  {p.dependencies.map((dep: string) => (
+                    <span key={dep} className="font-mono bg-white/[0.04] px-1 rounded text-slate-400">
+                      {dep}
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              {p.error && (
+                <p className="text-xs text-rose-400 bg-rose-500/10 p-2 rounded border border-rose-500/20 font-mono">
+                  {p.error}
+                </p>
+              )}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 self-end sm:self-auto">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={onInspect}
+            >
+              <Info size={14} className="mr-1.5" />
+              Inspect
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              aria-label={`Reload ${p.name}`}
+              title="Reload Plugin"
+              disabled={isReloadPending}
+              onClick={onReload}
+            >
+              <RefreshCw size={14} className={isReloadPending ? 'animate-spin' : ''} />
+            </Button>
+            {isAdmin && !isCore && (
+              <>
+                <Button
+                  variant={p.enabled ? 'secondary' : 'primary'}
+                  size="sm"
+                  disabled={isTogglePending}
+                  onClick={() => onToggle(!p.enabled)}
+                >
+                  <Power size={14} className="mr-1.5" />
+                  {p.enabled ? 'Disable' : 'Enable'}
+                </Button>
+                {!p.isOfficial && (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    title="Uninstall Plugin"
+                    disabled={isUninstallPending}
+                    onClick={() => {
+                      if (confirm(`Are you sure you want to uninstall plugin "${p.name}"?`)) {
+                        onUninstall();
+                      }
+                    }}
+                    className="hover:text-rose-400 hover:bg-rose-500/10 border-rose-500/20"
+                  >
+                    <Trash2 size={14} />
+                  </Button>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      </CardBody>
+    </Card>
   );
 }

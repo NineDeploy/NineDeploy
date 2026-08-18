@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { template as templateSchema } from '@ninedeploy/schemas';
 import bundledRegistry from '../../src/templates/registry.json' with { type: 'json' };
-import { parseBundle, parseTemplates } from '../../src/templates/registry.js';
+import { parseBundle } from '../../src/templates/registry.js';
 
 describe('Hub Template Registry Proof & Verification Suite', () => {
   const templates = bundledRegistry.templates as any[];
@@ -49,6 +49,7 @@ describe('Hub Template Registry Proof & Verification Suite', () => {
 
     for (const t of templates) {
       expect(t.category).toBeDefined();
+      expect(validCategories.has(t.category)).toBe(true);
       expect(t.emoji).toBeDefined();
       expect(t.emoji.length).toBeGreaterThanOrEqual(1);
       expect(t.name.trim().length).toBeGreaterThanOrEqual(2);
