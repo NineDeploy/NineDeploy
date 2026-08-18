@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ConfigCenter } from '../../src/kernel/configCenter.js';
-import { encrypt } from '../../src/lib/crypto.js';
 import { createFakeDb } from '../helpers.js';
 
 describe('ConfigCenter', () => {

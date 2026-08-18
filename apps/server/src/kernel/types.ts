@@ -84,7 +84,7 @@ export interface IEventBus {
 export interface IHookPipeline {
   tap<K extends keyof HookDefinitions>(
     hook: K,
-    handler: (payload: HookDefinitions[K], ctx: KernelContext) => Promise<void | HookDefinitions[K]>,
+    handler: (payload: HookDefinitions[K], ctx: KernelContext) => Promise<undefined | HookDefinitions[K]>,
     opts?: { priority?: number; id?: string; timeoutMs?: number },
   ): () => void;
   call<K extends keyof HookDefinitions>(hook: K, payload: HookDefinitions[K]): Promise<HookDefinitions[K]>;

@@ -35,7 +35,7 @@ export function safeContainerPath(input: string): string | null {
     if (seg.length > 255) return null;
     parts.push(seg);
   }
-  return parts.length ? '/' + parts.join('/') : '/';
+  return parts.length ? `/${parts.join('/')}` : '/';
 }
 
 function toIso(mtime: string | undefined): string | null {

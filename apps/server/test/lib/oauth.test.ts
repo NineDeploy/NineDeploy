@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createHmac } from 'node:crypto';
 import { config } from '../../src/config.js';
 import {
@@ -38,7 +38,7 @@ describe('oauth library', () => {
       const state = generateOAuthState('okta');
       const [payload, sig] = state.split('.');
       expect(verifyOAuthState(`${payload}.invalidsig`)).toBeNull();
-      expect(verifyOAuthState('invalidbase64!.' + sig)).toBeNull();
+      expect(verifyOAuthState(`invalidbase64!.${sig}`)).toBeNull();
 
       // Corrupt payload that passes HMAC check but fails JSON.parse triggers catch
       const corruptPayload = 'corrupt-not-json';

@@ -4,7 +4,7 @@ interface HookHandlerEntry {
   id?: string;
   priority: number;
   timeoutMs: number;
-  handler: (payload: any, ctx: KernelContext) => Promise<any | void>;
+  handler: (payload: any, ctx: KernelContext) => Promise<any | undefined>;
 }
 
 export class HookPipeline implements IHookPipeline {
@@ -17,7 +17,7 @@ export class HookPipeline implements IHookPipeline {
 
   tap<K extends keyof HookDefinitions>(
     hook: K,
-    handler: (payload: HookDefinitions[K], ctx: KernelContext) => Promise<void | HookDefinitions[K]>,
+    handler: (payload: HookDefinitions[K], ctx: KernelContext) => Promise<undefined | HookDefinitions[K]>,
     opts?: { priority?: number; id?: string; timeoutMs?: number },
   ): () => void {
     const hookName = hook as string;

@@ -104,9 +104,9 @@ export async function executeAutoPrune(
 ): Promise<AutoPruneRunResult> {
   const defaultRunner: AutoPruneRunner = async (cmd, args) => {
     let stdout = '';
-    let stderr = '';
+    const stderr = '';
     await run(cmd, args, {}, (line: string) => {
-      stdout += line + '\n';
+      stdout += `${line}\n`;
     });
     return { stdout, stderr };
   };

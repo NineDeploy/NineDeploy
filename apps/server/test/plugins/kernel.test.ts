@@ -1,6 +1,5 @@
 import Fastify from 'fastify';
 import { describe, expect, it, vi } from 'vitest';
-import dbPlugin from '../../src/plugins/db.js';
 import kernelPlugin from '../../src/plugins/kernel.js';
 import { createFakeDb } from '../helpers.js';
 

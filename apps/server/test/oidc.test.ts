@@ -492,7 +492,7 @@ describe('OIDC and OAuth2 SSO endpoints', () => {
     });
 
     it('forbids login when auto-enrollment is disabled for new user (403)', async () => {
-      const [noEnroll] = await app.db
+      await app.db
         .insert(oidcProviders)
         .values({
           name: 'Closed Provider',

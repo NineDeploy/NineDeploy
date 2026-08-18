@@ -183,7 +183,7 @@ describe('projects routes', () => {
   });
 
   it('filters projects by workspaceId and creates/patches with workspaceId', async () => {
-    let projectDb: any = undefined;
+    let projectDb: any;
     const app = await appWith({
       findMany: { projects: [projectRow({ id: 1, workspaceId: 5 })] },
       insert: { projects: [projectRow({ id: 2, workspaceId: 5 })] },
