@@ -1,58 +1,343 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { type FormEvent, type ReactNode, useEffect, useState } from 'react';
-import { Activity, BellRing, Cpu, Database, Gauge, HardDrive, MemoryStick, Server } from 'lucide-react';
+import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from 'react';
+import {
+  Activity,
+  ArrowUpRight,
+  BellRing,
+  Cpu,
+  Database,
+  Flame,
+  Gauge,
+  HardDrive,
+  Layers,
+  LayoutGrid,
+  List,
+  MemoryStick,
+  Radio,
+  Search,
+  Server,
+} from 'lucide-react';
 import { Link } from 'react-router';
 import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.js';
 import { useToast } from '../components/Toast.js';
-import { Button, Card, ErrorCard, Input, PageHeader, Select, Skeleton, StatusBadge, cn } from '../components/ui.js';
+import {
+  Button,
+  Card,
+  CardBody,
+  EmptyState,
+  ErrorCard,
+  Input,
+  PageHeader,
+  Select,
+  Skeleton,
+  StatusBadge,
+  cn,
+} from '../components/ui.js';
 import { Sparkline } from '../components/Sparkline.js';
 import { formatBytes, toInt } from '../lib/format.js';
 
 export function Monitoring() {
   const { user: me } = useAuth();
-  const stats = useQuery({ queryKey: ['stats'], queryFn: () => api.stats.snapshot(), refetchInterval: 4000 });
+  const [filterType, setFilterType] = useState<'all' | 'service' | 'database' | 'high-usage'>('all');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [viewMode, setViewMode] = useState<'grid' | 'table'>('grid');
+
+  const stats = useQuery({
+    queryKey: ['stats'],
+    queryFn: () => api.stats.snapshot(),
+    refetchInterval: 4000,
+  });
+
   const host = stats.data?.host;
   const containers = stats.data?.containers ?? [];
 
-  const memPct = host ? Math.round((host.memUsedBytes / host.memTotalBytes) * 100) : 0;
-  const diskPct = host ? Math.round((host.diskUsedBytes / host.diskTotalBytes) * 100) : 0;
+  const memPct = host && host.memTotalBytes > 0 ? Math.round((host.memUsedBytes / host.memTotalBytes) * 100) : 0;
+  const diskPct = host && host.diskTotalBytes > 0 ? Math.round((host.diskUsedBytes / host.diskTotalBytes) * 100) : 0;
+
+  // Filtered containers
+  const filteredContainers = useMemo(() => {
+    return containers.filter((c) => {
+      const matchesSearch =
+        c.refName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (c.engine && c.engine.toLowerCase().includes(searchQuery.toLowerCase()));
+
+      if (!matchesSearch) return false;
+
+      if (filterType === 'service') return c.kind === 'service';
+      if (filterType === 'database') return c.kind === 'database';
+      if (filterType === 'high-usage') {
+        const memLimit = c.memLimitMb > 0 ? c.memLimitMb : 512;
+        const memUsagePct = (c.memMb / memLimit) * 100;
+        return c.cpuPct > 20 || memUsagePct > 60;
+      }
+      return true;
+    });
+  }, [containers, filterType, searchQuery]);
+
+  // Aggregate telemetry
+  const totalCpuUsage = containers.reduce((acc, c) => acc + c.cpuPct, 0);
+  const totalMemUsageMb = containers.reduce((acc, c) => acc + c.memMb, 0);
 
   return (
-    <div className="nd-fade">
-      <PageHeader icon={<Activity size={18} />} title="Monitoring" subtitle="Host and container resource metrics." />
+    <div className="space-y-8 nd-fade">
+      <PageHeader
+        icon={<Activity size={20} />}
+        title="Live Monitoring & Telemetry"
+        subtitle="Real-time host and container performance metrics, allocation breakdown, and threshold alerts."
+      />
 
-      {/* Host overview */}
+      {/* Host Overview Metric Cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard icon={<Cpu size={16} />} label="CPU" value={host ? `${host.cpuCores} cores` : '—'} sub={host ? `load ${host.load1.toFixed(2)}` : ''} />
-        <BarCard icon={<MemoryStick size={16} />} label="Memory" pct={memPct} text={host ? `${formatBytes(host.memUsedBytes)} / ${formatBytes(host.memTotalBytes)}` : '—'} />
-        <BarCard icon={<HardDrive size={16} />} label="Disk" pct={diskPct} text={host ? `${formatBytes(host.diskUsedBytes)} / ${formatBytes(host.diskTotalBytes)}` : '—'} />
-        <StatCard icon={<Gauge size={16} />} label="Workloads" value={`${containers.length}`} sub="containers running" />
+        <StatCard
+          icon={<Cpu size={18} className="text-indigo-400" />}
+          label="Host CPU"
+          value={host ? `${host.cpuCores} cores` : '—'}
+          sub={host ? `load avg: ${host.load1.toFixed(2)} · total load: ${totalCpuUsage.toFixed(1)}%` : ''}
+          tone="indigo"
+        />
+        <BarCard
+          icon={<MemoryStick size={18} className="text-violet-400" />}
+          label="Host Memory"
+          pct={memPct}
+          text={host ? `${formatBytes(host.memUsedBytes)} / ${formatBytes(host.memTotalBytes)}` : '—'}
+          sub={`${totalMemUsageMb.toFixed(0)} MB container allocation`}
+        />
+        <BarCard
+          icon={<HardDrive size={18} className="text-amber-400" />}
+          label="Disk Storage"
+          pct={diskPct}
+          text={host ? `${formatBytes(host.diskUsedBytes)} / ${formatBytes(host.diskTotalBytes)}` : '—'}
+          sub={host ? `${formatBytes(host.diskTotalBytes - host.diskUsedBytes)} free` : ''}
+        />
+        <StatCard
+          icon={<Gauge size={18} className="text-emerald-400" />}
+          label="Active Workloads"
+          value={`${containers.length}`}
+          sub={`${containers.filter((c) => c.kind === 'service').length} services · ${containers.filter((c) => c.kind === 'database').length} databases`}
+          tone="emerald"
+        />
       </div>
 
-      {/* Containers */}
-      <h2 className="mb-3 mt-8 text-sm font-semibold uppercase tracking-wide text-slate-500">Containers</h2>
-      {stats.isLoading ? (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {[0, 1, 2].map((i) => (
-            <Card key={i} className="p-5">
-              <Skeleton className="h-4 w-1/2" />
-              <Skeleton className="mt-3 h-8 w-20" />
-            </Card>
-          ))}
-        </div>
-      ) : stats.isError ? (
-        <ErrorCard title="Couldn't load metrics" error={stats.error} onRetry={() => stats.refetch()} />
-      ) : containers.length === 0 ? (
-        <Card className="p-10 text-center text-sm text-slate-500">No running workloads yet.</Card>
-      ) : (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {containers.map((c) => (
-            <ContainerCard key={`${c.kind}-${c.refId}`} c={c} />
-          ))}
-        </div>
+      {/* Resource Allocation Breakdown Visualizer */}
+      {containers.length > 0 && (
+        <Card>
+          <CardBody className="p-5">
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+              <div className="flex items-center gap-2">
+                <Layers size={16} className="text-indigo-400" />
+                <h3 className="text-sm font-semibold text-slate-100">Resource Consumption Breakdown</h3>
+              </div>
+              <span className="text-xs text-slate-500 font-mono">
+                {containers.length} containers · {totalCpuUsage.toFixed(1)}% total CPU · {(totalMemUsageMb / 1024).toFixed(2)} GB RAM
+              </span>
+            </div>
+
+            <div className="space-y-3">
+              {containers.slice(0, 6).map((c) => {
+                const memLimit = c.memLimitMb > 0 ? c.memLimitMb : 512;
+                const memPctBar = Math.min(100, Math.round((c.memMb / memLimit) * 100));
+                const cpuPctBar = Math.min(100, Math.round(c.cpuPct));
+                return (
+                  <div key={`${c.kind}-${c.refId}`} className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 rounded-xl bg-white/[0.02] p-3 ring-1 ring-inset ring-white/[0.05]">
+                    <div className="flex items-center gap-2.5 sm:w-48 shrink-0">
+                      <span className={cn('grid h-7 w-7 place-items-center rounded-lg text-xs font-semibold', c.kind === 'service' ? 'bg-indigo-500/10 text-indigo-300' : 'bg-emerald-500/10 text-emerald-300')}>
+                        {c.kind === 'service' ? <Server size={14} /> : <Database size={14} />}
+                      </span>
+                      <div className="min-w-0">
+                        <div className="truncate text-xs font-semibold text-slate-200">{c.refName}</div>
+                        <div className="truncate font-mono text-[10px] text-slate-500">{c.engine ?? c.name}</div>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 flex-1">
+                      {/* CPU Bar */}
+                      <div>
+                        <div className="flex justify-between text-[10px] text-slate-400 mb-1">
+                          <span>CPU Load</span>
+                          <span className="font-mono font-medium text-slate-300">{c.cpuPct.toFixed(1)}%</span>
+                        </div>
+                        <div className="h-1.5 w-full rounded-full bg-white/5 overflow-hidden">
+                          <div className="h-full bg-indigo-500 rounded-full transition-all duration-300" style={{ width: `${Math.max(4, cpuPctBar)}%` }} />
+                        </div>
+                      </div>
+
+                      {/* Memory Bar */}
+                      <div>
+                        <div className="flex justify-between text-[10px] text-slate-400 mb-1">
+                          <span>Memory Usage</span>
+                          <span className="font-mono font-medium text-slate-300">{c.memMb.toFixed(0)} MB {c.memLimitMb > 0 ? `(${memPctBar}%)` : ''}</span>
+                        </div>
+                        <div className="h-1.5 w-full rounded-full bg-white/5 overflow-hidden">
+                          <div className={cn('h-full rounded-full transition-all duration-300', memPctBar > 80 ? 'bg-rose-500' : memPctBar > 60 ? 'bg-amber-500' : 'bg-emerald-500')} style={{ width: `${Math.max(4, memPctBar)}%` }} />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </CardBody>
+        </Card>
       )}
 
+      {/* Containers Telemetry Section */}
+      <div className="space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <Radio size={16} className="text-emerald-400 animate-pulse" />
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">
+              Live Workload Telemetry ({filteredContainers.length})
+            </h2>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Search Input */}
+            <div className="relative">
+              <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
+              <Input
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search workloads…"
+                className="h-8 w-44 pl-8 text-xs font-mono"
+              />
+            </div>
+
+            {/* Filter Selector */}
+            <div className="flex items-center rounded-lg bg-white/[0.03] p-0.5 ring-1 ring-inset ring-white/10 text-xs">
+              <button
+                type="button"
+                onClick={() => setFilterType('all')}
+                className={cn('rounded px-2 py-1 transition font-medium', filterType === 'all' ? 'bg-indigo-500/20 text-indigo-300' : 'text-slate-400 hover:text-slate-200')}
+              >
+                All
+              </button>
+              <button
+                type="button"
+                onClick={() => setFilterType('service')}
+                className={cn('rounded px-2 py-1 transition font-medium', filterType === 'service' ? 'bg-indigo-500/20 text-indigo-300' : 'text-slate-400 hover:text-slate-200')}
+              >
+                Services
+              </button>
+              <button
+                type="button"
+                onClick={() => setFilterType('database')}
+                className={cn('rounded px-2 py-1 transition font-medium', filterType === 'database' ? 'bg-indigo-500/20 text-indigo-300' : 'text-slate-400 hover:text-slate-200')}
+              >
+                Databases
+              </button>
+              <button
+                type="button"
+                onClick={() => setFilterType('high-usage')}
+                className={cn('rounded px-2 py-1 transition font-medium flex items-center gap-1', filterType === 'high-usage' ? 'bg-amber-500/20 text-amber-300' : 'text-slate-400 hover:text-slate-200')}
+              >
+                <Flame size={12} /> Hot
+              </button>
+            </div>
+
+            {/* View Mode Toggle */}
+            <div className="flex items-center rounded-lg bg-white/[0.03] p-0.5 ring-1 ring-inset ring-white/10 text-xs">
+              <button
+                type="button"
+                onClick={() => setViewMode('grid')}
+                className={cn('rounded p-1 transition', viewMode === 'grid' ? 'bg-white/10 text-slate-100' : 'text-slate-500 hover:text-slate-300')}
+                title="Card Grid View"
+              >
+                <LayoutGrid size={14} />
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode('table')}
+                className={cn('rounded p-1 transition', viewMode === 'table' ? 'bg-white/10 text-slate-100' : 'text-slate-500 hover:text-slate-300')}
+                title="DevOps Matrix Table View"
+              >
+                <List size={14} />
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {stats.isLoading ? (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {[0, 1, 2].map((i) => (
+              <Card key={i} className="p-5">
+                <Skeleton className="h-4 w-1/2" />
+                <Skeleton className="mt-3 h-8 w-20" />
+              </Card>
+            ))}
+          </div>
+        ) : stats.isError ? (
+          <ErrorCard title="Couldn't load metrics" error={stats.error} onRetry={() => stats.refetch()} />
+        ) : filteredContainers.length === 0 ? (
+          <Card className="p-10">
+            <EmptyState
+              icon={<Gauge size={28} />}
+              title="No workloads found"
+              hint={searchQuery ? `No active workload matches "${searchQuery}".` : 'No running workloads in this filter category.'}
+            />
+          </Card>
+        ) : viewMode === 'grid' ? (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {filteredContainers.map((c) => (
+              <ContainerCard key={`${c.kind}-${c.refId}`} c={c} />
+            ))}
+          </div>
+        ) : (
+          <Card>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead>
+                  <tr className="border-b border-white/5 bg-white/[0.02] text-slate-400">
+                    <th className="py-3 px-4 font-semibold">Workload</th>
+                    <th className="py-3 px-4 font-semibold">Type / Engine</th>
+                    <th className="py-3 px-4 font-semibold">CPU Load</th>
+                    <th className="py-3 px-4 font-semibold">Memory</th>
+                    <th className="py-3 px-4 font-semibold">Limit (MB)</th>
+                    <th className="py-3 px-4 font-semibold">Sparkline</th>
+                    <th className="py-3 px-4 text-right font-semibold">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5 font-mono">
+                  {filteredContainers.map((c) => {
+                    const isService = c.kind === 'service';
+                    return (
+                      <tr key={`${c.kind}-${c.refId}`} className="hover:bg-white/[0.02] transition">
+                        <td className="py-3 px-4 font-sans font-medium text-slate-200">
+                          <div className="flex items-center gap-2">
+                            <span className={cn('grid h-6 w-6 place-items-center rounded text-xs', isService ? 'bg-indigo-500/10 text-indigo-400' : 'bg-emerald-500/10 text-emerald-400')}>
+                              {isService ? <Server size={12} /> : <Database size={12} />}
+                            </span>
+                            <span>{c.refName}</span>
+                          </div>
+                        </td>
+                        <td className="py-3 px-4 text-slate-400">{c.engine ?? (isService ? 'Service' : 'Database')}</td>
+                        <td className="py-3 px-4 text-slate-200 font-semibold">{c.cpuPct.toFixed(2)}%</td>
+                        <td className="py-3 px-4 text-slate-300">{c.memMb.toFixed(0)} MB</td>
+                        <td className="py-3 px-4 text-slate-400">{c.memLimitMb > 0 ? `${c.memLimitMb} MB` : '—'}</td>
+                        <td className="py-3 px-4">{isService ? <ServiceSpark id={c.refId} /> : <span className="text-slate-600">—</span>}</td>
+                        <td className="py-3 px-4 text-right font-sans">
+                          {isService ? (
+                            <Link to={`/services/${c.refId}`} className="inline-flex items-center gap-1 text-xs text-indigo-400 hover:text-indigo-300">
+                              Detail <ArrowUpRight size={12} />
+                            </Link>
+                          ) : (
+                            <Link to={`/databases/${c.refId}`} className="inline-flex items-center gap-1 text-xs text-emerald-400 hover:text-emerald-300">
+                              Detail <ArrowUpRight size={12} />
+                            </Link>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        )}
+      </div>
+
+      {/* Alert Rules Section */}
       <AlertRulesCard isAdmin={me?.role === 'admin'} />
     </div>
   );
@@ -196,19 +481,43 @@ function AlertRulesCard({ isAdmin }: { isAdmin: boolean }) {
   );
 }
 
-function StatCard({ icon, label, value, sub }: { icon: ReactNode; label: string; value: string; sub: string }) {
+function StatCard({
+  icon,
+  label,
+  value,
+  sub,
+  tone,
+}: {
+  icon: ReactNode;
+  label: string;
+  value: string;
+  sub?: string;
+  tone?: 'indigo' | 'emerald' | 'violet' | 'amber';
+}) {
   return (
-    <Card className="p-4">
+    <Card className={cn('p-4 transition', tone === 'indigo' && 'hover:border-indigo-500/30', tone === 'emerald' && 'hover:border-emerald-500/30')}>
       <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-slate-500">
         <span className="text-slate-400">{icon}</span> {label}
       </div>
-      <div className="mt-1.5 text-xl font-semibold tracking-tight">{value}</div>
-      {sub && <div className="text-xs text-slate-500">{sub}</div>}
+      <div className="mt-1.5 text-xl font-semibold tracking-tight text-slate-100">{value}</div>
+      {sub && <div className="mt-0.5 text-xs text-slate-500">{sub}</div>}
     </Card>
   );
 }
 
-function BarCard({ icon, label, pct, text }: { icon: ReactNode; label: string; pct: number; text: string }) {
+function BarCard({
+  icon,
+  label,
+  pct,
+  text,
+  sub,
+}: {
+  icon: ReactNode;
+  label: string;
+  pct: number;
+  text: string;
+  sub?: string;
+}) {
   const tone = pct > 85 ? 'bg-rose-500' : pct > 65 ? 'bg-amber-500' : 'bg-indigo-500';
   return (
     <Card className="p-4">
@@ -216,12 +525,13 @@ function BarCard({ icon, label, pct, text }: { icon: ReactNode; label: string; p
         <span className="text-slate-400">{icon}</span> {label}
       </div>
       <div className="mt-1.5 flex items-end justify-between">
-        <span className="text-xl font-semibold tracking-tight">{pct}%</span>
-        <span className="text-[11px] text-slate-500">{text}</span>
+        <span className="text-xl font-semibold tracking-tight text-slate-100">{pct}%</span>
+        <span className="text-[11px] text-slate-400">{text}</span>
       </div>
       <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/5">
-        <div className={cn('h-full rounded-full transition-all', tone)} style={{ width: `${Math.min(pct, 100)}%` }} />
+        <div className={cn('h-full rounded-full transition-all duration-300', tone)} style={{ width: `${Math.min(pct, 100)}%` }} />
       </div>
+      {sub && <div className="mt-1.5 text-[11px] text-slate-500">{sub}</div>}
     </Card>
   );
 }
