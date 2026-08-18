@@ -82,42 +82,45 @@ export function AttachmentsCard({ serviceId }: { serviceId: number }) {
         </div>
 
         {/* Attachment form */}
-        <div className="rounded-xl border border-slate-200 dark:border-white/[0.08] bg-slate-50/50 dark:bg-white/[0.02] p-3 space-y-2">
-          <div className="flex flex-col sm:flex-row gap-2">
+        <div className="rounded-xl border border-slate-200 dark:border-white/[0.08] bg-slate-50/50 dark:bg-white/[0.02] p-3 space-y-2.5">
+          <div className="space-y-2">
             <Select
               value={dbId}
               onChange={(e) => setDbId(e.target.value)}
-              className="h-9 flex-1 text-xs"
+              className="h-9 w-full text-xs"
               aria-label="Select database to attach"
             >
-              <option value="">Select database…</option>
+              <option value="">Select database to attach…</option>
               {available.map((d) => (
                 <option key={d.id} value={d.id}>
                   {d.name} ({d.engine})
                 </option>
               ))}
             </Select>
-            <div className="flex gap-2">
-              <Input
-                value={alias}
-                onChange={(e) => setAlias(e.target.value)}
-                placeholder={defaultPlaceholder}
-                className="h-9 w-36 shrink-0 font-mono text-xs"
-                title="Environment variable alias (e.g. DATABASE_URL, REDIS_URL)"
-              />
+
+            <div className="flex items-center gap-2">
+              <div className="flex-1 min-w-0">
+                <Input
+                  value={alias}
+                  onChange={(e) => setAlias(e.target.value)}
+                  placeholder={defaultPlaceholder}
+                  className="h-9 w-full font-mono text-xs"
+                  title="Environment variable alias (e.g. DATABASE_URL, REDIS_URL)"
+                />
+              </div>
               <Button
                 size="sm"
                 variant="secondary"
                 disabled={!dbId || attach.isPending}
                 onClick={() => attach.mutate()}
-                className="shrink-0"
+                className="h-9 shrink-0 px-4 text-xs font-semibold"
               >
                 Attach
               </Button>
             </div>
           </div>
           {available.length === 0 && (
-            <p className="text-[11px] text-amber-500/90 dark:text-amber-300/90 flex items-center gap-1.5">
+            <p className="text-[11px] text-amber-500/90 dark:text-amber-300/90 flex items-center gap-1.5 pt-0.5">
               <span>⚠️</span> No active databases running. Launch a database in the Databases tab first.
             </p>
           )}
@@ -145,9 +148,9 @@ export function AttachmentsCard({ serviceId }: { serviceId: number }) {
               return (
                 <div
                   key={a.id}
-                  className="group flex items-center justify-between rounded-xl border border-slate-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.02] p-3 shadow-sm dark:shadow-none transition hover:border-indigo-500/30"
+                  className="group flex items-center justify-between gap-2 rounded-xl border border-slate-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.02] p-3 shadow-sm dark:shadow-none transition hover:border-indigo-500/30"
                 >
-                  <div className="flex min-w-0 items-center gap-2.5">
+                  <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
                     <Database size={15} className="shrink-0 text-indigo-400" />
                     {a.database ? (
                       <Link
@@ -166,12 +169,12 @@ export function AttachmentsCard({ serviceId }: { serviceId: number }) {
                       </span>
                     )}
                     <span className="font-mono text-[10px] text-slate-400">→</span>
-                    <code className="rounded bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 font-mono text-[10px] text-emerald-600 dark:text-emerald-300 font-bold">
+                    <code className="rounded bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 font-mono text-[10px] text-emerald-600 dark:text-emerald-300 font-bold break-all">
                       {a.envAlias}
                     </code>
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex shrink-0 items-center gap-1">
                     {a.database && (
                       <Link
                         to={`/databases/${a.databaseId}`}
