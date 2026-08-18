@@ -225,4 +225,44 @@ export const TOOLS: ToolDef[] = [
       return c.services.update(serviceId, patch);
     },
   },
+  // ── Workspaces & Teams ─────────────────────────────────────────────────
+  {
+    name: 'list_workspaces',
+    description: 'List all accessible workspaces and organizations with roles and member counts.',
+    input: z.object({}),
+    handler: (c) => c.workspaces.list(),
+  },
+  {
+    name: 'get_workspace',
+    description: 'Get details of a specific workspace including full member list and roles.',
+    input: z.object({ id: z.number().int().positive() }),
+    handler: (c, input) => c.workspaces.get((input as { id: number }).id),
+  },
+  // ── Containers & Files ─────────────────────────────────────────────────
+  {
+    name: 'list_container_files',
+    description: 'Explore files and directories inside a live deployed service container.',
+    input: z.object({
+      container: z.string().min(1),
+      path: z.string().optional(),
+    }),
+    handler: (c, input) => {
+      const { container, path } = input as { container: string; path?: string };
+      return c.containers.listFiles(container, path);
+    },
+  },
+  // ── Observability & Log Drains ─────────────────────────────────────────
+  {
+    name: 'list_log_drains',
+    description: 'List structured log drain endpoints (Loki, Datadog, Vector, Syslog, HTTP) forwarding runtime logs.',
+    input: z.object({ serviceId: z.number().int().positive().optional() }),
+    handler: (c, input) => c.logDrains.list(input as { serviceId?: number }),
+  },
+  // ── Housekeeping & Maintenance ─────────────────────────────────────────
+  {
+    name: 'system_autoprune',
+    description: 'Trigger immediate housekeeping prune to purge dangling Docker images, stopped containers, and expired build artifacts.',
+    input: z.object({}),
+    handler: (c) => c.housekeeping.runPrune(),
+  },
 ];

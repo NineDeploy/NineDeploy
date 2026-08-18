@@ -40,6 +40,19 @@ function fakeClient(): NineDeployClient {
     menus: {
       list: vi.fn(async () => 'MENUS_LIST'),
     },
+    workspaces: {
+      list: vi.fn(async () => 'WORKSPACES_LIST'),
+      get: vi.fn(async () => 'WORKSPACE_GET'),
+    },
+    containers: {
+      listFiles: vi.fn(async () => 'CONTAINER_FILES'),
+    },
+    logDrains: {
+      list: vi.fn(async () => 'LOG_DRAINS_LIST'),
+    },
+    housekeeping: {
+      runPrune: vi.fn(async () => 'PRUNE_RUN'),
+    },
   } as unknown as NineDeployClient;
 }
 
@@ -50,9 +63,9 @@ const byName = (name: string) => {
 };
 
 describe('MCP tools', () => {
-  it('exposes 28 unique tools with descriptions', () => {
-    expect(TOOLS).toHaveLength(28);
-    expect(new Set(TOOLS.map((t) => t.name)).size).toBe(28);
+  it('exposes 33 unique tools with descriptions', () => {
+    expect(TOOLS).toHaveLength(33);
+    expect(new Set(TOOLS.map((t) => t.name)).size).toBe(33);
     for (const t of TOOLS) expect(t.description.length).toBeGreaterThan(10);
   });
 
@@ -148,6 +161,24 @@ describe('MCP tools', () => {
     expect(c.services.update).toHaveBeenCalledWith(10, { publishedPort: 8080 });
   });
 
+  it('exercises workspaces, containers, logDrains, and housekeeping tools', async () => {
+    const c = fakeClient();
+    expect(await byName('list_workspaces').handler(c, {})).toBe('WORKSPACES_LIST');
+    expect(c.workspaces.list).toHaveBeenCalled();
+
+    expect(await byName('get_workspace').handler(c, { id: 1 })).toBe('WORKSPACE_GET');
+    expect(c.workspaces.get).toHaveBeenCalledWith(1);
+
+    expect(await byName('list_container_files').handler(c, { container: 'srv-app', path: '/app' })).toBe('CONTAINER_FILES');
+    expect(c.containers.listFiles).toHaveBeenCalledWith('srv-app', '/app');
+
+    expect(await byName('list_log_drains').handler(c, { serviceId: 5 })).toBe('LOG_DRAINS_LIST');
+    expect(c.logDrains.list).toHaveBeenCalledWith({ serviceId: 5 });
+
+    expect(await byName('system_autoprune').handler(c, {})).toBe('PRUNE_RUN');
+    expect(c.housekeeping.runPrune).toHaveBeenCalled();
+  });
+
   it('input schemas validate and reject malformed inputs', () => {
     expect(byName('get_service').input.safeParse({ serviceId: 0 }).success).toBe(false);
     expect(byName('get_service').input.safeParse({}).success).toBe(false);
@@ -157,5 +188,10 @@ describe('MCP tools', () => {
     expect(byName('install_plugin').input.safeParse({ target: 'pkg' }).success).toBe(true);
     expect(byName('set_config').input.safeParse({ key: 'k1', value: 123 }).success).toBe(true);
     expect(byName('update_service').input.safeParse({ serviceId: 1, publishedPort: 9000 }).success).toBe(true);
+    expect(byName('get_workspace').input.safeParse({ id: 1 }).success).toBe(true);
+    expect(byName('list_container_files').input.safeParse({ container: 'srv_app', path: '/etc' }).success).toBe(true);
+    expect(byName('list_container_files').input.safeParse({}).success).toBe(false);
+    expect(byName('list_log_drains').input.safeParse({ serviceId: 1 }).success).toBe(true);
+    expect(byName('system_autoprune').input.safeParse({}).success).toBe(true);
   });
 });
