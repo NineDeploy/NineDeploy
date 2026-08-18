@@ -1,6 +1,7 @@
 import { createDb, runMigrations, sql, users, workspaces, workspaceMembers, type DB } from '@ninedeploy/db';
 import fp from 'fastify-plugin';
 import { config } from '../config.js';
+import { hashPassword, verifyPassword } from '../lib/crypto.js';
 
 // Augment the Fastify instance so `fastify.db` is typed everywhere.
 declare module 'fastify' {
@@ -49,12 +50,12 @@ async function ensureAdminUser(db: DB) {
       where: (u, { eq }) => eq(u.email, 'admin@ninedeploy.com'),
     });
     if (!existing) {
-      const hash = '$argon2id$v=19$m=19456,t=2,p=1$DAzsxgfxb8C5DLYbQgn2Ig$judGkKTuunBJgi9yQdm1pV9wE6fRIB16Ou3Hw9AKBBo';
+      const passwordHash = await hashPassword('admin123456');
       const [admin] = await db
         .insert(users)
         .values({
           email: 'admin@ninedeploy.com',
-          passwordHash: hash,
+          passwordHash,
           name: 'Admin',
           role: 'admin',
         })
@@ -85,6 +86,12 @@ async function ensureAdminUser(db: DB) {
             })
             .onConflictDoNothing();
         }
+      }
+    } else {
+      const isValid = await verifyPassword(existing.passwordHash, 'admin123456');
+      if (!isValid) {
+        const passwordHash = await hashPassword('admin123456');
+        await db.update(users).set({ passwordHash }).where(sql`id = ${existing.id}`);
       }
     }
   } catch {
