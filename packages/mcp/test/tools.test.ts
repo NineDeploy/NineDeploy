@@ -46,6 +46,8 @@ function fakeClient(): NineDeployClient {
     },
     containers: {
       listFiles: vi.fn(async () => 'CONTAINER_FILES'),
+      inspect: vi.fn(async () => 'CONTAINER_INSPECT'),
+      compose: vi.fn(async () => 'CONTAINER_COMPOSE'),
     },
     logDrains: {
       list: vi.fn(async () => 'LOG_DRAINS_LIST'),
@@ -63,9 +65,9 @@ const byName = (name: string) => {
 };
 
 describe('MCP tools', () => {
-  it('exposes 33 unique tools with descriptions', () => {
-    expect(TOOLS).toHaveLength(33);
-    expect(new Set(TOOLS.map((t) => t.name)).size).toBe(33);
+  it('exposes 35 unique tools with descriptions', () => {
+    expect(TOOLS).toHaveLength(35);
+    expect(new Set(TOOLS.map((t) => t.name)).size).toBe(35);
     for (const t of TOOLS) expect(t.description.length).toBeGreaterThan(10);
   });
 
@@ -172,6 +174,12 @@ describe('MCP tools', () => {
     expect(await byName('list_container_files').handler(c, { container: 'srv-app', path: '/app' })).toBe('CONTAINER_FILES');
     expect(c.containers.listFiles).toHaveBeenCalledWith('srv-app', '/app');
 
+    expect(await byName('inspect_container').handler(c, { container: 'srv-app' })).toBe('CONTAINER_INSPECT');
+    expect(c.containers.inspect).toHaveBeenCalledWith('srv-app');
+
+    expect(await byName('get_container_compose').handler(c, { container: 'srv-app' })).toBe('CONTAINER_COMPOSE');
+    expect(c.containers.compose).toHaveBeenCalledWith('srv-app');
+
     expect(await byName('list_log_drains').handler(c, { serviceId: 5 })).toBe('LOG_DRAINS_LIST');
     expect(c.logDrains.list).toHaveBeenCalledWith({ serviceId: 5 });
 
@@ -191,6 +199,10 @@ describe('MCP tools', () => {
     expect(byName('get_workspace').input.safeParse({ id: 1 }).success).toBe(true);
     expect(byName('list_container_files').input.safeParse({ container: 'srv_app', path: '/etc' }).success).toBe(true);
     expect(byName('list_container_files').input.safeParse({}).success).toBe(false);
+    expect(byName('inspect_container').input.safeParse({ container: 'srv_app' }).success).toBe(true);
+    expect(byName('inspect_container').input.safeParse({ container: '' }).success).toBe(false);
+    expect(byName('get_container_compose').input.safeParse({ container: 'srv_app' }).success).toBe(true);
+    expect(byName('get_container_compose').input.safeParse({}).success).toBe(false);
     expect(byName('list_log_drains').input.safeParse({ serviceId: 1 }).success).toBe(true);
     expect(byName('system_autoprune').input.safeParse({}).success).toBe(true);
   });

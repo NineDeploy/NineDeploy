@@ -169,3 +169,46 @@ export async function servicesExport(client: NineDeployClient, idStr: string): P
     success(`Exported to ${filename}`);
   } catch (err) { error(err instanceof Error ? err.message : String(err)); }
 }
+
+/** `ninedeploy services compose <id>` */
+export async function servicesCompose(client: NineDeployClient, idStr: string): Promise<void> {
+  const id = Number(idStr);
+  if (!id) return error('Usage: ninedeploy services compose <id>');
+  header('Runtime Docker Compose Manifest');
+  try {
+    const svc = await client.services.get(id);
+    const container = svc.runtimeId || `nd-svc-${svc.slug}-1`;
+    const res = await spinner('Generating manifest', () => client.containers.compose(container));
+    console.log(c.dim(`\n  # Container: ${container}\n`));
+    console.log(res.yaml.split('\n').map((l) => `  ${c.cyan(l)}`).join('\n'));
+    console.log();
+  } catch (err) { error(err instanceof Error ? err.message : String(err)); }
+}
+
+/** `ninedeploy services inspect <id>` */
+export async function servicesInspect(client: NineDeployClient, idStr: string): Promise<void> {
+  const id = Number(idStr);
+  if (!id) return error('Usage: ninedeploy services inspect <id>');
+  header('Container Runtime Inspection');
+  try {
+    const svc = await client.services.get(id);
+    const container = svc.runtimeId || `nd-svc-${svc.slug}-1`;
+    const data = await spinner('Inspecting container', () => client.containers.inspect(container));
+    kv('Container ID', data.id);
+    kv('Name', data.name);
+    kv('Image', data.image);
+    kv('Status', statusColor(data.state.status));
+    kv('Running', data.state.running ? c.green('true') : c.red('false'));
+    if (data.resources.memoryLimitBytes > 0) kv('Memory Limit', `${Math.round(data.resources.memoryLimitBytes / (1024 * 1024))} MB`);
+    if (data.resources.cpuShares > 0) kv('CPU Shares', `${data.resources.cpuShares}`);
+    kv('Restart Policy', data.resources.restartPolicy);
+
+    if (Object.keys(data.traefikTags).length > 0) {
+      console.log(c.dim('\n  Traefik Dynamic Ingress Tags:'));
+      for (const [k, v] of Object.entries(data.traefikTags)) {
+        console.log(`    ${c.yellow(k)}: ${c.dim(v)}`);
+      }
+    }
+    console.log();
+  } catch (err) { error(err instanceof Error ? err.message : String(err)); }
+}

@@ -30,11 +30,13 @@ describe('buildServer', () => {
   it('lists all tools with schemas', async () => {
     const mcp = await connected(fake());
     const tools = await mcp.listTools();
-    expect(tools.tools).toHaveLength(33);
+    expect(tools.tools).toHaveLength(35);
     expect(tools.tools.map((t) => t.name)).toContain('deploy_service');
     expect(tools.tools.map((t) => t.name)).toContain('list_services');
     expect(tools.tools.map((t) => t.name)).toContain('list_workspaces');
     expect(tools.tools.map((t) => t.name)).toContain('list_container_files');
+    expect(tools.tools.map((t) => t.name)).toContain('inspect_container');
+    expect(tools.tools.map((t) => t.name)).toContain('get_container_compose');
     expect(tools.tools.map((t) => t.name)).toContain('list_log_drains');
     expect(tools.tools.map((t) => t.name)).toContain('seed_demo');
     expect(tools.tools.map((t) => t.name)).toContain('update_service');

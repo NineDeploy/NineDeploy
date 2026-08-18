@@ -271,4 +271,80 @@ describe('containerFiles operations (docker exec)', () => {
     execMocks.capture.mockResolvedValueOnce('[]');
     await expect(inspectContainer('nd-svc-web-1')).rejects.toThrow('container inspect empty');
   });
+
+  it('handles minimal/sparse inspect objects with default fallback values', async () => {
+    const sparseInspect = [{
+      Mounts: [{}],
+    }];
+    execMocks.capture.mockResolvedValueOnce(JSON.stringify(sparseInspect));
+    const result = await inspectContainer('nd-svc-web-1');
+    expect(result.id).toBe('');
+    expect(result.name).toBe('');
+    expect(result.image).toBe('');
+    expect(result.state.status).toBe('unknown');
+    expect(result.state.running).toBe(false);
+    expect(result.state.exitCode).toBe(0);
+    expect(result.resources.restartPolicy).toBe('no');
+    expect(result.mounts).toEqual([{ source: '', destination: '', mode: '', rw: false }]);
+    expect(result.networks).toEqual([]);
+  });
+
+  it('generates compose manifest with minimal/empty resources and no optional blocks', async () => {
+    const minimalInspect = [
+      {
+        Id: 'cid999',
+        Name: 'simple-app',
+        Config: { Image: 'alpine' },
+        State: { Status: 'created' },
+        HostConfig: { RestartPolicy: { Name: '' } },
+      },
+    ];
+    execMocks.capture.mockResolvedValueOnce(JSON.stringify(minimalInspect));
+    const { yaml, inspect } = await getContainerComposeManifest('simple-app');
+    expect(inspect.name).toBe('simple-app');
+    expect(yaml).toContain('services:');
+    expect(yaml).toContain('simple-app:');
+    expect(yaml).toContain('image: alpine');
+    expect(yaml).toContain('restart: unless-stopped');
+    expect(yaml).not.toContain('volumes:');
+    expect(yaml).not.toContain('networks:');
+    expect(yaml).not.toContain('deploy:');
+  });
+
+  it('generates compose manifest with read-write mounts and memory-only or cpu-only limits', async () => {
+    const customInspect = [
+      {
+        Id: 'cid888',
+        Name: 'custom-app',
+        Config: { Image: 'node:20', Env: [] },
+        State: { Status: 'running', Running: true },
+        Mounts: [{ Source: '/vol', Destination: '/app/vol', Mode: 'rw', RW: true }],
+        HostConfig: {
+          Memory: 104857600,
+          CpuShares: 0,
+          RestartPolicy: { Name: 'always' },
+        },
+      },
+    ];
+    execMocks.capture.mockResolvedValueOnce(JSON.stringify(customInspect));
+    const { yaml } = await getContainerComposeManifest('custom-app');
+    expect(yaml).toContain('/vol:/app/vol');
+    expect(yaml).not.toContain('/vol:/app/vol:ro');
+    expect(yaml).toContain('memory: 100M');
+    expect(yaml).not.toContain('cpus:');
+
+    // CPU-only
+    const cpuOnlyInspect = [
+      {
+        Id: 'cid777',
+        Name: 'cpu-app',
+        Config: { Image: 'node:20' },
+        HostConfig: { Memory: 0, CpuShares: 512 },
+      },
+    ];
+    execMocks.capture.mockResolvedValueOnce(JSON.stringify(cpuOnlyInspect));
+    const { yaml: cpuYaml } = await getContainerComposeManifest('cpu-app');
+    expect(cpuYaml).toContain("cpus: '0.50'");
+    expect(cpuYaml).not.toContain('memory:');
+  });
 });

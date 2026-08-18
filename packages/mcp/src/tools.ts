@@ -251,6 +251,18 @@ export const TOOLS: ToolDef[] = [
       return c.containers.listFiles(container, path);
     },
   },
+  {
+    name: 'inspect_container',
+    description: 'Get deep runtime inspection data for a container including state, mounts, network IP, resource limits, and Traefik tags.',
+    input: z.object({ container: z.string().min(1) }),
+    handler: (c, input) => c.containers.inspect((input as { container: string }).container),
+  },
+  {
+    name: 'get_container_compose',
+    description: 'Generate and retrieve the live Docker Compose YAML manifest for a running container or service.',
+    input: z.object({ container: z.string().min(1) }),
+    handler: (c, input) => c.containers.compose((input as { container: string }).container),
+  },
   // ── Observability & Log Drains ─────────────────────────────────────────
   {
     name: 'list_log_drains',

@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  servicesCompose,
   servicesCreate,
   servicesDelete,
   servicesDeploy,
   servicesExport,
   servicesGet,
+  servicesInspect,
   servicesLifecycle,
   servicesList,
   servicesLogs,
@@ -50,6 +52,10 @@ function makeClient(overrides: Record<string, unknown> = {}) {
       start: vi.fn(),
       restart: vi.fn(),
       remove: vi.fn(),
+    },
+    containers: {
+      compose: vi.fn(),
+      inspect: vi.fn(),
     },
     deploys: { trigger: vi.fn() },
     ...overrides,
@@ -505,5 +511,124 @@ describe('servicesExport', () => {
     await servicesExport(client, '7');
 
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('boom'));
+  });
+});
+
+describe('servicesCompose', () => {
+  it('guards against invalid id', async () => {
+    const client = makeClient();
+    await servicesCompose(client, 'abc');
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Usage: ninedeploy services compose <id>'));
+  });
+
+  it('fetches and prints generated Docker Compose manifest', async () => {
+    const get = vi.fn().mockResolvedValue({ slug: 'web', runtimeId: 'nd-svc-web-1' });
+    const compose = vi.fn().mockResolvedValue({
+      yaml: 'services:\n  nd-svc-web-1:\n    image: node:20',
+      inspect: { name: 'nd-svc-web-1' },
+    });
+    const client = makeClient({ services: { get }, containers: { compose } });
+
+    await servicesCompose(client, '3');
+
+    expect(get).toHaveBeenCalledWith(3);
+    expect(compose).toHaveBeenCalledWith('nd-svc-web-1');
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('services:'));
+  });
+
+  it('falls back to default container name when runtimeId is absent in servicesCompose', async () => {
+    const get = vi.fn().mockResolvedValue({ slug: 'api', runtimeId: null });
+    const compose = vi.fn().mockResolvedValue({ yaml: 'services:\n  nd-svc-api-1:', inspect: {} });
+    const client = makeClient({ services: { get }, containers: { compose } });
+
+    await servicesCompose(client, '4');
+
+    expect(compose).toHaveBeenCalledWith('nd-svc-api-1');
+  });
+
+  it('handles compose errors gracefully', async () => {
+    const get = vi.fn().mockRejectedValue(new Error('service not found'));
+    const client = makeClient({ services: { get } });
+
+    await servicesCompose(client, '3');
+
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('service not found'));
+  });
+
+  it('handles non-Error compose rejections', async () => {
+    const get = vi.fn().mockRejectedValue('compose failed');
+    const client = makeClient({ services: { get } });
+
+    await servicesCompose(client, '3');
+
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('compose failed'));
+  });
+});
+
+describe('servicesInspect', () => {
+  it('guards against invalid id', async () => {
+    const client = makeClient();
+    await servicesInspect(client, '0');
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Usage: ninedeploy services inspect <id>'));
+  });
+
+  it('fetches and prints container inspect metadata and traefik tags', async () => {
+    const get = vi.fn().mockResolvedValue({ slug: 'web', runtimeId: null });
+    const inspect = vi.fn().mockResolvedValue({
+      id: 'cid123',
+      name: 'nd-svc-web-1',
+      image: 'node:20-alpine',
+      state: { status: 'running', running: true },
+      resources: { memoryLimitBytes: 536870912, cpuShares: 512, restartPolicy: 'unless-stopped' },
+      traefikTags: {
+        'traefik.enable': 'true',
+        'traefik.http.routers.web.rule': 'Host(`web.dev`)',
+      },
+    });
+    const client = makeClient({ services: { get }, containers: { inspect } });
+
+    await servicesInspect(client, '5');
+
+    expect(get).toHaveBeenCalledWith(5);
+    expect(inspect).toHaveBeenCalledWith('nd-svc-web-1');
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('512 MB'));
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Host(`web.dev`)'));
+  });
+
+  it('handles stopped container with zero resource limits and empty traefik tags', async () => {
+    const get = vi.fn().mockResolvedValue({ slug: 'api', runtimeId: 'nd-svc-api-1' });
+    const inspect = vi.fn().mockResolvedValue({
+      id: 'cid456',
+      name: 'nd-svc-api-1',
+      image: 'node:20',
+      state: { status: 'stopped', running: false },
+      resources: { memoryLimitBytes: 0, cpuShares: 0, restartPolicy: 'no' },
+      traefikTags: {},
+    });
+    const client = makeClient({ services: { get }, containers: { inspect } });
+
+    await servicesInspect(client, '6');
+
+    expect(get).toHaveBeenCalledWith(6);
+    expect(inspect).toHaveBeenCalledWith('nd-svc-api-1');
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('false'));
+  });
+
+  it('handles inspect errors gracefully', async () => {
+    const get = vi.fn().mockRejectedValue(new Error('container down'));
+    const client = makeClient({ services: { get } });
+
+    await servicesInspect(client, '5');
+
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('container down'));
+  });
+
+  it('handles non-Error inspect rejections', async () => {
+    const get = vi.fn().mockRejectedValue('inspect failed');
+    const client = makeClient({ services: { get } });
+
+    await servicesInspect(client, '5');
+
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('inspect failed'));
   });
 });

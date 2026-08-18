@@ -6,8 +6,8 @@ import { banner } from './lib/format.js';
 import { loginAction } from './commands/login.js';
 import { setupAction } from './commands/setup.js';
 import {
-  servicesCreate, servicesDelete, servicesDeploy, servicesExport,
-  servicesGet, servicesLifecycle, servicesList, servicesLogs,
+  servicesCompose, servicesCreate, servicesDelete, servicesDeploy, servicesExport,
+  servicesGet, servicesInspect, servicesLifecycle, servicesList, servicesLogs,
 } from './commands/services.js';
 import {
   dbCreate, dbList, deploysList, deploysRollback,
@@ -122,6 +122,10 @@ services.command('restart <id>').description('Restart a service').action((id: st
 services.command('delete <id>').description('Delete a service (with confirmation)').action((id: string) => servicesDelete(getClient(), id));
 
 services.command('export <id>').description('Export a service as a JSON bundle').action((id: string) => servicesExport(getClient(), id));
+
+services.command('compose <id>').description('Show generated runtime Docker Compose YAML').action((id: string) => servicesCompose(getClient(), id));
+
+services.command('inspect <id>').description('Inspect runtime container and Traefik tags').action((id: string) => servicesInspect(getClient(), id));
 
 // ── Databases ────────────────────────────────────────────────────────────
 const databases = program.command('databases').description('Manage databases');

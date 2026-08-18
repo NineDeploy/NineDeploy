@@ -93,6 +93,8 @@ const h = vi.hoisted(() => {
     servicesLifecycle: vi.fn(),
     servicesDelete: vi.fn(),
     servicesExport: vi.fn(),
+    servicesCompose: vi.fn(),
+    servicesInspect: vi.fn(),
     dbList: vi.fn(),
     dbCreate: vi.fn(),
     tplList: vi.fn(),
@@ -151,6 +153,8 @@ vi.mock('../src/commands/services.js', () => ({
   servicesLifecycle: h.servicesLifecycle,
   servicesList: h.servicesList,
   servicesLogs: h.servicesLogs,
+  servicesCompose: h.servicesCompose,
+  servicesInspect: h.servicesInspect,
 }));
 vi.mock('../src/commands/misc.js', () => ({
   dbCreate: h.dbCreate,
@@ -265,7 +269,7 @@ describe('program registration', () => {
       'env', 'domains', 'volumes', 'networks', 'sessions', 'backups', 'alerts', 'users',
       'reset-link <idOrEmail>', 'activity', 'plugins', 'config-center', 'workspaces', 'demo',
     ]);
-    expect(findCommand('services').children).toHaveLength(10);
+    expect(findCommand('services').children).toHaveLength(12);
     expect(findCommand('databases').children).toHaveLength(2);
     expect(findCommand('templates').children).toHaveLength(2);
     expect(findCommand('deploys').children).toHaveLength(3);
@@ -280,7 +284,7 @@ describe('program registration', () => {
     expect(findCommand('plugins').children).toHaveLength(8);
     expect(findCommand('config-center').children).toHaveLength(4);
     expect(findCommand('demo').children).toHaveLength(1);
-    expect(h.FakeCommand.instances).toHaveLength(87);
+    expect(h.FakeCommand.instances).toHaveLength(89);
     // argv length > 2 → no banner, no exit
     expect(h.banner).not.toHaveBeenCalled();
     expect(h.exit).not.toHaveBeenCalled();
@@ -561,6 +565,12 @@ describe('delegating actions', () => {
 
     await cmds.get('export <id>')!.actionFn!('6');
     expect(h.servicesExport).toHaveBeenCalledWith(client, '6');
+
+    await cmds.get('compose <id>')!.actionFn!('7');
+    expect(h.servicesCompose).toHaveBeenCalledWith(client, '7');
+
+    await cmds.get('inspect <id>')!.actionFn!('8');
+    expect(h.servicesInspect).toHaveBeenCalledWith(client, '8');
   });
 
   it('wires env, domains, volumes, backups, alerts, users, activity, and new system/deploys actions', async () => {
