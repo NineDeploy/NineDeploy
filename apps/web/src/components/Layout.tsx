@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
-  Activity, ChevronLeft, ChevronRight, Clock, Cloud, Container, Database, FolderKanban, Globe, HardDrive,
+  Activity, Building2, ChevronLeft, ChevronRight, Clock, Cloud, Container, Database, FolderKanban, Globe, HardDrive,
   Info, KeyRound, Layers, LayoutDashboard, Moon, Network, Shield, type LucideIcon,
   Rocket, Search, Server, Settings as SettingsIcon, Sparkles, Sun, Users, X,
 } from 'lucide-react';
@@ -13,6 +13,7 @@ import { useTheme } from '../lib/theme.js';
 import { Logo } from './Logo.js';
 import { cn } from './ui.js';
 import { CommandPalette } from './CommandPalette.js';
+import { WorkspaceSwitcher } from './WorkspaceSwitcher.js';
 
 interface NavItem { to: string; label: string; icon: LucideIcon }
 
@@ -21,6 +22,7 @@ interface NavGroup { id: string; label: string; icon: LucideIcon; items: NavItem
 export const ICON_MAP: Record<string, LucideIcon> = {
   server: Server,
   activity: Activity,
+  building: Building2,
   database: Database,
   shield: Shield,
   harddrive: HardDrive,
@@ -60,6 +62,7 @@ const GROUPS: NavGroup[] = [
   },
   {
     id: 'system', label: 'System', icon: SettingsIcon, items: [
+      { to: '/workspaces', label: 'Workspaces', icon: Building2 },
       { to: '/activity', label: 'Activity', icon: Clock },
       { to: '/monitoring', label: 'Monitoring', icon: Activity },
       { to: '/docker', label: 'Docker', icon: Container },
@@ -245,6 +248,7 @@ export function Layout() {
         {/* Top bar */}
         <header className="flex h-12 shrink-0 items-center justify-between border-b border-white/[0.06] px-5">
           <div className="flex items-center gap-2 text-sm">
+            <WorkspaceSwitcher />
             <ProjectSwitcher />
             <span className="font-medium text-slate-300">{currentGroup?.label ?? 'NineDeploy'}</span>
             {currentItem && (

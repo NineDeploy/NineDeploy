@@ -63,7 +63,7 @@ function enc(segment: string): string {
 
 export const ENGINES: Record<string, EngineConfig> = {
   postgres: {
-    image: (v) => `postgres:${v || '16'}`,
+    image: (v) => (v === 'vector' || v === 'pgvector' ? 'pgvector/pgvector:pg16' : `postgres:${v || '16'}`),
     port: 5432,
     volumePath: '/var/lib/postgresql/data',
     env: (p) => ({ POSTGRES_USER: 'nine', POSTGRES_PASSWORD: p, POSTGRES_DB: 'app' }),
@@ -98,6 +98,15 @@ export const ENGINES: Record<string, EngineConfig> = {
     dbName: () => undefined,
     connectionString: (h, prt) => `redis://${h}:${prt}`,
   },
+  valkey: {
+    image: (v) => `valkey/valkey:${v || '8'}`,
+    port: 6379,
+    volumePath: '/data',
+    env: () => ({}),
+    username: () => undefined,
+    dbName: () => undefined,
+    connectionString: (h, prt) => `valkey://${h}:${prt}`,
+  },
   mongo: {
     image: (v) => `mongo:${v || '7'}`,
     port: 27017,
@@ -107,10 +116,77 @@ export const ENGINES: Record<string, EngineConfig> = {
     dbName: () => undefined,
     connectionString: (h, prt, u, p) => `mongodb://${enc(u)}:${enc(p)}@${h}:${prt}`,
   },
+  clickhouse: {
+    image: (v) => `clickhouse/clickhouse-server:${v || '24'}`,
+    port: 8123,
+    volumePath: '/var/lib/clickhouse',
+    env: (p) => ({ CLICKHOUSE_USER: 'nine', CLICKHOUSE_PASSWORD: p, CLICKHOUSE_DB: 'app' }),
+    username: () => 'nine',
+    dbName: () => 'app',
+    connectionString: (h, prt, u, p, d) => `clickhouse://${enc(u)}:${enc(p)}@${h}:${prt}/${d ?? 'default'}`,
+  },
+  meilisearch: {
+    image: (v) => `getmeili/meilisearch:${v || 'v1.12'}`,
+    port: 7700,
+    volumePath: '/meili_data',
+    env: (p) => ({ MEILI_MASTER_KEY: p, MEILI_NO_ANALYTICS: 'true' }),
+    username: () => undefined,
+    dbName: () => undefined,
+    connectionString: (h, prt, _u, p) => `http://:${enc(p)}@${h}:${prt}`,
+  },
+  rabbitmq: {
+    image: (v) => `rabbitmq:${v || '3-management'}`,
+    port: 5672,
+    volumePath: '/var/lib/rabbitmq',
+    env: (p) => ({ RABBITMQ_DEFAULT_USER: 'nine', RABBITMQ_DEFAULT_PASS: p }),
+    username: () => 'nine',
+    dbName: () => undefined,
+    connectionString: (h, prt, u, p) => `amqp://${enc(u)}:${enc(p)}@${h}:${prt}/`,
+  },
 };
 
+/** Studio image for the given database engine. */
+export function studioImageForEngine(engine: string): { image: string; containerPort: number } {
+  if (engine === 'redis' || engine === 'valkey') {
+    return { image: 'rediscommander/redis-commander:latest', containerPort: 8081 };
+  }
+  return { image: 'adminer:latest', containerPort: 8080 };
+}
+
+/** Check if database studio container is running. */
+export async function isDatabaseStudioRunning(d: Database): Promise<boolean> {
+  const name = `nd-studio-${d.slug}`;
+  return containerRunning(name);
+}
+
+/** Start database web studio container on shared network. */
+export async function startDatabaseStudio(d: Database, port: number, log: (line: string) => void): Promise<void> {
+  const name = `nd-studio-${d.slug}`;
+  if (await containerRunning(name)) return;
+  await run('docker', ['rm', '-f', name], {}, swallow).catch(() => undefined);
+  const studio = studioImageForEngine(d.engine);
+  const args = [
+    'run', '-d', '--name', name, '--network', NETWORK, '--restart', 'unless-stopped',
+    '-p', `${port}:${studio.containerPort}`,
+  ];
+  if (d.engine === 'redis' || d.engine === 'valkey') {
+    const host = d.internalHost || d.containerName;
+    args.push('-e', `REDIS_HOSTS=local:${host}:${defaultPort(d.engine)}`);
+  }
+  args.push(studio.image);
+  log(`Starting Web Studio for ${d.name} on :${port} …`);
+  await run('docker', args, {}, log);
+}
+
+/** Stop database web studio container. */
+export async function stopDatabaseStudio(d: Database, log: (line: string) => void): Promise<void> {
+  const name = `nd-studio-${d.slug}`;
+  log(`Stopping Web Studio ${name} …`);
+  await run('docker', ['rm', '-f', name], {}, swallow).catch(() => undefined);
+}
+
 /** Whether a container exists and is currently in the `running` state. */
-async function containerRunning(name: string): Promise<boolean> {
+export async function containerRunning(name: string): Promise<boolean> {
   try {
     const out = await capture('docker', ['inspect', name, '--format', '{{.State.Status}}']);
     return out.trim() === 'running';
@@ -220,7 +296,7 @@ export async function databaseSize(d: Database): Promise<number> {
       const out = await capture('docker', ['exec', d.containerName, 'psql', '-U', cfg.username()!, '-d', cfg.dbName()!, '-tAc', "SELECT pg_database_size(current_database())"]);
       return Number(out.trim()) || 0;
     }
-    if (d.engine === 'redis') {
+    if (d.engine === 'redis' || d.engine === 'valkey') {
       const out = await capture('docker', ['exec', d.containerName, 'redis-cli', 'INFO', 'memory']);
       const m = /used_memory:(\d+)/.exec(out);
       return m ? Number(m[1]) : 0;
@@ -268,7 +344,7 @@ export async function backupDatabase(d: Database, file: string, log: (line: stri
     await run('docker', ['exec', cn, dumper, '-uroot', `--password=${pass}`, '--all-databases', `--result-file=${DUMP_TMP}`], {}, log);
     await run('docker', ['cp', `${cn}:${DUMP_TMP}`, file], {}, log);
     await run('docker', ['exec', cn, 'rm', '-f', DUMP_TMP], {}, swallow);
-  } else if (d.engine === 'redis') {
+  } else if (d.engine === 'redis' || d.engine === 'valkey') {
     await run('docker', ['exec', cn, 'redis-cli', 'SAVE'], {}, log);
     await run('docker', ['cp', `${cn}:/data/dump.rdb`, file], {}, log);
   } else if (d.engine === 'mongo') {
@@ -310,14 +386,15 @@ export async function restoreDatabase(d: Database, file: string, log: (line: str
     d.engine !== 'mysql' &&
     d.engine !== 'mariadb' &&
     d.engine !== 'mongo' &&
-    d.engine !== 'redis'
+    d.engine !== 'redis' &&
+    d.engine !== 'valkey'
   ) {
     throw new Error(`restore not supported for ${d.engine}`);
   }
 
   const staged = stageForRestore(file);
   try {
-    if (d.engine === 'redis') {
+    if (d.engine === 'redis' || d.engine === 'valkey') {
       await run('docker', ['cp', staged.path, `${cn}:/data/dump.rdb`], {}, log);
       await run('docker', ['restart', cn], {}, log);
     } else {

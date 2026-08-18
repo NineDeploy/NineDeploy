@@ -121,3 +121,95 @@ export function parsePush(body: unknown, provider: Provider): PushEvent | null {
     changedFiles: changedFilesFrom(withHead),
   };
 }
+
+export interface PullRequestEvent {
+  action: 'opened' | 'synchronize' | 'reopened' | 'closed';
+  prNumber: number;
+  branch: string;
+  sha: string;
+  title: string;
+  author: string;
+  repoUrl?: string;
+  merged?: boolean;
+}
+
+/** Whether this request is a pull request / merge request event. */
+export function isPullRequest(headers: Record<string, string | string[] | undefined>, provider: Provider): boolean {
+  const h = (k: string) => (typeof headers[k] === 'string' ? headers[k] : undefined);
+  if (provider === 'github' || provider === 'gitea') {
+    return h('x-github-event') === 'pull_request' || h('x-gitea-event') === 'pull_request';
+  }
+  return h('x-gitlab-event') === 'Merge Request Hook';
+}
+
+/** Parse a pull request / merge request payload into structured fields. */
+export function parsePullRequest(body: unknown, provider: Provider): PullRequestEvent | null {
+  const b = body as Record<string, unknown>;
+  if (!b) return null;
+
+  if (provider === 'gitlab') {
+    const attrs = b['object_attributes'] as Record<string, unknown> | undefined;
+    if (!attrs) return null;
+    const rawAction = String(attrs['action'] ?? '');
+    let action: PullRequestEvent['action'] = 'opened';
+    if (rawAction === 'close' || rawAction === 'merge') action = 'closed';
+    else if (rawAction === 'update') action = 'synchronize';
+    else if (rawAction === 'reopen') action = 'reopened';
+    else if (rawAction === 'open') action = 'opened';
+    else return null;
+
+    const prNumber = Number(attrs['iid']) || 0;
+    const branch = String(attrs['source_branch'] ?? '');
+    const lastCommit = attrs['last_commit'] as Record<string, unknown> | undefined;
+    const sha = String(lastCommit?.['id'] ?? attrs['last_commit_id'] ?? '');
+    const title = String(attrs['title'] ?? '');
+    const author = String((attrs['author'] as Record<string, unknown> | undefined)?.['name'] ?? (lastCommit?.['author'] as Record<string, unknown> | undefined)?.['name'] ?? '');
+    const project = b['project'] as Record<string, unknown> | undefined;
+    const repoUrl = typeof project?.['git_http_url'] === 'string' ? (project['git_http_url'] as string) : undefined;
+    if (!prNumber || !branch) return null;
+    return {
+      action,
+      prNumber,
+      branch,
+      sha,
+      title,
+      author,
+      repoUrl,
+      merged: rawAction === 'merge',
+    };
+  }
+
+  // GitHub & Gitea
+  const rawAction = String(b['action'] ?? '');
+  let action: PullRequestEvent['action'] = 'opened';
+  if (rawAction === 'closed') action = 'closed';
+  else if (rawAction === 'synchronize') action = 'synchronize';
+  else if (rawAction === 'reopened') action = 'reopened';
+  else if (rawAction === 'opened') action = 'opened';
+  else return null;
+
+  const pr = b['pull_request'] as Record<string, unknown> | undefined;
+  if (!pr) return null;
+  const prNumber = Number(b['number'] || pr['number']) || 0;
+  const head = pr['head'] as Record<string, unknown> | undefined;
+  const branch = String(head?.['ref'] ?? '');
+  const sha = String(head?.['sha'] ?? '');
+  const title = String(pr['title'] ?? '');
+  const user = pr['user'] as Record<string, unknown> | undefined;
+  const author = String(user?.['login'] ?? '');
+  const headRepo = head?.['repo'] as Record<string, unknown> | undefined;
+  const repoUrl = typeof headRepo?.['clone_url'] === 'string' ? (headRepo['clone_url'] as string) : undefined;
+  const merged = Boolean(pr['merged']);
+  if (!prNumber || !branch) return null;
+
+  return {
+    action,
+    prNumber,
+    branch,
+    sha,
+    title,
+    author,
+    repoUrl,
+    merged,
+  };
+}

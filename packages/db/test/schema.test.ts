@@ -13,6 +13,9 @@ describe('schema', () => {
     'apiTokens',
     'webauthnCredentials',
     'sessions',
+    'workspaces',
+    'workspaceMembers',
+    'oidcProviders',
     'projects',
     'services',
     'buildConfigs',
@@ -32,6 +35,7 @@ describe('schema', () => {
     'notificationLog',
     'configEntries',
     'installedPlugins',
+    'logDrains',
   ] as const;
 
   it('exposes every expected table', () => {
@@ -44,6 +48,7 @@ describe('schema', () => {
   it('exposes the expected enum arrays', () => {
     for (const name of [
       'userRole',
+      'workspaceRole',
       'serviceType',
       'serviceStatus',
       'buildPack',
@@ -69,6 +74,8 @@ describe('schema', () => {
   it('exposes the expected relations', () => {
     for (const name of [
       'usersRelations',
+      'workspacesRelations',
+      'workspaceMembersRelations',
       'apiTokensRelations',
       'projectsRelations',
       'servicesRelations',
@@ -96,6 +103,9 @@ describe('schema', () => {
       'apiTokens',
       'webauthnCredentials',
       'sessions',
+      'workspaces',
+      'workspaceMembers',
+      'oidcProviders',
       'projects',
       'services',
       'buildConfigs',
@@ -120,6 +130,7 @@ describe('schema', () => {
       'scheduledJobs',
       'configEntries',
       'installedPlugins',
+      'logDrains',
     ] as const;
     for (const name of tables) {
       const table = (schema as unknown as Record<string, unknown>)[name];

@@ -13,6 +13,24 @@ vi.mock('../src/lib/api.js', async () => {
   };
 });
 
+vi.mock('@xyflow/react', () => ({
+  ReactFlow: ({ nodes, edges, nodeTypes, children }: { nodes: Array<{ id: string; type: string; data: unknown }>; edges: unknown[]; nodeTypes?: Record<string, React.ComponentType<{ id: string; data: unknown }>>; children: React.ReactNode }) => (
+    <div data-testid="react-flow" data-nodes={nodes.length} data-edges={edges.length}>
+      {nodes.map((n) => {
+        const NodeComp = nodeTypes?.[n.type];
+        return NodeComp ? <NodeComp key={n.id} id={n.id} data={n.data} /> : null;
+      })}
+      {children}
+    </div>
+  ),
+  ReactFlowProvider: ({ children }: { children: React.ReactNode }) => <div data-testid="flow-provider">{children}</div>,
+  Background: () => <div data-testid="background" />,
+  Controls: () => <div data-testid="controls" />,
+  Handle: () => <div data-testid="handle" />,
+  BackgroundVariant: { Dots: 'dots' },
+  Position: { Left: 'left', Right: 'right', Top: 'top', Bottom: 'bottom' },
+}));
+
 const sampleDb = {
   id: 1,
   projectId: 1,
@@ -409,5 +427,94 @@ describe('DatabaseDetail', () => {
     const saveLimitsBtn = screen.getByRole('button', { name: 'Save resource limits' });
     fireEvent.click(saveLimitsBtn);
     await waitFor(() => expect(api.databases.setLimits).toHaveBeenCalledWith(1, { cpuShares: undefined, memLimitMb: undefined }));
+  });
+
+  it('renders the Topology tab with visual schema', async () => {
+    mockOf(api.databases.get).mockResolvedValue(sampleDb as any);
+    mockOf(api.backups.list).mockResolvedValue([]);
+
+    renderRoute(<DatabaseDetail />, { path: '/databases/:id', route: '/databases/1' });
+    await screen.findByText('prod-postgres');
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Topology' }));
+    expect(await screen.findByText('Database Ecosystem & Mesh Topology')).toBeInTheDocument();
+    expect(screen.getByTestId('react-flow')).toBeInTheDocument();
+  });
+
+  it('launches and stops Web Studio from the Overview tab', async () => {
+    const windowOpenSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
+    mockOf(api.databases.get).mockResolvedValue({
+      ...sampleDb,
+      webGuiEnabled: false,
+      webGuiPort: null,
+      extensions: ['pgvector'],
+    } as any);
+    mockOf(api.databases.startStudio).mockResolvedValue({ ok: true, port: 18001, url: 'http://localhost:18001' } as any);
+    mockOf(api.databases.stopStudio).mockResolvedValue({ ok: true } as any);
+
+    renderRoute(<DatabaseDetail />, { path: '/databases/:id', route: '/databases/1' });
+    expect(await screen.findByText('Database Web Studio')).toBeInTheDocument();
+    expect(screen.getByText('pgvector')).toBeInTheDocument();
+
+    const launchBtn = screen.getByRole('button', { name: /Launch Web Studio/i });
+    fireEvent.click(launchBtn);
+    await waitFor(() => expect(api.databases.startStudio).toHaveBeenCalledWith(1));
+    expect(windowOpenSpy).toHaveBeenCalledWith('http://localhost:18001', '_blank');
+
+    // Error on launch
+    mockOf(api.databases.startStudio).mockRejectedValueOnce(new Error('fail'));
+    fireEvent.click(launchBtn);
+    await waitFor(() => expect(api.databases.startStudio).toHaveBeenCalledTimes(2));
+
+    // When Web Studio is already running
+    mockOf(api.databases.get).mockResolvedValue({
+      ...sampleDb,
+      webGuiEnabled: true,
+      webGuiPort: 18001,
+    } as any);
+    renderRoute(<DatabaseDetail />, { path: '/databases/:id', route: '/databases/1' });
+    expect(await screen.findByText('Running on :18001')).toBeInTheDocument();
+    expect(screen.getByText('Open Web Studio')).toBeInTheDocument();
+
+    const stopBtn = screen.getByRole('button', { name: /Stop Studio/i });
+    fireEvent.click(stopBtn);
+    await waitFor(() => expect(api.databases.stopStudio).toHaveBeenCalledWith(1));
+
+    // Error on stop
+    mockOf(api.databases.stopStudio).mockRejectedValueOnce(new Error('stop error'));
+    fireEvent.click(stopBtn);
+    await waitFor(() => expect(api.databases.stopStudio).toHaveBeenCalledTimes(2));
+  });
+
+  it('renders the Files tab with live database container file browser', async () => {
+    mockOf(api.databases.get).mockResolvedValue(sampleDb as any);
+    mockOf(api.containers.listFiles).mockResolvedValue({
+      path: '/',
+      entries: [{ name: 'postgresql.conf', type: 'file', sizeBytes: 2048, mode: '0644', modifiedAt: null }],
+    } as never);
+
+    renderRoute(<DatabaseDetail />, { path: '/databases/:id', route: '/databases/1' });
+    await screen.findByText('prod-postgres');
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Files' }));
+    expect(await screen.findByText('postgresql.conf')).toBeInTheDocument();
+    expect(screen.getByText('nd-db-prod-postgres')).toBeInTheDocument();
+  });
+
+  it('uses fallback container name in Files tab when containerName is undefined', async () => {
+    mockOf(api.databases.get).mockResolvedValue({
+      ...sampleDb,
+      id: 99,
+      slug: 'fallback-pg',
+      containerName: undefined,
+    } as any);
+    mockOf(api.containers.listFiles).mockResolvedValue({
+      path: '/',
+      entries: [{ name: 'fallback.conf', type: 'file', sizeBytes: 100, mode: '0644', modifiedAt: null }],
+    } as never);
+
+    renderRoute(<DatabaseDetail />, { path: '/databases/:id', route: '/databases/99' });
+    fireEvent.click(await screen.findByRole('tab', { name: 'Files' }));
+    expect(await screen.findByText('nd-db-fallback-pg')).toBeInTheDocument();
   });
 });

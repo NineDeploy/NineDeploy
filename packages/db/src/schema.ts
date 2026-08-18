@@ -1,5 +1,5 @@
 import { relations, sql } from 'drizzle-orm';
-import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import { type AnySQLiteColumn, index, integer, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 /**
  * NineDeploy — database schema (single source of truth).
@@ -20,6 +20,7 @@ const tsUpdatable = (name: string) =>
 
 // ─── enums (stored as TEXT) ───────────────────────────────────────────────
 export const userRole = ['admin', 'member'] as const;
+export const workspaceRole = ['owner', 'admin', 'member', 'viewer'] as const;
 export const serviceType = ['pm2', 'docker', 'compose'] as const;
 export const serviceStatus = [
   'idle',
@@ -132,9 +133,58 @@ export const sessions = sqliteTable(
   (t) => ({ userIdx: index('sessions_user_idx').on(t.userId) }),
 );
 
+// ─── workspaces & teams ───────────────────────────────────────────────────
+export const workspaces = sqliteTable('workspaces', {
+  id: id(),
+  name: text('name').notNull(),
+  slug: text('slug').notNull().unique(),
+  description: text('description'),
+  ownerId: integer('owner_id')
+    .notNull()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  createdAt: ts('created_at'),
+  updatedAt: tsUpdatable('updated_at'),
+});
+
+export const workspaceMembers = sqliteTable(
+  'workspace_members',
+  {
+    id: id(),
+    workspaceId: integer('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    role: text('role', { enum: workspaceRole }).notNull().default('member'),
+    createdAt: ts('created_at'),
+    updatedAt: tsUpdatable('updated_at'),
+  },
+  (t) => ({
+    workspaceUserIdx: uniqueIndex('workspace_members_workspace_user_idx').on(t.workspaceId, t.userId),
+    userIdx: index('workspace_members_user_idx').on(t.userId),
+  }),
+);
+
+export const oidcProviders = sqliteTable('oidc_providers', {
+  id: id(),
+  name: text('name').notNull(),
+  slug: text('slug').notNull().unique(),
+  issuerUrl: text('issuer_url'),
+  clientId: text('client_id').notNull(),
+  clientSecretEncrypted: text('client_secret_encrypted').notNull(),
+  scopes: text('scopes').notNull().default('openid profile email'),
+  enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+  autoEnroll: integer('auto_enroll', { mode: 'boolean' }).notNull().default(true),
+  defaultRole: text('default_role', { enum: userRole }).notNull().default('member'),
+  createdAt: ts('created_at'),
+  updatedAt: tsUpdatable('updated_at'),
+});
+
 // ─── projects & services ──────────────────────────────────────────────────
 export const projects = sqliteTable('projects', {
   id: id(),
+  workspaceId: integer('workspace_id').references(() => workspaces.id, { onDelete: 'cascade' }),
   name: text('name').notNull(),
   slug: text('slug').notNull().unique(),
   description: text('description'),
@@ -161,6 +211,8 @@ export const services = sqliteTable(
     // Optional container path to mount a persistent named volume (nd-svc-<slug>-data).
     volumeMount: text('volume_mount'),
     port: integer('port'),
+    // Direct host port mapping (e.g. 8080) for domain-less external access.
+    publishedPort: integer('published_port'),
     healthPath: text('health_path').notNull().default('/'),
     // Runtime identifier: pm2 process name or docker container name.
     runtimeId: text('runtime_id'),
@@ -177,6 +229,14 @@ export const services = sqliteTable(
     serverId: integer('server_id').references(() => servers.id, { onDelete: 'set null' }),
     // Compose deploys: the "main" service in the compose file (routing target).
     composeService: text('compose_service'),
+    // Ephemeral PR / MR Preview Deployments settings
+    previewDeploymentsEnabled: integer('preview_deployments_enabled', { mode: 'boolean' }).notNull().default(false),
+    previewAutoDestroyOnClose: integer('preview_auto_destroy_on_close', { mode: 'boolean' }).notNull().default(true),
+    previewDomainPattern: text('preview_domain_pattern'),
+    previewMaxActive: integer('preview_max_active').notNull().default(5),
+    isEphemeralPreview: integer('is_ephemeral_preview', { mode: 'boolean' }).notNull().default(false),
+    previewParentServiceId: integer('preview_parent_service_id').references((): AnySQLiteColumn => services.id, { onDelete: 'cascade' }),
+    prNumber: integer('pr_number'),
     createdAt: ts('created_at'),
     updatedAt: tsUpdatable('updated_at'),
   },
@@ -194,6 +254,10 @@ export const buildConfigs = sqliteTable('build_configs', {
   buildCmd: text('build_cmd'),
   startCmd: text('start_cmd'),
   dockerfilePath: text('dockerfile_path'),
+  // CI/CD Lifecycle Hooks
+  preDeployCmd: text('pre_deploy_cmd'),
+  postDeployCmd: text('post_deploy_cmd'),
+  preStopCmd: text('pre_stop_cmd'),
   // Container restart policy (docker --restart). 'on-failure:N' caps the
   // restart loop; 'always'/'unless-stopped'/'no' pass through verbatim.
   restartPolicy: text('restart_policy').notNull().default('unless-stopped'),
@@ -294,6 +358,14 @@ export const domains = sqliteTable(
     redirectWww: integer('redirect_www', { mode: 'boolean' }).notNull().default(false),
     // Custom response headers as a JSON array [{name, value}] → Traefik headers middleware.
     headers: text('headers'),
+    // Basic Auth credentials (JSON array of "user:htpasswd_hash" or "user:pass")
+    basicAuth: text('basic_auth'),
+    // IP Allowlist (comma-separated CIDRs e.g. "1.2.3.4/32, 10.0.0.0/8")
+    ipAllowlist: text('ip_allowlist'),
+    // Rate limit: average requests/second (0 or null = disabled)
+    rateLimitAverage: integer('rate_limit_average'),
+    // Rate limit: burst peak requests allowed (0 or null = disabled)
+    rateLimitBurst: integer('rate_limit_burst'),
     status: text('status', { enum: domainStatus }).notNull().default('pending'),
     // External DNS record id (e.g. Cloudflare) when the provider integration
     // created the record — null for provider-less/manual DNS.
@@ -395,7 +467,7 @@ export const settings = sqliteTable(
 );
 
 // ─── managed databases ────────────────────────────────────────────────────
-export const dbEngine = ['postgres', 'mysql', 'mariadb', 'redis', 'mongo'] as const;
+export const dbEngine = ['postgres', 'mysql', 'mariadb', 'redis', 'mongo', 'valkey', 'clickhouse', 'meilisearch', 'rabbitmq'] as const;
 export const dbStatus = ['creating', 'running', 'stopped', 'error', 'deleting'] as const;
 
 export const databases = sqliteTable(
@@ -418,6 +490,14 @@ export const databases = sqliteTable(
     // Resource limits (0 = unlimited).
     cpuShares: integer('cpu_shares').notNull().default(0),
     memLimitMb: integer('mem_limit_mb').notNull().default(0),
+    // Web Studio (GUI): Adminer / Redis Commander / pgweb container port & status
+    webGuiEnabled: integer('web_gui_enabled', { mode: 'boolean' }).notNull().default(false),
+    webGuiPort: integer('web_gui_port'),
+    // Installed extensions (e.g. ['pgvector', 'postgis'] for PostgreSQL)
+    extensions: text('extensions', { mode: 'json' })
+      .$type<string[]>()
+      .notNull()
+      .default(sql`'[]'`),
     createdAt: ts('created_at'),
     updatedAt: tsUpdatable('updated_at'),
   },
@@ -648,6 +728,30 @@ export const installedPlugins = sqliteTable(
   }),
 );
 
+// ─── log drains ───────────────────────────────────────────────────────────
+export const logDrainType = ['syslog', 'loki', 'vector', 'datadog', 'http'] as const;
+export const logDrainFormat = ['json', 'raw', 'rfc5424'] as const;
+
+export const logDrains = sqliteTable(
+  'log_drains',
+  {
+    id: id(),
+    name: text('name').notNull(),
+    type: text('type', { enum: logDrainType }).notNull().default('http'),
+    url: text('url').notNull(),
+    apiKeyEncrypted: text('api_key_encrypted'),
+    serviceId: integer('service_id').references(() => services.id, { onDelete: 'cascade' }),
+    enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+    format: text('format', { enum: logDrainFormat }).notNull().default('json'),
+    headersJson: text('headers_json'),
+    createdAt: ts('created_at'),
+    updatedAt: tsUpdatable('updated_at'),
+  },
+  (t) => ({
+    serviceIdx: index('log_drains_service_idx').on(t.serviceId),
+  }),
+);
+
 export const passwordResetTokensRelations = relations(passwordResetTokens, ({ one }) => ({
   user: one(users, { fields: [passwordResetTokens.userId], references: [users.id] }),
 }));
@@ -660,6 +764,19 @@ export const usersRelations = relations(users, ({ many }) => ({
   apiTokens: many(apiTokens),
   webauthnCredentials: many(webauthnCredentials),
   sessions: many(sessions),
+  ownedWorkspaces: many(workspaces),
+  workspaceMemberships: many(workspaceMembers),
+}));
+
+export const workspacesRelations = relations(workspaces, ({ one, many }) => ({
+  owner: one(users, { fields: [workspaces.ownerId], references: [users.id] }),
+  members: many(workspaceMembers),
+  projects: many(projects),
+}));
+
+export const workspaceMembersRelations = relations(workspaceMembers, ({ one }) => ({
+  workspace: one(workspaces, { fields: [workspaceMembers.workspaceId], references: [workspaces.id] }),
+  user: one(users, { fields: [workspaceMembers.userId], references: [users.id] }),
 }));
 
 export const webauthnCredentialsRelations = relations(webauthnCredentials, ({ one }) => ({
@@ -674,7 +791,8 @@ export const apiTokensRelations = relations(apiTokens, ({ one }) => ({
   user: one(users, { fields: [apiTokens.userId], references: [users.id] }),
 }));
 
-export const projectsRelations = relations(projects, ({ many }) => ({
+export const projectsRelations = relations(projects, ({ one, many }) => ({
+  workspace: one(workspaces, { fields: [projects.workspaceId], references: [workspaces.id] }),
   services: many(services),
 }));
 
@@ -734,10 +852,20 @@ export const alertStateRelations = relations(alertState, ({ one }) => ({
   rule: one(alertRules, { fields: [alertState.ruleId], references: [alertRules.id] }),
 }));
 
+export const logDrainsRelations = relations(logDrains, ({ one }) => ({
+  service: one(services, { fields: [logDrains.serviceId], references: [services.id] }),
+}));
+
 // ─── type exports ─────────────────────────────────────────────────────────
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 export type ApiToken = typeof apiTokens.$inferSelect;
+export type Workspace = typeof workspaces.$inferSelect;
+export type NewWorkspace = typeof workspaces.$inferInsert;
+export type WorkspaceMember = typeof workspaceMembers.$inferSelect;
+export type NewWorkspaceMember = typeof workspaceMembers.$inferInsert;
+export type OidcProvider = typeof oidcProviders.$inferSelect;
+export type NewOidcProvider = typeof oidcProviders.$inferInsert;
 export type Project = typeof projects.$inferSelect;
 export type Service = typeof services.$inferSelect;
 export type BuildConfig = typeof buildConfigs.$inferSelect;
@@ -769,3 +897,6 @@ export type ConfigEntry = typeof configEntries.$inferSelect;
 export type NewConfigEntry = typeof configEntries.$inferInsert;
 export type InstalledPlugin = typeof installedPlugins.$inferSelect;
 export type NewInstalledPlugin = typeof installedPlugins.$inferInsert;
+export type LogDrain = typeof logDrains.$inferSelect;
+export type NewLogDrain = typeof logDrains.$inferInsert;
+

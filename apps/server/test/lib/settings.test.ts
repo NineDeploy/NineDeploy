@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { settings } from '@ninedeploy/db';
-import { getSetting, getSettingString, setSetting, setSettingString } from '../../src/lib/settings.js';
+import { getSetting, getSettingJson, getSettingString, setSetting, setSettingJson, setSettingString } from '../../src/lib/settings.js';
 
 function makeDb(row?: { key: string; value: unknown }) {
   const findFirst = vi.fn(async () => row);
@@ -70,3 +70,28 @@ describe('setSettingString', () => {
     );
   });
 });
+
+describe('getSettingJson', () => {
+  it('returns parsed json from object or string, or fallback', async () => {
+    const { db: objDb } = makeDb({ key: 'cfg', value: { a: 1 } });
+    await expect(getSettingJson(objDb, 'cfg', null)).resolves.toEqual({ a: 1 });
+
+    const { db: strDb } = makeDb({ key: 'cfg', value: '{"b":2}' });
+    await expect(getSettingJson(strDb, 'cfg', null)).resolves.toEqual({ b: 2 });
+
+    const { db: badDb } = makeDb({ key: 'cfg', value: '{bad-json' });
+    await expect(getSettingJson(badDb, 'cfg', { fallback: true })).resolves.toEqual({ fallback: true });
+
+    const { db: emptyDb } = makeDb(undefined);
+    await expect(getSettingJson(emptyDb, 'cfg', null)).resolves.toBeNull();
+  });
+});
+
+describe('setSettingJson', () => {
+  it('upserts the json value', async () => {
+    const h = makeDb();
+    await setSettingJson(h.db, 'cfg', { test: true });
+    expect(h.insert).toHaveBeenCalledWith(settings);
+  });
+});
+

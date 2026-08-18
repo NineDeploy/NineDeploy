@@ -181,4 +181,35 @@ describe('projects routes', () => {
     expect(res.json()).toEqual({ ok: true });
     expect(auditMocks.audit).toHaveBeenCalledWith(expect.anything(), 1, 'project.delete', 'Acme');
   });
+
+  it('filters projects by workspaceId and creates/patches with workspaceId', async () => {
+    let projectDb: any = undefined;
+    const app = await appWith({
+      findMany: { projects: [projectRow({ id: 1, workspaceId: 5 })] },
+      insert: { projects: [projectRow({ id: 2, workspaceId: 5 })] },
+      findFirst: { projects: () => projectDb },
+      update: { projects: [projectRow({ id: 2, workspaceId: 7 })] },
+    });
+
+    const listRes = await app.inject({ method: 'GET', url: '/projects?workspaceId=5', headers: asUser() });
+    expect(listRes.statusCode).toBe(200);
+    expect(listRes.json()[0].workspaceId).toBe(5);
+
+    const createRes = await app.inject({
+      method: 'POST',
+      url: '/projects',
+      headers: { ...asUser(), 'content-type': 'application/json' },
+      payload: { name: 'Scoped Project', workspaceId: 5 },
+    });
+    expect(createRes.statusCode).toBe(200);
+
+    projectDb = projectRow({ id: 2, workspaceId: 5 });
+    const patchRes = await app.inject({
+      method: 'PATCH',
+      url: '/projects/2',
+      headers: { ...asUser(), 'content-type': 'application/json' },
+      payload: { workspaceId: 7 },
+    });
+    expect(patchRes.statusCode).toBe(200);
+  });
 });

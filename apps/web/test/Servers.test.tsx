@@ -62,6 +62,7 @@ describe('Servers', () => {
     } as never);
     renderWithProviders(<Servers />);
     fireEvent.click(await screen.findByRole('button', { name: 'Add server' }));
+    fireEvent.click(screen.getByRole('button', { name: /Manual Token Registration/i }));
     fireEvent.change(screen.getByPlaceholderText('edge-1'), { target: { value: 'edge-3' } });
     fireEvent.change(screen.getByPlaceholderText('10.0.0.5'), { target: { value: '10.0.0.7' } });
     fireEvent.click(screen.getByRole('button', { name: 'Register server' }));
@@ -74,6 +75,7 @@ describe('Servers', () => {
     mockOf(api.servers.list).mockResolvedValue([] as never);
     renderWithProviders(<Servers />);
     fireEvent.click(await screen.findByRole('button', { name: 'Add server' }));
+    fireEvent.click(screen.getByRole('button', { name: /Manual Token Registration/i }));
     expect(screen.getByRole('button', { name: 'Register server' })).toBeDisabled();
     fireEvent.submit(screen.getByPlaceholderText('edge-1').closest('form')!);
     expect(api.servers.create).not.toHaveBeenCalled();
@@ -109,6 +111,7 @@ describe('Servers', () => {
     mockOf(api.servers.create).mockRejectedValue(new Error('dup') as never);
     renderWithProviders(<Servers />);
     fireEvent.click(await screen.findByRole('button', { name: 'Add server' }));
+    fireEvent.click(screen.getByRole('button', { name: /Manual Token Registration/i }));
     fireEvent.change(screen.getByPlaceholderText('edge-1'), { target: { value: 'x' } });
     fireEvent.change(screen.getByPlaceholderText('10.0.0.5'), { target: { value: 'h' } });
     fireEvent.click(screen.getByRole('button', { name: 'Register server' }));
@@ -123,6 +126,7 @@ describe('Servers', () => {
     renderWithProviders(<Servers />);
     expect(await screen.findByText('error')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Add server' }));
+    fireEvent.click(screen.getByRole('button', { name: /Manual Token Registration/i }));
     fireEvent.change(screen.getByPlaceholderText('edge-1'), { target: { value: 'x' } });
     fireEvent.change(screen.getByPlaceholderText('10.0.0.5'), { target: { value: 'h' } });
     fireEvent.submit(screen.getByPlaceholderText('edge-1').closest('form')!);
@@ -136,6 +140,7 @@ describe('Servers', () => {
     } as never);
     renderWithProviders(<Servers />);
     fireEvent.click(await screen.findByRole('button', { name: 'Add server' }));
+    fireEvent.click(screen.getByRole('button', { name: /Manual Token Registration/i }));
     fireEvent.change(screen.getByPlaceholderText('edge-1'), { target: { value: 'x' } });
     fireEvent.change(screen.getByPlaceholderText('10.0.0.5'), { target: { value: 'h' } });
     fireEvent.change(screen.getByDisplayValue('4600'), { target: { value: '' } });
@@ -152,6 +157,7 @@ describe('Servers', () => {
     } as never);
     renderWithProviders(<Servers />);
     fireEvent.click(await screen.findByRole('button', { name: 'Add server' }));
+    fireEvent.click(screen.getByRole('button', { name: /Manual Token Registration/i }));
     fireEvent.change(screen.getByPlaceholderText('edge-1'), { target: { value: 'x' } });
     fireEvent.change(screen.getByPlaceholderText('10.0.0.5'), { target: { value: 'h' } });
     fireEvent.change(screen.getByDisplayValue('4600'), { target: { value: '4700' } });
@@ -166,6 +172,7 @@ describe('Servers', () => {
     mockOf(api.servers.list).mockResolvedValue([] as never);
     renderWithProviders(<Servers />);
     fireEvent.click(await screen.findByRole('button', { name: 'Add server' }));
+    fireEvent.click(screen.getByRole('button', { name: /Manual Token Registration/i }));
     fireEvent.click(screen.getByText('Cancel'));
     expect(screen.queryByPlaceholderText('edge-1')).not.toBeInTheDocument();
 
@@ -174,6 +181,7 @@ describe('Servers', () => {
       id: 4, token: 't', tokenSha256: 'b'.repeat(64), agentCommand: 'x',
     } as never);
     fireEvent.click(screen.getByRole('button', { name: 'Add server' }));
+    fireEvent.click(screen.getByRole('button', { name: /Manual Token Registration/i }));
     fireEvent.change(screen.getByPlaceholderText('edge-1'), { target: { value: 'x' } });
     fireEvent.change(screen.getByPlaceholderText('10.0.0.5'), { target: { value: 'h' } });
     fireEvent.click(screen.getByRole('button', { name: 'Register server' }));
@@ -192,6 +200,7 @@ describe('Servers', () => {
     });
     renderWithProviders(<Servers />);
     fireEvent.click(await screen.findByRole('button', { name: 'Add server' }));
+    fireEvent.click(screen.getByRole('button', { name: /Manual Token Registration/i }));
     fireEvent.change(screen.getByPlaceholderText('edge-1'), { target: { value: 'x' } });
     fireEvent.change(screen.getByPlaceholderText('10.0.0.5'), { target: { value: 'h' } });
     fireEvent.click(screen.getByRole('button', { name: 'Register server' }));
@@ -213,6 +222,7 @@ describe('Servers', () => {
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
     renderWithProviders(<Servers />);
     fireEvent.click(await screen.findByRole('button', { name: 'Add server' }));
+    fireEvent.click(screen.getByRole('button', { name: /Manual Token Registration/i }));
     fireEvent.change(screen.getByPlaceholderText('edge-1'), { target: { value: 'x' } });
     fireEvent.change(screen.getByPlaceholderText('10.0.0.5'), { target: { value: 'h' } });
     fireEvent.click(screen.getByRole('button', { name: 'Register server' }));
@@ -235,6 +245,7 @@ describe('Servers', () => {
 
     // Open add server and switch tabs
     fireEvent.click(screen.getByRole('button', { name: 'Add server' }));
+    fireEvent.click(screen.getByRole('button', { name: /Manual Token Registration/i }));
     fireEvent.change(screen.getByPlaceholderText('edge-1'), { target: { value: 'x' } });
     fireEvent.change(screen.getByPlaceholderText('10.0.0.5'), { target: { value: 'h' } });
     fireEvent.click(screen.getByRole('button', { name: 'Register server' }));
@@ -302,5 +313,276 @@ describe('Servers', () => {
     mockOf(api.servers.reject).mockRejectedValueOnce(new Error('fail'));
     fireEvent.click(screen.getByRole('button', { name: /Reject/i }));
     await waitFor(() => expect(api.servers.reject).toHaveBeenCalledTimes(2));
+  });
+
+  it('handles SSH Zero-Touch Connection probe success and failure', async () => {
+    mockOf(api.servers.list).mockResolvedValue([] as never);
+    mockOf(api.servers.sshTest).mockResolvedValue({
+      ok: true,
+      message: 'SSH probe successful',
+      os: 'Ubuntu 24.04 LTS',
+      dockerInstalled: true,
+      dockerVersion: '27.1.1',
+      latencyMs: 18,
+    } as never);
+
+    renderWithProviders(<Servers />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Add server' }));
+
+    // Form inputs in SSH mode (default)
+    fireEvent.change(screen.getByPlaceholderText('production-vps-1'), { target: { value: 'my-vps' } });
+    fireEvent.change(screen.getByPlaceholderText('195.201.45.10'), { target: { value: '195.201.45.99' } });
+    fireEvent.change(screen.getByPlaceholderText('22'), { target: { value: '2222' } });
+    fireEvent.change(screen.getByPlaceholderText('root'), { target: { value: 'ubuntu' } });
+
+    // Test SSH probe
+    fireEvent.click(screen.getByRole('button', { name: /Test SSH Connection/i }));
+    await waitFor(() => expect(api.servers.sshTest).toHaveBeenCalled());
+    expect(await screen.findByText('SSH probe successful')).toBeInTheDocument();
+    expect(screen.getByText('Ubuntu 24.04 LTS')).toBeInTheDocument();
+
+    // Switch to password auth
+    fireEvent.click(screen.getByRole('button', { name: /SSH Password/i }));
+    fireEvent.change(screen.getByPlaceholderText('••••••••••••'), { target: { value: 'secret123' } });
+
+    // Switch back to key auth
+    fireEvent.click(screen.getByRole('button', { name: /SSH Private Key/i }));
+    fireEvent.change(screen.getByPlaceholderText(/BEGIN OPENSSH PRIVATE KEY/), { target: { value: 'fake-key' } });
+
+    // Toggle install docker checkbox
+    const dockerCheck = screen.getByLabelText(/Install Docker if missing/i);
+    fireEvent.click(dockerCheck);
+    expect(dockerCheck).not.toBeChecked();
+
+    // Agent port change
+    fireEvent.change(screen.getByPlaceholderText('4600'), { target: { value: '4700' } });
+
+    // Switch between SSH and Manual tabs
+    fireEvent.click(screen.getByRole('button', { name: /Manual Token Registration/i }));
+    fireEvent.click(screen.getByRole('button', { name: /SSH Zero-Touch Onboarding/i }));
+
+    // Close form button in header
+    fireEvent.click(screen.getByRole('button', { name: 'Close Form' }));
+    expect(screen.queryByPlaceholderText('production-vps-1')).not.toBeInTheDocument();
+
+    // Reopen form for probe tests
+    fireEvent.click(screen.getByRole('button', { name: 'Add server' }));
+    fireEvent.change(screen.getByPlaceholderText('195.201.45.10'), { target: { value: '195.201.45.99' } });
+
+    // Probe failure case
+    mockOf(api.servers.sshTest).mockResolvedValueOnce({
+      ok: false,
+      message: 'Authentication failed',
+    } as never);
+    fireEvent.click(screen.getByRole('button', { name: /Test SSH Connection/i }));
+    await waitFor(() => expect(screen.getByText('Authentication failed')).toBeInTheDocument());
+
+    // Probe success with Docker not installed
+    mockOf(api.servers.sshTest).mockResolvedValueOnce({
+      ok: true,
+      message: 'Probe ok without docker',
+      os: 'Debian 12',
+      dockerInstalled: false,
+      latencyMs: 12,
+    } as never);
+    fireEvent.click(screen.getByRole('button', { name: /Test SSH Connection/i }));
+    expect(await screen.findByText('Not Installed')).toBeInTheDocument();
+
+    // Probe error throw (Error and string)
+    mockOf(api.servers.sshTest).mockRejectedValueOnce(new Error('Network timeout'));
+    fireEvent.click(screen.getByRole('button', { name: /Test SSH Connection/i }));
+    await waitFor(() => expect(screen.getByText('Network timeout')).toBeInTheDocument());
+
+    mockOf(api.servers.sshTest).mockRejectedValueOnce('raw probe string rejection');
+    fireEvent.click(screen.getByRole('button', { name: /Test SSH Connection/i }));
+    await waitFor(() => expect(screen.getByText('SSH probe failed')).toBeInTheDocument());
+
+    // Probe with empty port/user and password auth
+    fireEvent.change(screen.getByPlaceholderText('22'), { target: { value: '' } });
+    fireEvent.change(screen.getByPlaceholderText('root'), { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: /SSH Password/i }));
+    fireEvent.change(screen.getByPlaceholderText('••••••••••••'), { target: { value: 'probe-pass' } });
+
+    mockOf(api.servers.sshTest).mockResolvedValueOnce({ ok: true, message: 'Password probe ok', latencyMs: 5 });
+    fireEvent.click(screen.getByRole('button', { name: /Test SSH Connection/i }));
+    await waitFor(() => expect(api.servers.sshTest).toHaveBeenCalledWith(expect.objectContaining({
+      sshPort: 22,
+      sshUser: 'root',
+      authType: 'password',
+      sshPassword: 'probe-pass',
+    })));
+
+    // Probe in-flight spinner state
+    let resolveProbe!: (v: unknown) => void;
+    const probePromise = new Promise((resolve) => { resolveProbe = resolve; });
+    mockOf(api.servers.sshTest).mockImplementationOnce(() => probePromise);
+    fireEvent.click(screen.getByRole('button', { name: /Test SSH Connection/i }));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /Test SSH Connection/i }).querySelector('.animate-spin')).toBeInTheDocument(),
+    );
+    resolveProbe({ ok: true, message: 'Probe in-flight completed ok' });
+    await waitFor(() => expect(screen.getByText('Probe in-flight completed ok')).toBeInTheDocument());
+  });
+
+  it('runs automated SSH bootstrap onboarding successfully with password auth and default fallbacks', async () => {
+    mockOf(api.servers.list).mockResolvedValue([] as never);
+    mockOf(api.servers.sshBootstrap).mockResolvedValue({
+      ok: true,
+      serverId: 15,
+      serverName: 'onboarded-vps',
+      steps: [
+        { step: 'connecting', status: 'success', message: 'Connected', timestamp: '2026-01-01T00:00:00Z' },
+        { step: 'docker_install', status: 'success', message: 'Docker installed', timestamp: '2026-01-01T00:00:00Z' },
+        { step: 'done', status: 'success', message: 'Node onboarded', timestamp: '2026-01-01T00:00:00Z' },
+      ],
+      logs: ['[CONNECTING] SUCCESS: Connected', '[DONE] SUCCESS: Node onboarded'],
+    } as never);
+
+    renderWithProviders(<Servers />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Add server' }));
+
+    fireEvent.change(screen.getByPlaceholderText('production-vps-1'), { target: { value: 'onboarded-vps' } });
+    fireEvent.change(screen.getByPlaceholderText('195.201.45.10'), { target: { value: '1.2.3.4' } });
+    fireEvent.change(screen.getByPlaceholderText('22'), { target: { value: '' } });
+    fireEvent.change(screen.getByPlaceholderText('root'), { target: { value: '' } });
+    fireEvent.change(screen.getByPlaceholderText('4600'), { target: { value: '' } });
+
+    // Switch to password auth
+    fireEvent.click(screen.getByRole('button', { name: /SSH Password/i }));
+    fireEvent.change(screen.getByPlaceholderText('••••••••••••'), { target: { value: 'secretPass!' } });
+
+    fireEvent.click(screen.getByRole('button', { name: /Start Automated Onboarding/i }));
+    await waitFor(() => expect(api.servers.sshBootstrap).toHaveBeenCalledWith({
+      name: 'onboarded-vps',
+      host: '1.2.3.4',
+      sshPort: 22,
+      sshUser: 'root',
+      authType: 'password',
+      sshKey: undefined,
+      sshPassword: 'secretPass!',
+      installDocker: true,
+      agentPort: 4600,
+    }));
+    expect(await screen.findByText('Zero-Touch Server Onboarding')).toBeInTheDocument();
+    expect(screen.getByText('Node onboarded')).toBeInTheDocument();
+    expect(screen.getByText('[DONE] SUCCESS: Node onboarded')).toBeInTheDocument();
+
+    // Close modal via Done button
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+    await waitFor(() => expect(screen.queryByText('Zero-Touch Server Onboarding')).not.toBeInTheDocument());
+  });
+
+  it('handles automated SSH bootstrap failure with Error and string', async () => {
+    mockOf(api.servers.list).mockResolvedValue([] as never);
+    mockOf(api.servers.sshBootstrap).mockRejectedValueOnce(new Error('Fatal SSH error'));
+
+    renderWithProviders(<Servers />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Add server' }));
+
+    fireEvent.change(screen.getByPlaceholderText('production-vps-1'), { target: { value: 'fail-vps' } });
+    fireEvent.change(screen.getByPlaceholderText('195.201.45.10'), { target: { value: '1.2.3.5' } });
+
+    fireEvent.click(screen.getByRole('button', { name: /Start Automated Onboarding/i }));
+    await waitFor(() => expect(api.servers.sshBootstrap).toHaveBeenCalled());
+    expect(await screen.findByText('Fatal SSH error')).toBeInTheDocument();
+
+    // Close via modal top-right close dialog button
+    fireEvent.click(screen.getAllByLabelText('Close dialog')[0]!);
+    await waitFor(() => expect(screen.queryByText('Fatal SSH error')).not.toBeInTheDocument());
+
+    // Non-Error failure string
+    fireEvent.click(screen.getByRole('button', { name: 'Add server' }));
+    fireEvent.change(screen.getByPlaceholderText('production-vps-1'), { target: { value: 'fail-str-vps' } });
+    fireEvent.change(screen.getByPlaceholderText('195.201.45.10'), { target: { value: '1.2.3.6' } });
+
+    mockOf(api.servers.sshBootstrap).mockRejectedValueOnce('raw failure string');
+    fireEvent.click(screen.getByRole('button', { name: /Start Automated Onboarding/i }));
+    await waitFor(() => expect(screen.getByText('Bootstrap failed')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+  });
+
+  it('views historical bootstrap logs for an existing server and closes via top button', async () => {
+    mockOf(api.servers.list).mockResolvedValue([
+      { id: 1, name: 'edge-1', host: '10.0.0.5', port: 4600, status: 'online', lastSeenAt: '2026-01-01T00:00:00Z' },
+    ] as never);
+    mockOf(api.servers.bootstrapLogs).mockResolvedValue({
+      logs: ['[INIT] Bootstrapped on 2026-01-01', '[DOCKER] Docker 27.1.1', '[DONE] Online'],
+    } as never);
+
+    renderWithProviders(<Servers />);
+    expect(await screen.findByText('edge-1')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTitle('View bootstrap logs'));
+    await waitFor(() => expect(api.servers.bootstrapLogs).toHaveBeenCalledWith(1));
+    expect(await screen.findByText('Bootstrap Logs: edge-1')).toBeInTheDocument();
+    expect(screen.getByText('[INIT] Bootstrapped on 2026-01-01')).toBeInTheDocument();
+
+    // Close logs modal via top button
+    fireEvent.click(screen.getAllByLabelText('Close dialog')[0]!);
+    await waitFor(() => expect(screen.queryByText('Bootstrap Logs: edge-1')).not.toBeInTheDocument());
+
+    // When logs are empty
+    mockOf(api.servers.bootstrapLogs).mockResolvedValueOnce({ logs: [] } as never);
+    fireEvent.click(screen.getByTitle('View bootstrap logs'));
+    expect(await screen.findByText(/No bootstrap execution logs/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Close Logs' }));
+  });
+
+  it('shows historical bootstrap logs modal when server name is blank', async () => {
+    mockOf(api.servers.list).mockResolvedValue([
+      { id: 2, name: '', host: '10.0.0.6', port: 4600, status: 'online', lastSeenAt: null },
+    ] as never);
+    mockOf(api.servers.bootstrapLogs).mockResolvedValue({
+      logs: ['[LOG] Line 1'],
+    } as never);
+
+    renderWithProviders(<Servers />);
+    expect(await screen.findByText('10.0.0.6:4600')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTitle('View bootstrap logs'));
+    expect(await screen.findByText('Bootstrap Logs:')).toBeInTheDocument();
+    expect(await screen.findByText('[LOG] Line 1')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Close Logs' }));
+  });
+
+  it('renders in-flight spinner step and prevents modal close while bootstrap is running', async () => {
+    mockOf(api.servers.list).mockResolvedValue([] as never);
+    let resolveBootstrap: (v: unknown) => void;
+    mockOf(api.servers.sshBootstrap).mockImplementationOnce(
+      () => new Promise((resolve) => { resolveBootstrap = resolve; }),
+    );
+
+    renderWithProviders(<Servers />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Add server' }));
+    fireEvent.change(screen.getByPlaceholderText('production-vps-1'), { target: { value: '' } });
+    fireEvent.change(screen.getByPlaceholderText('195.201.45.10'), { target: { value: '1.2.3.9' } });
+
+    // Submit form (with empty name to test 'remote-node' fallback)
+    fireEvent.submit(screen.getByPlaceholderText('production-vps-1').closest('form')!);
+    // Submit was blocked by disabled/required check; let's fill name and clear it
+    fireEvent.change(screen.getByPlaceholderText('production-vps-1'), { target: { value: 'node-temp' } });
+    fireEvent.click(screen.getByRole('button', { name: /Start Automated Onboarding/i }));
+
+    expect(await screen.findByText('Zero-Touch Server Onboarding')).toBeInTheDocument();
+    expect(screen.getByText(/Bootstrapping remote server/)).toBeInTheDocument();
+
+    // Try closing while running (no-op)
+    fireEvent.click(screen.getAllByLabelText('Close dialog')[0]!);
+    expect(screen.getByText('Zero-Touch Server Onboarding')).toBeInTheDocument();
+
+    // Resolve bootstrap with step status 'running' and status 'failed'
+    resolveBootstrap!({
+      ok: true,
+      serverId: 20,
+      steps: [
+        { step: 'connecting', status: 'running', message: 'Connecting to host…', timestamp: '2026-01-01T00:00:00Z' },
+        { step: 'agent_deploy', status: 'failed', message: 'Failed agent deploy', timestamp: '2026-01-01T00:00:00Z' },
+      ],
+      logs: ['[CONNECTING] IN PROGRESS'],
+    });
+
+    expect(await screen.findByText('Connecting to host…')).toBeInTheDocument();
+    expect(screen.getByText('Failed agent deploy')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
   });
 });

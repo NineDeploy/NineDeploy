@@ -94,9 +94,15 @@ export function createFakeDb(opts: FakeDbOpts = {}): DB {
               /* callback is query-shape only */
             }
           }
-          return resolveRows(opts.findMany?.[name], [], args);
+          const snake = name.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
+          const target = opts.findMany?.[name] !== undefined ? opts.findMany[name] : opts.findMany?.[snake];
+          return resolveRows(target, [], args);
         },
-        findFirst: (args?: unknown) => resolveRow(opts.findFirst?.[name], undefined, args),
+        findFirst: (args?: unknown) => {
+          const snake = name.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
+          const target = opts.findFirst?.[name] !== undefined ? opts.findFirst[name] : opts.findFirst?.[snake];
+          return resolveRow(target, undefined, args);
+        },
       };
     },
   });
@@ -362,11 +368,39 @@ export const svcRow = (over: Record<string, unknown> = {}) => ({
   sourceId: null,
   image: null,
   volumeMount: null,
+  composeService: null,
   port: 3000,
   healthPath: '/',
   runtimeId: null,
   cpuShares: 0,
   memLimitMb: 0,
+  publishedPort: null,
+  previewDeploymentsEnabled: false,
+  previewAutoDestroyOnClose: true,
+  previewDomainPattern: null,
+  previewMaxActive: 5,
+  isEphemeralPreview: false,
+  previewParentServiceId: null,
+  prNumber: null,
+  createdAt: NOW,
+  updatedAt: NOW,
+  ...over,
+});
+
+export const buildConfigRow = (over: Record<string, unknown> = {}) => ({
+  id: 1,
+  serviceId: 1,
+  buildPack: 'auto',
+  baseDir: '/',
+  installCmd: null,
+  buildCmd: null,
+  startCmd: null,
+  dockerfilePath: null,
+  preDeployCmd: null,
+  postDeployCmd: null,
+  preStopCmd: null,
+  restartPolicy: 'unless-stopped',
+  stopGraceSeconds: 5,
   createdAt: NOW,
   updatedAt: NOW,
   ...over,
@@ -389,6 +423,9 @@ export const dbRow = (over: Record<string, unknown> = {}) => ({
   volumeName: 'nd-db-pg-data',
   cpuShares: 0,
   memLimitMb: 0,
+  webGuiEnabled: false,
+  webGuiPort: null,
+  extensions: [],
   createdAt: NOW,
   updatedAt: NOW,
   ...over,
@@ -416,6 +453,11 @@ export const domainRow = (over: Record<string, unknown> = {}) => ({
   path: '/',
   ssl: false,
   redirectWww: false,
+  headers: null,
+  basicAuth: null,
+  ipAllowlist: null,
+  rateLimitAverage: null,
+  rateLimitBurst: null,
   status: 'active',
   createdAt: NOW,
   updatedAt: NOW,
@@ -559,16 +601,19 @@ export const metricRow = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-export const buildConfigRow = (over: Record<string, unknown> = {}) => ({
+export const drainRow = (over: Record<string, unknown> = {}) => ({
   id: 1,
-  serviceId: 1,
-  buildPack: 'auto',
-  baseDir: '/',
-  installCmd: null,
-  buildCmd: null,
-  startCmd: null,
-  dockerfilePath: null,
+  name: 'Datadog Prod',
+  type: 'datadog',
+  url: 'https://http-intake.logs.datadoghq.com',
+  apiKeyEncrypted: null,
+  serviceId: null,
+  enabled: true,
+  format: 'json',
+  headersJson: null,
   createdAt: NOW,
   updatedAt: NOW,
   ...over,
 });
+
+

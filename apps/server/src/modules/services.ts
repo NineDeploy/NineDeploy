@@ -31,9 +31,17 @@ function serialize(s: Service) {
     runtimeId: s.runtimeId,
     healthPath: s.healthPath,
     port: s.port,
+    publishedPort: s.publishedPort ?? null,
     autoUrl: config.wildcardDomain ? `${s.slug}.${config.wildcardDomain}` : null,
     cpuShares: s.cpuShares,
     memLimitMb: s.memLimitMb,
+    previewDeploymentsEnabled: s.previewDeploymentsEnabled,
+    previewAutoDestroyOnClose: s.previewAutoDestroyOnClose,
+    previewDomainPattern: s.previewDomainPattern,
+    previewMaxActive: s.previewMaxActive,
+    isEphemeralPreview: s.isEphemeralPreview,
+    previewParentServiceId: s.previewParentServiceId,
+    prNumber: s.prNumber,
     createdAt: s.createdAt.toISOString(),
     updatedAt: s.updatedAt.toISOString(),
   };
@@ -48,6 +56,9 @@ function serializeBuild(b: typeof buildConfigs.$inferSelect) {
     buildCmd: b.buildCmd,
     startCmd: b.startCmd,
     dockerfilePath: b.dockerfilePath,
+    preDeployCmd: b.preDeployCmd,
+    postDeployCmd: b.postDeployCmd,
+    preStopCmd: b.preStopCmd,
     restartPolicy: b.restartPolicy,
     stopGraceSeconds: b.stopGraceSeconds,
   };
@@ -93,6 +104,11 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
         cpuShares: input.cpuShares ?? 0,
         memLimitMb: input.memLimitMb ?? 0,
         port: input.port ?? null,
+        publishedPort: input.publishedPort ?? null,
+        previewDeploymentsEnabled: input.previewDeploymentsEnabled ?? false,
+        previewAutoDestroyOnClose: input.previewAutoDestroyOnClose ?? true,
+        previewDomainPattern: input.previewDomainPattern ?? null,
+        previewMaxActive: input.previewMaxActive ?? 5,
       })
       .returning();
     if (!svc) throw notFound('Could not create service');
@@ -106,6 +122,9 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
         buildCmd: input.build.buildCmd ?? null,
         startCmd: input.build.startCmd ?? null,
         dockerfilePath: input.build.dockerfilePath ?? null,
+        preDeployCmd: input.build.preDeployCmd ?? null,
+        postDeployCmd: input.build.postDeployCmd ?? null,
+        preStopCmd: input.build.preStopCmd ?? null,
         restartPolicy: input.build.restartPolicy ?? 'unless-stopped',
         stopGraceSeconds: input.build.stopGraceSeconds ?? 5,
       });
@@ -135,7 +154,7 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
       if (build.baseDir !== undefined) values.baseDir = build.baseDir;
       if (build.restartPolicy !== undefined) values.restartPolicy = build.restartPolicy;
       if (build.stopGraceSeconds !== undefined) values.stopGraceSeconds = build.stopGraceSeconds;
-      for (const key of ['installCmd', 'buildCmd', 'startCmd', 'dockerfilePath'] as const) {
+      for (const key of ['installCmd', 'buildCmd', 'startCmd', 'dockerfilePath', 'preDeployCmd', 'postDeployCmd', 'preStopCmd'] as const) {
         const v = build[key];
         if (v !== undefined) values[key] = v === '' ? null : v;
       }

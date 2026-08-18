@@ -147,7 +147,11 @@ export function ServicesList() {
                       <span className="flex items-center gap-1">
                         <GitBranch size={12} /> {s.branch}
                       </span>
-                      {s.port && <span className="font-mono">:{s.port}</span>}
+                      {s.publishedPort ? (
+                        <span className="font-mono text-emerald-400">:{s.publishedPort}</span>
+                      ) : s.port ? (
+                        <span className="font-mono">:{s.port}</span>
+                      ) : null}
                     </div>
                   </Card>
                 </Link>

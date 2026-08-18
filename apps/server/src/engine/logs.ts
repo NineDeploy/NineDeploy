@@ -8,6 +8,11 @@ import { config } from '../config.js';
  * subscribers (the WebSocket log stream).
  */
 class LogBus extends EventEmitter {
+  constructor() {
+    super();
+    this.setMaxListeners(0);
+  }
+
   publish(deploymentId: number, line: string): void {
     const file = path.join(config.paths.logsDir, `${deploymentId}.log`);
     try {

@@ -4,6 +4,7 @@ import { Compass } from 'lucide-react';
 import { Layout } from './components/Layout.js';
 import { Button, Card, EmptyState, FullScreenSpinner } from './components/ui.js';
 import { useAuth } from './lib/auth.js';
+import { WorkspaceProvider } from './lib/workspace.js';
 import { Login } from './routes/Login.js';
 import { ForgotPassword } from './routes/ForgotPassword.js';
 import { ResetPassword } from './routes/ResetPassword.js';
@@ -23,6 +24,7 @@ import { Sources } from './routes/Sources.js';
 import { Topology } from './routes/Topology.js';
 import { Tunnels } from './routes/Tunnels.js';
 import { Users } from './routes/Users.js';
+import { Workspaces } from './routes/Workspaces.js';
 import { Volumes } from './routes/Volumes.js';
 import { Networks } from './routes/Networks.js';
 import { DockerDashboard } from './routes/Docker.js';
@@ -62,12 +64,15 @@ export default function App() {
       <Route
         element={
           <RequireAuth>
-            <Layout />
+            <WorkspaceProvider>
+              <Layout />
+            </WorkspaceProvider>
           </RequireAuth>
         }
       >
         <Route index element={<Dashboard />} />
         <Route path="dashboard" element={<Navigate to="/" replace />} />
+        <Route path="workspaces" element={<Workspaces />} />
         <Route path="services" element={<ServicesList />} />
         <Route path="hub" element={<Hub />} />
         <Route path="databases" element={<Databases />} />

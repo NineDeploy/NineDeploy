@@ -402,6 +402,18 @@ describe('createClient', () => {
       await client.servers.reject(2);
       expect(last(calls).url).toBe('/v1/servers/2/reject');
       expect(last(calls).init.method).toBe('POST');
+
+      await client.servers.sshTest({ host: '192.168.1.50', authType: 'key' });
+      expect(last(calls).url).toBe('/v1/servers/ssh-test');
+      expect(last(calls).init.method).toBe('POST');
+
+      await client.servers.sshBootstrap({ name: 'Node A', host: '192.168.1.50', authType: 'key', installDocker: true });
+      expect(last(calls).url).toBe('/v1/servers/ssh-bootstrap');
+      expect(last(calls).init.method).toBe('POST');
+
+      await client.servers.bootstrapLogs(1);
+      expect(last(calls).url).toBe('/v1/servers/1/bootstrap-logs');
+      expect(last(calls).init.method).toBe('GET');
     });
   });
 
@@ -695,6 +707,19 @@ describe('createClient', () => {
       await client.volumes.prune();
       expect(last(calls)).toMatchObject({ url: '/v1/volumes/prune', init: { method: 'POST' } });
 
+      await client.containers.listFiles('nd-svc-web-1', '/app');
+      expect(last(calls).url).toBe('/v1/containers/nd-svc-web-1/files?path=%2Fapp');
+      await client.containers.readFile('nd-svc-web-1', '/app/config.json');
+      expect(last(calls).url).toBe('/v1/containers/nd-svc-web-1/files/content?path=%2Fapp%2Fconfig.json');
+      await client.containers.writeFile('nd-svc-web-1', { path: '/app/config.json', contentBase64: 'e30=' });
+      expect(last(calls)).toMatchObject({ url: '/v1/containers/nd-svc-web-1/files', init: { method: 'PUT' } });
+      await client.containers.mkdir('nd-svc-web-1', { path: '/app/logs' });
+      expect(last(calls)).toMatchObject({ url: '/v1/containers/nd-svc-web-1/files/dir', init: { method: 'POST' } });
+      await client.containers.deleteFile('nd-svc-web-1', '/app/tmp');
+      expect(last(calls).url).toBe('/v1/containers/nd-svc-web-1/files?path=%2Fapp%2Ftmp');
+      await client.containers.listFiles('nd-svc-web-1'); // default path branch
+      expect(last(calls).url).toBe('/v1/containers/nd-svc-web-1/files?path=%2F');
+
       await client.users.create({ email: 'x@y.dev', password: '12345678', role: 'admin' });
       expect(last(calls)).toMatchObject({ url: '/v1/users', init: { method: 'POST' } });
 
@@ -915,6 +940,13 @@ describe('createClient', () => {
       await client.databases.setLimits(1, { cpuShares: 512, memLimitMb: 1024 });
       expect(last(calls)).toMatchObject({ url: '/v1/databases/1/limits', init: { method: 'PATCH' } });
       expect(JSON.parse(last(calls).init.body ?? '{}')).toEqual({ cpuShares: 512, memLimitMb: 1024 });
+
+      await client.databases.startStudio(1, 18055);
+      expect(last(calls)).toMatchObject({ url: '/v1/databases/1/studio', init: { method: 'POST' } });
+      expect(JSON.parse(last(calls).init.body ?? '{}')).toEqual({ port: 18055 });
+
+      await client.databases.stopStudio(1);
+      expect(last(calls)).toMatchObject({ url: '/v1/databases/1/studio', init: { method: 'DELETE' } });
     });
   });
 
@@ -1157,6 +1189,15 @@ describe('createClient', () => {
     });
   });
 
+  describe('demo', () => {
+    it('hits the demo seed endpoint', async () => {
+      const { fetchMock, calls } = makeFetch(() => ok({ ok: true, projectId: 1, projectName: 'Demo', services: [] }));
+      const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
+      await client.demo.seed();
+      expect(last(calls)).toMatchObject({ url: '/v1/demo/seed', init: { method: 'POST' } });
+    });
+  });
+
   describe('health', () => {
     it('hits the health endpoint', async () => {
       const { fetchMock, calls } = makeFetch(() => ok({ status: 'ok' }));
@@ -1202,6 +1243,145 @@ describe('createClient', () => {
         const err = e as { code?: string; message?: string; name?: string };
         expect(err.code).toBe('unknown_error'); // (body)?.error === undefined → code ?? 'unknown_error'
       }
+    });
+  });
+
+  describe('logDrains', () => {
+    it('exercises list, get, create, update, remove, and test', async () => {
+      const { fetchMock, calls } = makeFetch(() => ok({}));
+      const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
+
+      await client.logDrains.list();
+      expect(last(calls)).toMatchObject({ url: '/v1/log-drains', init: { method: 'GET' } });
+
+      await client.logDrains.list({ serviceId: 5 });
+      expect(last(calls)).toMatchObject({ url: '/v1/log-drains?serviceId=5', init: { method: 'GET' } });
+
+      await client.logDrains.get(1);
+      expect(last(calls)).toMatchObject({ url: '/v1/log-drains/1', init: { method: 'GET' } });
+
+      await client.logDrains.create({ name: 'Datadog Drain', type: 'datadog', url: 'https://http-intake.logs.datadoghq.com' });
+      expect(last(calls)).toMatchObject({ url: '/v1/log-drains', init: { method: 'POST' } });
+      expect(JSON.parse(last(calls).init.body ?? '{}')).toEqual({
+        name: 'Datadog Drain',
+        type: 'datadog',
+        url: 'https://http-intake.logs.datadoghq.com',
+      });
+
+      await client.logDrains.update(1, { enabled: false });
+      expect(last(calls)).toMatchObject({ url: '/v1/log-drains/1', init: { method: 'PATCH' } });
+      expect(JSON.parse(last(calls).init.body ?? '{}')).toEqual({ enabled: false });
+
+      await client.logDrains.remove(1);
+      expect(last(calls)).toMatchObject({ url: '/v1/log-drains/1', init: { method: 'DELETE' } });
+
+      await client.logDrains.test(1);
+      expect(last(calls)).toMatchObject({ url: '/v1/log-drains/1/test', init: { method: 'POST' } });
+    });
+  });
+
+  describe('housekeeping', () => {
+    it('exercises getAutoPrune, updateAutoPrune, and runPrune', async () => {
+      const { fetchMock, calls } = makeFetch(() => ok({}));
+      const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
+
+      await client.housekeeping.getAutoPrune();
+      expect(last(calls)).toMatchObject({ url: '/v1/housekeeping/prune/config', init: { method: 'GET' } });
+
+      await client.housekeeping.updateAutoPrune({ thresholdPercent: 80, enabled: true });
+      expect(last(calls)).toMatchObject({ url: '/v1/housekeeping/prune/config', init: { method: 'PATCH' } });
+      expect(JSON.parse(last(calls).init.body ?? '{}')).toEqual({ thresholdPercent: 80, enabled: true });
+
+      await client.housekeeping.runPrune();
+      expect(last(calls)).toMatchObject({ url: '/v1/housekeeping/prune', init: { method: 'POST' } });
+    });
+  });
+
+  describe('auth.oidc', () => {
+    it('exercises publicProviders, listProviders, createProvider, updateProvider, deleteProvider, and callback', async () => {
+      const { fetchMock, calls } = makeFetch(() => ok({}));
+      const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
+
+      await client.auth.oidc.publicProviders();
+      expect(last(calls)).toMatchObject({ url: '/v1/auth/oidc/providers/public', init: { method: 'GET' } });
+
+      await client.auth.oidc.listProviders();
+      expect(last(calls)).toMatchObject({ url: '/v1/auth/oidc/providers', init: { method: 'GET' } });
+
+      await client.auth.oidc.createProvider({
+        name: 'Google Workspace',
+        slug: 'google',
+        issuerUrl: 'https://accounts.google.com',
+        clientId: 'g-client',
+        clientSecret: 'g-secret',
+        scopes: 'openid email',
+        enabled: true,
+        autoEnroll: true,
+        defaultRole: 'member',
+      });
+      expect(last(calls)).toMatchObject({ url: '/v1/auth/oidc/providers', init: { method: 'POST' } });
+
+      await client.auth.oidc.updateProvider(1, { enabled: false });
+      expect(last(calls)).toMatchObject({ url: '/v1/auth/oidc/providers/1', init: { method: 'PATCH' } });
+
+      await client.auth.oidc.list();
+      expect(last(calls)).toMatchObject({ url: '/v1/auth/oidc/providers', init: { method: 'GET' } });
+
+      await client.auth.oidc.create({
+        name: 'Google Workspace',
+        slug: 'google',
+        issuerUrl: 'https://accounts.google.com',
+        clientId: 'g-client',
+        clientSecret: 'g-secret',
+        scopes: 'openid email',
+        enabled: true,
+        autoEnroll: true,
+        defaultRole: 'member',
+      });
+      expect(last(calls)).toMatchObject({ url: '/v1/auth/oidc/providers', init: { method: 'POST' } });
+
+      await client.auth.oidc.update(1, { enabled: false });
+      expect(last(calls)).toMatchObject({ url: '/v1/auth/oidc/providers/1', init: { method: 'PATCH' } });
+
+      await client.auth.oidc.deleteProvider(1);
+      expect(last(calls)).toMatchObject({ url: '/v1/auth/oidc/providers/1', init: { method: 'DELETE' } });
+
+      await client.auth.oidc.delete(1);
+      expect(last(calls)).toMatchObject({ url: '/v1/auth/oidc/providers/1', init: { method: 'DELETE' } });
+
+      await client.auth.oidc.callback('google', { code: 'code123', state: 'state456' });
+      expect(last(calls)).toMatchObject({ url: '/v1/auth/oidc/google/callback', init: { method: 'POST' } });
+    });
+  });
+
+  describe('workspaces', () => {
+    it('exercises list, get, create, update, delete, addMember, updateMemberRole, and removeMember', async () => {
+      const { fetchMock, calls } = makeFetch(() => ok({}));
+      const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
+
+      await client.workspaces.list();
+      expect(last(calls)).toMatchObject({ url: '/v1/workspaces', init: { method: 'GET' } });
+
+      await client.workspaces.get(1);
+      expect(last(calls)).toMatchObject({ url: '/v1/workspaces/1', init: { method: 'GET' } });
+
+      await client.workspaces.create({ name: 'Acme Corp', slug: 'acme', description: 'Main Org' });
+      expect(last(calls)).toMatchObject({ url: '/v1/workspaces', init: { method: 'POST' } });
+
+      await client.workspaces.update(1, { name: 'Acme Global' });
+      expect(last(calls)).toMatchObject({ url: '/v1/workspaces/1', init: { method: 'PATCH' } });
+
+      await client.workspaces.delete(1);
+      expect(last(calls)).toMatchObject({ url: '/v1/workspaces/1', init: { method: 'DELETE' } });
+
+      await client.workspaces.addMember(1, { email: 'dev@acme.com', role: 'admin' });
+      expect(last(calls)).toMatchObject({ url: '/v1/workspaces/1/members', init: { method: 'POST' } });
+
+      await client.workspaces.updateMemberRole(1, 2, { role: 'viewer' });
+      expect(last(calls)).toMatchObject({ url: '/v1/workspaces/1/members/2', init: { method: 'PATCH' } });
+
+      await client.workspaces.removeMember(1, 2);
+      expect(last(calls)).toMatchObject({ url: '/v1/workspaces/1/members/2', init: { method: 'DELETE' } });
     });
   });
 });

@@ -1,16 +1,145 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ExternalLink, Globe, Plus, Trash2 } from 'lucide-react';
+import { ExternalLink, Globe, Plus, Radio, Shield, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { api } from '../../lib/api.js';
 import { useToast } from '../../components/Toast.js';
 import { Button, Card, CardBody, Input, Skeleton, cn } from '../../components/ui.js';
 
-/** Custom domains attached to one service. */
-export function NetworkTab({ serviceId }: { serviceId: number }) {
+import type { Service } from '@ninedeploy/sdk';
+
+/** Custom domains and direct host port publishing for a service. */
+export function NetworkTab({ serviceId, svc }: { serviceId: number; svc?: Service | null }) {
   return (
     <div className="mt-5 max-w-3xl space-y-5">
+      <DirectPortCard serviceId={serviceId} svc={svc} />
       <DomainsCard serviceId={serviceId} />
     </div>
+  );
+}
+
+// ── Direct Port Publishing ───────────────────────────────────────────────────
+function DirectPortCard({ serviceId, svc }: { serviceId: number; svc?: Service | null }) {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const [portInput, setPortInput] = useState<string>('');
+  const [editing, setEditing] = useState(false);
+
+  const update = useMutation({
+    mutationFn: (publishedPort: number | null) => api.services.update(serviceId, { publishedPort }),
+    onSuccess: (_, publishedPort) => {
+      qc.invalidateQueries({ queryKey: ['service', serviceId] });
+      qc.invalidateQueries({ queryKey: ['services'] });
+      setEditing(false);
+      toast(publishedPort ? `Host port :${publishedPort} exposed` : 'Direct host port disabled', 'success');
+    },
+    onError: () => toast('Could not update host port mapping', 'error'),
+  });
+
+  const currentPublished = svc?.publishedPort ?? null;
+  const containerPort = svc?.port ?? 80;
+  const hostUrl = currentPublished ? `http://${window.location.hostname}:${currentPublished}` : null;
+
+  return (
+    <Card>
+      <CardBody>
+        <div className="mb-3 flex items-center justify-between">
+          <div className="flex items-center gap-2 text-sm font-medium text-slate-300">
+            <Radio size={15} className="text-slate-500" /> Direct Host Port Publishing
+          </div>
+          {currentPublished && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-300 ring-1 ring-inset ring-emerald-500/20">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+              Published on :{currentPublished}
+            </span>
+          )}
+        </div>
+
+        <p className="text-xs text-slate-400 mb-4">
+          Expose this service directly on a host TCP port without needing a domain or reverse proxy routing.
+        </p>
+
+        {currentPublished && !editing ? (
+          <div className="flex items-center justify-between rounded-xl bg-white/[0.02] p-3 ring-1 ring-inset ring-white/5">
+            <div className="flex items-center gap-3">
+              <div className="font-mono text-xs text-slate-200">
+                <span className="text-emerald-400 font-semibold">:{currentPublished}</span>
+                <span className="text-slate-500"> → :{containerPort}</span>
+              </div>
+              {hostUrl && (
+                <a
+                  href={hostUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex items-center gap-1 font-mono text-xs text-slate-400 hover:text-indigo-300 transition"
+                >
+                  <span>{hostUrl}</span>
+                  <ExternalLink size={11} />
+                </a>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => {
+                  setPortInput(String(currentPublished));
+                  setEditing(true);
+                }}
+              >
+                Change Port
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => update.mutate(null)}
+                disabled={update.isPending}
+                className="text-slate-400 hover:text-rose-400"
+              >
+                Disable
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              const p = Number.parseInt(portInput.trim(), 10);
+              if (p >= 1 && p <= 65535) {
+                update.mutate(p);
+              } else {
+                toast('Please enter a valid port between 1 and 65535', 'error');
+              }
+            }}
+            className="flex items-center gap-2"
+          >
+            <div className="relative flex-1">
+              <Input
+                type="number"
+                min={1}
+                max={65535}
+                value={portInput}
+                onChange={(e) => setPortInput(e.target.value)}
+                placeholder="e.g. 8080 or 3000"
+                className="h-9 font-mono"
+              />
+            </div>
+            <Button type="submit" size="sm" disabled={!portInput.trim() || update.isPending}>
+              {update.isPending ? 'Saving…' : 'Publish Port'}
+            </Button>
+            {editing && (
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={() => setEditing(false)}
+              >
+                Cancel
+              </Button>
+            )}
+          </form>
+        )}
+      </CardBody>
+    </Card>
   );
 }
 
@@ -28,22 +157,6 @@ function DomainsCard({ serviceId }: { serviceId: number }) {
       qc.invalidateQueries({ queryKey: ['domains', serviceId] });
     },
     onError: () => toast('Could not add the domain', 'error'),
-  });
-  const remove = useMutation({
-    mutationFn: (domainId: number) => api.domains.remove(serviceId, domainId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['domains', serviceId] }),
-    onError: () => toast('Could not remove the domain', 'error'),
-  });
-  const toggleSsl = useMutation({
-    mutationFn: (d: { id: number; ssl: boolean }) => api.domains.setSsl(d.id, !d.ssl),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['domains', serviceId] }),
-    onError: () => toast('Could not toggle SSL', 'error'),
-  });
-  const toggleWww = useMutation({
-    mutationFn: (d: { id: number; redirectWww: boolean }) =>
-      api.domains.update(serviceId, d.id, { redirectWww: !d.redirectWww }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['domains', serviceId] }),
-    onError: () => toast('Could not toggle the www redirect', 'error'),
   });
 
   return (
@@ -71,67 +184,188 @@ function DomainsCard({ serviceId }: { serviceId: number }) {
           </Button>
         </form>
 
-        <div className="mt-3 space-y-1.5">
+        <div className="mt-3 space-y-2">
           {domains.isLoading ? (
             <Skeleton className="h-8 w-full" />
           ) : !domains.data || domains.data.length === 0 ? (
             <p className="py-2 text-xs text-slate-600">No domains attached.</p>
           ) : (
             domains.data.map((d) => (
-              <div
-                key={d.id}
-                className="group flex items-center justify-between rounded-lg bg-white/[0.02] px-3 py-2 ring-1 ring-inset ring-white/5"
-              >
-                <div className="flex min-w-0 items-center gap-2">
-                  <a
-                    href={`${d.ssl ? 'https' : 'http'}://${d.hostname}${d.path}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="flex items-center gap-1.5 truncate font-mono text-xs text-slate-300 hover:text-indigo-300"
-                  >
-                    {d.hostname}
-                    {d.path !== '/' && <span className="text-slate-500">{d.path}</span>}
-                    <ExternalLink size={11} className="shrink-0 opacity-0 transition group-hover:opacity-100" />
-                  </a>
-                </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  <button type="button"
-                    onClick={() => toggleSsl.mutate({ id: d.id, ssl: d.ssl })}
-                    className={cn(
-                      'rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset transition',
-                      d.ssl
-                        ? 'bg-emerald-500/15 text-emerald-300 ring-emerald-500/20 hover:bg-emerald-500/25'
-                        : 'bg-slate-500/15 text-slate-400 ring-slate-500/20 hover:bg-slate-500/25',
-                    )}
-                    title={d.ssl ? 'HTTPS on — click to disable' : 'HTTPS off — click to issue a certificate'}
-                  >
-                    {d.ssl ? 'HTTPS' : 'HTTP'}
-                  </button>
-                  <button type="button"
-                    onClick={() => toggleWww.mutate({ id: d.id, redirectWww: d.redirectWww })}
-                    className={cn(
-                      'rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset transition',
-                      d.redirectWww
-                        ? 'bg-sky-500/15 text-sky-300 ring-sky-500/20 hover:bg-sky-500/25'
-                        : 'bg-slate-500/15 text-slate-400 ring-slate-500/20 hover:bg-slate-500/25',
-                    )}
-                    title={d.redirectWww ? 'www→apex redirect on — click to disable' : 'Redirect www. to the apex host — click to enable'}
-                  >
-                    www
-                  </button>
-                  <button type="button"
-                    onClick={() => remove.mutate(d.id)}
-                    className="text-slate-600 transition hover:text-rose-400"
-                    title="Remove domain"
-                  >
-                    <Trash2 size={13} />
-                  </button>
-                </div>
-              </div>
+              <DomainItemRow key={d.id} domain={d} serviceId={serviceId} />
             ))
           )}
         </div>
       </CardBody>
     </Card>
+  );
+}
+
+function DomainItemRow({ domain: d, serviceId }: { domain: any; serviceId: number }) {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const [expanded, setExpanded] = useState(false);
+  const [basicAuth, setBasicAuth] = useState(d.basicAuth ?? '');
+  const [ipAllowlist, setIpAllowlist] = useState(d.ipAllowlist ?? '');
+  const [rateLimitAvg, setRateLimitAvg] = useState(d.rateLimitAverage ? String(d.rateLimitAverage) : '');
+  const [rateLimitBurst, setRateLimitBurst] = useState(d.rateLimitBurst ? String(d.rateLimitBurst) : '');
+
+  const remove = useMutation({
+    mutationFn: () => api.domains.remove(serviceId, d.id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['domains', serviceId] }),
+    onError: () => toast('Could not remove the domain', 'error'),
+  });
+
+  const toggleSsl = useMutation({
+    mutationFn: () => api.domains.setSsl(d.id, !d.ssl),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['domains', serviceId] }),
+    onError: () => toast('Could not toggle SSL', 'error'),
+  });
+
+  const toggleWww = useMutation({
+    mutationFn: () => api.domains.update(serviceId, d.id, { redirectWww: !d.redirectWww }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['domains', serviceId] }),
+    onError: () => toast('Could not toggle the www redirect', 'error'),
+  });
+
+  const updateMiddlewares = useMutation({
+    mutationFn: () =>
+      api.domains.update(serviceId, d.id, {
+        basicAuth: basicAuth.trim() || null,
+        ipAllowlist: ipAllowlist.trim() || null,
+        rateLimitAverage: rateLimitAvg ? Number(rateLimitAvg) : null,
+        rateLimitBurst: rateLimitBurst ? Number(rateLimitBurst) : null,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['domains', serviceId] });
+      toast('Domain security settings updated', 'success');
+      setExpanded(false);
+    },
+    onError: () => toast('Could not update domain security settings', 'error'),
+  });
+
+  const hasActiveSecurity = !!(d.basicAuth || d.ipAllowlist || d.rateLimitAverage);
+
+  return (
+    <div className="rounded-lg bg-white/[0.02] ring-1 ring-inset ring-white/5 overflow-hidden">
+      <div className="group flex items-center justify-between px-3 py-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <a
+            href={`${d.ssl ? 'https' : 'http'}://${d.hostname}${d.path}`}
+            target="_blank"
+            rel="noreferrer"
+            className="flex items-center gap-1.5 truncate font-mono text-xs text-slate-300 hover:text-indigo-300"
+          >
+            {d.hostname}
+            {d.path !== '/' && <span className="text-slate-500">{d.path}</span>}
+            <ExternalLink size={11} className="shrink-0 opacity-0 transition group-hover:opacity-100" />
+          </a>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setExpanded(!expanded)}
+            className={cn(
+              'rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset transition flex items-center gap-1',
+              hasActiveSecurity
+                ? 'bg-amber-500/15 text-amber-300 ring-amber-500/20 hover:bg-amber-500/25'
+                : 'bg-slate-500/15 text-slate-400 ring-slate-500/20 hover:bg-slate-500/25',
+            )}
+            title="Configure Basic Auth, IP Whitelist & Rate Limiting"
+          >
+            <Shield size={10} />
+            Security
+          </button>
+          <button
+            type="button"
+            onClick={() => toggleSsl.mutate()}
+            className={cn(
+              'rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset transition',
+              d.ssl
+                ? 'bg-emerald-500/15 text-emerald-300 ring-emerald-500/20 hover:bg-emerald-500/25'
+                : 'bg-slate-500/15 text-slate-400 ring-slate-500/20 hover:bg-slate-500/25',
+            )}
+            title={d.ssl ? 'HTTPS on — click to disable' : 'HTTPS off — click to issue a certificate'}
+          >
+            {d.ssl ? 'HTTPS' : 'HTTP'}
+          </button>
+          <button
+            type="button"
+            onClick={() => toggleWww.mutate()}
+            className={cn(
+              'rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset transition',
+              d.redirectWww
+                ? 'bg-sky-500/15 text-sky-300 ring-sky-500/20 hover:bg-sky-500/25'
+                : 'bg-slate-500/15 text-slate-400 ring-slate-500/20 hover:bg-slate-500/25',
+            )}
+            title={d.redirectWww ? 'www→apex redirect on — click to disable' : 'Redirect www. to the apex host — click to enable'}
+          >
+            www
+          </button>
+          <button
+            type="button"
+            onClick={() => remove.mutate()}
+            className="text-slate-600 transition hover:text-rose-400"
+            title="Remove domain"
+          >
+            <Trash2 size={13} />
+          </button>
+        </div>
+      </div>
+
+      {expanded && (
+        <div className="border-t border-white/5 bg-slate-950/40 p-3 space-y-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+            <div>
+              <label className="block text-slate-400 font-medium mb-1">Basic Auth (user:pass or htpasswd)</label>
+              <Input
+                value={basicAuth}
+                onChange={(e) => setBasicAuth(e.target.value)}
+                placeholder="admin:password or ['user:hash']"
+                className="h-8 font-mono text-xs"
+              />
+            </div>
+            <div>
+              <label className="block text-slate-400 font-medium mb-1">IP Allowlist (CIDR comma-separated)</label>
+              <Input
+                value={ipAllowlist}
+                onChange={(e) => setIpAllowlist(e.target.value)}
+                placeholder="192.168.1.0/24, 10.0.0.1"
+                className="h-8 font-mono text-xs"
+              />
+            </div>
+            <div>
+              <label className="block text-slate-400 font-medium mb-1">Rate Limit (Average req/sec)</label>
+              <Input
+                type="number"
+                min={0}
+                value={rateLimitAvg}
+                onChange={(e) => setRateLimitAvg(e.target.value)}
+                placeholder="e.g. 50 (0 = disabled)"
+                className="h-8 font-mono text-xs"
+              />
+            </div>
+            <div>
+              <label className="block text-slate-400 font-medium mb-1">Rate Limit (Burst peak)</label>
+              <Input
+                type="number"
+                min={0}
+                value={rateLimitBurst}
+                onChange={(e) => setRateLimitBurst(e.target.value)}
+                placeholder="e.g. 100"
+                className="h-8 font-mono text-xs"
+              />
+            </div>
+          </div>
+          <div className="flex justify-end gap-2 pt-1">
+            <Button size="sm" variant="ghost" onClick={() => setExpanded(false)}>
+              Cancel
+            </Button>
+            <Button size="sm" onClick={() => updateMiddlewares.mutate()} disabled={updateMiddlewares.isPending}>
+              Save Security Settings
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

@@ -10,12 +10,19 @@ import { composeBuilder } from './builders/compose.js';
 import { logBus } from './logs.js';
 import { pm2Builder } from './builders/pm2.js';
 import { writeDynamicConfig } from './proxy.js';
-import { sleep } from '../lib/exec.js';
+import { sleep, run } from '../lib/exec.js';
 import { resolveVaultRefs } from '../lib/vault.js';
 import { agentOp } from '../lib/agentClient.js';
 import type { BuildContext, Builder, DeployRuntime } from './types.js';
 
 const builders: Record<string, Builder> = { docker: dockerBuilder, pm2: pm2Builder, compose: composeBuilder };
+
+/** Execute a lifecycle hook command in the service workDir with resolved environment. */
+async function runHook(cmd: string, cwd: string, env: Record<string, string>, log: (line: string) => void): Promise<void> {
+  const [bin, ...args] = cmd.trim().split(/\s+/);
+  if (!bin) return;
+  await run(bin, args, { cwd, env }, log);
+}
 
 /** Render any thrown value as a single-line message (handles non-Error rejections). */
 const msg = (err: unknown): string => (err instanceof Error ? err.message : String(err));
@@ -122,6 +129,9 @@ async function snapshotConfig(
     buildCmd: buildConfig?.buildCmd ?? null,
     startCmd: buildConfig?.startCmd ?? null,
     dockerfilePath: buildConfig?.dockerfilePath ?? null,
+    preDeployCmd: buildConfig?.preDeployCmd ?? null,
+    postDeployCmd: buildConfig?.postDeployCmd ?? null,
+    preStopCmd: buildConfig?.preStopCmd ?? null,
     restartPolicy: buildConfig?.restartPolicy ?? 'unless-stopped',
     stopGraceSeconds: buildConfig?.stopGraceSeconds ?? 5,
     image: service.image ?? null,
@@ -211,6 +221,12 @@ export async function runDeployment(db: DB, deploymentId: number): Promise<void>
         : undefined,
       log,
     };
+
+    if (buildConfig?.preDeployCmd) {
+      log(`▶ Running Pre-Deploy Hook: ${buildConfig.preDeployCmd} …`);
+      await runHook(buildConfig.preDeployCmd, workDir, ctx.env, log);
+    }
+
     runtime = await builder.buildAndRun(ctx, previous);
 
     // Cancel checkpoint: the build finished, but the healthcheck (up to 5 min)
@@ -220,6 +236,15 @@ export async function runDeployment(db: DB, deploymentId: number): Promise<void>
     log('Running healthcheck …');
     const healthy = await builder.isHealthy(runtime, 300_000, 10_000, log);
     if (!healthy) throw new Error('Healthcheck failed — service did not become ready in time');
+
+    if (buildConfig?.postDeployCmd) {
+      log(`▶ Running Post-Deploy Hook: ${buildConfig.postDeployCmd} …`);
+      try {
+        await runHook(buildConfig.postDeployCmd, workDir, ctx.env, log);
+      } catch (err) {
+        log(`warning: post-deploy hook failed: ${msg(err)}`);
+      }
+    }
 
     // Cancel checkpoint: last one before the success writes.
     if (await isCancelled(db, deploymentId)) throw new DeploymentCancelled();
@@ -321,6 +346,12 @@ export async function runDeployment(db: DB, deploymentId: number): Promise<void>
     // the new one — otherwise we'd stop the still-serving version and cause an
     // outage. If the config write failed, leave the previous container live.
     if (routingFlipped) {
+      if (buildConfig?.preStopCmd) {
+        log(`▶ Running Pre-Stop Hook: ${buildConfig.preStopCmd} …`);
+        await runHook(buildConfig.preStopCmd, workDir, await loadRuntimeEnv(db, service), log).catch((err) =>
+          log(`pre-stop warning: ${msg(err)}`),
+        );
+      }
       // Give Traefik's file watcher a moment to apply the new config before
       // retiring the old container — otherwise its reload latency could 502
       // requests still routed to the previous version.

@@ -19,7 +19,7 @@ import { serverRoutes } from './servers.js';
 import { projectRoutes } from './projects.js';
 import { notificationRoutes } from './notifications.js';
 import { networkRoutes } from './networks.js';
-import { metricRoutes, statsRoutes } from './stats.js';
+import { statsRoutes } from './stats.js';
 import { servicesRoutes } from './services.js';
 import { serviceMigrationRoutes } from './serviceMigration.js';
 import { settingsRoutes } from './settings.js';
@@ -32,8 +32,13 @@ import { templateRoutes } from './templates.js';
 import { topologyRoutes } from './topology.js';
 import { tunnelRoutes } from './tunnels.js';
 import { traefikRoutes } from './traefik.js';
+import { demoRoutes } from './demo.js';
 import { userRoutes } from './users.js';
 import { volumeRoutes } from './volumes.js';
+import { containerRoutes } from './containers.js';
+import { logDrainRoutes } from './logDrains.js';
+import { housekeepingRoutes } from './housekeeping.js';
+import { workspaceRoutes } from './workspaces.js';
 
 /** All versioned API routes, mounted under /v1. */
 export const apiRoutes: FastifyPluginAsync = async (app) => {
@@ -47,7 +52,9 @@ export const apiRoutes: FastifyPluginAsync = async (app) => {
   await app.register(hookReceiveRoutes, { prefix: '/hooks' });
 
   await app.register(authRoutes, { prefix: '/auth' });
+  await app.register(workspaceRoutes, { prefix: '/workspaces' });
   await app.register(userRoutes, { prefix: '/users' });
+  await app.register(demoRoutes, { prefix: '/demo' });
   await app.register(projectRoutes, { prefix: '/projects' });
   await app.register(projectEnvRoutes, { prefix: '/projects' });
   await app.register(activityRoutes, { prefix: '/activity' });
@@ -61,6 +68,7 @@ export const apiRoutes: FastifyPluginAsync = async (app) => {
   await app.register(domainIndexRoutes, { prefix: '/domains' });
   await app.register(networkRoutes, { prefix: '/networks' });
   await app.register(volumeRoutes, { prefix: '/volumes' });
+  await app.register(containerRoutes, { prefix: '/containers' });
   await app.register(statsRoutes, { prefix: '/stats' });
   await app.register(dashboardRoutes, { prefix: '/dashboard' });
   await app.register(systemRoutes, { prefix: '/system' });
@@ -81,7 +89,8 @@ export const apiRoutes: FastifyPluginAsync = async (app) => {
   await app.register(envSearchRoutes, { prefix: '/env' });
   await app.register(jobRoutes, { prefix: '/services' });
   await app.register(serverRoutes, { prefix: '/servers' });
-  await app.register(metricRoutes, { prefix: '/services' });
+  await app.register(logDrainRoutes, { prefix: '/log-drains' });
+  await app.register(housekeepingRoutes, { prefix: '/housekeeping' });
   await app.register(serviceMigrationRoutes, { prefix: '/services' });
   await app.register(traefikRoutes, { prefix: '' });
 };

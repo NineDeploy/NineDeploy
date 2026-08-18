@@ -606,4 +606,107 @@ describe('restoreDatabase', () => {
     h.capture.mockRejectedValueOnce(new Error('docker dead'));
     expect(await databaseLogs(dbRow({ containerName: 'db-cont' }))).toEqual([]);
   });
+
+  it('configures extended engines properly (valkey, clickhouse, meilisearch, rabbitmq, vector)', () => {
+    expect(ENGINES.postgres.image('vector')).toBe('pgvector/pgvector:pg16');
+    expect(ENGINES.postgres.image('pgvector')).toBe('pgvector/pgvector:pg16');
+    expect(ENGINES.postgres.image('16')).toBe('postgres:16');
+    expect(ENGINES.valkey.image('8')).toBe('valkey/valkey:8');
+    expect(ENGINES.valkey.image()).toBe('valkey/valkey:8');
+    expect(ENGINES.clickhouse.image('24')).toBe('clickhouse/clickhouse-server:24');
+    expect(ENGINES.clickhouse.image()).toBe('clickhouse/clickhouse-server:24');
+    expect(ENGINES.meilisearch.image('v1.12')).toBe('getmeili/meilisearch:v1.12');
+    expect(ENGINES.meilisearch.image()).toBe('getmeili/meilisearch:v1.12');
+    expect(ENGINES.rabbitmq.image('3-management')).toBe('rabbitmq:3-management');
+    expect(ENGINES.rabbitmq.image()).toBe('rabbitmq:3-management');
+
+    expect(ENGINES.valkey.env('p')).toEqual({});
+    expect(ENGINES.valkey.username()).toBeUndefined();
+    expect(ENGINES.valkey.dbName()).toBeUndefined();
+
+    expect(ENGINES.clickhouse.env('p')).toEqual({ CLICKHOUSE_USER: 'nine', CLICKHOUSE_PASSWORD: 'p', CLICKHOUSE_DB: 'app' });
+    expect(ENGINES.clickhouse.username()).toBe('nine');
+    expect(ENGINES.clickhouse.dbName()).toBe('app');
+
+    expect(ENGINES.meilisearch.env('p')).toEqual({ MEILI_MASTER_KEY: 'p', MEILI_NO_ANALYTICS: 'true' });
+    expect(ENGINES.meilisearch.username()).toBeUndefined();
+    expect(ENGINES.meilisearch.dbName()).toBeUndefined();
+
+    expect(ENGINES.rabbitmq.env('p')).toEqual({ RABBITMQ_DEFAULT_USER: 'nine', RABBITMQ_DEFAULT_PASS: 'p' });
+    expect(ENGINES.rabbitmq.username()).toBe('nine');
+    expect(ENGINES.rabbitmq.dbName()).toBeUndefined();
+
+    expect(connectionString(dbRow({ engine: 'valkey', internalHost: 'valkey-h', internalPort: 6379 }))).toBe('valkey://valkey-h:6379');
+    expect(connectionString(dbRow({ engine: 'clickhouse', internalHost: 'ch-h', internalPort: 8123 }))).toBe('clickhouse://nine:pw%3Aenc@ch-h:8123/app');
+    expect(ENGINES.clickhouse.connectionString('ch-h', 8123, 'nine', 'pw:enc', undefined)).toBe('clickhouse://nine:pw%3Aenc@ch-h:8123/default');
+    expect(connectionString(dbRow({ engine: 'meilisearch', internalHost: 'ms-h', internalPort: 7700 }))).toBe('http://:pw%3Aenc@ms-h:7700');
+    expect(connectionString(dbRow({ engine: 'rabbitmq', internalHost: 'rb-h', internalPort: 5672 }))).toBe('amqp://nine:pw%3Aenc@rb-h:5672/');
+    expect(defaultPort('clickhouse')).toBe(8123);
+    expect(defaultPort('meilisearch')).toBe(7700);
+    expect(defaultPort('rabbitmq')).toBe(5672);
+  });
+
+  it('manages Web Studio containers (Adminer and Redis Commander)', async () => {
+    const { studioImageForEngine, isDatabaseStudioRunning, startDatabaseStudio, stopDatabaseStudio } = await import(
+      '../src/engine/database.js'
+    );
+    expect(studioImageForEngine('postgres')).toEqual({ image: 'adminer:latest', containerPort: 8080 });
+    expect(studioImageForEngine('redis')).toEqual({ image: 'rediscommander/redis-commander:latest', containerPort: 8081 });
+    expect(studioImageForEngine('valkey')).toEqual({ image: 'rediscommander/redis-commander:latest', containerPort: 8081 });
+
+    h.capture.mockResolvedValueOnce('running');
+    expect(await isDatabaseStudioRunning(dbRow({ slug: 'my-db' }))).toBe(true);
+
+    h.capture.mockResolvedValueOnce('stopped');
+    expect(await isDatabaseStudioRunning(dbRow({ slug: 'my-db' }))).toBe(false);
+
+    // If already running, startDatabaseStudio returns early
+    h.capture.mockResolvedValueOnce('running');
+    await startDatabaseStudio(dbRow({ slug: 'my-db', engine: 'postgres', name: 'my-db' }), 18000, vi.fn());
+
+    // Starts Redis commander with REDIS_HOSTS
+    h.capture.mockResolvedValueOnce('exited');
+    await startDatabaseStudio(dbRow({ slug: 'my-redis', engine: 'redis', name: 'my-redis', internalHost: 'my-redis' }), 18001, vi.fn());
+    expect(h.run).toHaveBeenCalledWith(
+      'docker',
+      expect.arrayContaining(['run', '-d', '--name', 'nd-studio-my-redis', '-p', '18001:8081', '-e', 'REDIS_HOSTS=local:my-redis:6379']),
+      {},
+      expect.any(Function),
+    );
+
+    // Starts Valkey studio container using containerName fallback
+    h.capture.mockResolvedValueOnce('exited');
+    await startDatabaseStudio(dbRow({ slug: 'my-valkey', engine: 'valkey', name: 'my-valkey', internalHost: null, containerName: 'nd-valkey' }), 18002, vi.fn());
+    expect(h.run).toHaveBeenCalledWith(
+      'docker',
+      expect.arrayContaining(['run', '-d', '--name', 'nd-studio-my-valkey', '-p', '18002:8081', '-e', 'REDIS_HOSTS=local:nd-valkey:6379']),
+      {},
+      expect.any(Function),
+    );
+
+    // Starts postgres studio container using empty host fallback
+    h.capture.mockResolvedValueOnce('exited');
+    await startDatabaseStudio(dbRow({ slug: 'my-pg', engine: 'postgres', name: 'my-pg', internalHost: null, containerName: null }), 18003, vi.fn());
+
+    // Stop studio
+    await stopDatabaseStudio(dbRow({ slug: 'my-redis', name: 'my-redis' }), vi.fn());
+    expect(h.run).toHaveBeenCalledWith('docker', ['rm', '-f', 'nd-studio-my-redis'], {}, expect.any(Function));
+  });
+
+  it('backs up and restores valkey database', async () => {
+    // Size check
+    h.capture.mockResolvedValueOnce('used_memory:1048576');
+    const size = await databaseSize(dbRow({ engine: 'valkey', containerName: 'c' }));
+    expect(size).toBe(1048576);
+
+    // Backup
+    const backupTarget = encFile('valkey-b');
+    await backupDatabase(dbRow({ engine: 'valkey', containerName: 'c' }), backupTarget, vi.fn());
+    expect(h.run).toHaveBeenCalledWith('docker', ['exec', 'c', 'redis-cli', 'SAVE'], {}, expect.any(Function));
+
+    // Restore
+    await restoreDatabase(dbRow({ engine: 'valkey', containerName: 'c' }), backupTarget, vi.fn());
+    expect(h.run).toHaveBeenCalledWith('docker', ['cp', expect.any(String), 'c:/data/dump.rdb'], {}, expect.any(Function));
+    expect(h.run).toHaveBeenCalledWith('docker', ['restart', 'c'], {}, expect.any(Function));
+  });
 });

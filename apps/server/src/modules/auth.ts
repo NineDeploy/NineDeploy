@@ -1,11 +1,11 @@
 import { and, count, eq, sql } from 'drizzle-orm';
 import type { FastifyPluginAsync } from 'fastify';
-import { apiTokens, type DB, sessions as sessionsTable, users, webauthnCredentials, type User } from '@ninedeploy/db';
+import { apiTokens, type DB, oidcProviders, type OidcProvider, sessions as sessionsTable, users, webauthnCredentials, type User } from '@ninedeploy/db';
 import type { PublicUser, Register } from '@ninedeploy/schemas';
-import { forgotPassword, login, passkeyLoginVerify, passkeyRegisterVerify, passwordChange, passwordResetWithToken, refresh, register, twoFactorCode, twoFactorDisable, twoFactorSetup } from '@ninedeploy/schemas';
+import { forgotPassword, login, oidcProviderCreate, oidcProviderUpdate, type OidcProviderEntry, type OidcPublicProvider, passkeyLoginVerify, passkeyRegisterVerify, passwordChange, passwordResetWithToken, refresh, register, twoFactorCode, twoFactorDisable, twoFactorSetup } from '@ninedeploy/schemas';
 import { config } from '../config.js';
 import { decrypt, encrypt, hashPassword, randomToken, sha256, verifyPassword } from '../lib/crypto.js';
-import { badRequest, conflict, forbidden, unauthorized } from '../lib/errors.js';
+import { badRequest, conflict, forbidden, notFound, parseId, unauthorized } from '../lib/errors.js';
 import { verifyJwt, type AppJwtPayload } from '../lib/jwt.js';
 import { isLocked, recordFailure, recordSuccess } from '../lib/loginLockout.js';
 import { consumeResetToken, issueResetToken } from '../lib/passwordReset.js';
@@ -15,8 +15,27 @@ import { audit } from '../lib/audit.js';
 import { getSetting } from '../lib/settings.js';
 import { findLiveSession, issueSessionTokens, refreshSessionTokens, revokeAllSessions } from '../lib/sessions.js';
 import { beginAuthentication, beginRegistration, finishAuthentication, finishRegistration } from '../lib/webauthn.js';
+import { exchangeGitHubCode, exchangeOidcCode, fetchOidcConfiguration, fetchOidcUserInfo, generateOAuthState, verifyOAuthState } from '../lib/oauth.js';
+import { ensureDefaultWorkspace } from './workspaces.js';
+import { iso } from '../lib/serialize.js';
 
 const toUser = (u: User): PublicUser => ({ id: u.id, email: u.email, name: u.name, role: u.role });
+
+function serializeOidc(p: OidcProvider): OidcProviderEntry {
+  return {
+    id: p.id,
+    name: p.name,
+    slug: p.slug,
+    issuerUrl: p.issuerUrl,
+    clientId: p.clientId,
+    scopes: p.scopes,
+    enabled: Boolean(p.enabled),
+    autoEnroll: Boolean(p.autoEnroll),
+    defaultRole: p.defaultRole as 'admin' | 'member',
+    createdAt: iso(p.createdAt) as string,
+    updatedAt: iso(p.updatedAt) as string,
+  };
+}
 
 /** Count existing users (used to decide first-user-is-admin). */
 async function userCount(db: Pick<DB, 'select'>): Promise<number> {
@@ -427,4 +446,209 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     await app.db.delete(apiTokens).where(and(eq(apiTokens.id, id), eq(apiTokens.userId, req.user!.id)));
     return { ok: true };
   });
+
+  // ── OIDC & OAuth2 SSO Provider Management (Admin) ─────────────────────────
+  app.get('/oidc/providers/public', async (): Promise<OidcPublicProvider[]> => {
+    const rows = await app.db.query.oidcProviders.findMany({
+      where: eq(oidcProviders.enabled, true),
+    });
+    return rows.map((p) => ({
+      id: p.id,
+      name: p.name,
+      slug: p.slug,
+      authUrl: `/v1/auth/oidc/${p.slug}/login`,
+    }));
+  });
+
+  app.get('/oidc/providers', { onRequest: [app.authenticate, app.requireAdmin] }, async (): Promise<OidcProviderEntry[]> => {
+    const rows = await app.db.query.oidcProviders.findMany();
+    return rows.map(serializeOidc);
+  });
+
+  app.post('/oidc/providers', { onRequest: [app.authenticate, app.requireAdmin] }, async (req) => {
+    const input = oidcProviderCreate.parse(req.body);
+    const existing = await app.db.query.oidcProviders.findFirst({ where: eq(oidcProviders.slug, input.slug) });
+    if (existing) throw conflict(`Provider with slug "${input.slug}" already exists`);
+
+    const clientSecretEncrypted = encrypt(input.clientSecret);
+    const [created] = await app.db
+      .insert(oidcProviders)
+      .values({
+        name: input.name,
+        slug: input.slug,
+        issuerUrl: input.issuerUrl ?? null,
+        clientId: input.clientId,
+        clientSecretEncrypted,
+        scopes: input.scopes,
+        enabled: input.enabled,
+        autoEnroll: input.autoEnroll,
+        defaultRole: input.defaultRole,
+      })
+      .returning();
+
+    void audit(app.db, req.user!.id, 'oidc_provider.create', created!.name);
+    return serializeOidc(created!);
+  });
+
+  app.patch('/oidc/providers/:id', { onRequest: [app.authenticate, app.requireAdmin] }, async (req) => {
+    const id = parseId((req.params as { id: string }).id);
+    const input = oidcProviderUpdate.parse(req.body);
+
+    const existing = await app.db.query.oidcProviders.findFirst({ where: eq(oidcProviders.id, id) });
+    if (!existing) throw notFound('OIDC provider not found');
+
+    const [updated] = await app.db
+      .update(oidcProviders)
+      .set({
+        ...(input.name !== undefined && { name: input.name }),
+        ...(input.issuerUrl !== undefined && { issuerUrl: input.issuerUrl ?? null }),
+        ...(input.clientId !== undefined && { clientId: input.clientId }),
+        ...(input.clientSecret !== undefined && { clientSecretEncrypted: encrypt(input.clientSecret) }),
+        ...(input.scopes !== undefined && { scopes: input.scopes }),
+        ...(input.enabled !== undefined && { enabled: input.enabled }),
+        ...(input.autoEnroll !== undefined && { autoEnroll: input.autoEnroll }),
+        ...(input.defaultRole !== undefined && { defaultRole: input.defaultRole }),
+      })
+      .where(eq(oidcProviders.id, id))
+      .returning();
+
+    void audit(app.db, req.user!.id, 'oidc_provider.update', updated!.name);
+    return serializeOidc(updated!);
+  });
+
+  app.delete('/oidc/providers/:id', { onRequest: [app.authenticate, app.requireAdmin] }, async (req) => {
+    const id = parseId((req.params as { id: string }).id);
+    const existing = await app.db.query.oidcProviders.findFirst({ where: eq(oidcProviders.id, id) });
+    if (!existing) throw notFound('OIDC provider not found');
+
+    await app.db.delete(oidcProviders).where(eq(oidcProviders.id, id));
+    void audit(app.db, req.user!.id, 'oidc_provider.delete', existing.name);
+    return { ok: true };
+  });
+
+  // ── OIDC & OAuth2 Login Initiation ─────────────────────────────────────────
+  app.get('/oidc/:slug/login', async (req, reply) => {
+    const { slug } = req.params as { slug: string };
+    const query = req.query as { returnTo?: string; json?: string };
+    const returnTo = query?.returnTo;
+    const json = query?.json;
+
+    const provider = await app.db.query.oidcProviders.findFirst({
+      where: and(eq(oidcProviders.slug, slug), eq(oidcProviders.enabled, true)),
+    });
+    if (!provider) throw notFound(`OAuth2/OIDC provider "${slug}" not found or disabled`);
+
+    const state = generateOAuthState(slug, returnTo);
+    const origin = `${req.protocol}://${req.hostname}`;
+    const redirectUri = `${origin}/v1/auth/oidc/${slug}/callback`;
+
+    let authUrl: string;
+    if (slug === 'github' || (!provider.issuerUrl && slug.includes('github'))) {
+      const params = new URLSearchParams({
+        client_id: provider.clientId,
+        redirect_uri: redirectUri,
+        scope: provider.scopes,
+        state,
+      });
+      authUrl = `https://github.com/login/oauth/authorize?${params.toString()}`;
+    } else {
+      if (!provider.issuerUrl) throw badRequest(`Provider "${slug}" is missing an issuer URL`);
+      const oidcConfig = await fetchOidcConfiguration(provider.issuerUrl);
+      const params = new URLSearchParams({
+        response_type: 'code',
+        client_id: provider.clientId,
+        redirect_uri: redirectUri,
+        scope: provider.scopes,
+        state,
+      });
+      authUrl = `${oidcConfig.authorization_endpoint}?${params.toString()}`;
+    }
+
+    if (json === 'true' || json === '1') {
+      return { authUrl };
+    }
+    return reply.redirect(authUrl);
+  });
+
+  // ── OIDC & OAuth2 Login Callback ───────────────────────────────────────────
+  const handleOidcCallback = async (req: any, reply: any, isPost: boolean) => {
+    const { slug } = req.params as { slug: string };
+    const query = (isPost ? req.body : req.query) as { code?: string; state?: string; error?: string; error_description?: string };
+
+    if (query.error) {
+      throw unauthorized(query.error_description || query.error);
+    }
+    if (!query.code || !query.state) {
+      throw badRequest('Missing OAuth code or state parameter');
+    }
+
+    const stateData = verifyOAuthState(query.state);
+    if (!stateData || stateData.slug !== slug) {
+      throw unauthorized('Invalid or expired OAuth state parameter');
+    }
+
+    const provider = await app.db.query.oidcProviders.findFirst({
+      where: and(eq(oidcProviders.slug, slug), eq(oidcProviders.enabled, true)),
+    });
+    if (!provider) throw notFound(`OAuth2/OIDC provider "${slug}" not found or disabled`);
+
+    const clientSecret = decrypt(provider.clientSecretEncrypted);
+    const origin = `${req.protocol}://${req.hostname}`;
+    const redirectUri = `${origin}/v1/auth/oidc/${slug}/callback`;
+
+    let userInfo: { sub: string; email: string; name?: string | null };
+
+    if (slug === 'github' || (!provider.issuerUrl && slug.includes('github'))) {
+      userInfo = await exchangeGitHubCode(provider.clientId, clientSecret, query.code, redirectUri);
+    } else {
+      if (!provider.issuerUrl) throw badRequest(`Provider "${slug}" is missing an issuer URL`);
+      const oidcConfig = await fetchOidcConfiguration(provider.issuerUrl);
+      const tokens = await exchangeOidcCode(oidcConfig.token_endpoint, provider.clientId, clientSecret, query.code, redirectUri);
+      const userinfoEndpoint = oidcConfig.userinfo_endpoint || `${provider.issuerUrl.replace(/\/+$/, '')}/userinfo`;
+      userInfo = await fetchOidcUserInfo(userinfoEndpoint, tokens.access_token);
+    }
+
+    let user = await app.db.query.users.findFirst({ where: eq(users.email, userInfo.email) });
+    if (!user) {
+      if (!provider.autoEnroll) {
+        throw forbidden('Auto-enrollment is disabled for this SSO provider');
+      }
+      const randomPassword = randomToken(32);
+      const passwordHash = await hashPassword(randomPassword);
+      const isFirst = (await userCount(app.db)) === 0;
+      const role = isFirst ? 'admin' : provider.defaultRole;
+
+      const [created] = await app.db
+        .insert(users)
+        .values({
+          email: userInfo.email,
+          passwordHash,
+          name: userInfo.name ?? null,
+          role,
+        })
+        .returning();
+
+      user = created!;
+    }
+
+    // Ensure default workspace exists
+    await ensureDefaultWorkspace(app.db, user);
+
+    const tokens = await issueSessionTokens(app.db, user, { ip: req.ip, userAgent: req.headers['user-agent'] });
+    void audit(app.db, user.id, 'auth.sso_login', `${provider.name} (${userInfo.email})`, undefined, {
+      ip: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+
+    if (isPost) {
+      return { user: toUser(user), tokens };
+    }
+
+    // Redirect browser with tokens in hash fragment
+    const returnTo = stateData.returnTo.startsWith('/') ? stateData.returnTo : '/';
+    return reply.redirect(`${returnTo}#access_token=${tokens.accessToken}&refresh_token=${tokens.refreshToken}`);
+  };
+
+  app.get('/oidc/:slug/callback', async (req, reply) => handleOidcCallback(req, reply, false));
+  app.post('/oidc/:slug/callback', async (req, reply) => handleOidcCallback(req, reply, true));
 };

@@ -177,4 +177,46 @@ it('shows an error card with retry when the dashboard query fails', async () => 
     renderWithProviders(<Dashboard />);
     expect(await screen.findByText('cancelled')).toBeInTheDocument();
   });
+
+  it('triggers demo stack seeding on button click', async () => {
+    mockOf(api.dashboard.get).mockResolvedValue(dashData as never);
+    let resolveSeed!: (val: any) => void;
+    mockOf(api.demo.seed).mockReturnValue(
+      new Promise((resolve) => {
+        resolveSeed = resolve;
+      }),
+    );
+
+    renderWithProviders(<Dashboard />);
+    const seedBtn = await screen.findByRole('button', { name: /Load Demo Stack/i });
+    fireEvent.click(seedBtn);
+
+    // Pending state renders 'Seeding Demo…'
+    expect(await screen.findByRole('button', { name: /Seeding Demo…/i })).toBeInTheDocument();
+
+    resolveSeed({
+      ok: true,
+      projectId: 1,
+      projectName: 'Next.js Demo Stack',
+      services: [{ id: 1, name: 'Next.js Docker', type: 'docker', status: 'running', port: 3000 }],
+      database: { id: 2, name: 'demo-postgres', engine: 'postgres' },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Load Demo Stack/i })).toBeInTheDocument();
+    });
+  });
+
+  it('handles demo stack seeding failure', async () => {
+    mockOf(api.dashboard.get).mockResolvedValue(dashData as never);
+    mockOf(api.demo.seed).mockRejectedValue(new Error('seed failed'));
+
+    renderWithProviders(<Dashboard />);
+    const seedBtn = await screen.findByRole('button', { name: /Load Demo Stack/i });
+    fireEvent.click(seedBtn);
+
+    await waitFor(() => {
+      expect(api.demo.seed).toHaveBeenCalledTimes(1);
+    });
+  });
 });

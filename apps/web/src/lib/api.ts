@@ -38,9 +38,9 @@ function setRefreshToken(token: string | null): void {
 }
 
 /** Persist both tokens of a session (access + refresh). */
-export function setSessionTokens(accessToken: string, refreshToken: string): void {
+export function setSessionTokens(accessToken: string, refreshToken?: string): void {
   setToken(accessToken);
-  setRefreshToken(refreshToken);
+  setRefreshToken(refreshToken ?? null);
 }
 
 /** Clear every stored credential (logout / failed refresh). */

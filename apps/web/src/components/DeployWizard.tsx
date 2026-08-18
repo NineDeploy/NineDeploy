@@ -54,6 +54,7 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
   const [sourceId, setSourceId] = useState('');
   const [image, setImage] = useState(template?.image ?? '');
   const [port, setPort] = useState(template ? String(template.port) : '');
+  const [publishedPort, setPublishedPort] = useState('');
   const [volumeMount, setVolumeMount] = useState(template?.volumeMount ?? '');
   const [healthPath, setHealthPath] = useState('/');
   const [cpuShares, setCpuShares] = useState('');
@@ -88,6 +89,7 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
         branch,
         sourceId: toInt(sourceId),
         port: toInt(port),
+        publishedPort: toInt(publishedPort),
         volumeMount: volumeMount || undefined,
         healthPath: healthPath || undefined,
         cpuShares: toInt(cpuShares),
@@ -218,11 +220,12 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
           {step === 1 && (
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-3">
-                <L label="Port (host)"><Input value={port} onChange={(e) => setPort(e.target.value)} placeholder="3000" /></L>
-                <L label="Persistent volume (container path)"><Input value={volumeMount} onChange={(e) => setVolumeMount(e.target.value)} placeholder="/app/data" className="font-mono text-xs" /></L>
+                <L label="Container port"><Input value={port} onChange={(e) => setPort(e.target.value)} placeholder="3000" /></L>
+                <L label="Direct host port (optional)"><Input value={publishedPort} onChange={(e) => setPublishedPort(e.target.value)} placeholder="e.g. 8080" /></L>
               </div>
+              <L label="Persistent volume (container path)"><Input value={volumeMount} onChange={(e) => setVolumeMount(e.target.value)} placeholder="/app/data" className="font-mono text-xs" /></L>
               <L label="Health check path"><Input value={healthPath} onChange={(e) => setHealthPath(e.target.value)} placeholder="/" className="font-mono text-xs" /></L>
-              <p className="rounded-lg bg-white/[0.03] px-3 py-2 text-xs text-slate-500">Leave volume empty for ephemeral storage. Health check probes this path to verify the app is up.</p>
+              <p className="rounded-lg bg-white/[0.03] px-3 py-2 text-xs text-slate-500">Direct host port publishes a TCP port without requiring a domain. Leave volume empty for ephemeral storage.</p>
             </div>
           )}
 
@@ -272,6 +275,7 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
               <Row label="Type" value={type} />
               <Row label={mode === 'repo' ? 'Repository' : 'Image'} value={mode === 'repo' ? repoUrl : image} />
               {port && <Row label="Port" value={`:${port}`} />}
+              {publishedPort && <Row label="Host Port" value={`:${publishedPort}`} />}
               {volumeMount && <Row label="Volume" value={volumeMount} />}
               <Row label="Env vars" value={String(envRows.filter((e) => e.key.trim()).length)} />
               <Row label="Limits" value={cpuShares || memLimitMb ? `${cpuShares || '—'} shares · ${memLimitMb || '—'} MB` : 'none'} />

@@ -1,6 +1,6 @@
 import { createHmac } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { isPing, parsePush, verifyWebhook } from '../../src/lib/webhooks.js';
+import { isPing, isPullRequest, parsePullRequest, parsePush, verifyWebhook } from '../../src/lib/webhooks.js';
 
 const SECRET = 'whsec_test';
 
@@ -205,3 +205,100 @@ describe('parsePush', () => {
     expect(parsePush(body, 'github')?.changedFiles).toEqual(['ok.ts']);
   });
 });
+
+describe('isPullRequest and parsePullRequest', () => {
+  it('detects PR events on GitHub, Gitea, and GitLab', () => {
+    expect(isPullRequest({ 'x-github-event': 'pull_request' }, 'github')).toBe(true);
+    expect(isPullRequest({ 'x-gitea-event': 'pull_request' }, 'gitea')).toBe(true);
+    expect(isPullRequest({ 'x-gitlab-event': 'Merge Request Hook' }, 'gitlab')).toBe(true);
+    expect(isPullRequest({ 'x-github-event': 'push' }, 'github')).toBe(false);
+  });
+
+  it('parses GitHub pull request events (open, sync, reopen, close)', () => {
+    const prOpen = {
+      action: 'opened',
+      number: 10,
+      pull_request: {
+        number: 10,
+        title: 'New feature',
+        head: { ref: 'feat', sha: 'sha1', repo: { clone_url: 'https://github.com/a/b.git' } },
+        user: { login: 'octo' },
+        merged: false,
+      },
+    };
+    expect(parsePullRequest(prOpen, 'github')).toEqual({
+      action: 'opened',
+      prNumber: 10,
+      branch: 'feat',
+      sha: 'sha1',
+      title: 'New feature',
+      author: 'octo',
+      repoUrl: 'https://github.com/a/b.git',
+      merged: false,
+    });
+
+    expect(parsePullRequest({ ...prOpen, action: 'synchronize' }, 'github')?.action).toBe('synchronize');
+    expect(parsePullRequest({ ...prOpen, action: 'reopened' }, 'github')?.action).toBe('reopened');
+    expect(parsePullRequest({ ...prOpen, action: 'closed' }, 'github')?.action).toBe('closed');
+    expect(parsePullRequest({ ...prOpen, action: 'labeled' }, 'github')).toBeNull();
+    expect(parsePullRequest(null, 'github')).toBeNull();
+    expect(parsePullRequest({ action: 'opened' }, 'github')).toBeNull();
+    expect(parsePullRequest({ action: 'opened', pull_request: {} }, 'github')).toBeNull();
+    expect(parsePullRequest({ action: 'opened', pull_request: { number: 1, head: {} } }, 'github')).toBeNull();
+    expect(parsePullRequest({ pull_request: { number: 1, head: { ref: 'main' } } }, 'github')).toBeNull();
+    expect(parsePullRequest({ action: 'opened', pull_request: { head: { ref: 'main' } } }, 'github')).toBeNull();
+  });
+
+  it('parses GitLab merge request events (open, update, reopen, close, merge)', () => {
+    const mrOpen = {
+      object_attributes: {
+        iid: 22,
+        action: 'open',
+        source_branch: 'gl-feat',
+        last_commit: { id: 'glsha', author: { name: 'dev' } },
+        title: 'GL MR',
+      },
+      project: { git_http_url: 'https://gitlab.com/a/b.git' },
+    };
+    expect(parsePullRequest(mrOpen, 'gitlab')).toEqual({
+      action: 'opened',
+      prNumber: 22,
+      branch: 'gl-feat',
+      sha: 'glsha',
+      title: 'GL MR',
+      author: 'dev',
+      repoUrl: 'https://gitlab.com/a/b.git',
+      merged: false,
+    });
+
+    // Test fallbacks: last_commit_id and author name at top level
+    const mrFallback = {
+      object_attributes: {
+        iid: 23,
+        action: 'open',
+        source_branch: 'gl-feat',
+        last_commit_id: 'fallback-sha',
+        author: { name: 'top-author' },
+        title: 'Fallback',
+      },
+    };
+    expect(parsePullRequest(mrFallback, 'gitlab')).toMatchObject({
+      sha: 'fallback-sha',
+      author: 'top-author',
+      repoUrl: undefined,
+    });
+
+    expect(parsePullRequest({ object_attributes: { ...mrOpen.object_attributes, action: 'update' } }, 'gitlab')?.action).toBe('synchronize');
+    expect(parsePullRequest({ object_attributes: { ...mrOpen.object_attributes, action: 'reopen' } }, 'gitlab')?.action).toBe('reopened');
+    expect(parsePullRequest({ object_attributes: { ...mrOpen.object_attributes, action: 'close' } }, 'gitlab')?.action).toBe('closed');
+    const merged = parsePullRequest({ object_attributes: { ...mrOpen.object_attributes, action: 'merge' } }, 'gitlab');
+    expect(merged?.action).toBe('closed');
+    expect(merged?.merged).toBe(true);
+    expect(parsePullRequest({ object_attributes: { action: 'approved' } }, 'gitlab')).toBeNull();
+    expect(parsePullRequest({}, 'gitlab')).toBeNull();
+    expect(parsePullRequest({ object_attributes: {} }, 'gitlab')).toBeNull();
+    expect(parsePullRequest({ object_attributes: { action: 'open', iid: 0 } }, 'gitlab')).toBeNull();
+    expect(parsePullRequest({ object_attributes: { action: 'open', iid: 1, source_branch: '' } }, 'gitlab')).toBeNull();
+  });
+});
+

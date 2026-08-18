@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { badRequest, conflict, forbidden, HttpError, notFound, parseId, unauthorized } from '../../src/lib/errors.js';
+import { badRequest, conflict, forbidden, HttpError, notFound, parseId, unauthorized, unprocessable } from '../../src/lib/errors.js';
 
 describe('HttpError', () => {
   it('constructs a typed error with statusCode and code', () => {
@@ -47,6 +47,12 @@ describe('error factories', () => {
   it('conflict', () => {
     expect(conflict().statusCode).toBe(409);
     expect(conflict().code).toBe('conflict');
+  });
+
+  it('unprocessable', () => {
+    expect(unprocessable().statusCode).toBe(422);
+    expect(unprocessable().code).toBe('unprocessable_entity');
+    expect(unprocessable('Invalid data', 'bad_data').message).toBe('Invalid data');
   });
 });
 

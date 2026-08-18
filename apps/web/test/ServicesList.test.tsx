@@ -111,4 +111,12 @@ describe('ServicesList', () => {
     expect(screen.getAllByText('my-api').length).toBeGreaterThanOrEqual(2);
     expect(screen.getAllByText('worker').length).toBeGreaterThanOrEqual(2);
   });
+
+  it('renders publishedPort when present on a service', async () => {
+    mockOf(api.services.list).mockResolvedValue([
+      { id: 3, name: 'custom-web', slug: 'custom-web', type: 'docker', branch: 'main', port: 3000, publishedPort: 8080, status: 'running' },
+    ] as never);
+    renderWithProviders(<ServicesList />);
+    expect(await screen.findByText(':8080')).toBeInTheDocument();
+  });
 });

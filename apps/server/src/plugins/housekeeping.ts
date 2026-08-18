@@ -4,6 +4,7 @@ import fp from 'fastify-plugin';
 import { run } from '../lib/exec.js';
 import { pruneOldLogs } from '../engine/logs.js';
 import { pruneResetTokens } from '../lib/passwordReset.js';
+import { executeAutoPrune, getAutoPruneStatus } from '../engine/autoPrune.js';
 
 const swallow = () => {};
 const INTERVAL_MS = 60 * 60 * 1000; // hourly
@@ -42,6 +43,16 @@ export default fp(
         await fastify.db.delete(notificationLog).where(lt(notificationLog.ts, new Date(now - NOTIF_MAX_AGE_MS)));
         await pruneResetTokens(fastify.db);
         pruneDanglingImages();
+
+        // Disk Auto-Prune check
+        const pruneStatus = await getAutoPruneStatus(fastify.db);
+        if (pruneStatus.enabled && pruneStatus.diskUsedPercent >= pruneStatus.thresholdPercent) {
+          fastify.log.warn(
+            { diskUsedPercent: pruneStatus.diskUsedPercent, thresholdPercent: pruneStatus.thresholdPercent },
+            'Disk threshold reached — triggering auto-prune',
+          );
+          await executeAutoPrune(fastify.db);
+        }
       } catch (err) {
         fastify.log.error({ err }, 'housekeeping failed');
       } finally {

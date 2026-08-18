@@ -10,7 +10,17 @@ import { useCopy } from '../lib/format.js';
 import { StorageGauge } from '../components/StorageGauge.js';
 import { DatabaseWizard } from '../components/DatabaseWizard.js';
 
-const ENGINE_LABEL: Record<string, string> = { postgres: 'PostgreSQL', mysql: 'MySQL', mariadb: 'MariaDB', redis: 'Redis', mongo: 'MongoDB' };
+const ENGINE_LABEL: Record<string, string> = {
+  postgres: 'PostgreSQL',
+  mysql: 'MySQL',
+  mariadb: 'MariaDB',
+  redis: 'Redis',
+  valkey: 'Valkey',
+  mongo: 'MongoDB',
+  clickhouse: 'ClickHouse',
+  meilisearch: 'Meilisearch',
+  rabbitmq: 'RabbitMQ',
+};
 
 export function Databases() {
   const qc = useQueryClient();

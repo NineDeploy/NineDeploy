@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { type FormEvent, useState } from 'react';
 import { Navigate, Link, useLocation, useNavigate, useSearchParams } from 'react-router';
-import { Fingerprint } from 'lucide-react';
+import { Fingerprint, Globe } from 'lucide-react';
 import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.js';
 import { BrandMark, Button, Card, Field, Input } from '../components/ui.js';
@@ -23,6 +23,12 @@ export function Login() {
 
   const status = useQuery({ queryKey: ['auth-status'], queryFn: () => api.auth.status() });
   const initialized = status.data?.initialized ?? false;
+
+  const publicProviders = useQuery({
+    queryKey: ['public-oidc-providers'],
+    queryFn: () => api.auth.oidc.publicProviders(),
+    enabled: initialized,
+  });
 
   if (user) return <Navigate to="/" replace />;
 
@@ -114,6 +120,31 @@ export function Login() {
             <Button type="submit" className="w-full" disabled={busy || status.isLoading}>
               {busy ? 'Please wait…' : initialized ? (needsTotp ? 'Verify & sign in' : 'Sign in') : 'Create account'}
             </Button>
+
+            {initialized && (publicProviders.data?.length ?? 0) > 0 && (
+              <div className="space-y-2 pt-1">
+                <div className="relative py-1 text-center">
+                  <span className="relative z-10 bg-slate-900 px-2 text-xs text-slate-600">or sign in with</span>
+                  <span className="absolute inset-x-0 top-1/2 h-px bg-white/5" />
+                </div>
+                <div className="grid grid-cols-1 gap-2">
+                  {publicProviders.data?.map((p) => (
+                    <Button
+                      key={p.id}
+                      type="button"
+                      variant="secondary"
+                      className="w-full justify-center"
+                      onClick={() => {
+                        window.location.href = p.authUrl;
+                      }}
+                    >
+                      <Globe size={14} className="text-indigo-400" />
+                      <span>{p.name}</span>
+                    </Button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {initialized && (
               <div className="relative py-1 text-center">

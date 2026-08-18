@@ -109,8 +109,30 @@ describe('pm2Builder.buildAndRun', () => {
 
     await pm2Builder.buildAndRun(ctx as never);
 
-    const opts = h.pm2.start.mock.calls[0]![0] as Record<string, unknown>;
-    expect(opts['max_memory_restart']).toBeUndefined();
+    const startOpts = h.pm2.start.mock.calls[0]![0] as Record<string, unknown>;
+    expect(startOpts.max_memory_restart).toBeUndefined();
+  });
+
+  it('populates env.PORT from publishedPort or port when not already defined', async () => {
+    const ctx1 = makeCtx({
+      service: { slug: 'api', port: null, publishedPort: 9000, healthPath: '/health' },
+      env: {},
+    });
+    await pm2Builder.buildAndRun(ctx1 as never);
+    expect(h.pm2.start).toHaveBeenCalledWith(
+      expect.objectContaining({ env: { PORT: '9000' } }),
+      expect.any(Function),
+    );
+
+    const ctx2 = makeCtx({
+      service: { slug: 'api', port: 5000, healthPath: '/health' },
+      env: {},
+    });
+    await pm2Builder.buildAndRun(ctx2 as never);
+    expect(h.pm2.start).toHaveBeenCalledWith(
+      expect.objectContaining({ env: { PORT: '5000' } }),
+      expect.any(Function),
+    );
   });
 
   it('defaults null port and healthPath in the returned runtime', async () => {

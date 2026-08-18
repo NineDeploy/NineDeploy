@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Cpu, Settings } from 'lucide-react';
+import { Cpu, GitPullRequest, Layers, Settings } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import type { Service } from '@ninedeploy/sdk';
 import { api } from '../../lib/api.js';
@@ -7,17 +7,18 @@ import { toInt } from '../../lib/format.js';
 import { useToast } from '../../components/Toast.js';
 import { Button, Card, CardBody, Field, Input, Select, Skeleton } from '../../components/ui.js';
 
-/** Service fields, build configuration and resource limits. */
+/** Service fields, build configuration, lifecycle hooks, PR previews, and resource limits. */
 export function SettingsTab({ serviceId, svc }: { serviceId: number; svc: Service }) {
   return (
     <div className="mt-5 space-y-5">
       <SettingsCard serviceId={serviceId} />
+      <PreviewEnvironmentsCard svc={svc} />
       <LimitsCard svc={svc} />
     </div>
   );
 }
 
-// ── Settings (service fields + build config) ───────────────────────────────
+// ── Settings (service fields + build config + lifecycle hooks) ─────────────
 function SettingsCard({ serviceId }: { serviceId: number }) {
   const qc = useQueryClient();
   const { toast } = useToast();
@@ -28,6 +29,7 @@ function SettingsCard({ serviceId }: { serviceId: number }) {
     name: string; branch: string; repoUrl: string; image: string; port: string;
     healthPath: string; volumeMount: string;
     buildPack: string; baseDir: string; installCmd: string; buildCmd: string; startCmd: string; dockerfilePath: string;
+    preDeployCmd: string; postDeployCmd: string; preStopCmd: string;
     restartPolicy: string; stopGraceSeconds: string;
   } | null>(null);
   useEffect(() => {
@@ -46,6 +48,9 @@ function SettingsCard({ serviceId }: { serviceId: number }) {
       buildCmd: svc.build?.buildCmd ?? '',
       startCmd: svc.build?.startCmd ?? '',
       dockerfilePath: svc.build?.dockerfilePath ?? '',
+      preDeployCmd: svc.build?.preDeployCmd ?? '',
+      postDeployCmd: svc.build?.postDeployCmd ?? '',
+      preStopCmd: svc.build?.preStopCmd ?? '',
       restartPolicy: svc.build?.restartPolicy ?? 'unless-stopped',
       stopGraceSeconds: String(svc.build?.stopGraceSeconds ?? 5),
     });
@@ -71,6 +76,9 @@ function SettingsCard({ serviceId }: { serviceId: number }) {
           buildCmd: orUndef(f.buildCmd),
           startCmd: orUndef(f.startCmd),
           dockerfilePath: orUndef(f.dockerfilePath),
+          preDeployCmd: orUndef(f.preDeployCmd),
+          postDeployCmd: orUndef(f.postDeployCmd),
+          preStopCmd: orUndef(f.preStopCmd),
           restartPolicy: f.restartPolicy,
           stopGraceSeconds: toInt(f.stopGraceSeconds, 5)!,
         },
@@ -123,6 +131,19 @@ function SettingsCard({ serviceId }: { serviceId: number }) {
           <Field label="Build command"><Input value={form.buildCmd} onChange={set('buildCmd')} placeholder="npm run build" className="h-9 font-mono text-xs" /></Field>
           <Field label="Start command"><Input value={form.startCmd} onChange={set('startCmd')} placeholder="npm start" className="h-9 font-mono text-xs" /></Field>
           <Field label="Dockerfile path"><Input value={form.dockerfilePath} onChange={set('dockerfilePath')} placeholder="./Dockerfile" className="h-9 font-mono text-xs" /></Field>
+
+          <div className="col-span-full mt-2 border-t border-white/5 pt-4 text-xs font-medium uppercase tracking-wide text-slate-500 flex items-center gap-1.5">
+            <Layers size={13} className="text-indigo-400" /> CI/CD Lifecycle Hooks
+          </div>
+          <Field label="Pre-deploy command (e.g. DB migrations)">
+            <Input value={form.preDeployCmd} onChange={set('preDeployCmd')} placeholder="npm run db:migrate" className="h-9 font-mono text-xs" />
+          </Field>
+          <Field label="Post-deploy command (e.g. cache warm-up)">
+            <Input value={form.postDeployCmd} onChange={set('postDeployCmd')} placeholder="curl -sSL http://localhost:3000/api/warmup" className="h-9 font-mono text-xs" />
+          </Field>
+          <Field label="Pre-stop command">
+            <Input value={form.preStopCmd} onChange={set('preStopCmd')} placeholder="npm run cleanup" className="h-9 font-mono text-xs" />
+          </Field>
           <Field label="Restart policy">
             <Select value={form.restartPolicy} onChange={set('restartPolicy')} className="h-9">
               <option value="unless-stopped">unless-stopped</option>
@@ -143,6 +164,97 @@ function SettingsCard({ serviceId }: { serviceId: number }) {
             <span className="ml-3 text-xs text-slate-500">Build + runtime changes apply on the next deploy.</span>
           </div>
         </form>
+      </CardBody>
+    </Card>
+  );
+}
+
+// ── Ephemeral PR / MR Preview Environments ─────────────────────────────────
+function PreviewEnvironmentsCard({ svc }: { svc: Service }) {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+
+  const [enabled, setEnabled] = useState(svc.previewDeploymentsEnabled ?? false);
+  const [autoDestroy, setAutoDestroy] = useState(svc.previewAutoDestroyOnClose ?? true);
+  const [pattern, setPattern] = useState(svc.previewDomainPattern ?? 'pr-{{pr}}-{{slug}}.{{domain}}');
+  const [maxActive, setMaxActive] = useState(String(svc.previewMaxActive ?? 5));
+
+  const save = useMutation({
+    mutationFn: () =>
+      api.services.update(svc.id, {
+        previewDeploymentsEnabled: enabled,
+        previewAutoDestroyOnClose: autoDestroy,
+        previewDomainPattern: pattern || undefined,
+        previewMaxActive: parseInt(maxActive, 10) || 5,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['service', svc.id] });
+      qc.invalidateQueries({ queryKey: ['services'] });
+      toast('PR Preview settings saved', 'success');
+    },
+    onError: () => toast('Could not save PR preview settings', 'error'),
+  });
+
+  return (
+    <Card>
+      <CardBody className="space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 text-sm font-medium text-slate-300">
+            <GitPullRequest size={16} className="text-indigo-400" /> Ephemeral PR / MR Preview Deployments
+          </div>
+          <label className="relative inline-flex cursor-pointer items-center">
+            <input
+              type="checkbox"
+              checked={enabled}
+              onChange={(e) => setEnabled(e.target.checked)}
+              className="peer sr-only"
+            />
+            <div className="peer h-5 w-9 rounded-full bg-slate-700 after:absolute after:left-[2px] after:top-[2px] after:h-4 after:w-4 after:rounded-full after:bg-white after:transition-all after:content-[''] peer-checked:bg-indigo-600 peer-checked:after:translate-x-full peer-focus:outline-none" />
+          </label>
+        </div>
+
+        <p className="text-xs text-slate-400 leading-relaxed">
+          Automatically provision isolated preview environments on Pull Request / Merge Request webhooks (GitHub, GitLab, Gitea), and destroy them upon merge or close.
+        </p>
+
+        {enabled && (
+          <div className="grid grid-cols-1 gap-4 pt-2 md:grid-cols-2">
+            <Field label="Preview Domain Pattern" hint="Variables: {{pr}}, {{slug}}, {{domain}}">
+              <Input
+                value={pattern}
+                onChange={(e) => setPattern(e.target.value)}
+                placeholder="pr-{{pr}}-{{slug}}.{{domain}}"
+                className="h-9 font-mono text-xs"
+              />
+            </Field>
+            <Field label="Max Active Previews">
+              <Input
+                value={maxActive}
+                onChange={(e) => setMaxActive(e.target.value)}
+                inputMode="numeric"
+                placeholder="5"
+                className="h-9 font-mono text-xs"
+              />
+            </Field>
+            <div className="col-span-full">
+              <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={autoDestroy}
+                  onChange={(e) => setAutoDestroy(e.target.checked)}
+                  className="rounded border-white/20 bg-slate-800 text-indigo-500 focus:ring-0"
+                />
+                Auto-destroy ephemeral preview container and URL when PR is closed / merged
+              </label>
+            </div>
+          </div>
+        )}
+
+        <div className="pt-2">
+          <Button size="sm" onClick={() => save.mutate()} disabled={save.isPending}>
+            {save.isPending ? 'Saving…' : 'Save PR preview settings'}
+          </Button>
+        </div>
       </CardBody>
     </Card>
   );

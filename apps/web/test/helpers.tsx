@@ -5,6 +5,7 @@ import { MemoryRouter, Route, Routes } from 'react-router';
 import type { ReactNode } from 'react';
 import { ToastProvider } from '../src/components/Toast.js';
 import { ProjectScopeProvider } from '../src/lib/projects.js';
+import { WorkspaceProvider } from '../src/lib/workspace.js';
 
 /** jsdom does not implement ResizeObserver — some rendered components touch it. */
 if (typeof globalThis.ResizeObserver === 'undefined') {
@@ -50,6 +51,23 @@ export function createFakeApiModule() {
       sessions: { list: vi.fn(), revoke: vi.fn() },
       me: vi.fn(),
       tokens: { create: vi.fn(), list: vi.fn(), remove: vi.fn() },
+      oidc: {
+        list: vi.fn(),
+        publicProviders: vi.fn(),
+        create: vi.fn(),
+        update: vi.fn(),
+        delete: vi.fn(),
+      },
+    },
+    workspaces: {
+      list: vi.fn(),
+      get: vi.fn(),
+      create: vi.fn(),
+      update: vi.fn(),
+      delete: vi.fn(),
+      addMember: vi.fn(),
+      updateMemberRole: vi.fn(),
+      removeMember: vi.fn(),
     },
     services: {
       list: vi.fn(),
@@ -67,6 +85,7 @@ export function createFakeApiModule() {
     deploys: { trigger: vi.fn(), list: vi.fn(), rollback: vi.fn(), cancel: vi.fn(), configDiff: vi.fn() },
     domains: { list: vi.fn(), create: vi.fn(), remove: vi.fn(), all: vi.fn(), setSsl: vi.fn(), update: vi.fn() },
     volumes: { list: vi.fn(), remove: vi.fn(), prune: vi.fn(), listFiles: vi.fn(), readFile: vi.fn(), writeFile: vi.fn(), mkdir: vi.fn(), deleteFile: vi.fn() },
+    containers: { listFiles: vi.fn(), readFile: vi.fn(), writeFile: vi.fn(), mkdir: vi.fn(), deleteFile: vi.fn() },
     system: { resources: vi.fn(), pruneImages: vi.fn(), exportUrl: vi.fn(), updateCheck: vi.fn(), dockerEvents: vi.fn() },
     networks: { list: vi.fn(), create: vi.fn(), remove: vi.fn(), attach: vi.fn(), detach: vi.fn() },
     tunnels: { list: vi.fn(), create: vi.fn(), remove: vi.fn() },
@@ -105,6 +124,8 @@ export function createFakeApiModule() {
       logs: vi.fn(),
       credentials: vi.fn(),
       setLimits: vi.fn(),
+      startStudio: vi.fn(),
+      stopStudio: vi.fn(),
     },
     attachments: { list: vi.fn(), create: vi.fn(), remove: vi.fn() },
     env: { list: vi.fn(), create: vi.fn(), update: vi.fn(), remove: vi.fn() },
@@ -124,11 +145,35 @@ export function createFakeApiModule() {
     limits: { setService: vi.fn(), setDatabase: vi.fn() },
     backupDestinations: { list: vi.fn(), create: vi.fn(), update: vi.fn(), remove: vi.fn(), test: vi.fn() },
     jobs: { list: vi.fn(), create: vi.fn(), update: vi.fn(), remove: vi.fn(), run: vi.fn(), runs: vi.fn() },
-    servers: { list: vi.fn(), create: vi.fn(), remove: vi.fn(), test: vi.fn(), approve: vi.fn(), reject: vi.fn() },
+    servers: {
+      list: vi.fn(),
+      create: vi.fn(),
+      remove: vi.fn(),
+      test: vi.fn(),
+      approve: vi.fn(),
+      reject: vi.fn(),
+      sshTest: vi.fn(),
+      sshBootstrap: vi.fn(),
+      bootstrapLogs: vi.fn(),
+    },
     traefik: { get: vi.fn(), status: vi.fn(), certificates: vi.fn(), logs: vi.fn(), restart: vi.fn(), backupCerts: vi.fn() },
     config: { list: vi.fn(), get: vi.fn(), set: vi.fn(), delete: vi.fn() },
     plugins: { list: vi.fn(), marketplace: vi.fn(), install: vi.fn(), enable: vi.fn(), disable: vi.fn(), reload: vi.fn(), inspect: vi.fn(), uninstall: vi.fn() },
     menus: { list: vi.fn() },
+    logDrains: {
+      list: vi.fn(),
+      get: vi.fn(),
+      create: vi.fn(),
+      update: vi.fn(),
+      remove: vi.fn(),
+      test: vi.fn(),
+    },
+    housekeeping: {
+      getAutoPrune: vi.fn(),
+      updateAutoPrune: vi.fn(),
+      runPrune: vi.fn(),
+    },
+    demo: { seed: vi.fn() },
     health: vi.fn(),
   };
   const getToken = vi.fn(() => 'test-token');
@@ -183,6 +228,21 @@ export function createThemeMock() {
   };
 }
 
+/** Mock module for `src/lib/workspace.js`. */
+export function createWorkspaceMock() {
+  return {
+    WorkspaceProvider: ({ children }: { children?: ReactNode }) => <>{children}</>,
+    useWorkspace: vi.fn(() => ({
+      workspaces: [],
+      currentWorkspace: null,
+      isLoading: false,
+      switchWorkspace: vi.fn(),
+      createWorkspace: vi.fn(),
+      refreshWorkspaces: vi.fn(),
+    })),
+  };
+}
+
 interface RenderOptions {
   route?: string;
   initialEntries?: string[];
@@ -199,11 +259,13 @@ export function renderWithProviders(ui: ReactNode, opts: RenderOptions = {}) {
   const initialEntries = opts.initialEntries ?? [opts.route ?? '/'];
   const utils = render(
     <QueryClientProvider client={queryClient}>
-      <ProjectScopeProvider>
-        <MemoryRouter initialEntries={initialEntries}>
-          <ToastProvider>{ui}</ToastProvider>
-        </MemoryRouter>
-      </ProjectScopeProvider>
+      <WorkspaceProvider>
+        <ProjectScopeProvider>
+          <MemoryRouter initialEntries={initialEntries}>
+            <ToastProvider>{ui}</ToastProvider>
+          </MemoryRouter>
+        </ProjectScopeProvider>
+      </WorkspaceProvider>
     </QueryClientProvider>,
   );
   return { ...utils, queryClient };

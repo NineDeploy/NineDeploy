@@ -7,6 +7,16 @@ import { FakeWebSocket } from './web-utils.js';
 
 const authMock = vi.hoisted(() => ({ useAuth: vi.fn() }));
 const themeMock = vi.hoisted(() => ({ useTheme: vi.fn() }));
+const workspaceMock = vi.hoisted(() => ({
+  useWorkspace: vi.fn(() => ({
+    workspaces: [],
+    currentWorkspace: null,
+    isLoading: false,
+    switchWorkspace: vi.fn(),
+    createWorkspace: vi.fn(),
+    refreshWorkspaces: vi.fn(),
+  })),
+}));
 const apiMock = vi.hoisted(() => ({
   getToken: vi.fn(() => 'tok'),
   api: {
@@ -21,6 +31,7 @@ const apiMock = vi.hoisted(() => ({
 
 vi.mock('../src/lib/auth.js', () => ({ useAuth: authMock.useAuth }));
 vi.mock('../src/lib/theme.js', () => ({ useTheme: themeMock.useTheme }));
+vi.mock('../src/lib/workspace.js', () => ({ useWorkspace: workspaceMock.useWorkspace }));
 vi.mock('../src/lib/api.js', () => apiMock);
 
 import { Layout } from '../src/components/Layout.js';

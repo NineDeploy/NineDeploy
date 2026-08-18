@@ -1,5 +1,5 @@
-import { useQuery } from '@tanstack/react-query';
-import { AlertCircle, CheckCircle2, Database, Globe, Link2, Package, Rocket, Server, Upload, XCircle } from 'lucide-react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { AlertCircle, CheckCircle2, Database, Globe, Link2, Package, Rocket, Server, Sparkles, Upload, XCircle } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { api } from '../lib/api.js';
@@ -9,10 +9,23 @@ import { formatDateTime } from '../lib/format.js';
 
 export function Dashboard() {
   const navigate = useNavigate();
+  const qc = useQueryClient();
   const { toast } = useToast();
   const dash = useQuery({ queryKey: ['dashboard'], queryFn: () => api.dashboard.get(), refetchInterval: 5000 });
   const importRef = useRef<HTMLInputElement>(null);
   const [importing, setImporting] = useState(false);
+
+  const seedDemo = useMutation({
+    mutationFn: () => api.demo.seed(),
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ['dashboard'] });
+      qc.invalidateQueries({ queryKey: ['services'] });
+      qc.invalidateQueries({ queryKey: ['databases'] });
+      qc.invalidateQueries({ queryKey: ['projects'] });
+      toast(`Demo Stack seeded: ${res.services.length} services & Postgres DB`, 'success');
+    },
+    onError: () => toast('Could not seed demo stack', 'error'),
+  });
 
   const doImport = async (file: File) => {
     setImporting(true);
@@ -56,7 +69,16 @@ export function Dashboard() {
     <div className="nd-fade space-y-5">
       {/* Hero status banner */}
       <input ref={importRef} type="file" accept=".json" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) doImport(f); e.target.value = ''; }} />
-      <div className="flex justify-end">
+      <div className="flex items-center justify-end gap-2">
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => seedDemo.mutate()}
+          disabled={seedDemo.isPending}
+        >
+          <Sparkles size={13} className="text-indigo-400" />
+          {seedDemo.isPending ? 'Seeding Demo…' : 'Load Demo Stack'}
+        </Button>
         <Button variant="secondary" size="sm" onClick={() => importRef.current?.click()} disabled={importing}>
           <Upload size={13} /> {importing ? 'Importing…' : 'Import service'}
         </Button>

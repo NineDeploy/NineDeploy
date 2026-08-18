@@ -57,6 +57,11 @@ export const pm2Builder: Builder = {
     const { script, args } = parseStartCommand(buildConfig?.startCmd ?? '');
     log(`Starting PM2 process ${name} …`);
 
+    const effectivePort = service.publishedPort ?? service.port;
+    if (effectivePort && env.PORT === undefined) {
+      env.PORT = String(effectivePort);
+    }
+
     // interpreter: 'none' makes PM2 exec the script directly so `npm`/`node`
     // are run as binaries instead of being re-interpreted through node.
     const startOpts: Record<string, unknown> = {

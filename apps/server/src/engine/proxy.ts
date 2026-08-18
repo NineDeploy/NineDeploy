@@ -355,7 +355,7 @@ export async function writeDynamicConfig(db: DB): Promise<void> {
       ? `HostRegexp(\`^[a-zA-Z0-9-]+\\.${escapeRegexp(host.slice(2))}$\`)`
       : `Host(\`${host}\`)`;
 
-    // Per-domain middlewares: www→apex redirect + custom response headers.
+    // Per-domain middlewares: www→apex redirect + custom response headers + basicAuth + ipAllowlist + rateLimit.
     const mwList: string[] = [];
     const apexHost = host.startsWith('*.') ? host : host.replace(/^www\./, '');
     if (d.redirectWww && !host.startsWith('*.')) {
@@ -376,6 +376,27 @@ export async function writeDynamicConfig(db: DB): Promise<void> {
         .map((h) => `        ${yamlKey(h.name)}: "${yamlValue(h.value)}"`)
         .join('\n');
       middlewares.push(`    ${mw}:\n      headers:\n        customResponseHeaders:\n${lines}\n`);
+    }
+    const authUsers = parseBasicAuth(d.basicAuth);
+    if (authUsers.length > 0) {
+      const mw = `mw_${key}_auth`;
+      mwList.push(mw);
+      const lines = authUsers.map((u) => `        - "${yamlDoubleQuoted(u)}"`).join('\n');
+      middlewares.push(`    ${mw}:\n      basicAuth:\n        users:\n${lines}\n`);
+    }
+    const ipList = parseIpAllowlist(d.ipAllowlist);
+    if (ipList.length > 0) {
+      const mw = `mw_${key}_ip`;
+      mwList.push(mw);
+      const lines = ipList.map((ip) => `        - "${yamlDoubleQuoted(ip)}"`).join('\n');
+      middlewares.push(`    ${mw}:\n      ipAllowList:\n        sourceRange:\n${lines}\n`);
+    }
+    if (d.rateLimitAverage && d.rateLimitAverage > 0) {
+      const mw = `mw_${key}_ratelimit`;
+      mwList.push(mw);
+      const avg = d.rateLimitAverage;
+      const burst = d.rateLimitBurst && d.rateLimitBurst > 0 ? d.rateLimitBurst : avg;
+      middlewares.push(`    ${mw}:\n      rateLimit:\n        average: ${avg}\n        burst: ${burst}\n`);
     }
 
     const fullRule =
@@ -457,6 +478,54 @@ export function parseHeaders(raw: string | null | undefined): Array<{ name: stri
   return out;
 }
 
+/** Parse the domain `basicAuth` column into sanitized user:hash entries. */
+export function parseBasicAuth(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  let entries: string[] = [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      entries = parsed.map(String);
+    } else {
+      entries = String(parsed).split(/[\n,]+/);
+    }
+  } catch {
+    entries = raw.split(/[\n,]+/);
+  }
+  const out: string[] = [];
+  for (const item of entries) {
+    const trimmed = item.trim().replace(/[\r\n\0]/g, '');
+    if (trimmed.includes(':')) {
+      out.push(trimmed);
+    }
+  }
+  return out;
+}
+
+/** Parse the domain `ipAllowlist` column into sanitized CIDR / IP strings. */
+export function parseIpAllowlist(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  let entries: string[] = [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      entries = parsed.map(String);
+    } else {
+      entries = String(parsed).split(/[\n,]+/);
+    }
+  } catch {
+    entries = raw.split(/[\n,]+/);
+  }
+  const out: string[] = [];
+  for (const item of entries) {
+    const sanitized = item.trim().replace(/[^0-9a-fA-F:./]/g, '');
+    if (sanitized.length > 0) {
+      out.push(sanitized);
+    }
+  }
+  return out;
+}
+
 /** Header names become YAML keys — quote anything that could be misread. */
 function yamlKey(name: string): string {
   return `"${name}"`;
@@ -475,3 +544,4 @@ function escapeRegexp(s: string): string {
 function yamlDoubleQuoted(value: string): string {
   return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }
+

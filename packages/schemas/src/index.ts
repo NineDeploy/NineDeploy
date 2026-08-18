@@ -4,3 +4,5 @@ export * from './management.js';
 export * from './project.js';
 export * from './service.js';
 export * from './kernel.js';
+export * from './workspaces.js';
+

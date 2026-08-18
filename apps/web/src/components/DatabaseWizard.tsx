@@ -6,11 +6,15 @@ import { formatBytes } from '../lib/format.js';
 import { Button, Input, cn } from './ui.js';
 
 const ENGINES = [
-  { id: 'postgres', label: 'PostgreSQL', emoji: '🐘', hint: 'Relational · SQL' },
+  { id: 'postgres', label: 'PostgreSQL', emoji: '🐘', hint: 'Relational · SQL · pgvector' },
   { id: 'mysql', label: 'MySQL', emoji: '🐬', hint: 'Relational · SQL' },
   { id: 'mariadb', label: 'MariaDB', emoji: '🦭', hint: 'Relational · SQL' },
-  { id: 'redis', label: 'Redis', emoji: '⚡', hint: 'Key-value · cache' },
+  { id: 'redis', label: 'Redis', emoji: '⚡', hint: 'Key-value · Cache' },
+  { id: 'valkey', label: 'Valkey', emoji: '🚀', hint: 'Fast KV · Redis fork' },
   { id: 'mongo', label: 'MongoDB', emoji: '🍃', hint: 'Document · NoSQL' },
+  { id: 'clickhouse', label: 'ClickHouse', emoji: '📊', hint: 'Columnar · OLAP' },
+  { id: 'meilisearch', label: 'Meilisearch', emoji: '🔍', hint: 'Full-text search' },
+  { id: 'rabbitmq', label: 'RabbitMQ', emoji: '🐇', hint: 'Message broker · AMQP' },
 ] as const;
 
 const STEPS = ['Engine', 'Details', 'Review'];
@@ -22,6 +26,7 @@ export function DatabaseWizard({ onClose }: { onClose: () => void }) {
   const [name, setName] = useState('');
   const [version, setVersion] = useState('');
   const [selectedVolume, setSelectedVolume] = useState<string>('');
+  const [pgvector, setPgvector] = useState(false);
 
   const volumes = useQuery({
     queryKey: ['volumes'],
@@ -39,6 +44,7 @@ export function DatabaseWizard({ onClose }: { onClose: () => void }) {
         engine: engine!,
         version: version || undefined,
         existingVolume: selectedVolume || undefined,
+        extensions: pgvector && engine === 'postgres' ? ['pgvector'] : undefined,
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['databases'] });
@@ -114,6 +120,21 @@ export function DatabaseWizard({ onClose }: { onClose: () => void }) {
                 <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-slate-400">Version (optional)</span>
                 <Input value={version} onChange={(e) => setVersion(e.target.value)} placeholder="e.g. 16 (default if empty)" />
               </div>
+
+              {engine === 'postgres' && (
+                <label className="flex items-center gap-2.5 rounded-lg border border-emerald-500/20 bg-emerald-500/[0.04] p-3 text-xs text-slate-200 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={pgvector}
+                    onChange={(e) => setPgvector(e.target.checked)}
+                    className="accent-emerald-500 rounded"
+                  />
+                  <span>
+                    <strong className="font-semibold text-emerald-300">Enable pgvector extension</strong>
+                    <span className="block text-[11px] text-slate-400">Installs vector database support for AI embeddings, similarity search, and RAG workloads.</span>
+                  </span>
+                </label>
+              )}
 
               {retainedVolumes.length > 0 && (
                 <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3.5 space-y-2.5">

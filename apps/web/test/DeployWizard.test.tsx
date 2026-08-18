@@ -483,4 +483,30 @@ describe('DeployWizard', () => {
       ),
     );
   });
+
+  it('supports direct host port input and displays Host Port in review', async () => {
+    const user = userEvent.setup();
+    renderWizard();
+    await user.type(screen.getByPlaceholderText('my-app'), 'port-app');
+    await user.type(screen.getByPlaceholderText('https://github.com/you/repo'), 'https://github.com/x/port-app');
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+
+    // Runtime step: fill container port and direct host port
+    await user.type(screen.getByPlaceholderText('3000'), '3000');
+    await user.type(screen.getByPlaceholderText('e.g. 8080'), '8080');
+    await user.click(screen.getByRole('button', { name: /continue/i })); // Env
+    await user.click(screen.getByRole('button', { name: /continue/i })); // Resources
+    await user.click(screen.getByRole('button', { name: /continue/i })); // Review
+
+    expect(screen.getByText(':8080')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /deploy/i }));
+    await waitFor(() =>
+      expect(apiMock.api.services.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          port: 3000,
+          publishedPort: 8080,
+        }),
+      ),
+    );
+  });
 });

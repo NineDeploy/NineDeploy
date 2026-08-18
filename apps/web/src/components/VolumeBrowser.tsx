@@ -13,6 +13,7 @@ import {
   RefreshCw,
   Save,
   Trash2,
+  Upload,
   X,
 } from 'lucide-react';
 import { useState } from 'react';
@@ -241,6 +242,29 @@ export function VolumeBrowser({ volume, onClose }: { volume: string; onClose: ()
                 >
                   <FilePlus2 size={13} /> File
                 </Button>
+                <label className="inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-white/10 bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-200 transition hover:bg-white/5 active:scale-[0.98]">
+                  <Upload size={13} /> Upload
+                  <input
+                    type="file"
+                    className="hidden"
+                    aria-label="Upload file to volume"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      const reader = new FileReader();
+                      reader.onload = () => {
+                        const res = String(reader.result ?? '');
+                        const base64 = res.split(',')[1] || '';
+                        const path = cwd ? `${cwd}/${file.name}` : file.name;
+                        api.volumes.writeFile(volume, { path, contentBase64: base64 }).then(() => {
+                          refresh();
+                          toast(`Uploaded ${file.name}`, 'success');
+                        }).catch(() => toast('Upload failed', 'error'));
+                      };
+                      reader.readAsDataURL(file);
+                    }}
+                  />
+                </label>
                 <Button size="sm" variant="secondary" onClick={refresh} disabled={dir.isFetching}>
                   <RefreshCw size={13} className={dir.isFetching ? 'animate-spin' : undefined} />
                 </Button>

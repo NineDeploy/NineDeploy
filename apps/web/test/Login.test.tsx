@@ -243,4 +243,19 @@ describe('Login', () => {
     renderWithProviders(<Login />, { initialEntries: ['/login?reset=ok'] });
     expect(await screen.findByText(/Password updated — sign in with your new password/)).toBeInTheDocument();
   });
+
+  it('renders public SSO provider buttons and redirects on click', async () => {
+    const user = userEvent.setup();
+    mockOf(api.auth.status).mockResolvedValue({ initialized: true } as never);
+    mockOf(api.auth.oidc.publicProviders).mockResolvedValue([
+      { id: 1, name: 'GitHub Enterprise', slug: 'github', authUrl: '/v1/auth/oidc/github/login' },
+    ] as never);
+    mockOf(useAuth).mockReturnValue(authValue() as never);
+
+    renderWithProviders(<Login />);
+    expect(await screen.findByText('GitHub Enterprise')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /GitHub Enterprise/ }));
+    expect(screen.getByText('GitHub Enterprise')).toBeInTheDocument();
+  });
 });

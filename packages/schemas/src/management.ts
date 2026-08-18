@@ -161,6 +161,69 @@ export const serverAnnounce = z.object({
 });
 export type ServerAnnounce = z.infer<typeof serverAnnounce>;
 
+export const sshAuthType = z.enum(['key', 'password']);
+export type SshAuthType = z.infer<typeof sshAuthType>;
+
+export const serverSshTest = z.object({
+  host: z.string().trim().min(1).max(255),
+  sshPort: z
+    .unknown()
+    .optional()
+    .transform((v) => Number(v ?? 22) || 22)
+    .pipe(z.number().int().min(1).max(65535)),
+  sshUser: z.string().trim().min(1).max(100).default('root'),
+  authType: sshAuthType.default('key'),
+  sshKey: z.string().optional(),
+  sshPassword: z.string().optional(),
+});
+export type ServerSshTest = z.infer<typeof serverSshTest>;
+
+export const serverSshBootstrap = z.object({
+  name: z.string().trim().min(1).max(100),
+  host: z.string().trim().min(1).max(255),
+  sshPort: z
+    .unknown()
+    .optional()
+    .transform((v) => Number(v ?? 22) || 22)
+    .pipe(z.number().int().min(1).max(65535)),
+  sshUser: z.string().trim().min(1).max(100).default('root'),
+  authType: sshAuthType.default('key'),
+  sshKey: z.string().optional(),
+  sshPassword: z.string().optional(),
+  installDocker: z.boolean().default(true),
+  agentPort: z
+    .unknown()
+    .optional()
+    .transform((v) => Number(v ?? 4600) || 4600)
+    .pipe(z.number().int().min(1).max(65535)),
+});
+export type ServerSshBootstrap = z.infer<typeof serverSshBootstrap>;
+
+export interface ServerSshTestResult {
+  ok: boolean;
+  message: string;
+  os?: string;
+  dockerInstalled?: boolean;
+  dockerVersion?: string;
+  latencyMs?: number;
+}
+
+export interface ServerBootstrapStep {
+  step: 'connecting' | 'os_detect' | 'docker_check' | 'docker_install' | 'agent_deploy' | 'verify' | 'done' | 'error';
+  status: 'pending' | 'running' | 'success' | 'failed';
+  message: string;
+  timestamp: string;
+}
+
+export interface ServerBootstrapResult {
+  ok: boolean;
+  serverId?: number;
+  serverName?: string;
+  steps: ServerBootstrapStep[];
+  logs: string[];
+  error?: string;
+}
+
 // ── Scheduled jobs ─────────────────────────────────────────────────────────
 /**
  * The cron expression itself is validated with croner at the route (the
@@ -293,9 +356,13 @@ export interface DatabaseDetail {
   database: string | null;
   connectionString: string | null;
   containerName?: string | null;
+  containerId?: string | null;
   volumeName?: string | null;
   cpuShares?: number | null;
   memLimitMb?: number | null;
+  webGuiEnabled?: boolean | null;
+  webGuiPort?: number | null;
+  extensions?: string[];
   attachedServices: Array<{ id: number; name: string; slug: string }>;
   createdAt: string;
   updatedAt: string;
@@ -310,4 +377,27 @@ export interface DatabaseCredentials {
   internalPort: number | null;
   connectionString: string;
 }
+
+export const demoSeedResult = z.object({
+  ok: z.boolean(),
+  projectId: z.number(),
+  projectName: z.string(),
+  services: z.array(
+    z.object({
+      id: z.number(),
+      name: z.string(),
+      type: z.string(),
+      status: z.string(),
+      port: z.number().nullable(),
+    }),
+  ),
+  database: z
+    .object({
+      id: z.number(),
+      name: z.string(),
+      engine: z.string(),
+    })
+    .nullable(),
+});
+export type DemoSeedResult = z.infer<typeof demoSeedResult>;
 

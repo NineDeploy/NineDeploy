@@ -114,10 +114,13 @@ export const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSel
   );
 });
 
-export function Field({ label, children }: { label: string; children: ReactNode }) {
+export function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
   return (
     <div>
-      <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-slate-400">{label}</span>
+      <div className="flex items-center justify-between mb-1.5">
+        <span className="block text-xs font-medium uppercase tracking-wide text-slate-400">{label}</span>
+        {hint && <span className="text-[11px] text-slate-500">{hint}</span>}
+      </div>
       {children}
     </div>
   );
@@ -464,8 +467,8 @@ const TONES = {
   sky: 'bg-sky-500/15 text-sky-300 ring-sky-500/20',
 } as const;
 
-export function Badge({ tone = 'neutral', children }: { tone?: keyof typeof TONES; children: ReactNode }) {
-  return <span className={cn('inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset', TONES[tone])}>{children}</span>;
+export function Badge({ tone = 'neutral', className, children }: { tone?: keyof typeof TONES; className?: string; children: ReactNode }) {
+  return <span className={cn('inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset', TONES[tone], className)}>{children}</span>;
 }
 
 // ── Stat card ─────────────────────────────────────────────────────────────

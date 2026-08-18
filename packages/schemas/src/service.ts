@@ -21,6 +21,11 @@ export const createService = z.object({
   memLimitMb: z.number().int().min(0).optional(),
   healthPath: z.string().optional(),
   port: z.number().int().min(1).max(65535).optional(),
+  publishedPort: z.number().int().min(1).max(65535).nullable().optional(),
+  previewDeploymentsEnabled: z.boolean().optional(),
+  previewAutoDestroyOnClose: z.boolean().optional(),
+  previewDomainPattern: z.string().nullable().optional(),
+  previewMaxActive: z.number().int().min(1).max(50).optional(),
   build: z
     .object({
       buildPack: buildPack.default('auto'),
@@ -29,6 +34,9 @@ export const createService = z.object({
       buildCmd: z.string().optional(),
       startCmd: z.string().optional(),
       dockerfilePath: z.string().optional(),
+      preDeployCmd: z.string().nullable().optional(),
+      postDeployCmd: z.string().nullable().optional(),
+      preStopCmd: z.string().nullable().optional(),
       // docker --restart policy: fixed values plus on-failure:N (restart-loop cap).
       restartPolicy: z.string().regex(/^(no|always|unless-stopped|on-failure(?::\d{1,3})?)$/).optional(),
       // Seconds between SIGTERM and SIGKILL on stop (docker stop -t).
@@ -57,6 +65,11 @@ export const updateService = z.object({
   memLimitMb: z.number().int().min(0).optional(),
   healthPath: z.string().optional(),
   port: z.number().int().min(1).max(65535).optional(),
+  publishedPort: z.number().int().min(1).max(65535).nullable().optional(),
+  previewDeploymentsEnabled: z.boolean().optional(),
+  previewAutoDestroyOnClose: z.boolean().optional(),
+  previewDomainPattern: z.string().nullable().optional(),
+  previewMaxActive: z.number().int().min(1).max(50).optional(),
   build: z
     .object({
       buildPack: buildPack.optional(),
@@ -65,6 +78,9 @@ export const updateService = z.object({
       buildCmd: z.string().optional(),
       startCmd: z.string().optional(),
       dockerfilePath: z.string().optional(),
+      preDeployCmd: z.string().nullable().optional(),
+      postDeployCmd: z.string().nullable().optional(),
+      preStopCmd: z.string().nullable().optional(),
       restartPolicy: z.string().regex(/^(no|always|unless-stopped|on-failure(?::\d{1,3})?)$/).optional(),
       stopGraceSeconds: z.number().int().min(0).max(300).optional(),
     })
@@ -94,8 +110,16 @@ export const service = z.object({
   healthPath: z.string(),
   autoUrl: z.string().nullable(),
   port: z.number().int().nullable(),
+  publishedPort: z.number().int().nullable().optional(),
   cpuShares: z.number().int(),
   memLimitMb: z.number().int(),
+  previewDeploymentsEnabled: z.boolean().optional(),
+  previewAutoDestroyOnClose: z.boolean().optional(),
+  previewDomainPattern: z.string().nullable().optional(),
+  previewMaxActive: z.number().int().optional(),
+  isEphemeralPreview: z.boolean().optional(),
+  previewParentServiceId: z.number().int().nullable().optional(),
+  prNumber: z.number().int().nullable().optional(),
   build: z
     .object({
       buildPack: buildPack,
@@ -104,6 +128,9 @@ export const service = z.object({
       buildCmd: z.string().nullable(),
       startCmd: z.string().nullable(),
       dockerfilePath: z.string().nullable(),
+      preDeployCmd: z.string().nullable().optional(),
+      postDeployCmd: z.string().nullable().optional(),
+      preStopCmd: z.string().nullable().optional(),
       restartPolicy: z.string(),
       stopGraceSeconds: z.number().int(),
     })
@@ -164,6 +191,14 @@ export const createDomain = z.object({
   redirectWww: z.boolean().optional(),
   /** JSON array [{name, value}] of custom response headers. */
   headers: z.string().max(8000).optional(),
+  /** Basic Auth credentials (JSON array of "user:htpasswd_hash" or "user:pass"). */
+  basicAuth: z.string().max(8000).optional().nullable(),
+  /** IP Allowlist (comma-separated CIDRs e.g. "1.2.3.4/32, 10.0.0.0/8"). */
+  ipAllowlist: z.string().max(4000).optional().nullable(),
+  /** Rate limit: average requests/second. */
+  rateLimitAverage: z.number().int().min(0).max(100000).optional().nullable(),
+  /** Rate limit: burst peak requests allowed. */
+  rateLimitBurst: z.number().int().min(0).max(100000).optional().nullable(),
 });
 export type CreateDomainInput = z.input<typeof createDomain>;
 
@@ -171,7 +206,11 @@ export type CreateDomainInput = z.input<typeof createDomain>;
 export const domainPatch = z.object({
   ssl: z.boolean().optional(),
   redirectWww: z.boolean().optional(),
-  headers: z.string().max(8000).optional(),
+  headers: z.string().max(8000).optional().nullable(),
+  basicAuth: z.string().max(8000).optional().nullable(),
+  ipAllowlist: z.string().max(4000).optional().nullable(),
+  rateLimitAverage: z.number().int().min(0).max(100000).optional().nullable(),
+  rateLimitBurst: z.number().int().min(0).max(100000).optional().nullable(),
 });
 export type DomainPatch = z.input<typeof domainPatch>;
 
@@ -183,6 +222,10 @@ export const domain = z.object({
   ssl: z.boolean(),
   redirectWww: z.boolean(),
   headers: z.string(),
+  basicAuth: z.string().nullable().optional(),
+  ipAllowlist: z.string().nullable().optional(),
+  rateLimitAverage: z.number().nullable().optional(),
+  rateLimitBurst: z.number().nullable().optional(),
   status: z.string(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
@@ -214,12 +257,21 @@ export type CreatedWebhook = z.infer<typeof createdWebhook>;
 // ── Managed databases ─────────────────────────────────────────────────────
 export const createDatabase = z.object({
   name: z.string().min(1).max(100),
-  engine: z.enum(['postgres', 'mysql', 'mariadb', 'redis', 'mongo']),
+  engine: z.enum(['postgres', 'mysql', 'mariadb', 'redis', 'mongo', 'valkey', 'clickhouse', 'meilisearch', 'rabbitmq']),
   version: z.string().optional(),
   projectId: z.number().int().optional(),
   existingVolume: z.string().optional(),
+  extensions: z.array(z.string()).optional(),
+  webGuiEnabled: z.boolean().optional(),
 });
 export type CreateDatabaseInput = z.input<typeof createDatabase>;
+
+export const databasePatch = z.object({
+  name: z.string().min(1).max(100).optional(),
+  extensions: z.array(z.string()).optional(),
+  webGuiEnabled: z.boolean().optional(),
+});
+export type DatabasePatch = z.input<typeof databasePatch>;
 
 export const managedDatabase = z.object({
   id: z.number().int(),
@@ -234,6 +286,9 @@ export const managedDatabase = z.object({
   username: z.string().nullable(),
   database: z.string().nullable(),
   connectionString: z.string().nullable(),
+  webGuiEnabled: z.boolean().optional().default(false),
+  webGuiPort: z.number().int().nullable().optional(),
+  extensions: z.array(z.string()).optional().default([]),
   attachedServices: z.array(z.object({ id: z.number().int(), name: z.string(), slug: z.string() })).optional().default([]),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
@@ -389,7 +444,7 @@ export const template = z.object({
   requires: z.string().optional(),
   /** When set, the wizard can auto-provision + attach a managed database of
    *  this engine (DATABASE_URL/REDIS_URL injected at deploy time). */
-  dbEngine: z.enum(['postgres', 'mysql', 'redis', 'mongo']).optional(),
+  dbEngine: z.enum(['postgres', 'mysql', 'mariadb', 'redis', 'valkey', 'mongo', 'clickhouse', 'meilisearch', 'rabbitmq']).optional(),
   /** Container command (argv) appended after the image — needed by images
    *  whose default entrypoint prints help and exits (e.g. minio). */
   cmd: z.array(z.string()).min(1).optional(),
@@ -431,6 +486,7 @@ export const volumeFileEntry = z.object({
   name: z.string(),
   type: z.enum(['file', 'dir']),
   sizeBytes: z.number().int(),
+  mode: z.string().nullable().optional(),
   modifiedAt: z.string().datetime().nullable(),
 });
 export type VolumeFileEntry = z.infer<typeof volumeFileEntry>;
@@ -447,6 +503,16 @@ export const volumePathCreate = z.object({
   path: z.string().min(1).max(1024),
 });
 export type VolumePathCreateInput = z.input<typeof volumePathCreate>;
+
+// ── Container file manager ─────────────────────────────────────────────────
+export const containerFileEntry = volumeFileEntry;
+export type ContainerFileEntry = VolumeFileEntry;
+
+export const containerFileWrite = volumeFileWrite;
+export type ContainerFileWriteInput = VolumeFileWriteInput;
+
+export const containerPathCreate = volumePathCreate;
+export type ContainerPathCreateInput = VolumePathCreateInput;
 
 // ── Docker resource accounting ─────────────────────────────────────────────
 export const dockerResources = z.object({
@@ -471,3 +537,86 @@ export const tunnelEntry = z.object({
   createdAt: z.string().datetime(),
 });
 export type TunnelEntry = z.infer<typeof tunnelEntry>;
+
+// ── Log Drains ─────────────────────────────────────────────────────────────
+export const logDrainType = z.enum(['syslog', 'loki', 'vector', 'datadog', 'http']);
+export type LogDrainType = z.infer<typeof logDrainType>;
+
+export const logDrainFormat = z.enum(['json', 'raw', 'rfc5424']);
+export type LogDrainFormat = z.infer<typeof logDrainFormat>;
+
+export const logDrain = z.object({
+  id: z.number().int(),
+  name: z.string(),
+  type: logDrainType,
+  url: z.string(),
+  serviceId: z.number().int().nullable(),
+  serviceName: z.string().nullable().optional(),
+  enabled: z.boolean(),
+  format: logDrainFormat,
+  headers: z.record(z.string(), z.string()).optional(),
+  hasApiKey: z.boolean().optional(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+export type LogDrain = z.infer<typeof logDrain>;
+
+export const logDrainCreate = z.object({
+  name: z.string().min(1).max(100),
+  type: logDrainType,
+  url: z.string().min(1),
+  apiKey: z.string().optional(),
+  serviceId: z.number().int().optional().nullable(),
+  enabled: z.boolean().optional(),
+  format: logDrainFormat.optional(),
+  headers: z.record(z.string(), z.string()).optional(),
+});
+export type LogDrainCreateInput = z.input<typeof logDrainCreate>;
+
+export const logDrainUpdate = logDrainCreate.partial();
+export type LogDrainUpdateInput = z.input<typeof logDrainUpdate>;
+
+export const logDrainTestResult = z.object({
+  ok: z.boolean(),
+  latencyMs: z.number(),
+  message: z.string().optional(),
+});
+export type LogDrainTestResult = z.infer<typeof logDrainTestResult>;
+
+// ── Auto-Prune & Disk Maintenance ──────────────────────────────────────────
+export const autoPruneConfig = z.object({
+  enabled: z.boolean(),
+  thresholdPercent: z.number().min(10).max(99),
+  pruneImages: z.boolean(),
+  pruneVolumes: z.boolean(),
+  pruneContainers: z.boolean(),
+  pruneBuildCache: z.boolean(),
+  maxAgeHours: z.number().min(1).max(720),
+});
+export type AutoPruneConfig = z.infer<typeof autoPruneConfig>;
+
+export const autoPruneConfigUpdate = autoPruneConfig.partial();
+export type AutoPruneConfigUpdateInput = z.input<typeof autoPruneConfigUpdate>;
+
+export const autoPruneStatus = autoPruneConfig.extend({
+  diskUsedPercent: z.number(),
+  diskTotalBytes: z.number(),
+  diskFreeBytes: z.number(),
+  lastPrunedAt: z.string().datetime().nullable(),
+  lastFreedBytes: z.number().nullable(),
+});
+export type AutoPruneStatus = z.infer<typeof autoPruneStatus>;
+
+export const autoPruneRunResult = z.object({
+  ok: z.boolean(),
+  freedBytes: z.number(),
+  diskUsedPercentAfter: z.number(),
+  details: z.object({
+    imagesFreed: z.string().optional(),
+    buildCacheFreed: z.string().optional(),
+    containersFreed: z.string().optional(),
+    volumesFreed: z.string().optional(),
+  }),
+});
+export type AutoPruneRunResult = z.infer<typeof autoPruneRunResult>;
+

@@ -464,4 +464,20 @@ describe('deploys routes', () => {
     await waitFor(() => (childProc.children[0].kill as ReturnType<typeof vi.fn>).mock.calls.length > 0);
     await app.close();
   });
+
+  it('closes the socket when child process emits an error', async () => {
+    const app = await buildTestApp({
+      websocket: true,
+      db: createFakeDb({ findFirst: { services: svcRow({ id: 1, runtimeId: 'c1' }) } }),
+    });
+    await app.register(deploysRoutes, { prefix: '/services' });
+    const port = await listen(app);
+    const ws = await openWs(wsUrl(port, '/services/1/exec?token=valid'));
+    sockets.push(ws);
+    await waitFor(() => childProc.children.length === 1);
+    const child = childProc.children[0]!;
+
+    child.emit('error', new Error('spawn error'));
+    await app.close();
+  });
 });

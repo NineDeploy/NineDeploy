@@ -158,6 +158,10 @@ describe('domains routes', () => {
         ssl: true,
         redirectWww: false,
         headers: '[]',
+        basicAuth: null,
+        ipAllowlist: null,
+        rateLimitAverage: null,
+        rateLimitBurst: null,
         status: 'active',
         createdAt: '2026-01-01T00:00:00.000Z',
         updatedAt: '2026-01-01T00:00:00.000Z',
@@ -255,6 +259,81 @@ describe('domains routes', () => {
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ id: 3, ssl: true, redirectWww: true });
     expect(JSON.parse(res.json().headers)).toEqual([{ name: 'X-Frame-Options', value: 'DENY' }]);
+    expect(proxyMocks.writeDynamicConfig).toHaveBeenCalled();
+  });
+
+  it('patches basicAuth, ipAllowlist, and rateLimit', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        update: {
+          domains: [
+            domainRow({
+              id: 4,
+              basicAuth: '["admin:secret"]',
+              ipAllowlist: '10.0.0.0/8',
+              rateLimitAverage: 100,
+              rateLimitBurst: 200,
+            }),
+          ],
+        },
+      }),
+    });
+    await app.register(domainsRoutes);
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/1/domains/4',
+      headers: asUser(),
+      payload: {
+        basicAuth: '["admin:secret"]',
+        ipAllowlist: '10.0.0.0/8',
+        rateLimitAverage: 100,
+        rateLimitBurst: 200,
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().basicAuth).toBe('["admin:secret"]');
+    expect(res.json().ipAllowlist).toBe('10.0.0.0/8');
+    expect(res.json().rateLimitAverage).toBe(100);
+    expect(res.json().rateLimitBurst).toBe(200);
+    expect(proxyMocks.writeDynamicConfig).toHaveBeenCalled();
+  });
+
+  it('creates domain with basicAuth, ipAllowlist, and rateLimit', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { services: svcRow() },
+        insert: {
+          domains: [
+            domainRow({
+              hostname: 'auth.example.com',
+              basicAuth: '["user:pass"]',
+              ipAllowlist: '127.0.0.1/32',
+              rateLimitAverage: 10,
+              rateLimitBurst: 20,
+            }),
+          ],
+        },
+      }),
+    });
+    await app.register(domainsRoutes);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/1/domains',
+      headers: asUser(),
+      payload: {
+        hostname: 'auth.example.com',
+        basicAuth: '["user:pass"]',
+        ipAllowlist: '127.0.0.1/32',
+        rateLimitAverage: 10,
+        rateLimitBurst: 20,
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().hostname).toBe('auth.example.com');
+    expect(res.json().basicAuth).toBe('["user:pass"]');
+    expect(res.json().ipAllowlist).toBe('127.0.0.1/32');
+    expect(res.json().rateLimitAverage).toBe(10);
+    expect(res.json().rateLimitBurst).toBe(20);
     expect(proxyMocks.writeDynamicConfig).toHaveBeenCalled();
   });
 

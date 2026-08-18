@@ -1,0 +1,175 @@
+import { createHmac, randomBytes } from 'node:crypto';
+import { config } from '../config.js';
+
+export interface OidcTokenResponse {
+  access_token: string;
+  id_token?: string;
+  token_type?: string;
+}
+
+export interface OidcUserInfo {
+  sub: string;
+  email: string;
+  name?: string | null;
+}
+
+/** Generate a signed state parameter for OAuth2/OIDC CSRF protection */
+export function generateOAuthState(providerSlug: string, returnTo?: string): string {
+  const nonce = randomBytes(16).toString('hex');
+  const payload = JSON.stringify({ slug: providerSlug, returnTo: returnTo ?? '/', nonce, ts: Date.now() });
+  const signature = createHmac('sha256', config.jwt.secret).update(payload).digest('base64url');
+  return `${Buffer.from(payload).toString('base64url')}.${signature}`;
+}
+
+/** Verify a signed state parameter */
+export function verifyOAuthState(state: string): { slug: string; returnTo: string } | null {
+  try {
+    const [payloadB64, signature] = state.split('.');
+    if (!payloadB64 || !signature) return null;
+    const payloadJson = Buffer.from(payloadB64, 'base64url').toString('utf8');
+    const expectedSig = createHmac('sha256', config.jwt.secret).update(payloadJson).digest('base64url');
+    if (signature !== expectedSig) return null;
+    const data = JSON.parse(payloadJson);
+    // 15 minute TTL on OAuth login initiation
+    if (Date.now() - data.ts > 15 * 60 * 1000) return null;
+    return { slug: data.slug, returnTo: data.returnTo };
+  } catch {
+    return null;
+  }
+}
+
+/** Fetch OIDC discovery document */
+export async function fetchOidcConfiguration(issuerUrl: string): Promise<{ authorization_endpoint: string; token_endpoint: string; userinfo_endpoint?: string }> {
+  const cleanIssuer = issuerUrl.replace(/\/+$/, '');
+  const res = await fetch(`${cleanIssuer}/.well-known/openid-configuration`);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch OIDC discovery configuration from ${cleanIssuer}: ${res.statusText}`);
+  }
+  return res.json() as Promise<{ authorization_endpoint: string; token_endpoint: string; userinfo_endpoint?: string }>;
+}
+
+/** Exchange authorization code at OIDC token endpoint */
+export async function exchangeOidcCode(
+  tokenEndpoint: string,
+  clientId: string,
+  clientSecret: string,
+  code: string,
+  redirectUri: string,
+): Promise<OidcTokenResponse> {
+  const body = new URLSearchParams({
+    grant_type: 'authorization_code',
+    client_id: clientId,
+    client_secret: clientSecret,
+    code,
+    redirect_uri: redirectUri,
+  });
+
+  const res = await fetch(tokenEndpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+    body: body.toString(),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`OIDC token exchange failed (${res.status}): ${text}`);
+  }
+
+  return res.json() as Promise<OidcTokenResponse>;
+}
+
+/** Fetch user profile info from OIDC userinfo endpoint */
+export async function fetchOidcUserInfo(userinfoEndpoint: string, accessToken: string): Promise<OidcUserInfo> {
+  const res = await fetch(userinfoEndpoint, {
+    headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' },
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Failed to fetch userinfo (${res.status}): ${text}`);
+  }
+
+  const json = (await res.json()) as Record<string, unknown>;
+  const email = (json['email'] as string) || (json['preferred_username'] as string);
+  if (!email) {
+    throw new Error('OIDC userinfo did not contain an email address');
+  }
+
+  return {
+    sub: String(json['sub'] ?? email),
+    email: email.toLowerCase().trim(),
+    name: (json['name'] as string) ?? null,
+  };
+}
+
+/** GitHub OAuth2 code exchange & user fetch */
+export async function exchangeGitHubCode(
+  clientId: string,
+  clientSecret: string,
+  code: string,
+  redirectUri: string,
+): Promise<OidcUserInfo> {
+  const tokenRes = await fetch('https://github.com/login/oauth/access_token', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify({
+      client_id: clientId,
+      client_secret: clientSecret,
+      code,
+      redirect_uri: redirectUri,
+    }),
+  });
+
+  if (!tokenRes.ok) {
+    throw new Error(`GitHub token exchange failed: ${tokenRes.statusText}`);
+  }
+
+  const tokenData = (await tokenRes.json()) as { access_token?: string; error?: string; error_description?: string };
+  if (!tokenData.access_token) {
+    throw new Error(tokenData.error_description ?? tokenData.error ?? 'Missing GitHub access token');
+  }
+
+  const userRes = await fetch('https://api.github.com/user', {
+    headers: {
+      Authorization: `Bearer ${tokenData.access_token}`,
+      'User-Agent': 'NineDeploy',
+      Accept: 'application/vnd.github+json',
+    },
+  });
+
+  if (!userRes.ok) {
+    throw new Error(`Failed to fetch GitHub profile: ${userRes.statusText}`);
+  }
+
+  const userProfile = (await userRes.json()) as { id: number; login: string; name?: string | null; email?: string | null };
+  let email = userProfile.email;
+
+  if (!email) {
+    // Fetch user verified primary email
+    const emailsRes = await fetch('https://api.github.com/user/emails', {
+      headers: {
+        Authorization: `Bearer ${tokenData.access_token}`,
+        'User-Agent': 'NineDeploy',
+        Accept: 'application/vnd.github+json',
+      },
+    });
+    if (emailsRes.ok) {
+      const emailList = (await emailsRes.json()) as Array<{ email: string; primary: boolean; verified: boolean }>;
+      const primary = emailList.find((e) => e.primary && e.verified) ?? emailList.find((e) => e.verified) ?? emailList[0];
+      if (primary) email = primary.email;
+    }
+  }
+
+  if (!email) {
+    email = `${userProfile.login}@github.user`;
+  }
+
+  return {
+    sub: String(userProfile.id),
+    email: email.toLowerCase().trim(),
+    name: userProfile.name ?? userProfile.login,
+  };
+}

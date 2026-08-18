@@ -12,6 +12,9 @@ import {
   metricQuery,
   serverAnnounce,
   serverCreate,
+  serverSshTest,
+  serverSshBootstrap,
+  sshAuthType,
   backupWithDb,
   notificationChannelCreate,
   containerStat,
@@ -61,6 +64,13 @@ import {
   upsertEnvVar,
   volumeEntry,
   webhook,
+  workspaceRoleEnum,
+  workspaceCreate,
+  workspaceUpdate,
+  workspaceMemberAdd,
+  workspaceMemberRoleUpdate,
+  oidcProviderCreate,
+  oidcProviderUpdate,
 } from '../src/index.js';
 
 /** Helper: assert a schema accepts an input. */
@@ -754,6 +764,42 @@ describe('service', () => {
       bad(serverAnnounce, { name: 'x', host: 'h', port: 99999, token: 'a'.repeat(16) }); // port out of range
     });
 
+    it('serverSshTest accepts defaults and rejects bad inputs', () => {
+      const data = ok(serverSshTest, { host: '192.168.1.100' });
+      expect(data).toMatchObject({
+        host: '192.168.1.100',
+        sshPort: 22,
+        sshUser: 'root',
+        authType: 'key',
+      });
+      expect(ok(serverSshTest, { host: 'vps.net', sshPort: '2222', authType: 'password', sshPassword: 'pwd' })?.sshPort).toBe(2222);
+      expect(ok(serverSshTest, { host: 'vps.net', sshPort: 'invalid' })?.sshPort).toBe(22);
+      bad(serverSshTest, { host: '' });
+      bad(serverSshTest, { host: 'h', sshPort: 70000 });
+      bad(serverSshTest, { host: 'h', authType: 'invalid' });
+      expect(sshAuthType.safeParse('key').success).toBe(true);
+      expect(sshAuthType.safeParse('password').success).toBe(true);
+    });
+
+    it('serverSshBootstrap accepts full bootstrap payload with fallbacks and rejects invalid', () => {
+      const data = ok(serverSshBootstrap, { name: 'Worker 1', host: '192.168.1.101' });
+      expect(data).toMatchObject({
+        name: 'Worker 1',
+        host: '192.168.1.101',
+        sshPort: 22,
+        sshUser: 'root',
+        authType: 'key',
+        installDocker: true,
+        agentPort: 4600,
+      });
+      expect(ok(serverSshBootstrap, { name: 'W2', host: 'h', agentPort: '4605', sshPort: '2200' })?.agentPort).toBe(4605);
+      expect(ok(serverSshBootstrap, { name: 'W2', host: 'h', agentPort: 'bad', sshPort: 'invalid' })?.sshPort).toBe(22);
+      expect(ok(serverSshBootstrap, { name: 'W2', host: 'h', agentPort: 'bad' })?.agentPort).toBe(4600);
+      bad(serverSshBootstrap, { name: '', host: 'h' });
+      bad(serverSshBootstrap, { name: 'W', host: '' });
+      bad(serverSshBootstrap, { name: 'W', host: 'h', agentPort: 80000 });
+    });
+
     it('jobCreate applies defaults and normalizes command/enabled', () => {
       const data = ok(jobCreate, { name: 'nightly', cron: '0 3 * * *' });
       expect(data).toMatchObject({ kind: 'deploy', command: '', enabled: true });
@@ -808,20 +854,84 @@ describe('service', () => {
   });
 
   describe('projects', () => {
-    it('createProject accepts names and optional slug/description', () => {
-      const data = ok(createProject, { name: 'Acme' });
+    it('createProject accepts names and optional slug/description and workspaceId', () => {
+      const data = ok(createProject, { name: 'Acme', workspaceId: 1 });
       expect(data?.name).toBe('Acme');
+      expect(data?.workspaceId).toBe(1);
       ok(createProject, { name: 'Acme', slug: 'acme', description: 'main workloads' });
       bad(createProject, { name: 'a' });
       bad(createProject, { name: 'x'.repeat(64) });
       bad(createProject, { name: 'Acme', slug: 'NOT A SLUG' });
+      bad(createProject, { name: 'Acme', workspaceId: -1 });
     });
 
     it('projectPatch accepts partial updates and rejects empty bodies', () => {
-      ok(projectPatch, { name: 'Renamed' });
-      ok(projectPatch, { description: null });
+      ok(projectPatch, { name: 'Renamed', workspaceId: 2 });
+      ok(projectPatch, { description: null, workspaceId: null });
       ok(projectPatch, { description: 'd', name: 'N' + 'ame' });
       bad(projectPatch, {});
+    });
+  });
+
+  describe('workspaces & oidc', () => {
+    it('workspaceRoleEnum parses valid roles', () => {
+      expect(workspaceRoleEnum.safeParse('owner').success).toBe(true);
+      expect(workspaceRoleEnum.safeParse('admin').success).toBe(true);
+      expect(workspaceRoleEnum.safeParse('member').success).toBe(true);
+      expect(workspaceRoleEnum.safeParse('viewer').success).toBe(true);
+      expect(workspaceRoleEnum.safeParse('invalid').success).toBe(false);
+    });
+
+    it('workspaceCreate accepts valid input and rejects invalid', () => {
+      const data = ok(workspaceCreate, { name: 'Engineering Team' });
+      expect(data?.name).toBe('Engineering Team');
+      ok(workspaceCreate, { name: 'Ops Team', slug: 'ops-team', description: 'Operations' });
+      bad(workspaceCreate, { name: 'A' });
+      bad(workspaceCreate, { name: 'a'.repeat(64) });
+      bad(workspaceCreate, { name: 'Team', slug: 'NOT A SLUG' });
+    });
+
+    it('workspaceUpdate accepts partial updates and rejects empty bodies', () => {
+      ok(workspaceUpdate, { name: 'Renamed Team' });
+      ok(workspaceUpdate, { description: null });
+      ok(workspaceUpdate, { description: 'Updated' });
+      bad(workspaceUpdate, {});
+    });
+
+    it('workspaceMemberAdd and workspaceMemberRoleUpdate parse valid inputs', () => {
+      const added = ok(workspaceMemberAdd, { email: 'dev@example.com', role: 'admin' });
+      expect(added?.email).toBe('dev@example.com');
+      expect(added?.role).toBe('admin');
+      expect(ok(workspaceMemberAdd, { email: 'user@example.com' })?.role).toBe('member');
+      bad(workspaceMemberAdd, { email: 'invalid-email' });
+      bad(workspaceMemberAdd, { email: 'dev@example.com', role: 'superadmin' });
+
+      const updated = ok(workspaceMemberRoleUpdate, { role: 'viewer' });
+      expect(updated?.role).toBe('viewer');
+      bad(workspaceMemberRoleUpdate, { role: 'superadmin' });
+    });
+
+    it('oidcProviderCreate and oidcProviderUpdate validate configurations', () => {
+      const prov = ok(oidcProviderCreate, {
+        name: 'Corporate Authentik',
+        slug: 'authentik',
+        issuerUrl: 'https://auth.example.com',
+        clientId: 'nine-client',
+        clientSecret: 'super-secret',
+      });
+      expect(prov?.name).toBe('Corporate Authentik');
+      expect(prov?.scopes).toBe('openid profile email');
+      expect(prov?.enabled).toBe(true);
+      expect(prov?.autoEnroll).toBe(true);
+      expect(prov?.defaultRole).toBe('member');
+
+      bad(oidcProviderCreate, { name: 'A', slug: 'okta', clientId: 'c', clientSecret: 's' });
+      bad(oidcProviderCreate, { name: 'Okta', slug: 'BAD SLUG', clientId: 'c', clientSecret: 's' });
+      bad(oidcProviderCreate, { name: 'Okta', slug: 'okta', issuerUrl: 'not-a-url', clientId: 'c', clientSecret: 's' });
+
+      ok(oidcProviderUpdate, { name: 'New Name' });
+      ok(oidcProviderUpdate, { enabled: false, autoEnroll: false, defaultRole: 'admin' });
+      bad(oidcProviderUpdate, {});
     });
   });
 });

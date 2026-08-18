@@ -10,6 +10,7 @@ import { slugify } from '../lib/slug.js';
 function serialize(p: Project, counts?: { services: number; databases: number }) {
   return {
     id: p.id,
+    workspaceId: p.workspaceId ?? null,
     name: p.name,
     slug: p.slug,
     description: p.description,
@@ -27,8 +28,12 @@ function serialize(p: Project, counts?: { services: number; databases: number })
 export const projectRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('onRequest', app.authenticate);
 
-  app.get('/', async () => {
-    const rows = await app.db.query.projects.findMany({ orderBy: [asc(projects.name)] });
+  app.get('/', async (req) => {
+    const query = req.query as { workspaceId?: string };
+    const workspaceId = query?.workspaceId;
+    const numWorkspaceId = workspaceId ? parseInt(workspaceId, 10) : undefined;
+    const where = numWorkspaceId ? eq(projects.workspaceId, numWorkspaceId) : undefined;
+    const rows = await app.db.query.projects.findMany({ where, orderBy: [asc(projects.name)] });
     // Count resource membership in JS: projects are few, and a GROUP BY here
     // would still scan the same rows on SQLite at self-hosted scale.
     const svcRows = await app.db.select({ projectId: services.projectId }).from(services);
@@ -52,7 +57,7 @@ export const projectRoutes: FastifyPluginAsync = async (app) => {
     if (exists) throw conflict(`Project slug "${slug}" is already taken`);
     const [row] = await app.db
       .insert(projects)
-      .values({ name: input.name, slug, description: input.description })
+      .values({ name: input.name, slug, description: input.description, workspaceId: input.workspaceId ?? null })
       .returning();
     if (!row) throw badRequest('Could not create project');
     void audit(app.db, req.user!.id, 'project.create', row.name);
@@ -66,7 +71,11 @@ export const projectRoutes: FastifyPluginAsync = async (app) => {
     if (!row) throw notFound('Project not found');
     const [updated] = await app.db
       .update(projects)
-      .set({ ...(input.name != null && { name: input.name }), ...(input.description !== undefined && { description: input.description }) })
+      .set({
+        ...(input.name != null && { name: input.name }),
+        ...(input.description !== undefined && { description: input.description }),
+        ...(input.workspaceId !== undefined && { workspaceId: input.workspaceId }),
+      })
       .where(eq(projects.id, id))
       .returning();
     if (!updated) throw badRequest('Could not update project');

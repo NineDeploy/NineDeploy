@@ -298,4 +298,79 @@ describe('VolumeBrowser', () => {
     fireEvent.click(screen.getByText('entrypoint'));
     expect(await screen.findByLabelText('File editor')).toBeInTheDocument();
   });
+
+  it('supports file upload via file input and handles errors', async () => {
+    class MockFileReader {
+      result: string | null = null;
+      onload: (() => void) | null = null;
+      readAsDataURL() {
+        this.result = 'data:text/plain;base64,Y29udGVudA==';
+        if (this.onload) this.onload();
+      }
+    }
+    const origFileReader = window.FileReader;
+    window.FileReader = MockFileReader as any;
+
+    try {
+      mockOf(api.volumes.listFiles).mockResolvedValue(dir as never);
+      mockOf(api.volumes.writeFile).mockResolvedValue({ ok: true } as never);
+
+      const { unmount } = renderWithProviders(<VolumeBrowser volume="nd-svc-web-data" onClose={vi.fn()} />);
+      const fileInput = await screen.findByLabelText('Upload file to volume');
+
+      // Empty / no file change
+      fireEvent.change(fileInput, { target: { files: [] } });
+
+      const fakeFile = new File(['content'], 'upload.txt', { type: 'text/plain' });
+      fireEvent.change(fileInput, { target: { files: [fakeFile] } });
+
+      await waitFor(() =>
+        expect(api.volumes.writeFile).toHaveBeenCalledWith('nd-svc-web-data', {
+          path: 'upload.txt',
+          contentBase64: 'Y29udGVudA==',
+        }),
+      );
+      unmount();
+
+      // Nested cwd upload
+      mockOf(api.volumes.listFiles).mockImplementation(async (_n, p) =>
+        p === 'configs' ? { path: 'configs', entries: [] } : dir,
+      );
+      renderWithProviders(<VolumeBrowser volume="nd-svc-web-data" onClose={vi.fn()} />);
+      fireEvent.click(await screen.findByText('configs'));
+      const nestedInput = await screen.findByLabelText('Upload file to volume');
+      fireEvent.change(nestedInput, { target: { files: [fakeFile] } });
+      await waitFor(() =>
+        expect(api.volumes.writeFile).toHaveBeenCalledWith('nd-svc-web-data', {
+          path: 'configs/upload.txt',
+          contentBase64: 'Y29udGVudA==',
+        }),
+      );
+
+      // Error on upload
+      mockOf(api.volumes.writeFile).mockRejectedValueOnce(new Error('err'));
+      fireEvent.change(nestedInput, { target: { files: [fakeFile] } });
+      await waitFor(() => expect(screen.getByText(/Upload failed/)).toBeInTheDocument());
+
+      // Raw base64 result without comma prefix and null result
+      class RawFileReader {
+        result: string | null = null;
+        onload: (() => void) | null = null;
+        readAsDataURL() {
+          if (this.onload) this.onload();
+        }
+      }
+      window.FileReader = RawFileReader as any;
+      mockOf(api.volumes.writeFile).mockResolvedValueOnce({ ok: true } as never);
+      fireEvent.change(nestedInput, { target: { files: [fakeFile] } });
+      await waitFor(() =>
+        expect(api.volumes.writeFile).toHaveBeenCalledWith('nd-svc-web-data', {
+          path: 'configs/upload.txt',
+          contentBase64: '',
+        }),
+      );
+    } finally {
+      window.FileReader = origFileReader;
+    }
+  });
 });

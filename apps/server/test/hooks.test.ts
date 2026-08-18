@@ -2,7 +2,7 @@ import { createHmac } from 'node:crypto';
 import { describe, expect, it, } from 'vitest';
 import { encrypt } from '../src/lib/crypto.js';
 import { hookReceiveRoutes, webhookMgmtRoutes } from '../src/modules/hooks.js';
-import { asUser, buildTestApp, createFakeDb, depRow, svcRow, webhookRow } from './helpers.js';
+import { asUser, buildConfigRow, buildTestApp, createFakeDb, depRow, domainRow, svcRow, webhookRow } from './helpers.js';
 
 const SECRET = 'hook-secret';
 const hook = (over: Record<string, unknown> = {}) =>
@@ -307,6 +307,409 @@ describe('webhook receiver', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ ok: true, provider: 'gitlab', deploymentId: 7 });
+  });
+
+  it('handles pull request opened and synchronize events by spawning ephemeral preview', async () => {
+    const parentService = svcRow({
+      id: 1,
+      slug: 'my-app',
+      name: 'My App',
+      previewDeploymentsEnabled: true,
+      previewAutoDestroyOnClose: true,
+      previewDomainPattern: 'pr-{{pr}}-{{slug}}.{{domain}}',
+      previewMaxActive: 5,
+    });
+
+    let svcLookup = 0;
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: {
+          webhooks: hook({ serviceId: 1 }),
+          services: () => {
+            svcLookup++;
+            return svcLookup === 1 ? parentService : undefined;
+          },
+          buildConfigs: buildConfigRow({ serviceId: 1 }),
+        },
+        findMany: {
+          services: [svcRow({ id: 99, previewParentServiceId: 1, isEphemeralPreview: true, runtimeId: 'old-pr-c' })],
+          envVars: [{ id: 1, serviceId: 1, key: 'API_KEY', valueEncrypted: 'enc', isSecret: true }],
+        },
+        insert: {
+          services: [svcRow({ id: 10, slug: 'my-app-pr-42', prNumber: 42, isEphemeralPreview: true })],
+          buildConfigs: [buildConfigRow({ id: 10, serviceId: 10 })],
+          domains: [domainRow({ id: 10, serviceId: 10, hostname: 'pr-42-my-app.localhost' })],
+          deployments: [depRow({ id: 15, serviceId: 10, trigger: 'webhook' })],
+        },
+      }),
+      rawBody: true,
+    });
+    await app.register(hookReceiveRoutes);
+
+    const body = JSON.stringify({
+      action: 'opened',
+      number: 42,
+      pull_request: {
+        number: 42,
+        title: 'Add feature',
+        head: { ref: 'feature-pr-42', sha: 'sha-42', repo: { clone_url: 'https://github.com/org/repo.git' } },
+        user: { login: 'alice' },
+        merged: false,
+      },
+    });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/1',
+      headers: { 'content-type': 'application/json', 'x-github-event': 'pull_request', 'x-hub-signature-256': sig(body) },
+      payload: body,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({
+      ok: true,
+      provider: 'github',
+      action: 'preview_deployment_queued',
+      prNumber: 42,
+      previewServiceId: 10,
+      deploymentId: 15,
+    });
+  });
+
+  it('handles pull request closed events by auto-destroying ephemeral preview container and records', async () => {
+    const parentService = svcRow({
+      id: 1,
+      slug: 'my-app',
+      name: 'My App',
+      previewDeploymentsEnabled: true,
+      previewAutoDestroyOnClose: true,
+    });
+    const previewService = svcRow({
+      id: 10,
+      slug: 'my-app-pr-42',
+      prNumber: 42,
+      isEphemeralPreview: true,
+      previewParentServiceId: 1,
+      runtimeId: 'nd-svc-my-app-pr-42',
+      type: 'docker',
+    });
+
+    let serviceCalls = 0;
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: {
+          webhooks: hook({ serviceId: 1 }),
+          services: () => {
+            serviceCalls++;
+            return serviceCalls === 1 ? parentService : previewService;
+          },
+        },
+      }),
+      rawBody: true,
+    });
+    await app.register(hookReceiveRoutes);
+
+    const body = JSON.stringify({
+      action: 'closed',
+      number: 42,
+      pull_request: {
+        number: 42,
+        title: 'Add feature',
+        head: { ref: 'feature-pr-42', sha: 'sha-42' },
+        user: { login: 'alice' },
+        merged: true,
+      },
+    });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/1',
+      headers: { 'content-type': 'application/json', 'x-github-event': 'pull_request', 'x-hub-signature-256': sig(body) },
+      payload: body,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({
+      ok: true,
+      action: 'preview_destroyed',
+      prNumber: 42,
+      serviceId: 10,
+    });
+  });
+
+  it('handles gitlab merge request events and skips when previews are disabled or invalid', async () => {
+    const parentService = svcRow({
+      id: 1,
+      previewDeploymentsEnabled: false,
+    });
+
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: {
+          webhooks: hook({ serviceId: 1 }),
+          services: parentService,
+        },
+      }),
+      rawBody: true,
+    });
+    await app.register(hookReceiveRoutes);
+
+    const body = JSON.stringify({
+      object_attributes: {
+        iid: 12,
+        action: 'open',
+        source_branch: 'mr-branch',
+        last_commit_id: 'mr-sha',
+        title: 'GitLab MR',
+      },
+    });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/1',
+      headers: { 'content-type': 'application/json', 'x-gitlab-event': 'Merge Request Hook', 'x-gitlab-token': SECRET },
+      payload: body,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: 'skipped', reason: 'preview_deployments_disabled' });
+  });
+
+  it('ignores invalid PR action payloads', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({ findFirst: { webhooks: hook({ serviceId: 1 }) } }),
+      rawBody: true,
+    });
+    await app.register(hookReceiveRoutes);
+    const body = JSON.stringify({ action: 'labeled', pull_request: { number: 1 } });
+    const res = await app.inject({
+      method: 'POST', url: '/1',
+      headers: { 'content-type': 'application/json', 'x-github-event': 'pull_request', 'x-hub-signature-256': sig(body) },
+      payload: body,
+    });
+    expect(res.json()).toEqual({ ok: 'ignored', reason: 'not_a_valid_pr' });
+  });
+
+  it('returns 404 when parent service is not found', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: {
+          webhooks: hook({ serviceId: 99 }),
+          services: () => undefined,
+        },
+      }),
+      rawBody: true,
+    });
+    await app.register(hookReceiveRoutes);
+    const prBody = JSON.stringify({
+      action: 'opened', number: 1,
+      pull_request: { number: 1, title: 't', head: { ref: 'b', sha: 's' } },
+    });
+    const res = await app.inject({
+      method: 'POST', url: '/1',
+      headers: { 'content-type': 'application/json', 'x-github-event': 'pull_request', 'x-hub-signature-256': sig(prBody) },
+      payload: prBody,
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('skips PR close when autoDestroy is disabled or preview does not exist', async () => {
+    const parentNoDestroy = svcRow({ id: 1, previewDeploymentsEnabled: true, previewAutoDestroyOnClose: false });
+    const previewExist = svcRow({ id: 2, previewParentServiceId: 1, prNumber: 1 });
+    let c = 0;
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: {
+          webhooks: hook({ serviceId: 1 }),
+          services: () => {
+            c++;
+            return c === 1 ? parentNoDestroy : previewExist;
+          },
+        },
+      }),
+      rawBody: true,
+    });
+    await app.register(hookReceiveRoutes);
+    const closeBody = JSON.stringify({
+      action: 'closed', number: 1,
+      pull_request: { number: 1, title: 't', head: { ref: 'b', sha: 's' } },
+    });
+    const res = await app.inject({
+      method: 'POST', url: '/1',
+      headers: { 'content-type': 'application/json', 'x-github-event': 'pull_request', 'x-hub-signature-256': sig(closeBody) },
+      payload: closeBody,
+    });
+    expect(res.json()).toEqual({ ok: 'skipped', reason: 'auto_destroy_disabled' });
+
+    let c4 = 0;
+    const app4 = await buildTestApp({
+      db: createFakeDb({
+        findFirst: {
+          webhooks: hook({ serviceId: 1 }),
+          services: () => {
+            c4++;
+            return c4 === 1 ? svcRow({ id: 1, previewDeploymentsEnabled: true, previewAutoDestroyOnClose: true }) : undefined;
+          },
+        },
+      }),
+      rawBody: true,
+    });
+    await app4.register(hookReceiveRoutes);
+    const res4 = await app4.inject({
+      method: 'POST', url: '/1',
+      headers: { 'content-type': 'application/json', 'x-github-event': 'pull_request', 'x-hub-signature-256': sig(closeBody) },
+      payload: closeBody,
+    });
+    expect(res4.json()).toEqual({ ok: 'skipped', reason: 'no_preview_found' });
+  });
+
+  it('handles PR closed destroying pm2 and compose runtimes or null runtimeId', async () => {
+    const closeBody = JSON.stringify({
+      action: 'closed', number: 1,
+      pull_request: { number: 1, title: 't', head: { ref: 'b', sha: 's' } },
+    });
+    for (const type of ['pm2', 'compose', 'unknown'] as const) {
+      let c = 0;
+      const app = await buildTestApp({
+        db: createFakeDb({
+          findFirst: {
+            webhooks: hook({ serviceId: 1 }),
+            services: () => {
+              c++;
+              return c === 1
+                ? svcRow({ id: 1, previewDeploymentsEnabled: true, previewAutoDestroyOnClose: true })
+                : svcRow({ id: 2, previewParentServiceId: 1, prNumber: 1, runtimeId: 'rt-1', type });
+            },
+          },
+        }),
+        rawBody: true,
+      });
+      await app.register(hookReceiveRoutes);
+      const res = await app.inject({
+        method: 'POST', url: '/1',
+        headers: { 'content-type': 'application/json', 'x-github-event': 'pull_request', 'x-hub-signature-256': sig(closeBody) },
+        payload: closeBody,
+      });
+      expect(res.json()).toMatchObject({ ok: true, action: 'preview_destroyed' });
+    }
+
+    let c9 = 0;
+    const app9 = await buildTestApp({
+      db: createFakeDb({
+        findFirst: {
+          webhooks: hook({ serviceId: 1 }),
+          services: () => {
+            c9++;
+            return c9 === 1 ? svcRow({ id: 1, previewDeploymentsEnabled: true }) : svcRow({ id: 2, runtimeId: null });
+          },
+        },
+      }),
+      rawBody: true,
+    });
+    await app9.register(hookReceiveRoutes);
+    const res9 = await app9.inject({
+      method: 'POST', url: '/1',
+      headers: { 'content-type': 'application/json', 'x-github-event': 'pull_request', 'x-hub-signature-256': sig(closeBody) },
+      payload: closeBody,
+    });
+    expect(res9.json()).toMatchObject({ ok: true, action: 'preview_destroyed' });
+  });
+
+  it('handles PR synchronize updating existing preview', async () => {
+    let c = 0;
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: {
+          webhooks: hook({ serviceId: 1 }),
+          services: () => {
+            c++;
+            return c === 1
+              ? svcRow({ id: 1, previewDeploymentsEnabled: true })
+              : svcRow({ id: 5, previewParentServiceId: 1, prNumber: 1 });
+          },
+        },
+        insert: { deployments: [depRow({ id: 20 })] },
+      }),
+      rawBody: true,
+    });
+    await app.register(hookReceiveRoutes);
+    const syncBody = JSON.stringify({
+      action: 'synchronize', number: 1,
+      pull_request: { number: 1, title: 'sync commit', head: { ref: 'b', sha: 'sha-new' } },
+    });
+    const res = await app.inject({
+      method: 'POST', url: '/1',
+      headers: { 'content-type': 'application/json', 'x-github-event': 'pull_request', 'x-hub-signature-256': sig(syncBody) },
+      payload: syncBody,
+    });
+    expect(res.json()).toMatchObject({ ok: true, action: 'preview_deployment_queued', previewServiceId: 5 });
+  });
+
+  it('prunes oldest preview when max active cap is reached and handles creation failure', async () => {
+    const prBody = JSON.stringify({
+      action: 'opened', number: 1,
+      pull_request: { number: 1, title: 't', head: { ref: 'b', sha: 's' } },
+    });
+    for (const oldest of [
+      svcRow({ id: 100, previewParentServiceId: 1, isEphemeralPreview: true, runtimeId: 'old-rt', type: 'pm2' }),
+      svcRow({ id: 100, previewParentServiceId: 1, isEphemeralPreview: true, runtimeId: 'old-rt', type: 'compose' }),
+      svcRow({ id: 50, runtimeId: null }),
+      svcRow({ id: 50, runtimeId: 'c-docker', type: 'docker' }),
+    ]) {
+      let c = 0;
+      const app = await buildTestApp({
+        db: createFakeDb({
+          findFirst: {
+            webhooks: hook({ serviceId: 1 }),
+            services: () => {
+              c++;
+              return c === 1 ? svcRow({ id: 1, previewDeploymentsEnabled: true, previewMaxActive: 1 }) : undefined;
+            },
+          },
+          findMany: {
+            services: [oldest],
+          },
+          insert: {
+            services: [svcRow({ id: 101, isEphemeralPreview: true, prNumber: 2 })],
+            deployments: [depRow({ id: 21 })],
+          },
+        }),
+        rawBody: true,
+      });
+      await app.register(hookReceiveRoutes);
+      const pr2 = JSON.stringify({
+        action: 'opened', number: 2,
+        pull_request: { number: 2, title: 'pr2', head: { ref: 'b2', sha: '' } },
+      });
+      const res = await app.inject({
+        method: 'POST', url: '/1',
+        headers: { 'content-type': 'application/json', 'x-github-event': 'pull_request', 'x-hub-signature-256': sig(pr2) },
+        payload: pr2,
+      });
+      expect(res.json()).toMatchObject({ ok: true, previewServiceId: 101 });
+    }
+
+    // Service insert fails -> failed_to_create_preview
+    let c8 = 0;
+    const app8 = await buildTestApp({
+      db: createFakeDb({
+        findFirst: {
+          webhooks: hook({ serviceId: 1 }),
+          services: () => {
+            c8++;
+            return c8 === 1 ? svcRow({ id: 1, previewDeploymentsEnabled: true }) : undefined;
+          },
+        },
+        insert: {
+          services: [],
+        },
+      }),
+      rawBody: true,
+    });
+    await app8.register(hookReceiveRoutes);
+    const res8 = await app8.inject({
+      method: 'POST', url: '/1',
+      headers: { 'content-type': 'application/json', 'x-github-event': 'pull_request', 'x-hub-signature-256': sig(prBody) },
+      payload: prBody,
+    });
+    expect(res8.json()).toEqual({ ok: 'error', reason: 'failed_to_create_preview' });
   });
 });
 

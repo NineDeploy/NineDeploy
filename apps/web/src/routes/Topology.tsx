@@ -42,21 +42,22 @@ function ServiceNode(props: NodeProps) {
   const data = props.data as ServiceData;
   const serviceId = props.id.replace('service-', '');
   return (
-    <div className="w-52 rounded-xl border border-indigo-500/30 bg-slate-900/90 px-3 py-2.5 shadow-lg shadow-black/40 backdrop-blur transition hover:border-indigo-400">
+    <div className="w-56 rounded-2xl border-2 border-indigo-500/40 bg-slate-900/95 p-3.5 shadow-xl shadow-black/50 backdrop-blur-md transition hover:border-indigo-400 hover:shadow-indigo-500/10">
       <Handle type="target" position={Position.Left} style={{ background: 'var(--nd-accent)' }} />
-      <Handle type="source" position={Position.Right} style={{ background: 'var(--nd-accent)' }} />
+      <Handle type="source" position={Position.Right} style={{ background: '#10b981' }} />
       <Handle type="source" id="bottom" position={Position.Bottom} style={{ background: '#f59e0b' }} />
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-2">
         <Link to={`/services/${serviceId}`} className="flex items-center gap-2 truncate hover:underline">
-          <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-indigo-500/15 text-indigo-300">
-            <Server size={14} />
+          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-indigo-500/15 text-indigo-300">
+            <Server size={15} />
           </span>
-          <span className="truncate font-medium text-slate-100">{data.name}</span>
+          <span className="truncate font-semibold text-slate-100 text-xs">{data.name}</span>
         </Link>
-      </div>
-      <div className="mt-1.5 flex items-center justify-between">
-        <span className="font-mono text-[10px] uppercase text-slate-500">{data.port ? `${data.type}:${data.port}` : data.type}</span>
         <StatusBadge status={data.status} />
+      </div>
+      <div className="mt-2.5 flex items-center justify-between rounded-lg bg-white/[0.03] px-2 py-1 font-mono text-[10px]">
+        <span className="uppercase text-slate-400">{data.type}</span>
+        <span className="text-slate-200">:{data.port ?? '—'}</span>
       </div>
     </div>
   );
@@ -66,20 +67,21 @@ function DatabaseNode(props: NodeProps) {
   const data = props.data as DatabaseData;
   const dbId = props.id.replace('database-', '');
   return (
-    <div className="w-48 rounded-xl border border-emerald-500/30 bg-slate-900/90 px-3 py-2.5 shadow-lg shadow-black/40 backdrop-blur transition hover:border-emerald-400">
+    <div className="w-52 rounded-2xl border-2 border-emerald-500/40 bg-slate-900/95 p-3.5 shadow-xl shadow-black/50 backdrop-blur-md transition hover:border-emerald-400 hover:shadow-emerald-500/10">
       <Handle type="target" position={Position.Left} style={{ background: '#10b981' }} />
       <Handle type="source" id="bottom" position={Position.Bottom} style={{ background: '#f59e0b' }} />
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-2">
         <Link to={`/databases/${dbId}`} className="flex items-center gap-2 truncate hover:underline">
-          <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-emerald-500/15 text-emerald-300">
-            <Database size={14} />
+          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-emerald-500/15 text-emerald-300">
+            <Database size={15} />
           </span>
-          <span className="truncate font-medium text-slate-100">{data.name}</span>
+          <span className="truncate font-semibold text-slate-100 text-xs">{data.name}</span>
         </Link>
-      </div>
-      <div className="mt-1.5 flex items-center justify-between">
-        <span className="font-mono text-[10px] capitalize text-slate-500">{data.engine}</span>
         <StatusBadge status={data.status} />
+      </div>
+      <div className="mt-2.5 flex items-center justify-between rounded-lg bg-emerald-500/[0.06] px-2 py-1 font-mono text-[10px]">
+        <span className="capitalize text-emerald-400">{data.engine}</span>
+        <span className="text-emerald-300/80">Managed</span>
       </div>
     </div>
   );
@@ -88,11 +90,11 @@ function DatabaseNode(props: NodeProps) {
 function DomainNode(props: NodeProps) {
   const data = props.data as DomainData;
   return (
-    <div className="rounded-lg border border-white/10 bg-slate-900/80 px-2.5 py-1.5 shadow backdrop-blur">
-      <Handle type="source" position={Position.Right} style={{ background: '#64748b' }} />
-      <div className="flex items-center gap-1.5">
-        <Globe size={12} className={data.ssl ? 'text-emerald-400' : 'text-slate-500'} />
-        <span className="font-mono text-[11px] text-slate-300">{data.hostname}</span>
+    <div className="rounded-xl border border-sky-500/30 bg-slate-900/90 px-3 py-2 shadow-lg shadow-black/40 backdrop-blur-md transition hover:border-sky-400">
+      <Handle type="source" position={Position.Right} style={{ background: '#38bdf8' }} />
+      <div className="flex items-center gap-2">
+        <Globe size={13} className={data.ssl ? 'text-emerald-400' : 'text-sky-400'} />
+        <span className="font-mono text-xs font-medium text-slate-200">{data.hostname}</span>
       </div>
     </div>
   );
@@ -101,11 +103,11 @@ function DomainNode(props: NodeProps) {
 function VolumeNode(props: NodeProps) {
   const data = props.data as VolumeData;
   return (
-    <div className="rounded-lg border border-amber-500/25 bg-slate-900/80 px-2.5 py-1.5 shadow backdrop-blur">
+    <div className="rounded-xl border border-amber-500/30 bg-slate-900/90 px-3 py-1.5 shadow-lg backdrop-blur-md">
       <Handle type="target" position={Position.Top} style={{ background: '#f59e0b' }} />
       <div className="flex items-center gap-1.5" title={data.name}>
-        <HardDrive size={12} className="text-amber-400" />
-        <span className="font-mono text-[11px] text-slate-300">{data.name.replace(/^(nd-(svc|db)-|-data$)/g, '')}</span>
+        <HardDrive size={13} className="text-amber-400" />
+        <span className="font-mono text-xs text-amber-200/90">{data.name.replace(/^(nd-(svc|db)-|-data$)/g, '')}</span>
       </div>
     </div>
   );
@@ -114,12 +116,12 @@ function VolumeNode(props: NodeProps) {
 function NetworkNode(props: NodeProps) {
   const data = props.data as NetworkData;
   return (
-    <div className="rounded-lg border border-sky-500/30 bg-slate-900/80 px-2.5 py-1.5 shadow backdrop-blur">
+    <div className="rounded-xl border border-sky-500/40 bg-slate-900/90 px-3 py-1.5 shadow-lg backdrop-blur-md">
       <Handle type="source" position={Position.Bottom} style={{ background: '#0ea5e9' }} />
-      <div className="flex items-center gap-1.5">
-        <Waypoints size={12} className="text-sky-400" />
-        <span className="font-mono text-[11px] text-slate-300">{data.name}</span>
-        <span className="font-mono text-[10px] text-slate-500">×{data.containers}</span>
+      <div className="flex items-center gap-2">
+        <Waypoints size={13} className="text-sky-400" />
+        <span className="font-mono text-xs font-semibold text-slate-200">{data.name}</span>
+        <span className="rounded bg-sky-500/20 px-1.5 py-0.5 font-mono text-[10px] text-sky-300">×{data.containers}</span>
       </div>
     </div>
   );
@@ -128,16 +130,19 @@ function NetworkNode(props: NodeProps) {
 function GatewayNode(props: NodeProps) {
   const data = props.data as GatewayData;
   return (
-    <div className="w-40 rounded-xl border border-sky-500/30 bg-slate-900/90 px-3 py-2.5 shadow-lg shadow-black/40 backdrop-blur">
+    <div className="w-44 rounded-2xl border-2 border-sky-500/40 bg-slate-900/95 p-3.5 shadow-xl shadow-black/50 backdrop-blur-md">
       <Handle type="target" position={Position.Left} style={{ background: '#0ea5e9' }} />
       <Handle type="source" position={Position.Right} style={{ background: '#0ea5e9' }} />
-      <div className="flex items-center gap-2">
-        <span className="grid h-7 w-7 place-items-center rounded-lg bg-sky-500/15 text-sky-300">
-          <ShieldCheck size={14} />
-        </span>
-        <span className="font-medium text-slate-100">Traefik</span>
-      </div>
-      <div className="mt-1.5 text-right">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className="grid h-8 w-8 place-items-center rounded-xl bg-sky-500/15 text-sky-300">
+            <ShieldCheck size={16} />
+          </span>
+          <div>
+            <p className="font-bold text-slate-100 text-xs">Traefik</p>
+            <p className="text-[10px] text-slate-400">Gateway</p>
+          </div>
+        </div>
         <StatusBadge status={data.running ? 'running' : 'stopped'} />
       </div>
     </div>

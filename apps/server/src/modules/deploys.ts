@@ -209,6 +209,7 @@ export const deploysRoutes: FastifyPluginAsync = async (app) => {
     // Absorb EPIPE on stdin: a keystroke racing the child's exit must never
     // crash the process (unhandled 'error' on a stream is fatal).
     child.stdin.on('error', () => { /* child already gone */ });
+    child.on('error', () => { try { socket.close(); } catch { /* already closed */ } });
     socket.on('message', (data) => { child.stdin.write(data as Buffer); });
     child.stdout.on('data', (data) => { try { socket.send(data); } catch { /* closed */ } });
     child.stderr.on('data', (data) => { try { socket.send(data); } catch { /* closed */ } });

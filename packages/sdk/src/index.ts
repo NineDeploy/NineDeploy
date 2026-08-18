@@ -26,9 +26,11 @@ import type {
   InstallPluginInput,
   MarketplaceCatalogResponse,
   MenuListResponse,
+  DemoSeedResult,
   Deployment,
   DockerResources,
   Domain,
+  DomainPatch,
   DomainEntry,
   EnvVar,
   Login,
@@ -65,6 +67,28 @@ import type {
   UpsertEnvVarInput,
   VolumeEntry,
   Webhook,
+  LogDrain,
+  LogDrainCreateInput,
+  LogDrainUpdateInput,
+  LogDrainTestResult,
+  AutoPruneConfigUpdateInput,
+  AutoPruneStatus,
+  AutoPruneRunResult,
+  ServerSshTest,
+  ServerSshTestResult,
+  ServerSshBootstrap,
+  ServerBootstrapResult,
+  WorkspaceEntry,
+  WorkspaceDetail,
+  WorkspaceCreateInput,
+  WorkspaceUpdateInput,
+  WorkspaceMemberEntry,
+  WorkspaceMemberAddInput,
+  WorkspaceMemberRoleUpdateInput,
+  OidcPublicProvider,
+  OidcProviderEntry,
+  OidcProviderCreateInput,
+  OidcProviderUpdateInput,
 } from '@ninedeploy/schemas';
 import { NineDeployError } from './errors.js';
 
@@ -140,6 +164,28 @@ export interface NineDeployClient {
       list: () => Promise<ActiveSession[]>;
       revoke: (id: number) => Promise<{ ok: boolean }>;
     };
+    oidc: {
+      publicProviders: () => Promise<OidcPublicProvider[]>;
+      listProviders: () => Promise<OidcProviderEntry[]>;
+      list: () => Promise<OidcProviderEntry[]>;
+      createProvider: (input: OidcProviderCreateInput) => Promise<OidcProviderEntry>;
+      create: (input: OidcProviderCreateInput) => Promise<OidcProviderEntry>;
+      updateProvider: (id: number, input: OidcProviderUpdateInput) => Promise<OidcProviderEntry>;
+      update: (id: number, input: OidcProviderUpdateInput) => Promise<OidcProviderEntry>;
+      deleteProvider: (id: number) => Promise<{ ok: boolean }>;
+      delete: (id: number) => Promise<{ ok: boolean }>;
+      callback: (slug: string, payload: { code: string; state: string }) => Promise<Session>;
+    };
+  };
+  workspaces: {
+    list: () => Promise<WorkspaceEntry[]>;
+    get: (id: number) => Promise<WorkspaceDetail>;
+    create: (input: WorkspaceCreateInput) => Promise<WorkspaceEntry>;
+    update: (id: number, input: WorkspaceUpdateInput) => Promise<WorkspaceEntry>;
+    delete: (id: number) => Promise<{ ok: boolean }>;
+    addMember: (id: number, input: WorkspaceMemberAddInput) => Promise<WorkspaceMemberEntry>;
+    updateMemberRole: (id: number, memberId: number, input: WorkspaceMemberRoleUpdateInput) => Promise<WorkspaceMemberEntry>;
+    removeMember: (id: number, memberId: number) => Promise<{ ok: boolean }>;
   };
   services: {
     /** `query` is appended verbatim, e.g. `?projectId=3` (project scoping). */
@@ -168,8 +214,8 @@ export interface NineDeployClient {
     list: (serviceId: number) => Promise<Domain[]>;
     create: (serviceId: number, input: CreateDomainInput) => Promise<Domain>;
     remove: (serviceId: number, domainId: number) => Promise<void>;
-    /** Update routing extras: ssl toggle, www→apex redirect, custom headers. */
-    update: (serviceId: number, domainId: number, input: { ssl?: boolean; redirectWww?: boolean; headers?: string }) => Promise<Domain>;
+    /** Update routing extras: ssl toggle, www→apex redirect, custom headers, basicAuth, ipAllowlist, rateLimit. */
+    update: (serviceId: number, domainId: number, input: DomainPatch) => Promise<Domain>;
     all: () => Promise<DomainEntry[]>;
     setSsl: (domainId: number, ssl: boolean) => Promise<{ id: number; ssl: boolean }>;
   };
@@ -187,6 +233,18 @@ export interface NineDeployClient {
     mkdir: (name: string, input: VolumePathCreateInput) => Promise<{ ok: boolean }>;
     /** File manager: delete a file or directory (recursive). */
     deleteFile: (name: string, path: string) => Promise<void>;
+  };
+  containers: {
+    /** File manager: list a directory inside the container. */
+    listFiles: (container: string, path?: string) => Promise<{ path: string; entries: VolumeFileEntry[] }>;
+    /** File manager: read a file (base64 content). */
+    readFile: (container: string, path: string) => Promise<{ content: string; encoding: 'utf8' | 'base64' }>;
+    /** File manager: write/overwrite a file (base64 content). */
+    writeFile: (container: string, input: VolumeFileWriteInput) => Promise<{ ok: boolean }>;
+    /** File manager: create a directory. */
+    mkdir: (container: string, input: VolumePathCreateInput) => Promise<{ ok: boolean }>;
+    /** File manager: delete a file or directory (recursive). */
+    deleteFile: (container: string, path: string) => Promise<void>;
   };
   system: {
     resources: () => Promise<DockerResources>;
@@ -296,6 +354,8 @@ export interface NineDeployClient {
     logs: (id: number, lines?: number) => Promise<{ logs: string[] }>;
     credentials: (id: number) => Promise<DatabaseCredentials>;
     setLimits: (id: number, input: SetLimitsInput) => Promise<{ cpuShares: number | null; memLimitMb: number | null }>;
+    startStudio: (id: number, port?: number) => Promise<{ ok: boolean; port: number; url: string }>;
+    stopStudio: (id: number) => Promise<{ ok: boolean }>;
   };
   attachments: {
     list: (serviceId: number) => Promise<Attachment[]>;
@@ -363,6 +423,9 @@ export interface NineDeployClient {
     test: (id: number) => Promise<{ ok: boolean; status: string }>;
     approve: (id: number) => Promise<{ ok: boolean; status: string }>;
     reject: (id: number) => Promise<{ ok: boolean }>;
+    sshTest: (input: ServerSshTest) => Promise<ServerSshTestResult>;
+    sshBootstrap: (input: ServerSshBootstrap) => Promise<ServerBootstrapResult>;
+    bootstrapLogs: (id: number) => Promise<{ logs: string[] }>;
   };
   templates: {
     list: () => Promise<TemplateSummary[]>;
@@ -399,6 +462,22 @@ export interface NineDeployClient {
   };
   menus: {
     list: (query?: { slot?: string }) => Promise<MenuListResponse>;
+  };
+  demo: {
+    seed: () => Promise<DemoSeedResult>;
+  };
+  logDrains: {
+    list: (query?: { serviceId?: number }) => Promise<LogDrain[]>;
+    get: (id: number) => Promise<LogDrain>;
+    create: (input: LogDrainCreateInput) => Promise<LogDrain>;
+    update: (id: number, input: LogDrainUpdateInput) => Promise<LogDrain>;
+    remove: (id: number) => Promise<{ ok: boolean }>;
+    test: (id: number) => Promise<LogDrainTestResult>;
+  };
+  housekeeping: {
+    getAutoPrune: () => Promise<AutoPruneStatus>;
+    updateAutoPrune: (input: AutoPruneConfigUpdateInput) => Promise<AutoPruneStatus>;
+    runPrune: () => Promise<AutoPruneRunResult>;
   };
   health: () => Promise<HealthStatus>;
 }
@@ -506,6 +585,28 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
         list: () => get<ActiveSession[]>('/v1/auth/sessions'),
         revoke: (id) => send<{ ok: boolean }>('DELETE', `/v1/auth/sessions/${id}`),
       },
+      oidc: {
+        publicProviders: () => get<OidcPublicProvider[]>('/v1/auth/oidc/providers/public'),
+        listProviders: () => get<OidcProviderEntry[]>('/v1/auth/oidc/providers'),
+        list: () => get<OidcProviderEntry[]>('/v1/auth/oidc/providers'),
+        createProvider: (input) => send<OidcProviderEntry>('POST', '/v1/auth/oidc/providers', input),
+        create: (input) => send<OidcProviderEntry>('POST', '/v1/auth/oidc/providers', input),
+        updateProvider: (id, input) => send<OidcProviderEntry>('PATCH', `/v1/auth/oidc/providers/${id}`, input),
+        update: (id, input) => send<OidcProviderEntry>('PATCH', `/v1/auth/oidc/providers/${id}`, input),
+        deleteProvider: (id) => send<{ ok: boolean }>('DELETE', `/v1/auth/oidc/providers/${id}`),
+        delete: (id) => send<{ ok: boolean }>('DELETE', `/v1/auth/oidc/providers/${id}`),
+        callback: (slug, payload) => send<Session>('POST', `/v1/auth/oidc/${slug}/callback`, payload),
+      },
+    },
+    workspaces: {
+      list: () => get<WorkspaceEntry[]>('/v1/workspaces'),
+      get: (id) => get<WorkspaceDetail>(`/v1/workspaces/${id}`),
+      create: (input) => send<WorkspaceEntry>('POST', '/v1/workspaces', input),
+      update: (id, input) => send<WorkspaceEntry>('PATCH', `/v1/workspaces/${id}`, input),
+      delete: (id) => send<{ ok: boolean }>('DELETE', `/v1/workspaces/${id}`),
+      addMember: (id, input) => send<WorkspaceMemberEntry>('POST', `/v1/workspaces/${id}/members`, input),
+      updateMemberRole: (id, memberId, input) => send<WorkspaceMemberEntry>('PATCH', `/v1/workspaces/${id}/members/${memberId}`, input),
+      removeMember: (id, memberId) => send<{ ok: boolean }>('DELETE', `/v1/workspaces/${id}/members/${memberId}`),
     },
     services: {
       list: (query) => get<Service[]>(`/v1/services${query ?? ''}`),
@@ -561,6 +662,17 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
         await request(`/v1/volumes/${encodeURIComponent(name)}`, { method: 'DELETE' });
       },
       prune: () => send<{ ok: boolean; deleted: number; freedBytes: number }>('POST', '/v1/volumes/prune'),
+    },
+    containers: {
+      listFiles: (container, path = '/') =>
+        get<{ path: string; entries: VolumeFileEntry[] }>(`/v1/containers/${encodeURIComponent(container)}/files?path=${encodeURIComponent(path)}`),
+      readFile: (container, path) =>
+        get<{ content: string; encoding: 'utf8' | 'base64' }>(`/v1/containers/${encodeURIComponent(container)}/files/content?path=${encodeURIComponent(path)}`),
+      writeFile: (container, input) => send<{ ok: boolean }>('PUT', `/v1/containers/${encodeURIComponent(container)}/files`, input),
+      mkdir: (container, input) => send<{ ok: boolean }>('POST', `/v1/containers/${encodeURIComponent(container)}/files/dir`, input),
+      deleteFile: async (container, path) => {
+        await request(`/v1/containers/${encodeURIComponent(container)}/files?path=${encodeURIComponent(path)}`, { method: 'DELETE' });
+      },
     },
     system: {
       resources: () => get<DockerResources>('/v1/system/resources'),
@@ -689,6 +801,11 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
       logs: (id, lines) => get<{ logs: string[] }>(`/v1/databases/${id}/logs${lines ? `?lines=${lines}` : ''}`),
       credentials: (id) => get<DatabaseCredentials>(`/v1/databases/${id}/credentials`),
       setLimits: (id, input) => send<{ cpuShares: number | null; memLimitMb: number | null }>('PATCH', `/v1/databases/${id}/limits`, input),
+      startStudio: (id, port) => send<{ ok: boolean; port: number; url: string }>('POST', `/v1/databases/${id}/studio`, { port }),
+      stopStudio: async (id) => {
+        await request(`/v1/databases/${id}/studio`, { method: 'DELETE' });
+        return { ok: true };
+      },
     },
     attachments: {
       list: (serviceId) => get<Attachment[]>(`/v1/services/${serviceId}/attachments`),
@@ -768,6 +885,9 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
       test: (id) => send<{ ok: boolean; status: string }>('POST', `/v1/servers/${id}/test`),
       approve: (id) => send<{ ok: boolean; status: string }>('POST', `/v1/servers/${id}/approve`),
       reject: (id) => send<{ ok: boolean }>('POST', `/v1/servers/${id}/reject`),
+      sshTest: (input) => send<ServerSshTestResult>('POST', '/v1/servers/ssh-test', input),
+      sshBootstrap: (input) => send<ServerBootstrapResult>('POST', '/v1/servers/ssh-bootstrap', input),
+      bootstrapLogs: (id) => get<{ logs: string[] }>(`/v1/servers/${id}/bootstrap-logs`),
     },
     limits: {
       setService: (serviceId, input) =>
@@ -811,6 +931,25 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
         const qs = query?.slot ? `?slot=${encodeURIComponent(query.slot)}` : '';
         return get<MenuListResponse>(`/v1/menus${qs}`);
       },
+    },
+    demo: {
+      seed: () => send<DemoSeedResult>('POST', '/v1/demo/seed'),
+    },
+    logDrains: {
+      list: (query) => {
+        const qs = query?.serviceId !== undefined ? `?serviceId=${encodeURIComponent(String(query.serviceId))}` : '';
+        return get<LogDrain[]>(`/v1/log-drains${qs}`);
+      },
+      get: (id) => get<LogDrain>(`/v1/log-drains/${id}`),
+      create: (input) => send<LogDrain>('POST', '/v1/log-drains', input),
+      update: (id, input) => send<LogDrain>('PATCH', `/v1/log-drains/${id}`, input),
+      remove: (id) => send<{ ok: boolean }>('DELETE', `/v1/log-drains/${id}`),
+      test: (id) => send<LogDrainTestResult>('POST', `/v1/log-drains/${id}/test`),
+    },
+    housekeeping: {
+      getAutoPrune: () => get<AutoPruneStatus>('/v1/housekeeping/prune/config'),
+      updateAutoPrune: (input) => send<AutoPruneStatus>('PATCH', '/v1/housekeeping/prune/config', input),
+      runPrune: () => send<AutoPruneRunResult>('POST', '/v1/housekeeping/prune'),
     },
     health: () => get<HealthStatus>('/health'),
   };

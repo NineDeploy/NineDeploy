@@ -55,6 +55,7 @@ vi.mock('../src/modules/resources.js', () => ({ systemRoutes: stubs.plugin('syst
 vi.mock('../src/modules/templates.js', () => ({ templateRoutes: stubs.plugin('templates') }));
 vi.mock('../src/modules/topology.js', () => ({ topologyRoutes: stubs.plugin('topology') }));
 vi.mock('../src/modules/tunnels.js', () => ({ tunnelRoutes: stubs.plugin('tunnels') }));
+vi.mock('../src/modules/demo.js', () => ({ demoRoutes: stubs.plugin('demo') }));
 vi.mock('../src/modules/users.js', () => ({ userRoutes: stubs.plugin('users') }));
 vi.mock('../src/modules/volumes.js', () => ({ volumeRoutes: stubs.plugin('volumes') }));
 

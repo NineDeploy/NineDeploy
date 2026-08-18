@@ -1,30 +1,68 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import { CheckCircle2, Copy, HardDrive, Plus, Radio, Server as ServerIcon, Sparkles, Trash2, XCircle } from 'lucide-react';
+import {
+  CheckCircle2,
+  Copy,
+  FileText,
+  HardDrive,
+  Key,
+  Lock,
+  Plus,
+  Radio,
+  RefreshCw,
+  Server as ServerIcon,
+  Sparkles,
+  Terminal,
+  Trash2,
+  XCircle,
+} from 'lucide-react';
+import type { ServerBootstrapResult, ServerSshTestResult } from '@ninedeploy/sdk';
 import { api } from '../lib/api.js';
 import { useToast } from '../components/Toast.js';
-import { Button, Card, ConfirmDialog, EmptyState, ErrorCard, Field, Input, PageHeader, Skeleton, cn } from '../components/ui.js';
+import { Button, Card, ConfirmDialog, EmptyState, ErrorCard, Field, Input, Modal, PageHeader, Skeleton, cn } from '../components/ui.js';
 import { formatRelative, useCopy } from '../lib/format.js';
 
 /**
- * Remote server registry (admin). Supports zero-touch auto-discovery (edge agents
- * announce to master on boot) with 1-click admin approval, or manual token pairing.
+ * Remote server registry (admin). Supports zero-touch SSH auto-onboarding,
+ * zero-touch auto-discovery announcements, or manual token pairing.
  */
 export function Servers() {
   const qc = useQueryClient();
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
+  const [addMode, setAddMode] = useState<'ssh' | 'manual'>('ssh');
   const [pendingDelete, setPendingDelete] = useState<{ id: number; name: string } | null>(null);
+
+  // Manual pairing state
   const [name, setName] = useState('');
   const [host, setHost] = useState('');
   const [port, setPort] = useState('4600');
   const [revealed, setRevealed] = useState<{ token: string; tokenSha256: string; agentCommand: string } | null>(null);
   const { copied, copy } = useCopy();
   const { copied: autoCopied, copy: autoCopy } = useCopy();
-
   const [cmdTab, setCmdTab] = useState<'docker' | 'npx'>('docker');
 
+  // SSH Onboarding Form State
+  const [sshName, setSshName] = useState('');
+  const [sshHost, setSshHost] = useState('');
+  const [sshPort, setSshPort] = useState('22');
+  const [sshUser, setSshUser] = useState('root');
+  const [authType, setAuthType] = useState<'key' | 'password'>('key');
+  const [sshKey, setSshKey] = useState('');
+  const [sshPassword, setSshPassword] = useState('');
+  const [installDocker, setInstallDocker] = useState(true);
+  const [agentPort, setAgentPort] = useState('4600');
+
+  // SSH Test Probe Feedback State
+  const [probeResult, setProbeResult] = useState<ServerSshTestResult | null>(null);
+
+  // Live Bootstrap Stepper & Log Modal State
+  const [bootstrapRunning, setBootstrapRunning] = useState(false);
+  const [bootstrapResult, setBootstrapResult] = useState<ServerBootstrapResult | null>(null);
+  const [activeLogServer, setActiveLogServer] = useState<{ id: number; name: string } | null>(null);
+
   const list = useQuery({ queryKey: ['servers'], queryFn: () => api.servers.list() });
+
   const create = useMutation({
     mutationFn: () => api.servers.create({ name, host, port: Number(port) || 4600 }),
     onSuccess: (res) => {
@@ -38,6 +76,75 @@ export function Servers() {
     },
     onError: () => toast('Could not register the server', 'error'),
   });
+
+  const sshTestMutation = useMutation({
+    mutationFn: () =>
+      api.servers.sshTest({
+        host: sshHost,
+        sshPort: Number(sshPort) || 22,
+        sshUser: sshUser || 'root',
+        authType,
+        sshKey: authType === 'key' ? sshKey : undefined,
+        sshPassword: authType === 'password' ? sshPassword : undefined,
+      }),
+    onSuccess: (res) => {
+      setProbeResult(res);
+      if (res.ok) {
+        toast(`SSH probe successful (${res.latencyMs}ms)`, 'success');
+      } else {
+        toast(res.message, 'error');
+      }
+    },
+    onError: (err) => {
+      const msg = err instanceof Error ? err.message : 'SSH probe failed';
+      setProbeResult({ ok: false, message: msg });
+      toast(msg, 'error');
+    },
+  });
+
+  const sshBootstrapMutation = useMutation({
+    mutationFn: () =>
+      api.servers.sshBootstrap({
+        name: sshName,
+        host: sshHost,
+        sshPort: Number(sshPort) || 22,
+        sshUser: sshUser || 'root',
+        authType,
+        sshKey: authType === 'key' ? sshKey : undefined,
+        sshPassword: authType === 'password' ? sshPassword : undefined,
+        installDocker,
+        agentPort: Number(agentPort) || 4600,
+      }),
+    onMutate: () => {
+      setBootstrapRunning(true);
+      setBootstrapResult(null);
+    },
+    onSuccess: (res) => {
+      setBootstrapRunning(false);
+      setBootstrapResult(res);
+      qc.invalidateQueries({ queryKey: ['servers'] });
+      toast(`Server "${sshName}" successfully onboarded!`, 'success');
+    },
+    onError: (err) => {
+      setBootstrapRunning(false);
+      const msg = err instanceof Error ? err.message : 'Bootstrap failed';
+      setBootstrapResult({
+        ok: false,
+        error: msg,
+        steps: [
+          {
+            step: 'error',
+            status: 'failed',
+            message: msg,
+            timestamp: new Date().toISOString(),
+          },
+        ],
+        logs: [`[FATAL] ${msg}`],
+      });
+      toast(msg, 'error');
+    },
+  });
+
   const remove = useMutation({
     mutationFn: (id: number) => api.servers.remove(id, { force: true }),
     onSuccess: () => {
@@ -46,6 +153,7 @@ export function Servers() {
     },
     onError: () => toast('Could not remove the server', 'error'),
   });
+
   const test = useMutation({
     mutationFn: (id: number) => api.servers.test(id),
     onSuccess: () => {
@@ -54,6 +162,7 @@ export function Servers() {
     },
     onError: () => toast('Agent unreachable', 'error'),
   });
+
   const approve = useMutation({
     mutationFn: (id: number) => api.servers.approve(id),
     onSuccess: () => {
@@ -62,6 +171,7 @@ export function Servers() {
     },
     onError: (err) => toast(`Approval failed: ${err instanceof Error ? err.message : 'unreachable'}`, 'error'),
   });
+
   const reject = useMutation({
     mutationFn: (id: number) => api.servers.reject(id),
     onSuccess: () => {
@@ -69,6 +179,12 @@ export function Servers() {
       toast('Server rejected', 'success');
     },
     onError: () => toast('Could not reject server', 'error'),
+  });
+
+  const serverLogsQuery = useQuery({
+    queryKey: ['server-logs', activeLogServer?.id],
+    queryFn: () => api.servers.bootstrapLogs(activeLogServer!.id),
+    enabled: activeLogServer != null,
   });
 
   const pendingServers = list.data?.filter((s) => s.status === 'pending') ?? [];
@@ -85,16 +201,28 @@ export function Servers() {
     : '';
   const activeCommand = cmdTab === 'docker' ? dockerCommand : npxCommand;
 
+  const handleResetSshForm = () => {
+    setSshName('');
+    setSshHost('');
+    setSshPort('22');
+    setSshUser('root');
+    setAuthType('key');
+    setSshKey('');
+    setSshPassword('');
+    setProbeResult(null);
+    setOpen(false);
+  };
+
   return (
-    <div className="max-w-3xl">
+    <div className="max-w-4xl space-y-6">
       <PageHeader
         icon={<ServerIcon size={18} />}
         title="Servers"
-        subtitle="Remote hosts running the NineDeploy agent — deploy services across your cluster."
+        subtitle="Remote nodes running the NineDeploy agent — zero-touch SSH onboarding or auto-discovery."
       />
 
       {/* Auto-Join Quick Instructions Banner */}
-      <Card className="mb-6 border-indigo-500/20 bg-indigo-500/[0.03]">
+      <Card className="border-indigo-500/20 bg-indigo-500/[0.03]">
         <div className="p-5">
           <div className="flex items-center justify-between gap-2 mb-2">
             <div className="flex items-center gap-2">
@@ -124,7 +252,7 @@ export function Servers() {
 
       {/* Discovery & Pending Approval Section */}
       {pendingServers.length > 0 && (
-        <Card className="mb-6 border-amber-500/40 bg-amber-500/[0.04]">
+        <Card className="border-amber-500/40 bg-amber-500/[0.04]">
           <div className="p-5">
             <div className="flex items-center gap-2 mb-2">
               <Radio className="text-amber-400 animate-pulse" size={18} />
@@ -177,7 +305,7 @@ export function Servers() {
       )}
 
       {revealed && (
-        <Card className="mb-5 border-amber-500/30">
+        <Card className="border-amber-500/30">
           <div className="p-5 space-y-3">
             <div className="flex items-center justify-between">
               <p className="text-xs font-medium text-amber-200">
@@ -217,32 +345,252 @@ export function Servers() {
         </Card>
       )}
 
+      {/* Add Server Onboarding Wizard Card */}
       {open && (
-        <Card className="mb-5 p-5">
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (name.trim() && host.trim()) create.mutate();
-            }}
-            className="grid grid-cols-1 gap-3 sm:grid-cols-3"
-          >
-            <Field label="Name"><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="edge-1" autoComplete="off" spellCheck={false} className="h-9" /></Field>
-            <Field label="Host"><Input value={host} onChange={(e) => setHost(e.target.value)} placeholder="10.0.0.5" autoComplete="off" spellCheck={false} className="h-9 font-mono text-xs" /></Field>
-            <Field label="Agent port"><Input value={port} onChange={(e) => setPort(e.target.value)} inputMode="numeric" autoComplete="off" className="h-9 font-mono text-xs" /></Field>
-            <div className="sm:col-span-3 flex gap-2">
-              <Button type="submit" size="sm" disabled={!name.trim() || !host.trim() || create.isPending}>
-                {create.isPending ? 'Registering…' : 'Register server'}
-              </Button>
-              <button type="button" onClick={() => setOpen(false)} className="text-xs text-slate-500 hover:underline">Cancel</button>
+        <Card className="p-5">
+          <div className="flex items-center justify-between border-b border-white/10 pb-3 mb-4">
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setAddMode('ssh')}
+                className={cn(
+                  'flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition',
+                  addMode === 'ssh' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-white',
+                )}
+              >
+                <Terminal size={14} />
+                SSH Zero-Touch Onboarding
+              </button>
+              <button
+                type="button"
+                onClick={() => setAddMode('manual')}
+                className={cn(
+                  'flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition',
+                  addMode === 'manual' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-white',
+                )}
+              >
+                <HardDrive size={14} />
+                Manual Token Registration
+              </button>
             </div>
-          </form>
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              className="text-xs text-slate-500 hover:text-slate-300"
+            >
+              Close Form
+            </button>
+          </div>
+
+          {addMode === 'ssh' ? (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (sshName.trim() && sshHost.trim()) {
+                  sshBootstrapMutation.mutate();
+                }
+              }}
+              className="space-y-4"
+            >
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <Field label="Node Name">
+                  <Input
+                    value={sshName}
+                    onChange={(e) => setSshName(e.target.value)}
+                    placeholder="production-vps-1"
+                    className="h-9 text-xs"
+                    required
+                  />
+                </Field>
+                <Field label="Server Host / IP">
+                  <Input
+                    value={sshHost}
+                    onChange={(e) => setSshHost(e.target.value)}
+                    placeholder="195.201.45.10"
+                    className="h-9 font-mono text-xs"
+                    required
+                  />
+                </Field>
+                <Field label="SSH Port">
+                  <Input
+                    value={sshPort}
+                    onChange={(e) => setSshPort(e.target.value)}
+                    placeholder="22"
+                    className="h-9 font-mono text-xs"
+                  />
+                </Field>
+                <Field label="SSH Username">
+                  <Input
+                    value={sshUser}
+                    onChange={(e) => setSshUser(e.target.value)}
+                    placeholder="root"
+                    className="h-9 font-mono text-xs"
+                  />
+                </Field>
+              </div>
+
+              {/* Authentication Type Selector */}
+              <div className="space-y-2">
+                <label className="block text-xs font-medium text-slate-300">Authentication Method</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setAuthType('key')}
+                    className={cn(
+                      'flex items-center justify-center gap-2 rounded-lg border p-2.5 text-xs font-medium transition',
+                      authType === 'key'
+                        ? 'border-indigo-500 bg-indigo-500/10 text-indigo-300'
+                        : 'border-white/10 text-slate-400 hover:border-white/20',
+                    )}
+                  >
+                    <Key size={14} />
+                    SSH Private Key
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAuthType('password')}
+                    className={cn(
+                      'flex items-center justify-center gap-2 rounded-lg border p-2.5 text-xs font-medium transition',
+                      authType === 'password'
+                        ? 'border-indigo-500 bg-indigo-500/10 text-indigo-300'
+                        : 'border-white/10 text-slate-400 hover:border-white/20',
+                    )}
+                  >
+                    <Lock size={14} />
+                    SSH Password
+                  </button>
+                </div>
+              </div>
+
+              {authType === 'key' ? (
+                <Field label="SSH Private Key">
+                  <textarea
+                    value={sshKey}
+                    onChange={(e) => setSshKey(e.target.value)}
+                    rows={4}
+                    placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;...&#10;-----END OPENSSH PRIVATE KEY-----"
+                    className="w-full rounded-lg border border-white/10 bg-black/40 p-2.5 font-mono text-xs text-slate-200 focus:border-indigo-500 focus:outline-none"
+                  />
+                </Field>
+              ) : (
+                <Field label="SSH Password">
+                  <Input
+                    type="password"
+                    value={sshPassword}
+                    onChange={(e) => setSshPassword(e.target.value)}
+                    placeholder="••••••••••••"
+                    className="h-9 text-xs"
+                  />
+                </Field>
+              )}
+
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <Field label="Agent Port (Inbound)">
+                  <Input
+                    value={agentPort}
+                    onChange={(e) => setAgentPort(e.target.value)}
+                    placeholder="4600"
+                    className="h-9 font-mono text-xs"
+                  />
+                </Field>
+                <div className="flex items-center gap-2 pt-6">
+                  <input
+                    type="checkbox"
+                    id="install-docker-checkbox"
+                    checked={installDocker}
+                    onChange={(e) => setInstallDocker(e.target.checked)}
+                    className="h-4 w-4 rounded border-white/20 bg-black/40 text-indigo-600 focus:ring-0"
+                  />
+                  <label htmlFor="install-docker-checkbox" className="text-xs text-slate-300 select-none">
+                    Install Docker if missing (<code className="text-indigo-300">get.docker.com</code>)
+                  </label>
+                </div>
+              </div>
+
+              {/* Probe Result Banner */}
+              {probeResult && (
+                <div
+                  className={cn(
+                    'rounded-lg border p-3 text-xs',
+                    probeResult.ok
+                      ? 'border-emerald-500/30 bg-emerald-500/[0.04] text-emerald-300'
+                      : 'border-rose-500/30 bg-rose-500/[0.04] text-rose-300',
+                  )}
+                >
+                  <div className="flex items-center gap-2 font-medium">
+                    {probeResult.ok ? <CheckCircle2 size={16} /> : <XCircle size={16} />}
+                    <span>{probeResult.message}</span>
+                  </div>
+                  {probeResult.ok && (
+                    <div className="mt-1.5 flex flex-wrap gap-3 text-[11px] text-slate-400">
+                      <span>OS: <strong className="text-slate-200">{probeResult.os}</strong></span>
+                      <span>Docker: <strong className="text-slate-200">{probeResult.dockerInstalled ? probeResult.dockerVersion : 'Not Installed'}</strong></span>
+                      <span>Latency: <strong className="text-slate-200">{probeResult.latencyMs}ms</strong></span>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => sshTestMutation.mutate()}
+                  disabled={!sshHost.trim() || sshTestMutation.isPending}
+                >
+                  {sshTestMutation.isPending ? <RefreshCw size={14} className="animate-spin mr-1" /> : <Sparkles size={14} className="mr-1" />}
+                  Test SSH Connection
+                </Button>
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="submit"
+                    size="sm"
+                    disabled={!sshName.trim() || !sshHost.trim() || sshBootstrapMutation.isPending}
+                    className="bg-indigo-600 hover:bg-indigo-500 text-white"
+                  >
+                    <Terminal size={14} className="mr-1" />
+                    Start Automated Onboarding
+                  </Button>
+                  <button type="button" onClick={handleResetSshForm} className="text-xs text-slate-500 hover:underline">
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </form>
+          ) : (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (name.trim() && host.trim()) create.mutate();
+              }}
+              className="grid grid-cols-1 gap-3 sm:grid-cols-3"
+            >
+              <Field label="Name">
+                <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="edge-1" autoComplete="off" spellCheck={false} className="h-9" />
+              </Field>
+              <Field label="Host">
+                <Input value={host} onChange={(e) => setHost(e.target.value)} placeholder="10.0.0.5" autoComplete="off" spellCheck={false} className="h-9 font-mono text-xs" />
+              </Field>
+              <Field label="Agent port">
+                <Input value={port} onChange={(e) => setPort(e.target.value)} inputMode="numeric" autoComplete="off" className="h-9 font-mono text-xs" />
+              </Field>
+              <div className="sm:col-span-3 flex gap-2">
+                <Button type="submit" size="sm" disabled={!name.trim() || !host.trim() || create.isPending}>
+                  {create.isPending ? 'Registering…' : 'Register server'}
+                </Button>
+                <button type="button" onClick={() => setOpen(false)} className="text-xs text-slate-500 hover:underline">Cancel</button>
+              </div>
+            </form>
+          )}
         </Card>
       )}
 
-      <div className="mb-4 flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-slate-200">Connected Servers ({registeredServers.length})</h2>
+      {/* Connected Servers List Table */}
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-slate-200">Connected Nodes ({registeredServers.length})</h2>
         <Button size="sm" variant="secondary" onClick={() => setOpen((v) => !v)}>
-          <Plus size={14} /> {open ? 'Close' : 'Add server'}
+          <Plus size={14} /> {open ? 'Hide form' : 'Add server'}
         </Button>
       </div>
 
@@ -251,7 +599,7 @@ export function Servers() {
       ) : list.isError ? (
         <ErrorCard title="Couldn't load servers" error={list.error} onRetry={() => list.refetch()} />
       ) : registeredServers.length === 0 ? (
-        <Card><EmptyState icon={<HardDrive size={26} />} title="No remote servers" hint="Everything deploys on this host. Run the auto-join command on an edge server to deploy there." /></Card>
+        <Card><EmptyState icon={<HardDrive size={26} />} title="No remote servers" hint="Everything deploys on this host. Use SSH Onboarding or run the auto-join command on a node." /></Card>
       ) : (
         <Card className="overflow-hidden">
           <table className="w-full text-sm">
@@ -279,6 +627,15 @@ export function Servers() {
                   </td>
                   <td className="px-5 py-3 text-right">
                     <div className="flex items-center justify-end gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setActiveLogServer({ id: s.id, name: s.name })}
+                        className="text-xs text-slate-500 hover:text-indigo-300 flex items-center gap-1"
+                        title="View bootstrap logs"
+                      >
+                        <FileText size={13} />
+                        logs
+                      </button>
                       <button type="button" onClick={() => test.mutate(s.id)} className="text-xs text-slate-500 hover:text-indigo-300" title="Test connectivity">
                         test
                       </button>
@@ -293,9 +650,105 @@ export function Servers() {
           </table>
         </Card>
       )}
-      <p className="mt-3 text-xs text-slate-600">
-        The agent runs the same binary with <code className="text-slate-400">NINEDEPLOY_AGENT=1</code> and only executes a fixed set of typed docker/git operations — never raw commands.
-      </p>
+
+      {/* Real-Time Bootstrap Console Modal */}
+      {(bootstrapRunning || bootstrapResult != null) && (
+        <Modal
+          onClose={() => {
+            if (!bootstrapRunning) {
+              setBootstrapResult(null);
+              handleResetSshForm();
+            }
+          }}
+          title="Zero-Touch Server Onboarding"
+        >
+          <div className="space-y-4">
+            <p className="text-xs text-slate-400">
+              Automated provisioning pipeline for node <strong className="text-slate-200">{sshName}</strong> ({sshHost}):
+            </p>
+
+            {/* Stepper Progress */}
+            {bootstrapResult?.steps && (
+              <div className="space-y-2 border border-white/10 rounded-lg p-3 bg-black/20">
+                {bootstrapResult.steps.map((st, idx) => (
+                  <div key={idx} className="flex items-center justify-between text-xs">
+                    <div className="flex items-center gap-2">
+                      {st.status === 'success' ? (
+                        <CheckCircle2 size={14} className="text-emerald-400 shrink-0" />
+                      ) : st.status === 'failed' ? (
+                        <XCircle size={14} className="text-rose-400 shrink-0" />
+                      ) : (
+                        <RefreshCw size={14} className="text-indigo-400 animate-spin shrink-0" />
+                      )}
+                      <span className={cn(st.status === 'failed' ? 'text-rose-300' : 'text-slate-200')}>
+                        {st.message}
+                      </span>
+                    </div>
+                    <span className="text-[10px] font-mono text-slate-500">{st.step}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {bootstrapRunning && (
+              <div className="flex items-center gap-2 p-3 bg-indigo-500/10 border border-indigo-500/20 rounded-lg text-xs text-indigo-300">
+                <RefreshCw size={15} className="animate-spin shrink-0" />
+                <span>Bootstrapping remote server over SSH, installing Docker and NineDeploy Agent…</span>
+              </div>
+            )}
+
+            {/* Live Terminal Log Viewer */}
+            {bootstrapResult?.logs && bootstrapResult.logs.length > 0 && (
+              <div className="rounded-lg border border-white/10 bg-black/90 p-3 font-mono text-[11px] text-slate-300 max-h-56 overflow-y-auto space-y-1">
+                {bootstrapResult.logs.map((l, i) => (
+                  <div key={i} className="whitespace-pre-wrap break-all leading-tight">{l}</div>
+                ))}
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2 pt-2">
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={bootstrapRunning}
+                onClick={() => {
+                  setBootstrapResult(null);
+                  handleResetSshForm();
+                }}
+              >
+                {bootstrapResult?.ok ? 'Done' : 'Dismiss'}
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Historical Bootstrap Logs Modal */}
+      {activeLogServer != null && (
+        <Modal
+          onClose={() => setActiveLogServer(null)}
+          title={`Bootstrap Logs: ${activeLogServer?.name || ''}`}
+        >
+          <div className="space-y-3">
+            {serverLogsQuery.isLoading ? (
+              <Skeleton className="h-32 w-full" />
+            ) : serverLogsQuery.data?.logs && serverLogsQuery.data.logs.length > 0 ? (
+              <div className="rounded-lg border border-white/10 bg-black/90 p-3 font-mono text-[11px] text-slate-300 max-h-80 overflow-y-auto space-y-1">
+                {serverLogsQuery.data.logs.map((l, i) => (
+                  <div key={i} className="whitespace-pre-wrap break-all leading-tight">{l}</div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-slate-400">No bootstrap execution logs recorded for this node.</p>
+            )}
+            <div className="flex justify-end">
+              <Button size="sm" variant="secondary" onClick={() => setActiveLogServer(null)}>
+                Close Logs
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
 
       <ConfirmDialog
         open={pendingDelete != null}

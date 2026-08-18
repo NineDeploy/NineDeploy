@@ -17,6 +17,13 @@ vi.mock('../src/lib/crypto.js', () => cryptoMocks);
 const auditMocks = vi.hoisted(() => ({ audit: vi.fn(async () => undefined) }));
 vi.mock('../src/lib/audit.js', () => auditMocks);
 
+const provisionerMocks = vi.hoisted(() => ({
+  testSshConnection: vi.fn(async () => ({ ok: true, message: 'Connected', os: 'Ubuntu', dockerInstalled: true })),
+  bootstrapServer: vi.fn(async () => ({ ok: true, serverId: 10, serverName: 'node-10', steps: [], logs: [] })),
+  getBootstrapLogs: vi.fn(() => ['log 1', 'log 2']),
+}));
+vi.mock('../src/engine/serverProvisioner.js', () => provisionerMocks);
+
 const serverRow = (over: Record<string, unknown> = {}) => ({
   id: 1,
   name: 'edge-1',
@@ -408,4 +415,94 @@ describe('servers routes', () => {
     });
     expect(resEmpty.statusCode).toBe(400);
   });
+
+  it('runs SSH connection test via POST /servers/ssh-test', async () => {
+    const app = await appWith({});
+    const resEmpty = await app.inject({
+      method: 'POST',
+      url: '/servers/ssh-test',
+      headers: asUser(),
+    });
+    expect(resEmpty.statusCode).toBe(400);
+
+    const resEmptyBoot = await app.inject({
+      method: 'POST',
+      url: '/servers/ssh-bootstrap',
+      headers: asUser(),
+    });
+    expect(resEmptyBoot.statusCode).toBe(400);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/servers/ssh-test',
+      headers: asUser(),
+      payload: { host: '192.168.1.50', sshPort: 22, authType: 'key' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ ok: true, message: 'Connected', os: 'Ubuntu' });
+    expect(provisionerMocks.testSshConnection).toHaveBeenCalledWith(
+      expect.objectContaining({ host: '192.168.1.50', sshPort: 22 }),
+    );
+  });
+
+  it('runs SSH automated bootstrap and audits success', async () => {
+    const app = await appWith({});
+    const res = await app.inject({
+      method: 'POST',
+      url: '/servers/ssh-bootstrap',
+      headers: asUser(),
+      payload: { name: 'Node-10', host: '192.168.1.50', sshPort: 22, authType: 'key', installDocker: true },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ ok: true, serverId: 10, serverName: 'node-10' });
+    expect(provisionerMocks.bootstrapServer).toHaveBeenCalled();
+    expect(auditMocks.audit).toHaveBeenCalledWith(expect.anything(), 1, 'server.ssh_bootstrap', 'Node-10');
+  });
+
+  it('handles bootstrap failure with 400 badRequest', async () => {
+    provisionerMocks.bootstrapServer.mockResolvedValueOnce({
+      ok: false,
+      error: 'Docker install timed out',
+      steps: [],
+      logs: [],
+    });
+
+    const app = await appWith({});
+    const res = await app.inject({
+      method: 'POST',
+      url: '/servers/ssh-bootstrap',
+      headers: asUser(),
+      payload: { name: 'Fail-Node', host: '192.168.1.99', authType: 'key' },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.message).toBe('Docker install timed out');
+
+    // Default error message fallback
+    provisionerMocks.bootstrapServer.mockResolvedValueOnce({
+      ok: false,
+      steps: [],
+      logs: [],
+    });
+    const resDef = await app.inject({
+      method: 'POST',
+      url: '/servers/ssh-bootstrap',
+      headers: asUser(),
+      payload: { name: 'Fail-Node-2', host: '192.168.1.99', authType: 'key' },
+    });
+    expect(resDef.statusCode).toBe(400);
+    expect(resDef.json().error.message).toBe('Server bootstrap failed');
+  });
+
+  it('retrieves bootstrap logs via GET /servers/:id/bootstrap-logs', async () => {
+    const app = await appWith({});
+    const res = await app.inject({
+      method: 'GET',
+      url: '/servers/5/bootstrap-logs',
+      headers: asUser(),
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ logs: ['log 1', 'log 2'] });
+    expect(provisionerMocks.getBootstrapLogs).toHaveBeenCalledWith(5);
+  });
 });
+

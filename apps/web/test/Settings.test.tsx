@@ -1074,4 +1074,34 @@ describe('Settings', () => {
     expect(await screen.findByText('Vault provider')).toBeInTheDocument();
     expect(screen.getByText('Cloudflare DNS records')).toBeInTheDocument();
   });
+
+  it('opens log drains and storage sections from settings tabs', async () => {
+    mockOf(api.logDrains.list).mockResolvedValue([] as never);
+    mockOf(api.housekeeping.getAutoPrune).mockResolvedValue({
+      enabled: true,
+      thresholdPercent: 85,
+      pruneImages: true,
+      pruneBuildCache: true,
+      pruneContainers: true,
+      pruneVolumes: false,
+      maxAgeHours: 168,
+      diskUsedPercent: 60,
+      diskTotalBytes: 100 * 1024 ** 3,
+      diskFreeBytes: 40 * 1024 ** 3,
+      lastPrunedAt: null,
+      lastFreedBytes: null,
+    } as never);
+
+    renderWithProviders(<Settings />);
+    await openSection('Log Drains');
+    expect(await screen.findByText('External Log Drains')).toBeInTheDocument();
+
+    await openSection('Storage & Prune');
+    expect(await screen.findByText('Storage & Auto-Pruning')).toBeInTheDocument();
+
+    mockOf(api.auth.oidc.list).mockResolvedValue([] as never);
+    await openSection('SSO & OIDC');
+    expect(await screen.findByText('Single Sign-On (SSO & OIDC)')).toBeInTheDocument();
+  });
 });
+

@@ -226,6 +226,34 @@ describe('dockerBuilder.buildAndRun', () => {
     ]);
   });
 
+  it('passes -p hostPort:containerPort when publishedPort is configured', async () => {
+    const ctx = makeCtx({
+      service: { slug: 'x', image: 'nginx', port: 80, publishedPort: 8080, cpuShares: 0, memLimitMb: 0, volumeMount: null, healthPath: '/' },
+      env: {},
+      commitSha: 'abc',
+    });
+
+    await dockerBuilder.buildAndRun(ctx as never);
+
+    const runArgs = h.run.mock.calls.at(-1)![1] as unknown[];
+    expect(runArgs).toContain('-p');
+    expect(runArgs).toContain('8080:80');
+  });
+
+  it('maps publishedPort to itself when service.port is null', async () => {
+    const ctx = makeCtx({
+      service: { slug: 'x', image: 'redis:alpine', port: null, publishedPort: 6379, cpuShares: 0, memLimitMb: 0, volumeMount: null, healthPath: '/' },
+      env: {},
+      commitSha: 'abc',
+    });
+
+    await dockerBuilder.buildAndRun(ctx as never);
+
+    const runArgs = h.run.mock.calls.at(-1)![1] as unknown[];
+    expect(runArgs).toContain('-p');
+    expect(runArgs).toContain('6379:6379');
+  });
+
   it('defaults the returned healthPath to / when the service has none', async () => {
     const ctx = makeCtx({
       service: { slug: 'y', image: 'busybox', port: null, cpuShares: 0, memLimitMb: 0, volumeMount: null, healthPath: null },

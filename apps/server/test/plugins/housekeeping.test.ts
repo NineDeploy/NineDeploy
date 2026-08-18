@@ -8,8 +8,21 @@ const execMock = vi.hoisted(() => ({
     sink?.('');
   }),
 }));
+const autoPruneMock = vi.hoisted(() => ({
+  getAutoPruneStatus: vi.fn(async () => ({
+    enabled: true,
+    thresholdPercent: 85,
+    diskUsedPercent: 90,
+  })),
+  executeAutoPrune: vi.fn(async () => ({ ok: true, freedBytes: 100 })),
+}));
+
 vi.mock('../../src/engine/logs.js', () => ({ logBus: new (class extends EventTarget {})(), pruneOldLogs: logsMock.pruneOldLogs }));
 vi.mock('../../src/lib/exec.js', () => ({ run: execMock.run }));
+vi.mock('../../src/engine/autoPrune.js', () => ({
+  getAutoPruneStatus: autoPruneMock.getAutoPruneStatus,
+  executeAutoPrune: autoPruneMock.executeAutoPrune,
+}));
 
 const housekeepingPlugin = (await import('../../src/plugins/housekeeping.js')).default;
 
@@ -33,6 +46,12 @@ describe('housekeeping plugin', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     logsMock.pruneOldLogs.mockClear();
+    autoPruneMock.executeAutoPrune.mockClear();
+    autoPruneMock.getAutoPruneStatus.mockResolvedValue({
+      enabled: true,
+      thresholdPercent: 85,
+      diskUsedPercent: 90,
+    } as never);
   });
   afterEach(async () => {
     vi.useRealTimers();
@@ -51,6 +70,22 @@ describe('housekeeping plugin', () => {
     expect(tables).toContain(notificationLog);
     // Dangling Docker images are pruned each tick too.
     expect(execMock.run).toHaveBeenCalledWith('docker', ['image', 'prune', '-f'], {}, expect.any(Function));
+    // Auto-prune was triggered because 90% >= 85%
+    expect(autoPruneMock.executeAutoPrune).toHaveBeenCalledTimes(1);
+    await app.close();
+  });
+
+  it('skips auto-prune when disk percent is below threshold', async () => {
+    autoPruneMock.getAutoPruneStatus.mockResolvedValueOnce({
+      enabled: true,
+      thresholdPercent: 85,
+      diskUsedPercent: 40,
+    } as never);
+    const { db } = makeDb();
+    const app = await buildApp(db);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(autoPruneMock.executeAutoPrune).not.toHaveBeenCalled();
     await app.close();
   });
 

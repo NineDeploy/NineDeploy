@@ -16,6 +16,10 @@ function serialize(d: Domain) {
     ssl: d.ssl,
     redirectWww: d.redirectWww,
     headers: d.headers ?? '[]',
+    basicAuth: d.basicAuth ?? null,
+    ipAllowlist: d.ipAllowlist ?? null,
+    rateLimitAverage: d.rateLimitAverage ?? null,
+    rateLimitBurst: d.rateLimitBurst ?? null,
     status: d.status,
     createdAt: d.createdAt.toISOString(),
     updatedAt: d.updatedAt.toISOString(),
@@ -47,6 +51,10 @@ export const domainsRoutes: FastifyPluginAsync = async (app) => {
         ssl: input.ssl,
         redirectWww: input.redirectWww ?? false,
         headers: input.headers ?? null,
+        basicAuth: input.basicAuth ?? null,
+        ipAllowlist: input.ipAllowlist ?? null,
+        rateLimitAverage: input.rateLimitAverage ?? null,
+        rateLimitBurst: input.rateLimitBurst ?? null,
         status: 'active',
       })
       .returning()
@@ -78,7 +86,7 @@ export const domainsRoutes: FastifyPluginAsync = async (app) => {
     return { ...serialize(d), dnsRecordId, dnsWarning };
   });
 
-  // Update routing extras: ssl, www→apex redirect and custom response headers.
+  // Update routing extras: ssl, www→apex redirect, custom headers, basicAuth, ipAllowlist, rateLimit.
   app.patch('/:id/domains/:domainId', async (req) => {
     const id = num((req.params as { id: string }).id);
     const domainId = num((req.params as { domainId: string }).domainId);
@@ -91,6 +99,10 @@ export const domainsRoutes: FastifyPluginAsync = async (app) => {
       const parsed = parseHeaders(input.headers);
       values.headers = JSON.stringify(parsed);
     }
+    if (input.basicAuth !== undefined) values.basicAuth = input.basicAuth;
+    if (input.ipAllowlist !== undefined) values.ipAllowlist = input.ipAllowlist;
+    if (input.rateLimitAverage !== undefined) values.rateLimitAverage = input.rateLimitAverage;
+    if (input.rateLimitBurst !== undefined) values.rateLimitBurst = input.rateLimitBurst;
     const [d] = await app.db
       .update(domains)
       .set(values)

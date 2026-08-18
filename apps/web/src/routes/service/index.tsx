@@ -10,6 +10,7 @@ import { useToast } from '../../components/Toast.js';
 import { Button, Card, CardBody, Skeleton, StatusBadge, Tabs } from '../../components/ui.js';
 import { downloadBlob } from '../../lib/format.js';
 import { OverviewTab } from './OverviewTab.js';
+import { ArchitectureTab } from './ArchitectureTab.js';
 import { DeploysTab, IN_FLIGHT } from './DeploysTab.js';
 import { EnvironmentTab } from './EnvironmentTab.js';
 import { NetworkTab } from './NetworkTab.js';
@@ -17,7 +18,9 @@ import { SettingsTab } from './SettingsTab.js';
 import { ActivityTab } from './ActivityTab.js';
 import { DangerZone } from './DangerZone.js';
 
-type TabId = 'overview' | 'deploys' | 'environment' | 'network' | 'settings' | 'activity' | 'danger';
+import { ContainerFileBrowser } from '../../components/ContainerFileBrowser.js';
+
+type TabId = 'overview' | 'architecture' | 'deploys' | 'environment' | 'network' | 'files' | 'settings' | 'activity' | 'danger';
 
 export function ServiceDetail() {
   const params = useParams();
@@ -232,9 +235,11 @@ export function ServiceDetail() {
         onChange={(t) => setTab(t as TabId)}
         tabs={[
           { id: 'overview', label: 'Overview' },
+          { id: 'architecture', label: 'Architecture' },
           { id: 'deploys', label: 'Deploys' },
           { id: 'environment', label: 'Environment' },
           { id: 'network', label: 'Network' },
+          { id: 'files', label: 'Files' },
           { id: 'settings', label: 'Settings' },
           { id: 'activity', label: 'Activity' },
           { id: 'danger', label: 'Danger' },
@@ -242,6 +247,7 @@ export function ServiceDetail() {
       />
 
       {tab === 'overview' && <OverviewTab serviceId={id} svc={svc} />}
+      {tab === 'architecture' && <ArchitectureTab service={svc} />}
       {tab === 'deploys' && (
         <DeploysTab
           serviceId={id}
@@ -252,7 +258,12 @@ export function ServiceDetail() {
         />
       )}
       {tab === 'environment' && <EnvironmentTab serviceId={id} />}
-      {tab === 'network' && <NetworkTab serviceId={id} />}
+      {tab === 'network' && <NetworkTab serviceId={id} svc={svc} />}
+      {tab === 'files' && (
+        <div className="mt-5">
+          <ContainerFileBrowser container={svc.runtimeId || `nd-svc-${svc.slug}`} />
+        </div>
+      )}
       {tab === 'settings' && <SettingsTab serviceId={id} svc={svc} />}
       {tab === 'activity' && <ActivityTab serviceId={id} name={svc.name} />}
 

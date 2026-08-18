@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { domains, services } from '@ninedeploy/db';
-import { encryptDnsToken, ensureNetwork, ensureTraefik, getAcmeEmail, getDnsConfig, NETWORK, parseCertExpiry, readCertificates, renderStaticConfig, writeDynamicConfig } from '../src/engine/proxy.js';
+import { encryptDnsToken, ensureNetwork, ensureTraefik, getAcmeEmail, getDnsConfig, NETWORK, parseBasicAuth, parseCertExpiry, parseIpAllowlist, readCertificates, renderStaticConfig, writeDynamicConfig } from '../src/engine/proxy.js';
 
 const h = vi.hoisted(() => {
   const capture = vi.fn(async () => '');
@@ -783,4 +783,86 @@ describe('DNS-01 challenge (wildcard SSL)', () => {
     const yaml = readFileSync(path.join(traefikDir, 'dynamic.yml'), 'utf8');
     expect(yaml).not.toContain('middlewares:');
   });
+
+  it('emits basicAuth, ipAllowList, and rateLimit middlewares correctly', async () => {
+    const db = makeDb(
+      [
+        {
+          id: 1,
+          serviceId: 1,
+          hostname: 'secure.example.com',
+          path: '/',
+          ssl: false,
+          basicAuth: JSON.stringify(['admin:$apr1$xyz', 'user:pass']),
+          ipAllowlist: '1.2.3.4/32, 10.0.0.0/8',
+          rateLimitAverage: 50,
+          rateLimitBurst: 100,
+        },
+      ],
+      [{ id: 1, slug: 'web', port: 3000, runtimeId: 'web-1' }],
+    );
+
+    await writeDynamicConfig(db as never);
+
+    const yaml = readFileSync(path.join(traefikDir, 'dynamic.yml'), 'utf8');
+    expect(yaml).toContain('mw_web_1_auth:');
+    expect(yaml).toContain('basicAuth:');
+    expect(yaml).toContain('- "admin:$apr1$xyz"');
+    expect(yaml).toContain('- "user:pass"');
+
+    expect(yaml).toContain('mw_web_1_ip:');
+    expect(yaml).toContain('ipAllowList:');
+    expect(yaml).toContain('- "1.2.3.4/32"');
+    expect(yaml).toContain('- "10.0.0.0/8"');
+
+    expect(yaml).toContain('mw_web_1_ratelimit:');
+    expect(yaml).toContain('rateLimit:');
+    expect(yaml).toContain('average: 50');
+    expect(yaml).toContain('burst: 100');
+
+    expect(yaml).toContain('middlewares:\n        - mw_web_1_auth\n        - mw_web_1_ip\n        - mw_web_1_ratelimit');
+  });
+
+  it('handles fallback for rateLimitBurst when 0 or unspecified', async () => {
+    const db = makeDb(
+      [
+        {
+          id: 2,
+          serviceId: 1,
+          hostname: 'rate.example.com',
+          path: '/',
+          ssl: false,
+          rateLimitAverage: 20,
+          rateLimitBurst: 0,
+        },
+      ],
+      [{ id: 1, slug: 'web', port: 3000, runtimeId: 'web-1' }],
+    );
+
+    await writeDynamicConfig(db as never);
+
+    const yaml = readFileSync(path.join(traefikDir, 'dynamic.yml'), 'utf8');
+    expect(yaml).toContain('mw_web_2_ratelimit:');
+    expect(yaml).toContain('average: 20');
+    expect(yaml).toContain('burst: 20');
+  });
 });
+
+describe('parseBasicAuth and parseIpAllowlist', () => {
+  it('parses basicAuth from array, string, and raw fallback', () => {
+    expect(parseBasicAuth(null)).toEqual([]);
+    expect(parseBasicAuth('')).toEqual([]);
+    expect(parseBasicAuth(JSON.stringify(['user:pass', 'invalid', '  admin:hash  ']))).toEqual(['user:pass', 'admin:hash']);
+    expect(parseBasicAuth(JSON.stringify('alice:pass, bob:pass'))).toEqual(['alice:pass', 'bob:pass']);
+    expect(parseBasicAuth('test:secret\nroot:hash')).toEqual(['test:secret', 'root:hash']);
+  });
+
+  it('parses ipAllowlist from array, string, and raw fallback', () => {
+    expect(parseIpAllowlist(null)).toEqual([]);
+    expect(parseIpAllowlist('')).toEqual([]);
+    expect(parseIpAllowlist(JSON.stringify(['192.168.1.1/32', '  10.0.0.0/8  ', '']))).toEqual(['192.168.1.1/32', '10.0.0.0/8']);
+    expect(parseIpAllowlist(JSON.stringify('1.1.1.1/32, 8.8.8.8/32'))).toEqual(['1.1.1.1/32', '8.8.8.8/32']);
+    expect(parseIpAllowlist('127.0.0.1\nfe80::1/64, evil!chars')).toEqual(['127.0.0.1', 'fe80::1/64', 'eca']);
+  });
+});
+

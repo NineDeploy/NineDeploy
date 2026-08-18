@@ -117,6 +117,7 @@ describe('servicesCreate', () => {
       .mockResolvedValueOnce('https://github.com/acme/api') // repo url
       .mockResolvedValueOnce('main') // branch
       .mockResolvedValueOnce('') // port
+      .mockResolvedValueOnce('') // publishedPort
       .mockResolvedValueOnce('') // volume
       .mockResolvedValueOnce('y'); // deploy now
 
@@ -129,6 +130,7 @@ describe('servicesCreate', () => {
       image: undefined,
       branch: 'main',
       port: undefined,
+      publishedPort: undefined,
       volumeMount: undefined,
     });
     expect(trigger).toHaveBeenCalledWith(7);
@@ -152,7 +154,8 @@ describe('servicesCreate', () => {
       .mockResolvedValueOnce('img') // name
       .mockResolvedValueOnce('2') // docker mode
       .mockResolvedValueOnce('nginx:alpine') // image
-      .mockResolvedValueOnce('8080') // port
+      .mockResolvedValueOnce('80') // port
+      .mockResolvedValueOnce('8080') // publishedPort
       .mockResolvedValueOnce('/data') // volume
       .mockResolvedValueOnce('n'); // deploy now
 
@@ -164,7 +167,8 @@ describe('servicesCreate', () => {
       repoUrl: undefined,
       image: 'nginx:alpine',
       branch: 'main',
-      port: 8080,
+      port: 80,
+      publishedPort: 8080,
       volumeMount: '/data',
     });
     expect(trigger).not.toHaveBeenCalled();
@@ -187,6 +191,7 @@ describe('servicesCreate', () => {
       .mockResolvedValueOnce('main')
       .mockResolvedValueOnce('')
       .mockResolvedValueOnce('')
+      .mockResolvedValueOnce('')
       .mockResolvedValueOnce('y');
 
     await servicesCreate(makeClient({ services: { create } }), undefined as never);
@@ -202,6 +207,7 @@ describe('servicesCreate', () => {
       .mockResolvedValueOnce('1')
       .mockResolvedValueOnce('https://github.com/acme/api')
       .mockResolvedValueOnce('main')
+      .mockResolvedValueOnce('')
       .mockResolvedValueOnce('')
       .mockResolvedValueOnce('')
       .mockResolvedValueOnce('y');
@@ -230,6 +236,7 @@ describe('servicesGet', () => {
       branch: 'main',
       image: 'nginx',
       port: 3000,
+      publishedPort: 8080,
       volumeMount: '/data',
       healthPath: '/health',
       runtimeId: 'rt-1',
@@ -245,6 +252,7 @@ describe('servicesGet', () => {
     expect(get).toHaveBeenCalledWith(17);
     const text = logSpy.mock.calls.map((call) => call[0]).join('\n');
     expect(text).toContain('api');
+    expect(text).toContain(':8080');
     expect(text).toContain('http://api.example.com');
   });
 

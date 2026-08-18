@@ -151,7 +151,8 @@ export const dockerBuilder: Builder = {
         await buildWithNixpacks(target, baseDir, buildConfig, workDir, log);
         // Buildpack apps conventionally listen on $PORT — align it with the
         // declared service port so Traefik routing matches without extra config.
-        if (service.port && env.PORT === undefined) env.PORT = String(service.port);
+        const effectivePort = service.port ?? service.publishedPort;
+        if (effectivePort && env.PORT === undefined) env.PORT = String(effectivePort);
       } else {
         await run('docker', ['build', '-t', target, '-f', dockerfile, baseDir], { cwd: workDir, env: { DOCKER_BUILDKIT: '1' } }, log);
       }
@@ -183,6 +184,11 @@ export const dockerBuilder: Builder = {
     if (service.cpuShares > 0) args.push('--cpu-shares', String(service.cpuShares));
     if (service.memLimitMb > 0) args.push('--memory', `${service.memLimitMb}m`);
     if (service.volumeMount) args.push('-v', `nd-svc-${service.slug}-data:${service.volumeMount}`);
+    // Direct host port mapping (e.g. 8080:3000) for domain-less external access.
+    if (service.publishedPort) {
+      const containerPort = service.port ?? service.publishedPort;
+      args.push('-p', `${service.publishedPort}:${containerPort}`);
+    }
     // Template-only flag (registry is admin-controlled): expose Docker control.
     if (service.dockerSocket) args.push('-v', '/var/run/docker.sock:/var/run/docker.sock');
 

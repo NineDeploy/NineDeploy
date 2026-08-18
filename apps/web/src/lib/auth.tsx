@@ -19,6 +19,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // Check if OAuth / OIDC SSO returned session tokens in the URL hash fragment
+    if (typeof window !== 'undefined' && window.location.hash.includes('access_token=')) {
+      const params = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+      const at = params.get('access_token');
+      const rt = params.get('refresh_token');
+      if (at) {
+        setSessionTokens(at, rt ?? undefined);
+        window.history.replaceState(null, '', window.location.pathname + window.location.search);
+      }
+    }
+
     const token = getToken();
     if (!token) {
       setLoading(false);

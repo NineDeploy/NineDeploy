@@ -3,9 +3,11 @@ import { useMemo, useState } from 'react';
 import {
   ArrowLeft,
   Check,
+  Compass,
   Copy,
   Database,
   Download,
+  ExternalLink,
   Eye,
   EyeOff,
   HardDrive,
@@ -33,15 +35,23 @@ import {
   Skeleton,
   StatusBadge,
   Tabs,
+  cn,
 } from '../components/ui.js';
 import { downloadBlob, formatBytes, formatDateTime, useCopy } from '../lib/format.js';
+
+import { ContainerFileBrowser } from '../components/ContainerFileBrowser.js';
+import { DatabaseTopologyTab } from './database/DatabaseTopologyTab.js';
 
 const ENGINE_LABEL: Record<string, string> = {
   postgres: 'PostgreSQL',
   mysql: 'MySQL',
   mariadb: 'MariaDB',
   redis: 'Redis',
+  valkey: 'Valkey',
   mongo: 'MongoDB',
+  clickhouse: 'ClickHouse',
+  meilisearch: 'Meilisearch',
+  rabbitmq: 'RabbitMQ',
 };
 
 export function DatabaseDetail() {
@@ -50,7 +60,7 @@ export function DatabaseDetail() {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const { toast } = useToast();
-  const [activeTab, setActiveTab] = useState<'overview' | 'backups' | 'logs' | 'settings'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'topology' | 'files' | 'backups' | 'logs' | 'settings'>('overview');
 
   const dbQuery = useQuery({
     queryKey: ['database-detail', id],
@@ -84,6 +94,25 @@ export function DatabaseDetail() {
       toast('Database started', 'success');
     },
     onError: () => toast('Could not start database', 'error'),
+  });
+
+  const startStudioMutation = useMutation({
+    mutationFn: () => api.databases.startStudio(id),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ['database-detail', id] });
+      toast(`Web Studio started on port ${data.port}`, 'success');
+      window.open(data.url, '_blank');
+    },
+    onError: () => toast('Could not launch Web Studio', 'error'),
+  });
+
+  const stopStudioMutation = useMutation({
+    mutationFn: () => api.databases.stopStudio(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['database-detail', id] });
+      toast('Web Studio stopped', 'success');
+    },
+    onError: () => toast('Could not stop Web Studio', 'error'),
   });
 
   const backupMutation = useMutation({
@@ -196,6 +225,8 @@ export function DatabaseDetail() {
         onChange={(t) => setActiveTab(t as any)}
         tabs={[
           { id: 'overview', label: 'Overview' },
+          { id: 'topology', label: 'Topology' },
+          { id: 'files', label: 'Files' },
           { id: 'backups', label: 'Backups' },
           { id: 'logs', label: 'Logs' },
           { id: 'settings', label: 'Settings' },
@@ -203,7 +234,20 @@ export function DatabaseDetail() {
       />
 
       {/* Tab Panels */}
-      {activeTab === 'overview' && <OverviewPanel db={db} />}
+      {activeTab === 'overview' && (
+        <OverviewPanel
+          db={db}
+          onStartStudio={() => startStudioMutation.mutate()}
+          onStopStudio={() => stopStudioMutation.mutate()}
+          isStudioPending={startStudioMutation.isPending || stopStudioMutation.isPending}
+        />
+      )}
+      {activeTab === 'topology' && <DatabaseTopologyTab db={db} />}
+      {activeTab === 'files' && (
+        <div className="mt-5">
+          <ContainerFileBrowser container={db.containerName ?? `nd-db-${db.slug}`} />
+        </div>
+      )}
       {activeTab === 'backups' && <BackupsPanel dbId={db.id} dbName={db.name} />}
       {activeTab === 'logs' && <LogsPanel dbId={db.id} isRunning={isRunning} />}
       {activeTab === 'settings' && <SettingsPanel db={db} onDeleted={() => navigate('/databases')} />}
@@ -212,7 +256,17 @@ export function DatabaseDetail() {
 }
 
 // ── Overview Tab ─────────────────────────────────────────────────────────────
-function OverviewPanel({ db }: { db: IDatabaseDetail }) {
+function OverviewPanel({
+  db,
+  onStartStudio,
+  onStopStudio,
+  isStudioPending,
+}: {
+  db: IDatabaseDetail;
+  onStartStudio: () => void;
+  onStopStudio: () => void;
+  isStudioPending: boolean;
+}) {
   const { copied, copy } = useCopy();
   const [showPassword, setShowPassword] = useState(false);
 
@@ -222,6 +276,9 @@ function OverviewPanel({ db }: { db: IDatabaseDetail }) {
   });
 
   const creds = credsQuery.data;
+  const isRunning = db.status === 'running';
+  const studioPort = db.webGuiPort || (18000 + (db.id % 1000));
+  const studioUrl = `http://${window.location.hostname}:${studioPort}`;
 
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
@@ -302,6 +359,63 @@ function OverviewPanel({ db }: { db: IDatabaseDetail }) {
           )}
         </Card>
 
+        {/* Web Studio (GUI) card */}
+        <Card className="p-5 space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Compass size={16} className="text-amber-400" />
+              <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-400">Database Web Studio</h2>
+            </div>
+            <span
+              className={cn(
+                'rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset',
+                db.webGuiEnabled
+                  ? 'bg-emerald-500/15 text-emerald-300 ring-emerald-500/20'
+                  : 'bg-slate-500/15 text-slate-400 ring-slate-500/20',
+              )}
+            >
+              {db.webGuiEnabled ? `Running on :${studioPort}` : 'Inactive'}
+            </span>
+          </div>
+
+          <p className="text-xs text-slate-400 leading-relaxed">
+            One-click visual database browser (Adminer for SQL / Redis Commander for KV). Inspect tables, execute queries, and view records without leaving your browser.
+          </p>
+
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            {db.webGuiEnabled ? (
+              <>
+                <a
+                  href={studioUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-emerald-500"
+                >
+                  <ExternalLink size={13} />
+                  Open Web Studio
+                </a>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={onStopStudio}
+                  disabled={isStudioPending}
+                >
+                  Stop Studio
+                </Button>
+              </>
+            ) : (
+              <Button
+                size="sm"
+                onClick={onStartStudio}
+                disabled={isStudioPending || !isRunning}
+              >
+                <Play size={13} className="fill-current text-emerald-400" />
+                Launch Web Studio
+              </Button>
+            )}
+          </div>
+        </Card>
+
         {/* Runtime info card */}
         <Card className="p-5 space-y-3">
           <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-400">Runtime &amp; Storage</h2>
@@ -314,6 +428,18 @@ function OverviewPanel({ db }: { db: IDatabaseDetail }) {
               <dt className="text-slate-500">Volume</dt>
               <dd className="font-mono text-slate-200">{db.volumeName ?? `nd-db-${db.slug}-data`}</dd>
             </div>
+            {db.extensions && db.extensions.length > 0 && (
+              <div className="flex justify-between border-b border-white/[0.04] pb-1.5">
+                <dt className="text-slate-500">Extensions</dt>
+                <dd className="flex gap-1.5">
+                  {db.extensions.map((ext) => (
+                    <span key={ext} className="rounded bg-emerald-500/15 px-1.5 py-0.5 font-mono text-[11px] font-medium text-emerald-300">
+                      {ext}
+                    </span>
+                  ))}
+                </dd>
+              </div>
+            )}
             <div className="flex justify-between border-b border-white/[0.04] pb-1.5">
               <dt className="text-slate-500">Created</dt>
               <dd className="text-slate-300">{formatDateTime(db.createdAt)}</dd>

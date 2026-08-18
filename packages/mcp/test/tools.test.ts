@@ -6,7 +6,13 @@ import type { NineDeployClient } from '@ninedeploy/sdk';
 function fakeClient(): NineDeployClient {
   const list = vi.fn(async () => 'LIST');
   return {
-    services: { list, get: vi.fn(async () => 'GET'), logs: vi.fn(async () => 'LOGS'), restart: vi.fn(async () => 'RESTART') },
+    services: {
+      list,
+      get: vi.fn(async () => 'GET'),
+      logs: vi.fn(async () => 'LOGS'),
+      restart: vi.fn(async () => 'RESTART'),
+      update: vi.fn(async () => 'UPDATE'),
+    },
     deploys: { list: vi.fn(async () => 'DEPLOYS'), trigger: vi.fn(async () => 'TRIGGER'), rollback: vi.fn(async () => 'ROLLBACK') },
     domains: { all: vi.fn(async () => 'DOMAINS') },
     databases: { list: vi.fn(async () => 'DBS') },
@@ -16,6 +22,7 @@ function fakeClient(): NineDeployClient {
     stats: { snapshot: vi.fn(async () => 'STATS') },
     topology: { get: vi.fn(async () => 'TOPO') },
     health: vi.fn(async () => 'HEALTH'),
+    demo: { seed: vi.fn(async () => 'DEMO_SEEDED') },
     plugins: {
       list: vi.fn(async () => 'PLUGINS_LIST'),
       marketplace: vi.fn(async () => 'MARKETPLACE'),
@@ -43,9 +50,9 @@ const byName = (name: string) => {
 };
 
 describe('MCP tools', () => {
-  it('exposes 26 unique tools with descriptions', () => {
-    expect(TOOLS).toHaveLength(26);
-    expect(new Set(TOOLS.map((t) => t.name)).size).toBe(26);
+  it('exposes 28 unique tools with descriptions', () => {
+    expect(TOOLS).toHaveLength(28);
+    expect(new Set(TOOLS.map((t) => t.name)).size).toBe(28);
     for (const t of TOOLS) expect(t.description.length).toBeGreaterThan(10);
   });
 
@@ -132,6 +139,15 @@ describe('MCP tools', () => {
     expect(c.menus.list).toHaveBeenCalledWith({ slot: 'sidebar:main' });
   });
 
+  it('exercises demo and service update tools', async () => {
+    const c = fakeClient();
+    expect(await byName('seed_demo').handler(c, {})).toBe('DEMO_SEEDED');
+    expect(c.demo.seed).toHaveBeenCalled();
+
+    await byName('update_service').handler(c, { serviceId: 10, publishedPort: 8080 });
+    expect(c.services.update).toHaveBeenCalledWith(10, { publishedPort: 8080 });
+  });
+
   it('input schemas validate and reject malformed inputs', () => {
     expect(byName('get_service').input.safeParse({ serviceId: 0 }).success).toBe(false);
     expect(byName('get_service').input.safeParse({}).success).toBe(false);
@@ -140,5 +156,6 @@ describe('MCP tools', () => {
     expect(byName('list_services').input.safeParse({ projectId: 'x' }).success).toBe(false);
     expect(byName('install_plugin').input.safeParse({ target: 'pkg' }).success).toBe(true);
     expect(byName('set_config').input.safeParse({ key: 'k1', value: 123 }).success).toBe(true);
+    expect(byName('update_service').input.safeParse({ serviceId: 1, publishedPort: 9000 }).success).toBe(true);
   });
 });

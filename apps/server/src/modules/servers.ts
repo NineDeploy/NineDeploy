@@ -1,11 +1,12 @@
 import { and, eq } from 'drizzle-orm';
 import { servers, services, type ServerRow } from '@ninedeploy/db';
-import { serverAnnounce, serverCreate } from '@ninedeploy/schemas';
+import { serverAnnounce, serverCreate, serverSshBootstrap, serverSshTest } from '@ninedeploy/schemas';
 import type { FastifyPluginAsync } from 'fastify';
 import { audit } from '../lib/audit.js';
 import { decrypt, encrypt } from '../lib/crypto.js';
 import { badRequest, notFound, parseId } from '../lib/errors.js';
 import { agentPing, generateAgentToken } from '../lib/agentClient.js';
+import { bootstrapServer, getBootstrapLogs, testSshConnection } from '../engine/serverProvisioner.js';
 
 function serialize(s: ServerRow) {
   return {
@@ -167,5 +168,30 @@ export const serverRoutes: FastifyPluginAsync = async (app) => {
       void audit(authed.db, req.user!.id, 'server.reject', row.name);
       return { ok: true };
     });
+
+    // Zero-Touch SSH Connection Pre-Flight Test
+    authed.post('/ssh-test', async (req) => {
+      const input = serverSshTest.parse(req.body ?? {});
+      return testSshConnection(input);
+    });
+
+    // Zero-Touch SSH Automated Server Bootstrap
+    authed.post('/ssh-bootstrap', async (req) => {
+      const input = serverSshBootstrap.parse(req.body ?? {});
+      const result = await bootstrapServer(authed.db, input);
+      if (!result.ok) {
+        throw badRequest(result.error || 'Server bootstrap failed');
+      }
+      void audit(authed.db, req.user!.id, 'server.ssh_bootstrap', input.name);
+      return result;
+    });
+
+    // Retrieve Bootstrap Logs for a server
+    authed.get('/:id/bootstrap-logs', async (req) => {
+      const id = parseId((req.params as { id: string }).id);
+      const logs = getBootstrapLogs(id);
+      return { logs };
+    });
   });
 };
+

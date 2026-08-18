@@ -30,6 +30,7 @@ import {
 import {
   configCenterList, configCenterGet, configCenterSet, configCenterDelete,
 } from './commands/configCenter.js';
+import { demoSeed } from './commands/demo.js';
 
 const program = new Command();
 
@@ -263,6 +264,10 @@ configCenter.command('set <key> <value>').description('Set or update a configura
   .option('-t, --tags <tags>', 'Comma-separated tags')
   .action((key: string, value: string, opts: any) => configCenterSet(getClient(), key, value, opts));
 configCenter.command('delete <key>').description('Delete a custom configuration key').action((key: string) => configCenterDelete(getClient(), key));
+
+// ── Demo Mode ──────────────────────────────────────────────────────────────
+const demo = program.command('demo').description('Demo mode operations');
+demo.command('seed').description('Seed Next.js Docker + PM2 demo environment with PostgreSQL database').action(() => demoSeed(getClient()));
 
 // ── System export/import + deploy log streaming ────────────────────────────
 system.command('export [file]').description('Export the full system state as JSON').action((file?: string) => systemExport(file));

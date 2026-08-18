@@ -118,6 +118,7 @@ const h = vi.hoisted(() => {
   configCenterGet: vi.fn(),
   configCenterSet: vi.fn(),
   configCenterDelete: vi.fn(),
+  demoSeed: vi.fn(),
   };
 });
 
@@ -126,6 +127,7 @@ vi.mock('../src/client.js', () => ({ getClient: h.getClient }));
 vi.mock('../src/config.js', () => ({ loadConfig: h.loadConfig, saveConfig: h.saveConfig }));
 vi.mock('../src/commands/login.js', () => ({ loginAction: h.loginAction }));
 vi.mock('../src/commands/setup.js', () => ({ setupAction: h.setupAction }));
+vi.mock('../src/commands/demo.js', () => ({ demoSeed: h.demoSeed }));
 vi.mock('../src/commands/services.js', () => ({
   servicesCreate: h.servicesCreate,
   servicesDelete: h.servicesDelete,
@@ -247,7 +249,7 @@ describe('program registration', () => {
       'setup', 'login', 'logout', 'whoami', 'config',
       'services', 'databases', 'templates', 'deploys', 'token', 'system',
       'env', 'domains', 'volumes', 'networks', 'sessions', 'backups', 'alerts', 'users',
-      'reset-link <idOrEmail>', 'activity', 'plugins', 'config-center',
+      'reset-link <idOrEmail>', 'activity', 'plugins', 'config-center', 'demo',
     ]);
     expect(findCommand('services').children).toHaveLength(10);
     expect(findCommand('databases').children).toHaveLength(2);
@@ -262,7 +264,8 @@ describe('program registration', () => {
     expect(findCommand('alerts').children).toHaveLength(3);
     expect(findCommand('plugins').children).toHaveLength(8);
     expect(findCommand('config-center').children).toHaveLength(4);
-    expect(h.FakeCommand.instances).toHaveLength(79);
+    expect(findCommand('demo').children).toHaveLength(1);
+    expect(h.FakeCommand.instances).toHaveLength(81);
     // argv length > 2 → no banner, no exit
     expect(h.banner).not.toHaveBeenCalled();
     expect(h.exit).not.toHaveBeenCalled();
@@ -659,5 +662,9 @@ describe('delegating actions', () => {
     expect(h.configCenterSet).toHaveBeenCalledWith(client, 'site_name', 'NineDeploy', { secret: false });
     await configCenter.children.find((c) => c.cmdName === 'delete <key>')!.actionFn!('site_name');
     expect(h.configCenterDelete).toHaveBeenCalledWith(client, 'site_name');
+
+    const demo = findCommand('demo');
+    await demo.children.find((c) => c.cmdName === 'seed')!.actionFn!();
+    expect(h.demoSeed).toHaveBeenCalledWith(client);
   });
 });

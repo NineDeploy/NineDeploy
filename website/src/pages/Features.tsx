@@ -38,7 +38,7 @@ const groups: {
       {
         icon: GitBranch,
         title: "Git, registry, or hub",
-        body: "Clone with PAT or SSH deploy keys (scrubbed after checkout), pull from private registries with per-source credentials, or start from 48 verified templates.",
+        body: "Clone with PAT or SSH deploy keys (scrubbed after checkout), pull from private registries with per-source credentials, or start from 52 verified templates.",
       },
       {
         icon: RotateCcw,
@@ -59,6 +59,11 @@ const groups: {
         icon: Lock,
         title: "HMAC webhooks",
         body: "GitHub/GitLab/Gitea verification, branch matching, replay dedup — a captured push can't flood the deploy queue.",
+      },
+      {
+        icon: Boxes,
+        title: "1-Click Demo Stack",
+        body: "Instant pre-configured demo stack with PostgreSQL database, Next.js Docker standalone container, and Next.js PM2 cluster service.",
       },
     ],
   },
@@ -93,7 +98,12 @@ const groups: {
       {
         icon: Globe,
         title: "Traefik ingress",
-        body: "The only exposed ports on your box are 80/443. App containers publish nothing — Traefik routes by container name over a shared network.",
+        body: "The only exposed ports on your box are 80/443. App containers publish nothing by default — Traefik routes by container name over a shared network.",
+      },
+      {
+        icon: Network,
+        title: "Direct Host Port Publishing",
+        body: "Expose services directly on dedicated TCP/host ports (e.g. :8080 or :3000) without requiring a domain name or reverse proxy routing.",
       },
       {
         icon: ShieldCheck,
@@ -107,14 +117,19 @@ const groups: {
       },
       {
         icon: FolderTree,
-        title: "Projects & topology",
-        body: "Optional single-level project scoping across services, databases and domains. Interactive topology graph of everything and how it's wired.",
+        title: "Projects & Architecture Topology",
+        body: "Interactive React Flow diagrams on global topology, service details, and database ecosystems with live component inspectors and direct endpoint copying.",
       },
     ],
   },
   {
     title: "System",
     items: [
+      {
+        icon: Boxes,
+        title: "Microkernel & Plugin Hub",
+        body: "Modular microkernel architecture with hot-swappable plugins, custom dashboard menus, extensible hooks, and dual-vault config store.",
+      },
       {
         icon: KeyRound,
         title: "Serious auth",
@@ -143,7 +158,7 @@ const groups: {
       {
         icon: MonitorSmartphone,
         title: "Every interface",
-        body: "Web dashboard (dark/light + 6 accents, ⌘K palette), ninedeploy CLI, REST API + typed SDK, and an MCP server for AI assistants.",
+        body: "Web dashboard (dark/light + 6 accents, ⌘K palette), ninedeploy CLI, REST API + typed SDK, and an MCP server with 28 tools for AI assistants.",
       },
     ],
   },

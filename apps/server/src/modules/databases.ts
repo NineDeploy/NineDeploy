@@ -4,7 +4,17 @@ import { audit } from "../lib/audit.js";
 import { backups, databaseAttachments, databases, services, type Database } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { createAttachment, createDatabase, setLimits } from '@ninedeploy/schemas';
-import { connectionString, databaseLogs, defaultPort, ENGINES, restartDatabase, startDatabase, stopDatabase } from '../engine/database.js';
+import {
+  connectionString,
+  databaseLogs,
+  defaultPort,
+  ENGINES,
+  restartDatabase,
+  startDatabase,
+  startDatabaseStudio,
+  stopDatabase,
+  stopDatabaseStudio,
+} from '../engine/database.js';
 import { decrypt, encrypt, randomToken } from '../lib/crypto.js';
 import { badRequest, notFound, parseId as num } from '../lib/errors.js';
 import { slugify } from '../lib/slug.js';
@@ -39,6 +49,9 @@ function serialize(
     volumeName: d.volumeName,
     cpuShares: d.cpuShares,
     memLimitMb: d.memLimitMb,
+    webGuiEnabled: Boolean(d.webGuiEnabled),
+    webGuiPort: d.webGuiPort,
+    extensions: d.extensions,
     attachedServices,
     createdAt: d.createdAt.toISOString(),
     updatedAt: d.updatedAt.toISOString(),
@@ -75,6 +88,7 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
     const password = randomToken(18);
     const containerName = `nd-db-${slug}`;
     const volumeName = input.existingVolume?.trim() ? input.existingVolume.trim() : `nd-db-${slug}-data`;
+    const version = input.extensions?.includes('pgvector') && input.engine === 'postgres' ? 'vector' : (input.version ?? null);
 
     const [created] = await app.db
       .insert(databases)
@@ -83,13 +97,15 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
         name: input.name,
         slug,
         engine: input.engine,
-        version: input.version ?? null,
+        version,
         status: 'creating',
         containerName,
         volumeName,
         username: cfg.username() ?? null,
         passwordEncrypted: encrypt(password),
         dbName: cfg.dbName() ?? null,
+        extensions: input.extensions ?? [],
+        webGuiEnabled: input.webGuiEnabled ?? false,
       })
       .returning();
     if (!created) throw badRequest('Could not create database');
@@ -120,6 +136,29 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
     });
     if (!d) throw notFound('Database not found');
     return serialize(d);
+  });
+
+  // Start Web Studio (Adminer / Redis Commander GUI) for this database
+  app.post('/:id/studio', async (req) => {
+    const id = num((req.params as { id: string }).id);
+    const d = await app.db.query.databases.findFirst({ where: eq(databases.id, id) });
+    if (!d) throw notFound('Database not found');
+    const port = (req.body as { port?: number })?.port ?? (d.webGuiPort || (18000 + (d.id % 1000)));
+    await startDatabaseStudio(d, port, (line) => app.log.info({ component: 'database-studio' }, line));
+    await app.db.update(databases).set({ webGuiEnabled: true, webGuiPort: port }).where(eq(databases.id, d.id));
+    void audit(app.db, req.user!.id, 'database.studio.start', `${d.name} on :${port}`);
+    return { ok: true, port, url: `http://${req.hostname.split(':')[0]}:${port}` };
+  });
+
+  // Stop Web Studio for this database
+  app.delete('/:id/studio', async (req) => {
+    const id = num((req.params as { id: string }).id);
+    const d = await app.db.query.databases.findFirst({ where: eq(databases.id, id) });
+    if (!d) throw notFound('Database not found');
+    await stopDatabaseStudio(d, (line) => app.log.info({ component: 'database-studio' }, line));
+    await app.db.update(databases).set({ webGuiEnabled: false }).where(eq(databases.id, d.id));
+    void audit(app.db, req.user!.id, 'database.studio.stop', d.name);
+    return { ok: true };
   });
 
   app.delete('/:id', async (req) => {

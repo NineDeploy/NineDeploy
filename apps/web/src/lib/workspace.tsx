@@ -1,0 +1,87 @@
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import type { Workspace, WorkspaceCreateInput } from '@ninedeploy/sdk';
+import { api } from './api.js';
+import { useAuth } from './auth.js';
+
+interface WorkspaceContextValue {
+  workspaces: Workspace[];
+  currentWorkspace: Workspace | null;
+  isLoading: boolean;
+  switchWorkspace: (workspaceId: number) => void;
+  createWorkspace: (input: WorkspaceCreateInput) => Promise<Workspace>;
+  refreshWorkspaces: () => Promise<void>;
+}
+
+const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
+
+const STORAGE_KEY = 'nd_current_workspace_id';
+
+export function WorkspaceProvider({ children }: { children: ReactNode }) {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+  const [selectedId, setSelectedId] = useState<number | null>(() => {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    return saved ? Number(saved) : null;
+  });
+
+  const { data: workspaces = [], isLoading, refetch } = useQuery({
+    queryKey: ['workspaces'],
+    queryFn: () => api.workspaces.list(),
+    enabled: Boolean(user),
+  });
+
+  // Ensure an active workspace is selected
+  useEffect(() => {
+    if (workspaces.length > 0) {
+      const exists = workspaces.some((w) => w.id === selectedId);
+      if (!exists || selectedId === null) {
+        const first = workspaces[0];
+        if (first) {
+          setSelectedId(first.id);
+          localStorage.setItem(STORAGE_KEY, String(first.id));
+        }
+      }
+    } else {
+      setSelectedId(null);
+      localStorage.removeItem(STORAGE_KEY);
+    }
+  }, [workspaces, selectedId]);
+
+  const createMutation = useMutation({
+    mutationFn: (input: WorkspaceCreateInput) => api.workspaces.create(input),
+    onSuccess: (newWs) => {
+      queryClient.invalidateQueries({ queryKey: ['workspaces'] });
+      setSelectedId(newWs.id);
+      localStorage.setItem(STORAGE_KEY, String(newWs.id));
+    },
+  });
+
+  const switchWorkspace = (workspaceId: number) => {
+    setSelectedId(workspaceId);
+    localStorage.setItem(STORAGE_KEY, String(workspaceId));
+    // Invalidate project and resource queries scoped to workspace
+    queryClient.invalidateQueries({ queryKey: ['projects'] });
+  };
+
+  const currentWorkspace = workspaces.find((w) => w.id === selectedId) ?? (workspaces[0] ?? null);
+
+  const value: WorkspaceContextValue = {
+    workspaces,
+    currentWorkspace,
+    isLoading,
+    switchWorkspace,
+    createWorkspace: (input) => createMutation.mutateAsync(input),
+    refreshWorkspaces: async () => {
+      await refetch();
+    },
+  };
+
+  return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;
+}
+
+export function useWorkspace(): WorkspaceContextValue {
+  const ctx = useContext(WorkspaceContext);
+  if (!ctx) throw new Error('useWorkspace must be used within WorkspaceProvider');
+  return ctx;
+}

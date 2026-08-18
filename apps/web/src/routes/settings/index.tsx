@@ -10,12 +10,18 @@ import { MigrationSection } from './MigrationSection.js';
 import { IntegrationsSection } from './IntegrationsSection.js';
 import { ConfigCenterSection } from './ConfigCenterSection.js';
 import { PluginsSection } from './PluginsSection.js';
+import { LogDrainsSection } from './LogDrainsSection.js';
+import { StorageSection } from './StorageSection.js';
+import { SsoSection } from './SsoSection.js';
 
 type SectionId =
   | 'account'
   | 'appearance'
   | 'security'
+  | 'sso'
   | 'integrations'
+  | 'log-drains'
+  | 'storage'
   | 'config'
   | 'plugins'
   | 'system'
@@ -44,7 +50,10 @@ export function Settings() {
           { id: 'account', label: 'Account' },
           { id: 'appearance', label: 'Appearance' },
           { id: 'security', label: 'Security' },
+          { id: 'sso', label: 'SSO & OIDC' },
           { id: 'integrations', label: 'Integrations' },
+          { id: 'log-drains', label: 'Log Drains' },
+          { id: 'storage', label: 'Storage & Prune' },
           { id: 'config', label: 'Config Center' },
           { id: 'plugins', label: 'Plugins' },
           { id: 'system', label: 'System' },
@@ -56,7 +65,10 @@ export function Settings() {
       {section === 'account' && <AccountSection />}
       {section === 'appearance' && <AppearanceSection />}
       {section === 'security' && <SecuritySection />}
+      {section === 'sso' && <SsoSection />}
       {section === 'integrations' && <IntegrationsSection />}
+      {section === 'log-drains' && <LogDrainsSection />}
+      {section === 'storage' && <StorageSection />}
       {section === 'config' && <ConfigCenterSection />}
       {section === 'plugins' && <PluginsSection />}
       {section === 'system' && <SystemSection />}

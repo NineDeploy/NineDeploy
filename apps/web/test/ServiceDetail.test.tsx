@@ -38,6 +38,24 @@ vi.mock('../src/components/AttachmentsCard.js', () => ({
   AttachmentsCard: () => <div data-testid="attachments-card">attachments</div>,
 }));
 
+vi.mock('@xyflow/react', () => ({
+  ReactFlow: ({ nodes, edges, nodeTypes, children }: { nodes: Array<{ id: string; type: string; data: unknown }>; edges: unknown[]; nodeTypes?: Record<string, React.ComponentType<{ id: string; data: unknown }>>; children: React.ReactNode }) => (
+    <div data-testid="react-flow" data-nodes={nodes.length} data-edges={edges.length}>
+      {nodes.map((n) => {
+        const NodeComp = nodeTypes?.[n.type];
+        return NodeComp ? <NodeComp key={n.id} id={n.id} data={n.data} /> : null;
+      })}
+      {children}
+    </div>
+  ),
+  ReactFlowProvider: ({ children }: { children: React.ReactNode }) => <div data-testid="flow-provider">{children}</div>,
+  Background: () => <div data-testid="background" />,
+  Controls: () => <div data-testid="controls" />,
+  Handle: () => <div data-testid="handle" />,
+  BackgroundVariant: { Dots: 'dots' },
+  Position: { Left: 'left', Right: 'right', Top: 'top', Bottom: 'bottom' },
+}));
+
 const service = {
   id: 1,
   name: 'api',
@@ -427,6 +445,84 @@ describe('ServiceDetail', () => {
     expect(badge).toHaveAttribute('title', 'www→apex redirect on — click to disable');
   });
 
+  it('configures domain security middlewares from the security drawer', async () => {
+    mockOf(api.domains.update).mockResolvedValue({ ...domains[0], basicAuth: 'admin:secret' } as never);
+    renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+    await openTab('Network');
+    const secBtn = await screen.findByText('Security');
+    fireEvent.click(secBtn);
+    const authInput = screen.getByPlaceholderText(/admin:password/);
+    const ipInput = screen.getByPlaceholderText(/192.168.1.0/);
+    const avgInput = screen.getByPlaceholderText(/50 \(0 = disabled\)/);
+    const burstInput = screen.getByPlaceholderText(/100/);
+
+    fireEvent.change(authInput, { target: { value: 'admin:secret' } });
+    fireEvent.change(ipInput, { target: { value: '10.0.0.0/8' } });
+    fireEvent.change(avgInput, { target: { value: '50' } });
+    fireEvent.change(burstInput, { target: { value: '100' } });
+
+    const saveBtn = screen.getByText('Save Security Settings');
+    fireEvent.click(saveBtn);
+    await waitFor(() =>
+      expect(api.domains.update).toHaveBeenCalledWith(1, 1, {
+        basicAuth: 'admin:secret',
+        ipAllowlist: '10.0.0.0/8',
+        rateLimitAverage: 50,
+        rateLimitBurst: 100,
+      }),
+    );
+
+    // Cancel closes drawer
+    fireEvent.click(secBtn);
+    const cancelBtn = screen.getByText('Cancel');
+    fireEvent.click(cancelBtn);
+    expect(screen.queryByText('Save Security Settings')).not.toBeInTheDocument();
+
+    // Error handling
+    mockOf(api.domains.update).mockRejectedValueOnce(new Error('fail'));
+    fireEvent.click(secBtn);
+    fireEvent.click(screen.getByText('Save Security Settings'));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Could not update domain security settings', 'error'));
+  });
+
+  it('renders domains with pre-configured active security settings and allows clearing them', async () => {
+    mockOf(api.domains.list).mockResolvedValue([
+      {
+        ...domains[0],
+        basicAuth: 'admin:secret',
+        ipAllowlist: '1.2.3.4/32',
+        rateLimitAverage: 10,
+        rateLimitBurst: 20,
+      },
+    ] as never);
+    mockOf(api.domains.update).mockResolvedValue({ ...domains[0], basicAuth: null } as never);
+    renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+    await openTab('Network');
+    const secBtn = await screen.findByText('Security');
+    expect(secBtn.className).toContain('text-amber-300');
+
+    fireEvent.click(secBtn);
+    const authInput = screen.getByPlaceholderText(/admin:password/);
+    const ipInput = screen.getByPlaceholderText(/192.168.1.0/);
+    const avgInput = screen.getByPlaceholderText(/50 \(0 = disabled\)/);
+    const burstInput = screen.getByPlaceholderText(/100/);
+
+    fireEvent.change(authInput, { target: { value: '' } });
+    fireEvent.change(ipInput, { target: { value: '' } });
+    fireEvent.change(avgInput, { target: { value: '' } });
+    fireEvent.change(burstInput, { target: { value: '' } });
+
+    fireEvent.click(screen.getByText('Save Security Settings'));
+    await waitFor(() =>
+      expect(api.domains.update).toHaveBeenCalledWith(1, 1, {
+        basicAuth: null,
+        ipAllowlist: null,
+        rateLimitAverage: null,
+        rateLimitBurst: null,
+      }),
+    );
+  });
+
   it('manages scheduled jobs from the config tab', async () => {
     mockOf(api.jobs.list).mockResolvedValue([
       { id: 3, name: 'nightly', cron: '0 3 * * *', kind: 'deploy', command: '', enabled: true, lastRunAt: null },
@@ -715,6 +811,87 @@ describe('ServiceDetail', () => {
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Limits saved — applied on next deploy', 'success'));
   });
 
+  it('saves PR preview environments settings and handles field changes', async () => {
+    const user = userEvent.setup();
+    mockOf(api.services.get).mockResolvedValue({
+      ...service,
+      previewDeploymentsEnabled: true,
+      previewDomainPattern: 'preview-{{pr}}.example.com',
+      previewMaxActive: 3,
+      previewAutoDestroyOnClose: true,
+    } as never);
+    mockOf(api.services.update).mockResolvedValue({ ...service } as never);
+    renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+    await openTab('Settings');
+    await screen.findByText('Ephemeral PR / MR Preview Deployments');
+    
+    const patternInput = screen.getByDisplayValue('preview-{{pr}}.example.com');
+    fireEvent.change(patternInput, { target: { value: 'pr-{{pr}}.domain.io' } });
+
+    const maxActiveInput = screen.getByDisplayValue('3');
+    await user.clear(maxActiveInput);
+    await user.type(maxActiveInput, '10');
+
+    const autoDestroyCheckbox = screen.getByLabelText(/Auto-destroy ephemeral preview/i);
+    await user.click(autoDestroyCheckbox);
+
+    await user.click(screen.getByRole('button', { name: /Save PR preview settings/ }));
+    await waitFor(() =>
+      expect(api.services.update).toHaveBeenCalledWith(1, {
+        previewDeploymentsEnabled: true,
+        previewAutoDestroyOnClose: false,
+        previewDomainPattern: 'pr-{{pr}}.domain.io',
+        previewMaxActive: 10,
+      }),
+    );
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('PR Preview settings saved', 'success'));
+  });
+
+  it('reports PR preview save failures via toast and tests toggle and empty field fallbacks', async () => {
+    const user = userEvent.setup();
+    let resolveUpdate: (val: unknown) => void = () => {};
+    mockOf(api.services.get).mockResolvedValue({
+      ...service,
+      previewDeploymentsEnabled: true,
+      previewDomainPattern: 'preview-{{pr}}.example.com',
+      previewMaxActive: 3,
+    } as never);
+    mockOf(api.services.update).mockImplementation(() => new Promise((resolve) => {
+      resolveUpdate = resolve;
+    }));
+
+    renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+    await openTab('Settings');
+    await screen.findByText('Ephemeral PR / MR Preview Deployments');
+
+    // Clear pattern and maxActive to test empty fallbacks
+    const patternInput = screen.getByDisplayValue('preview-{{pr}}.example.com');
+    fireEvent.change(patternInput, { target: { value: '' } });
+    const maxActiveInput = screen.getByDisplayValue('3');
+    await user.clear(maxActiveInput);
+
+    const saveBtn = screen.getByRole('button', { name: /Save PR preview settings/ });
+    await user.click(saveBtn);
+    expect(screen.getByText('Saving…')).toBeInTheDocument();
+
+    expect(api.services.update).toHaveBeenCalledWith(1, {
+      previewDeploymentsEnabled: true,
+      previewAutoDestroyOnClose: true,
+      previewDomainPattern: undefined,
+      previewMaxActive: 5,
+    });
+
+    resolveUpdate(service);
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('PR Preview settings saved', 'success'));
+
+    // Toggle off and test error toast
+    const toggle = screen.getAllByRole('checkbox')[0];
+    await user.click(toggle);
+    mockOf(api.services.update).mockRejectedValueOnce(new Error('err'));
+    await user.click(screen.getByRole('button', { name: /Save PR preview settings/ }));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Could not save PR preview settings', 'error'));
+  });
+
   it('toggles per-domain SSL from the network tab', async () => {
     mockOf(api.domains.setSsl).mockResolvedValue({ id: 1, ssl: false } as never);
     renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
@@ -938,5 +1115,152 @@ describe('ServiceDetail', () => {
       expect(screen.queryByText(/· in use/)).not.toBeInTheDocument();
       unmount();
     }
+  });
+
+  it('publishes, changes and disables direct host port mapping', async () => {
+    const user = userEvent.setup();
+    mockOf(api.services.get).mockResolvedValue({
+      id: 1,
+      name: 'api',
+      slug: 'api',
+      port: 3000,
+      publishedPort: null,
+      status: 'running',
+    } as never);
+    mockOf(api.services.update).mockResolvedValue({ id: 1, publishedPort: 8080 } as never);
+
+    const { unmount } = renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+    await openTab('Network');
+
+    // Invalid port validation
+    const portInput = await screen.findByPlaceholderText('e.g. 8080 or 3000');
+    fireEvent.change(portInput, { target: { value: '70000' } });
+    fireEvent.submit(portInput.closest('form')!);
+    expect(api.services.update).not.toHaveBeenCalled();
+
+    // Valid port publish
+    fireEvent.change(portInput, { target: { value: '8080' } });
+    fireEvent.submit(portInput.closest('form')!);
+    await waitFor(() => expect(api.services.update).toHaveBeenCalledWith(1, { publishedPort: 8080 }));
+    unmount();
+
+    // With publishedPort already active
+    mockOf(api.services.get).mockResolvedValue({
+      id: 1,
+      name: 'api',
+      slug: 'api',
+      port: 3000,
+      publishedPort: 8080,
+      status: 'running',
+    } as never);
+
+    const { unmount: unmount2 } = renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+    await openTab('Network');
+    expect(await screen.findByText('Published on :8080')).toBeInTheDocument();
+    expect(screen.getByText(/http:\/\/.*:8080/)).toBeInTheDocument();
+
+    // Change port and cancel
+    await user.click(screen.getByRole('button', { name: /Change Port/i }));
+    expect(screen.getByRole('button', { name: /Cancel/i })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /Cancel/i }));
+
+    // Disable published port
+    await user.click(screen.getByRole('button', { name: /Disable/i }));
+    await waitFor(() => expect(api.services.update).toHaveBeenCalledWith(1, { publishedPort: null }));
+    unmount2();
+  });
+
+  it('handles direct host port update errors', async () => {
+    mockOf(api.services.get).mockResolvedValue({
+      id: 1,
+      name: 'api',
+      slug: 'api',
+      port: 3000,
+      publishedPort: null,
+      status: 'running',
+    } as never);
+    mockOf(api.services.update).mockRejectedValue(new Error('fail') as never);
+
+    renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+    await openTab('Network');
+
+    const portInput = await screen.findByPlaceholderText('e.g. 8080 or 3000');
+    fireEvent.change(portInput, { target: { value: '8080' } });
+    fireEvent.submit(portInput.closest('form')!);
+    await waitFor(() => expect(api.services.update).toHaveBeenCalledWith(1, { publishedPort: 8080 }));
+  });
+
+  it('renders fallback container port :80 when port is null and shows Saving... while pending', async () => {
+    let resolveUpdate!: (val: any) => void;
+    mockOf(api.services.get).mockResolvedValue({
+      id: 1,
+      name: 'api',
+      slug: 'api',
+      port: null,
+      publishedPort: 8080,
+      status: 'running',
+    } as never);
+    mockOf(api.services.update).mockReturnValue(
+      new Promise((resolve) => {
+        resolveUpdate = resolve;
+      }),
+    );
+
+    const { unmount } = renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+    await openTab('Network');
+    expect(await screen.findByText('→ :80')).toBeInTheDocument();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /Change Port/i }));
+    const portInput = screen.getByPlaceholderText('e.g. 8080 or 3000');
+    fireEvent.change(portInput, { target: { value: '9000' } });
+    fireEvent.submit(portInput.closest('form')!);
+
+    expect(await screen.findByRole('button', { name: /Saving…/i })).toBeInTheDocument();
+    resolveUpdate({ id: 1, publishedPort: 9000 });
+
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: /Saving…/i })).not.toBeInTheDocument();
+    });
+    unmount();
+  });
+
+  it('renders the Architecture tab with interactive ReactFlow graph and attached components', async () => {
+    mockOf(api.attachments.list).mockResolvedValue([
+      { id: 1, databaseId: 5, envAlias: 'DATABASE_URL', database: { name: 'main-db', engine: 'postgres', status: 'running' } },
+    ] as never);
+    mockOf(api.env.list).mockResolvedValue([
+      { id: 1, key: 'PORT', value: '3000', isSecret: false },
+      { id: 2, key: 'JWT_SECRET', value: 'secret', isSecret: true },
+    ] as never);
+
+    renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+    await openTab('Architecture');
+
+    expect(await screen.findByText(/Full Application Architecture & System Topology/i)).toBeInTheDocument();
+    expect(await screen.findByTestId('react-flow')).toBeInTheDocument();
+    expect(screen.getByText('Traefik Ingress')).toBeInTheDocument();
+    expect(screen.getByText('DATABASE_URL')).toBeInTheDocument();
+    expect(screen.getByText(/Dual-Vault Store/i)).toBeInTheDocument();
+  });
+
+  it('renders the Files tab with live container file browser and slug fallback', async () => {
+    mockOf(api.containers.listFiles).mockResolvedValue({
+      path: '/',
+      entries: [{ name: 'server.js', type: 'file', sizeBytes: 1024, mode: '0644', modifiedAt: null }],
+    } as never);
+
+    const { unmount } = renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+    await openTab('Files');
+
+    expect(await screen.findByText('server.js')).toBeInTheDocument();
+    expect(screen.getByText('nd-api')).toBeInTheDocument();
+    unmount();
+
+    // Slug fallback when runtimeId is null
+    mockOf(api.services.get).mockResolvedValueOnce({ ...service, runtimeId: null } as never);
+    renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+    await openTab('Files');
+    expect(await screen.findByText('nd-svc-api')).toBeInTheDocument();
   });
 });

@@ -13,6 +13,8 @@ const engineMocks = vi.hoisted(() => ({
   databaseLogs: vi.fn(async (_d: unknown, _lines?: number) => ['log line 1', 'log line 2']),
   connectionString: vi.fn(() => 'postgres://conn'),
   defaultPort: vi.fn((_engine: string) => 5432),
+  startDatabaseStudio: vi.fn(async (_d: unknown, _port: number, log: (l: string) => void) => { log('studio starting'); }),
+  stopDatabaseStudio: vi.fn(async (_d: unknown, log: (l: string) => void) => { log('studio stopping'); }),
 }));
 
 // Partial ENGINES: `mysql` is a valid schema enum value but intentionally
@@ -28,6 +30,8 @@ vi.mock('../src/engine/database.js', () => ({
   databaseLogs: engineMocks.databaseLogs,
   connectionString: engineMocks.connectionString,
   defaultPort: engineMocks.defaultPort,
+  startDatabaseStudio: engineMocks.startDatabaseStudio,
+  stopDatabaseStudio: engineMocks.stopDatabaseStudio,
 }));
 
 beforeEach(() => {
@@ -289,6 +293,71 @@ describe('databases routes', () => {
     expect(res.json()).toEqual({ cpuShares: 512, memLimitMb: 1024 });
     expect(engineMocks.stopDatabase).toHaveBeenCalled();
     expect(engineMocks.startDatabase).toHaveBeenCalled();
+  });
+
+  it('starts and stops Web Studio for a database', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { databases: dbRow({ id: 10, name: 'pg-prod', slug: 'pg-prod', engine: 'postgres', webGuiPort: null }) },
+      }),
+    });
+    await app.register(databasesRoutes);
+
+    // Start with custom port
+    const resCustom = await app.inject({
+      method: 'POST',
+      url: '/10/studio',
+      headers: asUser(),
+      payload: { port: 18055 },
+    });
+    expect(resCustom.statusCode).toBe(200);
+    expect(resCustom.json()).toMatchObject({ ok: true, port: 18055 });
+    expect(engineMocks.startDatabaseStudio).toHaveBeenCalledWith(expect.anything(), 18055, expect.anything());
+
+    // Start with default calculated port
+    const resDefault = await app.inject({
+      method: 'POST',
+      url: '/10/studio',
+      headers: asUser(),
+    });
+    expect(resDefault.statusCode).toBe(200);
+    expect(resDefault.json()).toMatchObject({ ok: true, port: 18010 });
+
+    // Stop studio
+    const resStop = await app.inject({
+      method: 'DELETE',
+      url: '/10/studio',
+      headers: asUser(),
+    });
+    expect(resStop.statusCode).toBe(200);
+    expect(resStop.json()).toEqual({ ok: true });
+    expect(engineMocks.stopDatabaseStudio).toHaveBeenCalled();
+
+    // 404 for missing database on start / stop
+    const appEmpty = await buildTestApp({ db: createFakeDb({ findFirst: { databases: null } }) });
+    await appEmpty.register(databasesRoutes);
+    const resNotFound1 = await appEmpty.inject({ method: 'POST', url: '/999/studio', headers: asUser() });
+    expect(resNotFound1.statusCode).toBe(404);
+    const resNotFound2 = await appEmpty.inject({ method: 'DELETE', url: '/999/studio', headers: asUser() });
+    expect(resNotFound2.statusCode).toBe(404);
+  });
+
+  it('creates a postgres database with pgvector extension and vector version', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        insert: { databases: [dbRow({ id: 8, engine: 'postgres', version: 'vector', extensions: ['pgvector'] })] },
+        findFirst: { databases: dbRow({ id: 8, engine: 'postgres', version: 'vector', extensions: ['pgvector'] }) },
+      }),
+    });
+    await app.register(databasesRoutes);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/',
+      headers: asUser(),
+      payload: { name: 'vector-db', engine: 'postgres', extensions: ['pgvector'] },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ id: 8, version: 'vector', extensions: ['pgvector'] });
   });
 
   it('does not restart a non-running database on limit changes', async () => {

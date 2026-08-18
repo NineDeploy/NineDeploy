@@ -25,8 +25,12 @@ const h = vi.hoisted(() => {
 
 vi.mock('../src/config.js', () => ({ config: h.config }));
 // The finalize grace period sleeps 2s in real life — stub it for tests.
-const sleepMock = vi.hoisted(() => ({ sleep: vi.fn(async () => undefined) }));
-vi.mock('../src/lib/exec.js', () => sleepMock);
+const execMock = vi.hoisted(() => ({
+  sleep: vi.fn(async () => undefined),
+  run: vi.fn(async () => ({ stdout: '', stderr: '' })),
+}));
+const sleepMock = execMock;
+vi.mock('../src/lib/exec.js', () => execMock);
 vi.mock('../src/lib/crypto.js', () => ({ decrypt: h.decrypt }));
 vi.mock('../src/lib/git.js', () => ({ checkoutCommit: h.checkoutCommit }));
 vi.mock('../src/lib/agentClient.js', () => ({ agentOp: h.agentOp }));
@@ -867,5 +871,75 @@ describe('runDeployment', () => {
 
     expect(lines.join('\n')).toContain('Cancelled just before finalizing');
     expect(h.builder.stop).toHaveBeenCalledWith('new-c');
+  });
+
+  it('executes preDeployCmd, postDeployCmd and preStopCmd hooks during deployment', async () => {
+    const { db } = makeDb();
+    baseSetup(db, { image: 'nginx:latest', runtimeId: 'old-c' });
+    db.query.deployments.findFirst.mockResolvedValue(dep);
+    const configRow = {
+      id: 1,
+      serviceId: 5,
+      buildPack: 'auto',
+      baseDir: '/',
+      installCmd: null,
+      buildCmd: null,
+      startCmd: null,
+      dockerfilePath: null,
+      preDeployCmd: 'npm run db:migrate',
+      postDeployCmd: 'curl -sSL http://localhost/warmup',
+      preStopCmd: 'npm run drain',
+      restartPolicy: 'unless-stopped',
+      stopGraceSeconds: 5,
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+    };
+    db.query.buildConfigs.findFirst.mockResolvedValue(configRow);
+
+    const lines = collectLogs(1);
+    await runDeployment(db as never, 1);
+
+    expect(execMock.run).toHaveBeenCalledWith(
+      'npm',
+      ['run', 'db:migrate'],
+      expect.any(Object),
+      expect.any(Function),
+    );
+    expect(execMock.run).toHaveBeenCalledWith(
+      'curl',
+      ['-sSL', 'http://localhost/warmup'],
+      expect.any(Object),
+      expect.any(Function),
+    );
+    expect(execMock.run).toHaveBeenCalledWith(
+      'npm',
+      ['run', 'drain'],
+      expect.any(Object),
+      expect.any(Function),
+    );
+    expect(lines.join('\n')).toContain('Running Pre-Deploy Hook: npm run db:migrate');
+    expect(lines.join('\n')).toContain('Running Post-Deploy Hook: curl -sSL http://localhost/warmup');
+    expect(lines.join('\n')).toContain('Running Pre-Stop Hook: npm run drain');
+    // Pre-deploy hook failure causes deploy to fail and rollback
+    execMock.run.mockRejectedValueOnce(new Error('migration failed'));
+    await runDeployment(db as never, 1);
+    expect(lines.join('\n')).toContain('✗ Deployment failed: migration failed');
+
+    // Post-deploy hook failure is logged but does not fail the deploy
+    execMock.run.mockResolvedValueOnce({ stdout: '', stderr: '' });
+    execMock.run.mockRejectedValueOnce(new Error('warmup timed out'));
+    await runDeployment(db as never, 1);
+    expect(lines.join('\n')).toContain('warning: post-deploy hook failed: warmup timed out');
+
+    // Pre-stop hook failure is logged as warning during finalize
+    execMock.run.mockResolvedValueOnce({ stdout: '', stderr: '' }); // pre-deploy ok
+    execMock.run.mockResolvedValueOnce({ stdout: '', stderr: '' }); // post-deploy ok
+    execMock.run.mockRejectedValueOnce(new Error('drain failed')); // pre-stop fails
+    await runDeployment(db as never, 1);
+    expect(lines.join('\n')).toContain('pre-stop warning: drain failed');
+
+    // Whitespace hook command returns early
+    configRow.preDeployCmd = '   ';
+    await runDeployment(db as never, 1);
   });
 });

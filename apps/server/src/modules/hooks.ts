@@ -1,14 +1,29 @@
-import { and, eq, inArray } from 'drizzle-orm';
-import { deployments, services, webhooks } from '@ninedeploy/db';
+import { and, desc, eq, inArray } from 'drizzle-orm';
+import { buildConfigs, deployments, domains, envVars, services, webhooks } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { webhookCreate } from '@ninedeploy/schemas';
 import { config } from '../config.js';
 import { decrypt, encrypt, randomToken } from '../lib/crypto.js';
 import { matchesAny, parseWatchPaths } from '../lib/glob.js';
 import { notFound, parseId, unauthorized } from '../lib/errors.js';
-import { isPing, parsePush, verifyWebhook } from '../lib/webhooks.js';
+import { isPing, isPullRequest, parsePullRequest, parsePush, verifyWebhook } from '../lib/webhooks.js';
+import { dockerBuilder } from '../engine/builders/docker.js';
+import { pm2Builder } from '../engine/builders/pm2.js';
+import { composeBuilder } from '../engine/builders/compose.js';
+import { writeDynamicConfig } from '../engine/proxy.js';
 
-/** Public webhook receiver — auto-deploys on verified provider push events. */
+async function stopRuntimeFor(service: { runtimeId: string | null; type: string }) {
+  if (!service.runtimeId) return;
+  try {
+    if (service.type === 'docker') await dockerBuilder.stop(service.runtimeId);
+    else if (service.type === 'pm2') await pm2Builder.stop(service.runtimeId);
+    else if (service.type === 'compose') await composeBuilder.stop(service.runtimeId);
+  } catch {
+    /* swallow runtime stop error */
+  }
+}
+
+/** Public webhook receiver — auto-deploys on verified provider push & PR events. */
 export const hookReceiveRoutes: FastifyPluginAsync = async (app) => {
   // Public endpoint (auth bypassed, verified by HMAC) — cap flood attempts.
   app.post('/:id', { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (req, reply) => {
@@ -25,6 +40,157 @@ export const hookReceiveRoutes: FastifyPluginAsync = async (app) => {
 
     if (isPing(req.headers, provider)) return { ok: 'pong' };
 
+    // ── Ephemeral PR / MR Preview Deployments ──────────────────────────────────
+    if (isPullRequest(req.headers, provider)) {
+      const pr = parsePullRequest(req.body, provider);
+      if (!pr) return { ok: 'ignored', reason: 'not_a_valid_pr' };
+
+      const parent = await app.db.query.services.findFirst({ where: eq(services.id, hook.serviceId) });
+      if (!parent) return reply.code(404).send({ error: { code: 'not_found', message: 'Parent service not found' } });
+      if (!parent.previewDeploymentsEnabled) {
+        return { ok: 'skipped', reason: 'preview_deployments_disabled' };
+      }
+
+      const existingPreview = await app.db.query.services.findFirst({
+        where: and(
+          eq(services.previewParentServiceId, parent.id),
+          eq(services.prNumber, pr.prNumber),
+        ),
+      });
+
+      if (pr.action === 'closed') {
+        if (!parent.previewAutoDestroyOnClose || !existingPreview) {
+          return { ok: 'skipped', reason: existingPreview ? 'auto_destroy_disabled' : 'no_preview_found' };
+        }
+        await stopRuntimeFor(existingPreview);
+        await app.db.delete(services).where(eq(services.id, existingPreview.id));
+        try {
+          await writeDynamicConfig(app.db);
+        } catch {
+          /* best effort */
+        }
+        return { ok: true, action: 'preview_destroyed', prNumber: pr.prNumber, serviceId: existingPreview.id };
+      }
+
+      // Opened / Synchronize / Reopened
+      let targetService = existingPreview;
+      if (!targetService) {
+        // Enforce max active previews cap
+        const activePreviews = await app.db.query.services.findMany({
+          where: and(eq(services.previewParentServiceId, parent.id), eq(services.isEphemeralPreview, true)),
+          orderBy: [desc(services.id)],
+        });
+        if (activePreviews.length >= parent.previewMaxActive && activePreviews.length > 0) {
+          const oldest = activePreviews[activePreviews.length - 1]!;
+          await stopRuntimeFor(oldest);
+          await app.db.delete(services).where(eq(services.id, oldest.id));
+        }
+
+        const previewSlug = `${parent.slug}-pr-${pr.prNumber}`;
+        const [created] = await app.db
+          .insert(services)
+          .values({
+            projectId: parent.projectId,
+            ownerUserId: parent.ownerUserId,
+            name: `${parent.name} (PR #${pr.prNumber})`,
+            slug: previewSlug,
+            type: parent.type,
+            status: 'idle',
+            repoUrl: pr.repoUrl || parent.repoUrl,
+            branch: pr.branch,
+            commitSha: pr.sha,
+            sourceId: parent.sourceId,
+            image: parent.image,
+            volumeMount: null,
+            composeService: parent.composeService,
+            port: parent.port,
+            healthPath: parent.healthPath,
+            cpuShares: parent.cpuShares,
+            memLimitMb: parent.memLimitMb,
+            isEphemeralPreview: true,
+            previewParentServiceId: parent.id,
+            prNumber: pr.prNumber,
+          })
+          .returning();
+        targetService = created;
+
+        // Copy parent build config
+        const parentBuild = await app.db.query.buildConfigs.findFirst({ where: eq(buildConfigs.serviceId, parent.id) });
+        if (parentBuild && targetService) {
+          await app.db.insert(buildConfigs).values({
+            serviceId: targetService.id,
+            buildPack: parentBuild.buildPack,
+            baseDir: parentBuild.baseDir,
+            installCmd: parentBuild.installCmd,
+            buildCmd: parentBuild.buildCmd,
+            startCmd: parentBuild.startCmd,
+            dockerfilePath: parentBuild.dockerfilePath,
+            preDeployCmd: parentBuild.preDeployCmd,
+            postDeployCmd: parentBuild.postDeployCmd,
+            preStopCmd: parentBuild.preStopCmd,
+            restartPolicy: parentBuild.restartPolicy,
+            stopGraceSeconds: parentBuild.stopGraceSeconds,
+          });
+        }
+
+        // Copy parent service-scoped env vars
+        if (targetService) {
+          const parentEnvs = await app.db.query.envVars.findMany({ where: eq(envVars.serviceId, parent.id) });
+          for (const env of parentEnvs) {
+            await app.db.insert(envVars).values({
+              serviceId: targetService.id,
+              scope: 'service',
+              scopeKey: targetService.id,
+              key: env.key,
+              valueEncrypted: env.valueEncrypted,
+              isSecret: env.isSecret,
+            });
+          }
+
+          // Provision preview domain
+          const baseDomain = config.wildcardDomain || 'localhost';
+          const pattern = parent.previewDomainPattern || 'pr-{{pr}}-{{slug}}.{{domain}}';
+          const hostname = pattern
+            .replace(/\{\{pr\}\}/g, String(pr.prNumber))
+            .replace(/\{\{slug\}\}/g, parent.slug)
+            .replace(/\{\{domain\}\}/g, baseDomain);
+
+          await app.db.insert(domains).values({
+            serviceId: targetService.id,
+            hostname,
+            path: '/',
+            ssl: false,
+          });
+        }
+      } else {
+        await app.db.update(services).set({ branch: pr.branch, commitSha: pr.sha }).where(eq(services.id, targetService.id));
+      }
+
+      if (!targetService) return { ok: 'error', reason: 'failed_to_create_preview' };
+
+      const [dep] = await app.db
+        .insert(deployments)
+        .values({
+          serviceId: targetService.id,
+          status: 'queued',
+          trigger: 'webhook',
+          commitSha: pr.sha || null,
+          message: `PR #${pr.prNumber}: ${pr.title}`,
+          author: pr.author || null,
+        })
+        .returning();
+
+      return {
+        ok: true,
+        provider,
+        action: 'preview_deployment_queued',
+        previewServiceId: targetService.id,
+        deploymentId: dep?.id,
+        prNumber: pr.prNumber,
+      };
+    }
+
+    // ── Standard Push Webhook ──────────────────────────────────────────────────
     const push = parsePush(req.body, provider);
     if (!push) return { ok: 'ignored', reason: 'not_a_push' };
 

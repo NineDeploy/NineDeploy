@@ -203,4 +203,26 @@ export const TOOLS: ToolDef[] = [
     input: z.object({ slot: z.string().optional() }),
     handler: (c, input) => c.menus.list(input as any),
   },
+  // ── Demo & Service Configuration ───────────────────────────────────────
+  {
+    name: 'seed_demo',
+    description: 'Seed the full demo stack including PostgreSQL database, Next.js Docker app with host port publishing, and Next.js PM2 service.',
+    input: z.object({}),
+    handler: (c) => c.demo.seed(),
+  },
+  {
+    name: 'update_service',
+    description: 'Update a service configuration, including port, published host port (publishedPort), and branch.',
+    input: z.object({
+      serviceId: z.number().int().positive(),
+      name: z.string().optional(),
+      port: z.number().int().min(1).max(65535).optional(),
+      publishedPort: z.number().int().min(1).max(65535).nullable().optional(),
+      branch: z.string().optional(),
+    }),
+    handler: (c, input) => {
+      const { serviceId, ...patch } = input as { serviceId: number; name?: string; port?: number; publishedPort?: number | null; branch?: string };
+      return c.services.update(serviceId, patch);
+    },
+  },
 ];

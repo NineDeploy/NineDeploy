@@ -48,6 +48,8 @@ export async function servicesCreate(client: NineDeployClient): Promise<void> {
 
   const portStr = await prompt('Port (optional)', '');
   const port = portStr ? Number(portStr) : undefined;
+  const pubPortStr = await prompt('Direct host port (optional)', '');
+  const publishedPort = pubPortStr ? Number(pubPortStr) : undefined;
   const volume = await prompt('Persistent volume path (optional)', '');
 
   console.log();
@@ -57,7 +59,7 @@ export async function servicesCreate(client: NineDeployClient): Promise<void> {
         name, type: 'docker',
         repoUrl: useRepo ? repoUrl : undefined,
         image: useRepo ? undefined : image,
-        branch, port, volumeMount: volume || undefined,
+        branch, port, publishedPort, volumeMount: volume || undefined,
       }),
     );
     success(`Service "${svc.name}" created (id: ${svc.id})`);
@@ -88,6 +90,7 @@ export async function servicesGet(client: NineDeployClient, idStr: string): Prom
     kv('Branch', svc.branch);
     kv('Image', svc.image ?? '—');
     kv('Port', svc.port ?? '—');
+    if (svc.publishedPort) kv('Host Port', c.green(`:${svc.publishedPort}`));
     kv('Volume', svc.volumeMount ?? '—');
     kv('Health', svc.healthPath);
     kv('Runtime', svc.runtimeId ?? '—');

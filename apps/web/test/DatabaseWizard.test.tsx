@@ -192,4 +192,50 @@ describe('DatabaseWizard', () => {
       }),
     );
   });
+
+  it('creates postgres with pgvector extension enabled', async () => {
+    const user = userEvent.setup();
+    renderWizard();
+    await user.click(screen.getByText('PostgreSQL'));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.type(screen.getByPlaceholderText('my-database'), 'vector-db');
+
+    const pgvectorCheck = screen.getByRole('checkbox');
+    expect(pgvectorCheck).toBeInTheDocument();
+    await user.click(pgvectorCheck);
+
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /create database/i }));
+    await waitFor(() =>
+      expect(apiMock.api.databases.create).toHaveBeenCalledWith({
+        name: 'vector-db',
+        engine: 'postgres',
+        version: undefined,
+        existingVolume: undefined,
+        extensions: ['pgvector'],
+      }),
+    );
+  });
+
+  it('creates databases with extended engines (Valkey, ClickHouse, Meilisearch, RabbitMQ)', async () => {
+    const user = userEvent.setup();
+    renderWizard();
+    expect(screen.getByText('Valkey')).toBeInTheDocument();
+    expect(screen.getByText('ClickHouse')).toBeInTheDocument();
+    expect(screen.getByText('Meilisearch')).toBeInTheDocument();
+    expect(screen.getByText('RabbitMQ')).toBeInTheDocument();
+
+    await user.click(screen.getByText('ClickHouse'));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.type(screen.getByPlaceholderText('my-database'), 'analytics');
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /create database/i }));
+    await waitFor(() =>
+      expect(apiMock.api.databases.create).toHaveBeenCalledWith({
+        name: 'analytics',
+        engine: 'clickhouse',
+        version: undefined,
+      }),
+    );
+  });
 });

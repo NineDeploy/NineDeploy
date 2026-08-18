@@ -109,19 +109,20 @@ describe('services routes', () => {
     expect(res.json()).toMatchObject({ id: 4, port: null });
   });
 
-  it('creates a service with an explicit slug', async () => {
+  it('creates a service with an explicit slug and publishedPort', async () => {
     const app = await buildTestApp({
-      db: createFakeDb({ insert: { services: [svcRow({ id: 4, slug: 'custom' })] } }),
+      db: createFakeDb({ insert: { services: [svcRow({ id: 4, slug: 'custom', publishedPort: 8080 })] } }),
     });
     await app.register(servicesRoutes);
     const res = await app.inject({
       method: 'POST',
       url: '/',
       headers: asUser(),
-      payload: { ...validCreate, slug: 'custom' },
+      payload: { ...validCreate, slug: 'custom', publishedPort: 8080 },
     });
     expect(res.statusCode).toBe(200);
     expect(res.json().slug).toBe('custom');
+    expect(res.json().publishedPort).toBe(8080);
   });
 
   it('returns 404 when the service insert fails', async () => {
@@ -252,7 +253,17 @@ describe('services routes', () => {
     await app.register(servicesRoutes);
     const withBuild = await app.inject({
       method: 'PATCH', url: '/1', headers: asUser(),
-      payload: { name: 'renamed', build: { buildPack: 'nixpacks' } },
+      payload: {
+        name: 'renamed',
+        previewDeploymentsEnabled: true,
+        previewDomainPattern: 'pr-{{pr}}.local',
+        build: {
+          buildPack: 'nixpacks',
+          preDeployCmd: 'npm run db:migrate',
+          postDeployCmd: 'curl http://localhost/warmup',
+          preStopCmd: 'npm run drain',
+        },
+      },
     });
     expect(withBuild.statusCode).toBe(200);
     expect(withBuild.json()).toMatchObject({ id: 1, name: 'renamed' });

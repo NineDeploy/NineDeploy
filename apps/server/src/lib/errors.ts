@@ -17,6 +17,8 @@ export const unauthorized = (message = 'Unauthorized', code = 'unauthorized') =>
 export const forbidden = (message = 'Forbidden') => new HttpError(403, 'forbidden', message);
 export const notFound = (message = 'Not found') => new HttpError(404, 'not_found', message);
 export const conflict = (message = 'Conflict') => new HttpError(409, 'conflict', message);
+export const unprocessable = (message = 'Unprocessable entity', code = 'unprocessable_entity') =>
+  new HttpError(422, code, message);
 
 /**
  * Parse a route-param id into a positive integer. Throws 400 (not 404) on
