@@ -55,6 +55,16 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
   const [repoUrl, setRepoUrl] = useState('');
   const [branch, setBranch] = useState('main');
   const [sourceId, setSourceId] = useState('');
+  const remoteRepos = useQuery({
+    queryKey: ['source-repos', sourceId],
+    queryFn: () => api.sources.repos(Number(sourceId)),
+    enabled: Boolean(sourceId && Number(sourceId) > 0),
+  });
+  const remoteBranches = useQuery({
+    queryKey: ['source-branches', sourceId, repoUrl],
+    queryFn: () => api.sources.branches(Number(sourceId), repoUrl),
+    enabled: Boolean(sourceId && Number(sourceId) > 0 && repoUrl),
+  });
   const [image, setImage] = useState(template?.image ?? '');
   const [port, setPort] = useState(template ? String(template.port) : '');
   const [publishedPort, setPublishedPort] = useState('');
@@ -215,14 +225,71 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
               </div>
               {mode === 'repo' ? (
                 <>
-                  <L label="Repository URL"><Input value={repoUrl} onChange={(e) => setRepoUrl(e.target.value)} placeholder="https://github.com/you/repo" className="font-mono text-xs" /></L>
                   <div className="grid grid-cols-2 gap-3">
-                    <L label="Branch"><Input value={branch} onChange={(e) => setBranch(e.target.value)} placeholder="main" /></L>
-                    <L label="Source (private)"><Select value={sourceId} onChange={(e) => setSourceId(e.target.value)}>
-                      <option value="">Public / none</option>
-                      {sources.data?.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                    </Select></L>
+                    <L label="Source (Git Credential)">
+                      <Select value={sourceId} onChange={(e) => setSourceId(e.target.value)}>
+                        <option value="">Public / none</option>
+                        {sources.data?.map((s) => <option key={s.id} value={s.id}>{s.name} ({s.type})</option>)}
+                      </Select>
+                    </L>
+                    {remoteRepos.data && remoteRepos.data.length > 0 ? (
+                      <L label="Select Repository">
+                        <Select
+                          value={repoUrl}
+                          onChange={(e) => {
+                            const found = remoteRepos.data?.find((r) => r.url === e.target.value);
+                            setRepoUrl(e.target.value);
+                            if (found) {
+                              if (!name) setName(found.name);
+                              setBranch(found.defaultBranch || 'main');
+                            }
+                          }}
+                        >
+                          <option value="">Choose a repo ({remoteRepos.data.length})…</option>
+                          {remoteRepos.data.map((r) => (
+                            <option key={r.url} value={r.url}>
+                              {r.fullName} {r.isPrivate ? '🔒' : '🌐'}
+                            </option>
+                          ))}
+                        </Select>
+                      </L>
+                    ) : (
+                      <L label="Repository Branch">
+                        {remoteBranches.data && remoteBranches.data.length > 0 ? (
+                          <Select value={branch} onChange={(e) => setBranch(e.target.value)}>
+                            {remoteBranches.data.map((b) => (
+                              <option key={b} value={b}>{b}</option>
+                            ))}
+                          </Select>
+                        ) : (
+                          <Input value={branch} onChange={(e) => setBranch(e.target.value)} placeholder="main" />
+                        )}
+                      </L>
+                    )}
                   </div>
+
+                  <L label="Repository URL">
+                    <Input
+                      value={repoUrl}
+                      onChange={(e) => setRepoUrl(e.target.value)}
+                      placeholder="https://github.com/you/repo"
+                      className="font-mono text-xs"
+                    />
+                  </L>
+
+                  {remoteRepos.data && remoteRepos.data.length > 0 && (
+                    <L label="Branch">
+                      {remoteBranches.data && remoteBranches.data.length > 0 ? (
+                        <Select value={branch} onChange={(e) => setBranch(e.target.value)}>
+                          {remoteBranches.data.map((b) => (
+                            <option key={b} value={b}>{b}</option>
+                          ))}
+                        </Select>
+                      ) : (
+                        <Input value={branch} onChange={(e) => setBranch(e.target.value)} placeholder="main" />
+                      )}
+                    </L>
+                  )}
                 </>
               ) : (
                 <L label="Image"><Input value={image} onChange={(e) => setImage(e.target.value)} placeholder="n8nio/n8n" className="font-mono text-xs" /></L>

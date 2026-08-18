@@ -340,6 +340,8 @@ export interface NineDeployClient {
     create: (input: CreateSourceInput) => Promise<Source>;
     update: (id: number, input: Partial<CreateSourceInput>) => Promise<Source>;
     remove: (id: number) => Promise<void>;
+    repos: (id: number) => Promise<Array<{ name: string; fullName: string; url: string; defaultBranch: string; isPrivate: boolean }>>;
+    branches: (id: number, repo: string) => Promise<string[]>;
   };
   webhooks: {
     list: (serviceId: number) => Promise<Webhook[]>;
@@ -815,6 +817,8 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
       remove: async (id) => {
         await request(`/v1/sources/${id}`, { method: 'DELETE' });
       },
+      repos: (id) => get<Array<{ name: string; fullName: string; url: string; defaultBranch: string; isPrivate: boolean }>>(`/v1/sources/${id}/repos`),
+      branches: (id, repo) => get<string[]>(`/v1/sources/${id}/branches?repo=${encodeURIComponent(repo)}`),
     },
     webhooks: {
       list: (serviceId) => get<Webhook[]>(`/v1/services/${serviceId}/webhooks`),
