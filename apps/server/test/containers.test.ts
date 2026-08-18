@@ -8,6 +8,8 @@ const engineMocks = vi.hoisted(() => ({
   writeContainerFile: vi.fn(),
   makeContainerDir: vi.fn(),
   deleteContainerPath: vi.fn(),
+  inspectContainer: vi.fn(),
+  getContainerComposeManifest: vi.fn(),
 }));
 
 vi.mock('../src/engine/containerFiles.js', async () => {
@@ -225,5 +227,47 @@ describe('containerRoutes', () => {
       headers: asUser({ role: 'member' }),
     });
     expect(res.statusCode).toBe(403);
+  });
+
+  it('serves container inspect metadata and traefik tags', async () => {
+    engineMocks.inspectContainer.mockResolvedValueOnce({
+      id: 'cid1',
+      name: 'nd-svc-web-1',
+      image: 'node:20',
+      state: { status: 'running', running: true },
+      traefikTags: { 'traefik.enable': 'true' },
+    });
+
+    const app = await buildTestApp({ db: createFakeDb() });
+    await app.register(containerRoutes);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/nd-svc-web-1/inspect',
+      headers: asUser(),
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().name).toBe('nd-svc-web-1');
+    expect(res.json().traefikTags['traefik.enable']).toBe('true');
+  });
+
+  it('serves runtime generated Docker Compose YAML manifest', async () => {
+    engineMocks.getContainerComposeManifest.mockResolvedValueOnce({
+      yaml: 'services:\n  nd-svc-web-1:\n    image: node:20',
+      inspect: { name: 'nd-svc-web-1' },
+    });
+
+    const app = await buildTestApp({ db: createFakeDb() });
+    await app.register(containerRoutes);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/nd-svc-web-1/compose',
+      headers: asUser(),
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().yaml).toContain('services:');
   });
 });

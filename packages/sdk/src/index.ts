@@ -235,6 +235,8 @@ export interface NineDeployClient {
     deleteFile: (name: string, path: string) => Promise<void>;
   };
   containers: {
+    inspect: (container: string) => Promise<ContainerInspectData>;
+    compose: (container: string) => Promise<ContainerComposeData>;
     /** File manager: list a directory inside the container. */
     listFiles: (container: string, path?: string) => Promise<{ path: string; entries: VolumeFileEntry[] }>;
     /** File manager: read a file (base64 content). */
@@ -243,8 +245,10 @@ export interface NineDeployClient {
     writeFile: (container: string, input: VolumeFileWriteInput) => Promise<{ ok: boolean }>;
     /** File manager: create a directory. */
     mkdir: (container: string, input: VolumePathCreateInput) => Promise<{ ok: boolean }>;
+    makeDir: (container: string, input: VolumePathCreateInput) => Promise<{ ok: boolean }>;
     /** File manager: delete a file or directory (recursive). */
     deleteFile: (container: string, path: string) => Promise<void>;
+    deletePath: (container: string, path: string) => Promise<void>;
   };
   system: {
     resources: () => Promise<DockerResources>;
@@ -482,6 +486,37 @@ export interface NineDeployClient {
   health: () => Promise<HealthStatus>;
 }
 
+export interface ContainerInspectData {
+  id: string;
+  name: string;
+  image: string;
+  state: {
+    status: string;
+    running: boolean;
+    startedAt: string;
+    finishedAt: string;
+    exitCode: number;
+    error: string;
+  };
+  labels: Record<string, string>;
+  traefikTags: Record<string, string>;
+  env: string[];
+  ports: Record<string, unknown>;
+  mounts: Array<{ source: string; destination: string; mode: string; rw: boolean }>;
+  networks: string[];
+  resources: {
+    memoryLimitBytes: number;
+    cpuShares: number;
+    restartPolicy: string;
+  };
+  raw: unknown;
+}
+
+export interface ContainerComposeData {
+  yaml: string;
+  inspect: ContainerInspectData;
+}
+
 interface RequestInit {
   method?: string;
   headers?: Record<string, string>;
@@ -664,13 +699,19 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
       prune: () => send<{ ok: boolean; deleted: number; freedBytes: number }>('POST', '/v1/volumes/prune'),
     },
     containers: {
+      inspect: (container) => get<ContainerInspectData>(`/v1/containers/${encodeURIComponent(container)}/inspect`),
+      compose: (container) => get<ContainerComposeData>(`/v1/containers/${encodeURIComponent(container)}/compose`),
       listFiles: (container, path = '/') =>
         get<{ path: string; entries: VolumeFileEntry[] }>(`/v1/containers/${encodeURIComponent(container)}/files?path=${encodeURIComponent(path)}`),
       readFile: (container, path) =>
         get<{ content: string; encoding: 'utf8' | 'base64' }>(`/v1/containers/${encodeURIComponent(container)}/files/content?path=${encodeURIComponent(path)}`),
       writeFile: (container, input) => send<{ ok: boolean }>('PUT', `/v1/containers/${encodeURIComponent(container)}/files`, input),
       mkdir: (container, input) => send<{ ok: boolean }>('POST', `/v1/containers/${encodeURIComponent(container)}/files/dir`, input),
+      makeDir: (container, input) => send<{ ok: boolean }>('POST', `/v1/containers/${encodeURIComponent(container)}/files/dir`, input),
       deleteFile: async (container, path) => {
+        await request(`/v1/containers/${encodeURIComponent(container)}/files?path=${encodeURIComponent(path)}`, { method: 'DELETE' });
+      },
+      deletePath: async (container, path) => {
         await request(`/v1/containers/${encodeURIComponent(container)}/files?path=${encodeURIComponent(path)}`, { method: 'DELETE' });
       },
     },

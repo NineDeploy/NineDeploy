@@ -1384,4 +1384,35 @@ describe('createClient', () => {
       expect(last(calls)).toMatchObject({ url: '/v1/workspaces/1/members/2', init: { method: 'DELETE' } });
     });
   });
+
+  describe('containers', () => {
+    it('exercises inspect, compose, listFiles, readFile, writeFile, makeDir, and deletePath', async () => {
+      const { fetchMock, calls } = makeFetch(() => ok({}));
+      const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
+
+      await client.containers.inspect('ninedeploy-app-1');
+      expect(last(calls)).toMatchObject({ url: '/v1/containers/ninedeploy-app-1/inspect', init: { method: 'GET' } });
+
+      await client.containers.compose('ninedeploy-app-1');
+      expect(last(calls)).toMatchObject({ url: '/v1/containers/ninedeploy-app-1/compose', init: { method: 'GET' } });
+
+      await client.containers.listFiles('ninedeploy-app-1', '/app');
+      expect(last(calls)).toMatchObject({ url: '/v1/containers/ninedeploy-app-1/files?path=%2Fapp', init: { method: 'GET' } });
+
+      await client.containers.listFiles('ninedeploy-app-1');
+      expect(last(calls)).toMatchObject({ url: '/v1/containers/ninedeploy-app-1/files?path=%2F', init: { method: 'GET' } });
+
+      await client.containers.readFile('ninedeploy-app-1', '/app/config.json');
+      expect(last(calls)).toMatchObject({ url: '/v1/containers/ninedeploy-app-1/files/content?path=%2Fapp%2Fconfig.json', init: { method: 'GET' } });
+
+      await client.containers.writeFile('ninedeploy-app-1', { path: '/app/a.txt', contentBase64: 'ZGF0YQ==' });
+      expect(last(calls)).toMatchObject({ url: '/v1/containers/ninedeploy-app-1/files', init: { method: 'PUT' } });
+
+      await client.containers.makeDir('ninedeploy-app-1', { path: '/app/logs' });
+      expect(last(calls)).toMatchObject({ url: '/v1/containers/ninedeploy-app-1/files/dir', init: { method: 'POST' } });
+
+      await client.containers.deletePath('ninedeploy-app-1', '/app/tmp');
+      expect(last(calls)).toMatchObject({ url: '/v1/containers/ninedeploy-app-1/files?path=%2Fapp%2Ftmp', init: { method: 'DELETE' } });
+    });
+  });
 });

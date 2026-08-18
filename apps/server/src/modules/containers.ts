@@ -4,6 +4,8 @@ import { audit } from '../lib/audit.js';
 import { badRequest } from '../lib/errors.js';
 import {
   deleteContainerPath,
+  getContainerComposeManifest,
+  inspectContainer,
   isManagedContainer,
   listContainerDir,
   makeContainerDir,
@@ -25,6 +27,18 @@ export const containerRoutes: FastifyPluginAsync = async (app) => {
     if (safe === null) throw badRequest('invalid path');
     return safe;
   };
+
+  // ── Get detailed inspect metadata and Traefik tags ────────────────────────
+  app.get('/:container/inspect', async (req) => {
+    const container = guardContainer((req.params as { container: string }).container);
+    return inspectContainer(container);
+  });
+
+  // ── Get runtime generated Docker Compose YAML manifest ───────────────────
+  app.get('/:container/compose', async (req) => {
+    const container = guardContainer((req.params as { container: string }).container);
+    return getContainerComposeManifest(container);
+  });
 
   // ── List directory contents inside container ──────────────────────────────
   app.get('/:container/files', { preHandler: [app.requireAdmin] }, async (req) => {

@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   deleteContainerPath,
+  getContainerComposeManifest,
+  inspectContainer,
   isManagedContainer,
   listContainerDir,
   makeContainerDir,
@@ -182,5 +184,91 @@ describe('containerFiles operations (docker exec)', () => {
     await expect(deleteContainerPath('invalid/name', '/app', () => {})).rejects.toThrow('invalid container');
     await expect(deleteContainerPath('nd-svc-1', '/', () => {})).rejects.toThrow('cannot delete root');
     await expect(deleteContainerPath('nd-svc-1', 'a\0b', () => {})).rejects.toThrow('cannot delete root');
+  });
+
+  it('inspects container metadata and extracts labels, traefik tags and resources', async () => {
+    const fakeInspect = [
+      {
+        Id: 'cid123',
+        Name: '/nd-svc-web-1',
+        Config: {
+          Image: 'node:20-alpine',
+          Env: ['NODE_ENV=production', 'PORT=3000'],
+          Labels: {
+            'traefik.enable': 'true',
+            'traefik.http.routers.web.rule': 'Host(`app.dev`)',
+            'com.docker.compose.service': 'web',
+          },
+        },
+        State: {
+          Status: 'running',
+          Running: true,
+          StartedAt: '2026-08-18T10:00:00Z',
+          FinishedAt: '',
+          ExitCode: 0,
+          Error: '',
+        },
+        NetworkSettings: {
+          Ports: { '3000/tcp': [{ HostPort: '8080' }] },
+          Networks: { ninedeploy: {} },
+        },
+        Mounts: [{ Source: '/var/lib/data', Destination: '/data', Mode: 'rw', RW: true }],
+        HostConfig: {
+          Memory: 536870912,
+          CpuShares: 512,
+          RestartPolicy: { Name: 'unless-stopped' },
+        },
+      },
+    ];
+
+    execMocks.capture.mockResolvedValueOnce(JSON.stringify(fakeInspect));
+    const result = await inspectContainer('nd-svc-web-1');
+    expect(result.id).toBe('cid123');
+    expect(result.name).toBe('nd-svc-web-1');
+    expect(result.image).toBe('node:20-alpine');
+    expect(result.state.running).toBe(true);
+    expect(result.traefikTags['traefik.enable']).toBe('true');
+    expect(result.traefikTags['traefik.http.routers.web.rule']).toBe('Host(`app.dev`)');
+    expect(result.resources.memoryLimitBytes).toBe(536870912);
+  });
+
+  it('generates runtime Docker Compose YAML manifest with Traefik tags', async () => {
+    const fakeInspect = [
+      {
+        Id: 'cid123',
+        Name: '/nd-svc-web-1',
+        Config: {
+          Image: 'node:20-alpine',
+          Env: ['PORT=3000'],
+          Labels: {
+            'traefik.enable': 'true',
+            'traefik.http.routers.web.rule': 'Host(`app.dev`)',
+          },
+        },
+        State: { Status: 'running', Running: true },
+        NetworkSettings: { Networks: { ninedeploy: {} } },
+        Mounts: [{ Source: '/data', Destination: '/app/data', Mode: 'ro', RW: false }],
+        HostConfig: {
+          Memory: 268435456,
+          CpuShares: 1024,
+          RestartPolicy: { Name: 'unless-stopped' },
+        },
+      },
+    ];
+
+    execMocks.capture.mockResolvedValueOnce(JSON.stringify(fakeInspect));
+    const { yaml, inspect } = await getContainerComposeManifest('nd-svc-web-1');
+    expect(inspect.name).toBe('nd-svc-web-1');
+    expect(yaml).toContain('services:');
+    expect(yaml).toContain('nd-svc-web-1:');
+    expect(yaml).toContain('image: node:20-alpine');
+    expect(yaml).toContain('traefik.http.routers.web.rule=Host(`app.dev`)');
+    expect(yaml).toContain('networks:');
+    expect(yaml).toContain('ninedeploy:');
+  });
+
+  it('handles empty inspect output with error', async () => {
+    execMocks.capture.mockResolvedValueOnce('[]');
+    await expect(inspectContainer('nd-svc-web-1')).rejects.toThrow('container inspect empty');
   });
 });

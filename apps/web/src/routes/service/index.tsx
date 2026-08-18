@@ -11,6 +11,7 @@ import { Button, Card, CardBody, Skeleton, StatusBadge, Tabs } from '../../compo
 import { downloadBlob } from '../../lib/format.js';
 import { OverviewTab } from './OverviewTab.js';
 import { ArchitectureTab } from './ArchitectureTab.js';
+import { ManifestTab } from './ManifestTab.js';
 import { DeploysTab, IN_FLIGHT } from './DeploysTab.js';
 import { EnvironmentTab } from './EnvironmentTab.js';
 import { NetworkTab } from './NetworkTab.js';
@@ -20,7 +21,7 @@ import { DangerZone } from './DangerZone.js';
 
 import { ContainerFileBrowser } from '../../components/ContainerFileBrowser.js';
 
-type TabId = 'overview' | 'architecture' | 'deploys' | 'environment' | 'network' | 'files' | 'settings' | 'activity' | 'danger';
+type TabId = 'overview' | 'architecture' | 'manifest' | 'deploys' | 'environment' | 'network' | 'files' | 'settings' | 'activity' | 'danger';
 
 export function ServiceDetail() {
   const params = useParams();
@@ -236,6 +237,7 @@ export function ServiceDetail() {
         tabs={[
           { id: 'overview', label: 'Overview' },
           { id: 'architecture', label: 'Architecture' },
+          { id: 'manifest', label: 'Manifest & Traefik' },
           { id: 'deploys', label: 'Deploys' },
           { id: 'environment', label: 'Environment' },
           { id: 'network', label: 'Network' },
@@ -248,6 +250,7 @@ export function ServiceDetail() {
 
       {tab === 'overview' && <OverviewTab serviceId={id} svc={svc} />}
       {tab === 'architecture' && <ArchitectureTab service={svc} />}
+      {tab === 'manifest' && <ManifestTab service={svc} />}
       {tab === 'deploys' && (
         <DeploysTab
           serviceId={id}

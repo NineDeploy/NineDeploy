@@ -161,3 +161,150 @@ export async function deleteContainerPath(
 
   await run('docker', ['exec', container, 'rm', '-rf', '--', target], {}, sink);
 }
+
+export interface ContainerInspectResult {
+  id: string;
+  name: string;
+  image: string;
+  state: {
+    status: string;
+    running: boolean;
+    startedAt: string;
+    finishedAt: string;
+    exitCode: number;
+    error: string;
+  };
+  labels: Record<string, string>;
+  traefikTags: Record<string, string>;
+  env: string[];
+  ports: Record<string, unknown>;
+  mounts: Array<{ source: string; destination: string; mode: string; rw: boolean }>;
+  networks: string[];
+  resources: {
+    memoryLimitBytes: number;
+    cpuShares: number;
+    restartPolicy: string;
+  };
+  raw: unknown;
+}
+
+/** Inspect container metadata and parsed labels/traefik tags. */
+export async function inspectContainer(container: string): Promise<ContainerInspectResult> {
+  assertManagedContainer(container);
+  const out = await capture('docker', ['inspect', container]);
+  const parsed = JSON.parse(out);
+  const data = parsed[0];
+  if (!data) throw new Error('container inspect empty');
+
+  const labels: Record<string, string> = data.Config?.Labels ?? {};
+  const traefikTags: Record<string, string> = {};
+  for (const [k, v] of Object.entries(labels)) {
+    if (k.startsWith('traefik.')) {
+      traefikTags[k] = String(v);
+    }
+  }
+
+  return {
+    id: data.Id ?? '',
+    name: (data.Name ?? '').replace(/^\//, ''),
+    image: data.Config?.Image ?? '',
+    state: {
+      status: data.State?.Status ?? 'unknown',
+      running: Boolean(data.State?.Running),
+      startedAt: data.State?.StartedAt ?? '',
+      finishedAt: data.State?.FinishedAt ?? '',
+      exitCode: data.State?.ExitCode ?? 0,
+      error: data.State?.Error ?? '',
+    },
+    labels,
+    traefikTags,
+    env: data.Config?.Env ?? [],
+    ports: data.NetworkSettings?.Ports ?? {},
+    mounts: (data.Mounts ?? []).map((m: any) => ({
+      source: m.Source ?? '',
+      destination: m.Destination ?? '',
+      mode: m.Mode ?? '',
+      rw: Boolean(m.RW),
+    })),
+    networks: Object.keys(data.NetworkSettings?.Networks ?? {}),
+    resources: {
+      memoryLimitBytes: data.HostConfig?.Memory ?? 0,
+      cpuShares: data.HostConfig?.CpuShares ?? 0,
+      restartPolicy: data.HostConfig?.RestartPolicy?.Name ?? 'no',
+    },
+    raw: data,
+  };
+}
+
+/** Generate runtime Docker Compose YAML and Traefik tags manifest for container. */
+export async function getContainerComposeManifest(container: string): Promise<{
+  yaml: string;
+  inspect: ContainerInspectResult;
+}> {
+  const inspect = await inspectContainer(container);
+  const serviceName = inspect.name.replace(/[^a-zA-Z0-9_-]/g, '-');
+
+  const lines: string[] = [
+    `# NineDeploy Runtime Generated Compose Manifest`,
+    `# Generated for container: ${inspect.name}`,
+    `# Status: ${inspect.state.status.toUpperCase()}`,
+    `services:`,
+    `  ${serviceName}:`,
+    `    image: ${inspect.image}`,
+    `    container_name: ${inspect.name}`,
+    `    restart: ${inspect.resources.restartPolicy || 'unless-stopped'}`,
+  ];
+
+  if (inspect.resources.memoryLimitBytes > 0 || inspect.resources.cpuShares > 0) {
+    lines.push(`    deploy:`);
+    lines.push(`      resources:`);
+    lines.push(`        limits:`);
+    if (inspect.resources.memoryLimitBytes > 0) {
+      lines.push(`          memory: ${Math.round(inspect.resources.memoryLimitBytes / (1024 * 1024))}M`);
+    }
+    if (inspect.resources.cpuShares > 0) {
+      lines.push(`          cpus: '${(inspect.resources.cpuShares / 1024).toFixed(2)}'`);
+    }
+  }
+
+  if (inspect.networks.length > 0) {
+    lines.push(`    networks:`);
+    for (const net of inspect.networks) {
+      lines.push(`      - ${net}`);
+    }
+  }
+
+  if (inspect.mounts.length > 0) {
+    lines.push(`    volumes:`);
+    for (const m of inspect.mounts) {
+      lines.push(`      - ${m.source}:${m.destination}${m.rw ? '' : ':ro'}`);
+    }
+  }
+
+  if (Object.keys(inspect.labels).length > 0) {
+    lines.push(`    labels:`);
+    for (const [k, v] of Object.entries(inspect.labels)) {
+      lines.push(`      - "${k}=${v}"`);
+    }
+  }
+
+  if (inspect.env.length > 0) {
+    lines.push(`    environment:`);
+    for (const e of inspect.env) {
+      lines.push(`      - ${e}`);
+    }
+  }
+
+  if (inspect.networks.length > 0) {
+    lines.push(`networks:`);
+    for (const net of inspect.networks) {
+      lines.push(`  ${net}:`);
+      lines.push(`    external: true`);
+    }
+  }
+
+  return {
+    yaml: lines.join('\n'),
+    inspect,
+  };
+}
