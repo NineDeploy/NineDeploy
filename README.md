@@ -104,7 +104,7 @@ For in-depth guides, operational workflows, and configuration references:
 
 ```bash
 # Install CLI globally
-npm install -g @ninedeploy/cli
+npm install -g ninedeploy
 
 # Authenticate with your instance
 ninedeploy login

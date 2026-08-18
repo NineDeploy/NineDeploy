@@ -37,7 +37,7 @@ NineDeploy includes an official stdio MCP server exposing **35 dedicated tools**
 
 ```bash
 # Global installation
-npm install -g @ninedeploy/cli
+npm install -g ninedeploy
 
 # Login to your instance
 ninedeploy login

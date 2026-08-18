@@ -1,5 +1,5 @@
 {
-  "name": "ninedeploy",
+  "name": "ninedeploy-monorepo",
   "version": "0.2.0",
   "private": true,
   "description": "Self-hosted, one-click deployment platform with PM2 + Docker, Traefik, webhooks, secrets, backups and monitoring.",
