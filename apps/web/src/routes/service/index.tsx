@@ -21,7 +21,7 @@ import { DangerZone } from './DangerZone.js';
 
 import { ContainerFileBrowser } from '../../components/ContainerFileBrowser.js';
 
-type TabId = 'overview' | 'architecture' | 'manifest' | 'deploys' | 'environment' | 'network' | 'files' | 'settings' | 'activity' | 'danger';
+type TabId = 'overview' | 'terminal' | 'architecture' | 'manifest' | 'deploys' | 'environment' | 'network' | 'files' | 'settings' | 'activity' | 'danger';
 
 export function ServiceDetail() {
   const params = useParams();
@@ -224,9 +224,9 @@ export function ServiceDetail() {
         </Card>
       )}
 
-      {showExec && svc.runtimeId && (
+      {showExec && svc.runtimeId && tab !== 'terminal' && (
         <div className="mt-5">
-          <ContainerTerminal serviceId={id} onClose={() => setShowExec(false)} />
+          <ContainerTerminal serviceId={id} serviceName={svc.name} onClose={() => setShowExec(false)} />
         </div>
       )}
 
@@ -236,6 +236,7 @@ export function ServiceDetail() {
         onChange={(t) => setTab(t as TabId)}
         tabs={[
           { id: 'overview', label: 'Overview' },
+          { id: 'terminal', label: 'Terminal & Exec' },
           { id: 'architecture', label: 'Architecture' },
           { id: 'manifest', label: 'Manifest & Traefik' },
           { id: 'deploys', label: 'Deploys' },
@@ -249,6 +250,21 @@ export function ServiceDetail() {
       />
 
       {tab === 'overview' && <OverviewTab serviceId={id} svc={svc} />}
+      {tab === 'terminal' && (
+        <div className="mt-5 space-y-4">
+          {svc.runtimeId ? (
+            <ContainerTerminal serviceId={id} serviceName={svc.name} />
+          ) : (
+            <Card>
+              <CardBody className="py-8 text-center text-slate-400">
+                <Terminal size={32} className="mx-auto mb-2 text-slate-600" />
+                <p className="text-sm font-semibold text-slate-300">Container is not deployed</p>
+                <p className="text-xs text-slate-500 mt-1">Deploy this service first to launch an interactive container shell.</p>
+              </CardBody>
+            </Card>
+          )}
+        </div>
+      )}
       {tab === 'architecture' && <ArchitectureTab service={svc} />}
       {tab === 'manifest' && <ManifestTab service={svc} />}
       {tab === 'deploys' && (

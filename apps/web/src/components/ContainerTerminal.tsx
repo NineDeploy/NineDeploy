@@ -1,74 +1,285 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
+import { Maximize2, Minimize2, RefreshCw, Terminal as TerminalIcon, Trash2, X } from 'lucide-react';
 import { getToken } from '../lib/api.js';
+import { Button, cn } from './ui.js';
 
-export function ContainerTerminal({ serviceId, onClose }: { serviceId: number; onClose: () => void }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const [connected, setConnected] = useState(false);
+interface ContainerTerminalProps {
+  serviceId: number;
+  serviceName?: string;
+  onClose?: () => void;
+}
 
-  useEffect(() => {
-    if (!ref.current) return;
-    const term = new Terminal({
-      cursorBlink: true,
-      fontSize: 12,
-      fontFamily: "'JetBrains Mono', ui-monospace, monospace",
-      theme: { background: '#0a0a10', foreground: '#cbd5e1', cursor: '#6366f1' },
-    });
-    const fit = new FitAddon();
-    term.loadAddon(fit);
-    term.open(ref.current);
-    fit.fit();
-    term.writeln('Connecting to container shell…');
+export function ContainerTerminal({ serviceId, serviceName, onClose }: ContainerTerminalProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const termRef = useRef<Terminal | null>(null);
+  const fitRef = useRef<FitAddon | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
+
+  const [status, setStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
+  const [fullscreen, setFullscreen] = useState(false);
+
+  const connect = useCallback(() => {
+    if (!containerRef.current) return;
+
+    // Clean up any existing connection
+    if (wsRef.current) {
+      try {
+        wsRef.current.close();
+      } catch {
+        // ignore
+      }
+      wsRef.current = null;
+    }
+
+    if (!termRef.current) {
+      const term = new Terminal({
+        cursorBlink: true,
+        cursorStyle: 'block',
+        fontSize: 13,
+        lineHeight: 1.2,
+        fontFamily: "'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, monospace",
+        theme: {
+          background: '#0a101b',
+          foreground: '#e2e8f0',
+          cursor: '#4ecdc4',
+          selectionBackground: 'rgba(78, 205, 196, 0.3)',
+          black: '#0a101b',
+          red: '#f43f5e',
+          green: '#10b981',
+          yellow: '#f59e0b',
+          blue: '#3b82f6',
+          magenta: '#8b5cf6',
+          cyan: '#4ecdc4',
+          white: '#f8fafc',
+          brightBlack: '#475569',
+          brightRed: '#fb7185',
+          brightGreen: '#34d399',
+          brightYellow: '#fbbf24',
+          brightBlue: '#60a5fa',
+          brightMagenta: '#a78bfa',
+          brightCyan: '#7ce4dc',
+          brightWhite: '#ffffff',
+        },
+      });
+
+      const fit = new FitAddon();
+      term.loadAddon(fit);
+      term.open(containerRef.current);
+      termRef.current = term;
+      fitRef.current = fit;
+      setTimeout(() => fit.fit(), 50);
+
+      term.onData((data) => {
+        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+          wsRef.current.send(data);
+        }
+      });
+    }
+
+    const term = termRef.current;
+    const fit = fitRef.current;
+
+    setStatus('connecting');
+    term.writeln('\r\n\x1b[36m⚡ Connecting to container shell...\x1b[0m');
 
     const token = getToken() ?? '';
     const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    const ws = new WebSocket(`${proto}://${window.location.host}/v1/services/${serviceId}/exec?token=${token}`);
+    const ws = new WebSocket(
+      `${proto}://${window.location.host}/v1/services/${serviceId}/exec?token=${token}`,
+    );
     ws.binaryType = 'arraybuffer';
+    wsRef.current = ws;
 
     ws.onopen = () => {
-      setConnected(true);
+      setStatus('connected');
       term.clear();
+      term.writeln('\x1b[32m✔ Connected to interactive container shell.\x1b[0m');
+      term.writeln('\x1b[90mType "exit" or click Close to terminate the session.\x1b[0m\r\n');
+      if (fit) fit.fit();
     };
+
     ws.onmessage = (e) => {
-      if (e.data instanceof ArrayBuffer) term.write(new Uint8Array(e.data));
-      else term.write(e.data as string);
+      if (e.data instanceof ArrayBuffer) {
+        term.write(new Uint8Array(e.data));
+      } else {
+        term.write(e.data as string);
+      }
     };
+
     ws.onclose = () => {
-      setConnected(false);
-      term.write('\r\n\x1b[31m*** Connection closed ***\x1b[0m\r\n');
+      setStatus('disconnected');
+      term.writeln('\r\n\x1b[31m✕ Connection closed.\x1b[0m');
+      term.writeln('\x1b[90mClick "Reconnect" above to start a new shell session.\x1b[0m');
     };
-    term.onData((data) => {
-      if (ws.readyState === WebSocket.OPEN) ws.send(data);
-    });
 
-    const onResize = () => fit.fit();
-    window.addEventListener('resize', onResize);
-
-    return () => {
-      ws.close();
-      term.dispose();
-      window.removeEventListener('resize', onResize);
+    ws.onerror = () => {
+      setStatus('disconnected');
+      term.writeln('\r\n\x1b[31m⚠ WebSocket connection error.\x1b[0m');
     };
   }, [serviceId]);
 
+  useEffect(() => {
+    connect();
+
+    const onResize = () => {
+      if (fitRef.current) fitRef.current.fit();
+    };
+    window.addEventListener('resize', onResize);
+
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        e.preventDefault();
+      }
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+
+    return () => {
+      window.removeEventListener('resize', onResize);
+      window.removeEventListener('beforeunload', onBeforeUnload);
+      if (wsRef.current) {
+        try {
+          wsRef.current.close();
+        } catch {
+          // ignore
+        }
+      }
+      if (termRef.current) {
+        termRef.current.dispose();
+        termRef.current = null;
+      }
+    };
+  }, [connect]);
+
+  // Refit when fullscreen changes
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (fitRef.current) fitRef.current.fit();
+    }, fullscreen ? 150 : 50);
+    return () => clearTimeout(timer);
+  }, [fullscreen]);
+
+  const handleClear = () => {
+    if (termRef.current) {
+      termRef.current.clear();
+      termRef.current.focus();
+    }
+  };
+
   return (
-    <div className="overflow-hidden rounded-xl border border-white/[0.08] bg-[#0a0a10]">
-      <div className="flex items-center justify-between border-b border-white/[0.06] px-3 py-2">
-        <div className="flex items-center gap-1.5">
-          <span className="h-2.5 w-2.5 rounded-full bg-rose-500/70" />
-          <span className="h-2.5 w-2.5 rounded-full bg-amber-500/70" />
-          <span className="h-2.5 w-2.5 rounded-full bg-emerald-500/70" />
-          <span className="ml-2 font-mono text-[11px] text-slate-500">
-            container shell {connected ? '●' : '○ connecting'}
-          </span>
+    <div
+      className={cn(
+        'overflow-hidden rounded-2xl border border-white/15 bg-[#0a101b] shadow-2xl transition-all duration-200 flex flex-col',
+        fullscreen ? 'fixed inset-4 z-50 rounded-2xl' : 'w-full',
+      )}
+    >
+      {/* Terminal Titlebar */}
+      <div className="flex items-center justify-between border-b border-white/10 bg-[#0f172a]/90 px-4 py-2.5 select-none backdrop-blur-md">
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1.5">
+            <span className="h-3 w-3 rounded-full bg-rose-500/80 ring-1 ring-inset ring-rose-500/30" />
+            <span className="h-3 w-3 rounded-full bg-amber-500/80 ring-1 ring-inset ring-amber-500/30" />
+            <span className="h-3 w-3 rounded-full bg-emerald-500/80 ring-1 ring-inset ring-emerald-500/30" />
+          </div>
+
+          <div className="flex items-center gap-2">
+            <TerminalIcon size={14} className="text-slate-400" />
+            <span className="font-mono text-xs font-semibold text-slate-200">
+              {serviceName ? `${serviceName} · sh` : 'container shell'}
+            </span>
+          </div>
+
+          {/* Status Indicator */}
+          <div className="flex items-center gap-1.5 rounded-full bg-white/[0.04] px-2.5 py-0.5 text-[11px] font-medium">
+            <span
+              className={cn(
+                'h-2 w-2 rounded-full',
+                status === 'connected' && 'bg-emerald-400 animate-pulse',
+                status === 'connecting' && 'bg-amber-400 animate-ping',
+                status === 'disconnected' && 'bg-rose-400',
+              )}
+            />
+            <span
+              className={cn(
+                'capitalize font-mono text-[10px]',
+                status === 'connected' && 'text-emerald-300',
+                status === 'connecting' && 'text-amber-300',
+                status === 'disconnected' && 'text-rose-300',
+              )}
+            >
+              {status}
+            </span>
+          </div>
         </div>
-        <button type="button" onClick={onClose} className="text-xs text-slate-500 transition hover:text-slate-300">
-          close
-        </button>
+
+        {/* Action Controls */}
+        <div className="flex items-center gap-1.5">
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={connect}
+            title="Reconnect shell session"
+            className="h-7 px-2 text-xs text-slate-400 hover:text-slate-200"
+          >
+            <RefreshCw size={12} className={cn(status === 'connecting' && 'animate-spin')} />
+            <span className="hidden sm:inline">Reconnect</span>
+          </Button>
+
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={handleClear}
+            title="Clear terminal output"
+            className="h-7 px-2 text-xs text-slate-400 hover:text-slate-200"
+          >
+            <Trash2 size={12} />
+            <span className="hidden sm:inline">Clear</span>
+          </Button>
+
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setFullscreen((v) => !v)}
+            title={fullscreen ? 'Restore window size' : 'Expand full screen'}
+            className="h-7 px-2 text-xs text-slate-400 hover:text-slate-200"
+          >
+            {fullscreen ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
+          </Button>
+
+          {onClose && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                if (wsRef.current) {
+                  try {
+                    wsRef.current.close();
+                  } catch {
+                    // ignore
+                  }
+                }
+                onClose();
+              }}
+              title="Close terminal"
+              className="h-7 px-2 text-xs text-rose-400 hover:bg-rose-500/10 hover:text-rose-300 ml-1"
+            >
+              <X size={13} />
+              <span className="hidden sm:inline">Close</span>
+            </Button>
+          )}
+        </div>
       </div>
-      <div ref={ref} className="h-72 p-2" />
+
+      {/* XTerm Screen Container */}
+      <div
+        ref={containerRef}
+        className={cn(
+          'p-3 focus:outline-none overflow-hidden flex-1',
+          fullscreen ? 'h-[calc(100vh-8rem)]' : 'h-80',
+        )}
+      />
     </div>
   );
 }
