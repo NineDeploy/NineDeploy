@@ -335,45 +335,48 @@ export function Topology() {
     return { nodes, edges };
   }, [filtered]);
 
-  return (
-    <div>
-      <PageHeader
-        title="Topology"
-        subtitle="Domains, gateway, services, databases, volumes and networks — the whole picture."
-      />
+  const [selectedNode, setSelectedNode] = useState<{ id: string; type?: string; data: any } | null>(null);
 
-      {/* focus selector — isolate one service's slice of the graph */}
-      <div className="mb-4 flex items-center gap-3">
-        <label htmlFor="topology-focus" className="text-xs text-slate-500">
-          focus
-        </label>
-        <select
-          id="topology-focus"
-          aria-label="Focus service"
-          value={focus ?? ''}
-          onChange={onFocusChange}
-          disabled={graph.isLoading}
-          className="rounded-lg border border-white/10 bg-slate-900/70 px-3 py-1.5 text-xs text-slate-200 outline-none focus:border-[var(--nd-accent)]"
-        >
-          <option value="">all services</option>
-          {(graph.data?.services ?? []).map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.name}
-            </option>
-          ))}
-        </select>
-        {focus != null && (
-          <button
-            type="button"
-            onClick={resetFocus}
-            className="rounded-lg bg-white/[0.04] px-2.5 py-1.5 text-xs text-slate-400 transition hover:bg-white/[0.08] hover:text-slate-200"
+  return (
+    <div className="relative space-y-4 nd-fade">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <PageHeader
+          icon={<Waypoints size={20} />}
+          title="Infrastructure Topology"
+          subtitle="Real-time interactive graph of your services, attached databases, networks, gateway and storage volumes."
+        />
+        <div className="flex items-center gap-2">
+          <label htmlFor="topology-focus" className="text-xs text-slate-500">
+            focus
+          </label>
+          <select
+            id="topology-focus"
+            aria-label="Focus service"
+            value={focus ?? ''}
+            onChange={onFocusChange}
+            disabled={graph.isLoading}
+            className="rounded-lg border border-white/10 bg-slate-900/70 px-3 py-1.5 text-xs text-slate-200 outline-none focus:border-[var(--nd-accent)]"
           >
-            reset
-          </button>
-        )}
+            <option value="">all services</option>
+            {(graph.data?.services ?? []).map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
+          {focus != null && (
+            <button
+              type="button"
+              onClick={resetFocus}
+              className="rounded-lg bg-white/[0.04] px-2.5 py-1.5 text-xs text-slate-400 transition hover:bg-white/[0.08] hover:text-slate-200"
+            >
+              reset
+            </button>
+          )}
+        </div>
       </div>
 
-      <div className="nd-fade h-[72vh] overflow-hidden rounded-2xl border border-white/10 bg-slate-950/40">
+      <div className="relative nd-fade h-[72vh] overflow-hidden rounded-2xl border border-white/10 bg-slate-950/40">
         {graph.isLoading ? (
           <div className="grid h-full place-items-center text-sm text-slate-500">Loading graph…</div>
         ) : graph.isError ? (
@@ -392,11 +395,98 @@ export function Topology() {
               fitViewOptions={{ padding: 0.2 }}
               proOptions={{ hideAttribution: true }}
               defaultEdgeOptions={{ style: { stroke: '#475569' } }}
+              onNodeClick={(_, node) => setSelectedNode(node)}
             >
               <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="#1e293b" />
               <Controls className="!border-white/10 !bg-slate-900/80" showInteractive={false} />
             </ReactFlow>
           </ReactFlowProvider>
+        )}
+
+        {/* Node Inspector Drawer */}
+        {selectedNode && (
+          <div className="absolute right-4 top-4 bottom-4 w-80 rounded-2xl border border-white/15 bg-slate-950/95 p-4 shadow-2xl backdrop-blur-xl z-20 flex flex-col justify-between nd-fade">
+            <div className="space-y-4">
+              <div className="flex items-center justify-between border-b border-white/10 pb-3">
+                <div className="flex items-center gap-2">
+                  <span className="rounded-md bg-indigo-500/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-indigo-300">
+                    {selectedNode.type || 'Node'}
+                  </span>
+                  <h3 className="text-sm font-semibold text-slate-100 truncate">
+                    {selectedNode.data?.name || selectedNode.id}
+                  </h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedNode(null)}
+                  className="rounded-lg p-1 text-slate-400 hover:text-slate-200 hover:bg-white/10 transition"
+                  aria-label="Close Inspector"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="space-y-2 text-xs">
+                {selectedNode.data?.status && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400">Status</span>
+                    <StatusBadge status={selectedNode.data.status} />
+                  </div>
+                )}
+                {selectedNode.data?.port && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400">Port</span>
+                    <span className="font-mono text-slate-200">:{selectedNode.data.port}</span>
+                  </div>
+                )}
+                {selectedNode.data?.engine && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400">Engine</span>
+                    <span className="font-mono text-slate-200 uppercase">{selectedNode.data.engine}</span>
+                  </div>
+                )}
+                {selectedNode.data?.routes != null && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400">Active Routes</span>
+                    <span className="font-mono text-slate-200">{selectedNode.data.routes}</span>
+                  </div>
+                )}
+                {selectedNode.data?.containers != null && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400">Attached Containers</span>
+                    <span className="font-mono text-slate-200">{selectedNode.data.containers}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="pt-4 border-t border-white/10">
+              {selectedNode.type === 'service' && selectedNode.data?.id && (
+                <Link
+                  to={`/services/${selectedNode.data.id}`}
+                  className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-500 transition shadow-lg shadow-indigo-600/30"
+                >
+                  Open Service Details &rarr;
+                </Link>
+              )}
+              {selectedNode.type === 'database' && selectedNode.data?.id && (
+                <Link
+                  to={`/databases/${selectedNode.data.id}`}
+                  className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-500 transition shadow-lg shadow-emerald-600/30"
+                >
+                  Open Database Studio &rarr;
+                </Link>
+              )}
+              {selectedNode.type === 'gateway' && (
+                <Link
+                  to="/domains"
+                  className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-sky-600 px-3 py-2 text-xs font-semibold text-white hover:bg-sky-500 transition shadow-lg shadow-sky-600/30"
+                >
+                  Manage Gateway Routes &rarr;
+                </Link>
+              )}
+            </div>
+          </div>
         )}
       </div>
     </div>

@@ -1,4 +1,4 @@
-import { type ReactNode, useState } from 'react';
+import { type ReactNode, useMemo, useState } from 'react';
 import {
   ArrowLeftRight,
   Bell,
@@ -7,12 +7,14 @@ import {
   KeyRound,
   Palette,
   Puzzle,
+  Search,
   Server,
   Settings as SettingsIcon,
   Shield,
   Sliders,
   Terminal,
   User,
+  X,
 } from 'lucide-react';
 import { AccountSection } from './AccountSection.js';
 import { AppearanceSection } from './AppearanceSection.js';
@@ -26,7 +28,7 @@ import { PluginsSection } from './PluginsSection.js';
 import { LogDrainsSection } from './LogDrainsSection.js';
 import { StorageSection } from './StorageSection.js';
 import { SsoSection } from './SsoSection.js';
-import { PageHeader, cn } from '../../components/ui.js';
+import { Input, PageHeader, cn } from '../../components/ui.js';
 
 type SectionId =
   | 'account'
@@ -89,80 +91,123 @@ const SETTING_GROUPS: SectionCategory[] = [
   },
 ];
 
-/** Settings page shell: clean vertical sidebar navigation layout. */
+/** Settings page shell: clean vertical sidebar navigation layout with search filter. */
 export function Settings() {
   const [section, setSection] = useState<SectionId>('account');
+  const [search, setSearch] = useState('');
+
+  const filteredGroups = useMemo(() => {
+    if (!search.trim()) return SETTING_GROUPS;
+    const q = search.toLowerCase();
+    return SETTING_GROUPS.map((group) => ({
+      ...group,
+      items: group.items.filter(
+        (item) => item.label.toLowerCase().includes(q) || item.desc.toLowerCase().includes(q),
+      ),
+    })).filter((group) => group.items.length > 0);
+  }, [search]);
 
   return (
     <div className="space-y-6 nd-fade">
       <PageHeader
         icon={<SettingsIcon size={20} />}
         title="Settings & Platform Config"
-        subtitle="Manage personal preferences, enterprise authentication, integrations, storage and DevOps engine."
+        subtitle="Manage instance preferences, security, storage, log sinks and system lifecycle."
       />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
-        {/* Left Vertical Sidebar Navigation */}
-        <aside className="lg:col-span-4 xl:col-span-3" aria-label="Settings navigation">
-          <div className="sticky top-6 space-y-6 rounded-2xl border border-white/[0.08] bg-white/[0.025] p-3 backdrop-blur-sm">
-            <div role="tablist" aria-orientation="vertical" className="space-y-5">
-              {SETTING_GROUPS.map((group) => (
-                <div key={group.category} className="space-y-1">
-                  <div className="px-3 text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                    {group.category}
-                  </div>
-                  <div className="space-y-0.5">
-                    {group.items.map((item) => {
-                      const active = section === item.id;
-                      return (
-                        <button
-                          key={item.id}
-                          type="button"
-                          role="tab"
-                          id={`tab-${item.id}`}
-                          aria-selected={active}
-                          aria-controls={`panel-${item.id}`}
-                          onClick={() => setSection(item.id)}
-                          className={cn(
-                            'group flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition text-xs',
-                            active
-                              ? 'bg-indigo-500/15 text-indigo-300 font-semibold shadow-sm ring-1 ring-inset ring-indigo-500/25'
-                              : 'text-slate-400 hover:bg-white/[0.04] hover:text-slate-200',
-                          )}
-                        >
-                          <span
+        {/* Categorized Vertical Sidebar */}
+        <aside className="lg:col-span-4 xl:col-span-3">
+          <div className="sticky top-6 space-y-4 rounded-2xl border border-white/[0.08] bg-white/[0.02] p-3 backdrop-blur-md">
+            {/* Quick Filter Input */}
+            <div className="relative">
+              <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <Input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Filter settings..."
+                className="h-8 pl-8 pr-7 text-xs"
+              />
+              {search && (
+                <button
+                  type="button"
+                  onClick={() => setSearch('')}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200"
+                  aria-label="Clear filter"
+                >
+                  <X size={12} />
+                </button>
+              )}
+            </div>
+
+            <nav className="space-y-4" aria-label="Settings sections">
+              {filteredGroups.length === 0 ? (
+                <p className="p-3 text-center text-xs text-slate-500">No settings matching "{search}"</p>
+              ) : (
+                filteredGroups.map((group) => (
+                  <div key={group.category} className="space-y-1">
+                    <h3 className="px-3 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                      {group.category}
+                    </h3>
+                    <div className="space-y-0.5">
+                      {group.items.map((item) => {
+                        const active = section === item.id;
+                        return (
+                          <button
+                            type="button"
+                            key={item.id}
+                            role="tab"
+                            aria-selected={active}
+                            aria-controls={`settings-panel-${item.id}`}
+                            onClick={() => setSection(item.id)}
                             className={cn(
-                              'grid h-6 w-6 place-items-center rounded-lg transition-colors shrink-0',
-                              active ? 'bg-indigo-500/20 text-indigo-400' : 'text-slate-500 group-hover:text-slate-300',
+                              'group flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition-all duration-150',
+                              active
+                                ? 'bg-indigo-500/15 text-indigo-300 ring-1 ring-inset ring-indigo-500/30'
+                                : 'text-slate-400 hover:bg-white/[0.04] hover:text-slate-200',
                             )}
                           >
-                            {item.icon}
-                          </span>
-                          <span className="truncate">{item.label}</span>
-                        </button>
-                      );
-                    })}
+                            <span
+                              className={cn(
+                                'grid h-7 w-7 shrink-0 place-items-center rounded-lg transition-colors',
+                                active
+                                  ? 'bg-indigo-500/20 text-indigo-300'
+                                  : 'bg-white/[0.04] text-slate-400 group-hover:text-slate-200',
+                              )}
+                            >
+                              {item.icon}
+                            </span>
+                            <div className="min-w-0 flex-1">
+                              <div className={cn('text-xs font-semibold', active ? 'text-slate-100' : 'text-slate-300')}>
+                                {item.label}
+                              </div>
+                              <div className="truncate text-[10px] text-slate-500">{item.desc}</div>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
+                ))
+              )}
+            </nav>
           </div>
         </aside>
 
-        {/* Right Content Area */}
-        <main className="lg:col-span-8 xl:col-span-9 min-w-0" id={`panel-${section}`} role="tabpanel" aria-labelledby={`tab-${section}`}>
+        {/* Active Section Content Panel */}
+        <main className="lg:col-span-8 xl:col-span-9 min-w-0" id={`settings-panel-${section}`} role="tabpanel">
           <div className="space-y-6">
             {section === 'account' && <AccountSection />}
             {section === 'appearance' && <AppearanceSection />}
             {section === 'security' && <SecuritySection />}
             {section === 'sso' && <SsoSection />}
             {section === 'integrations' && <IntegrationsSection />}
+            {section === 'notifications' && <NotificationsSection />}
             {section === 'log-drains' && <LogDrainsSection />}
             {section === 'storage' && <StorageSection />}
             {section === 'config' && <ConfigCenterSection />}
             {section === 'plugins' && <PluginsSection />}
             {section === 'system' && <SystemSection />}
-            {section === 'notifications' && <NotificationsSection />}
             {section === 'migration' && <MigrationSection />}
           </div>
         </main>

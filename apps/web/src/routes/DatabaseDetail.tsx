@@ -61,6 +61,7 @@ export function DatabaseDetail() {
   const qc = useQueryClient();
   const { toast } = useToast();
   const [activeTab, setActiveTab] = useState<'overview' | 'topology' | 'manifest' | 'files' | 'backups' | 'logs' | 'settings'>('overview');
+  const [embeddedStudioUrl, setEmbeddedStudioUrl] = useState<string | null>(null);
 
   const dbQuery = useQuery({
     queryKey: ['database-detail', id],
@@ -100,8 +101,8 @@ export function DatabaseDetail() {
     mutationFn: () => api.databases.startStudio(id),
     onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ['database-detail', id] });
-      toast(`Web Studio started on port ${data.port}`, 'success');
-      window.open(data.url, '_blank');
+      toast(`Web Studio ready on port ${data.port}`, 'success');
+      setEmbeddedStudioUrl(data.url);
     },
     onError: () => toast('Could not launch Web Studio', 'error'),
   });
@@ -110,6 +111,7 @@ export function DatabaseDetail() {
     mutationFn: () => api.databases.stopStudio(id),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['database-detail', id] });
+      setEmbeddedStudioUrl(null);
       toast('Web Studio stopped', 'success');
     },
     onError: () => toast('Could not stop Web Studio', 'error'),
@@ -257,6 +259,41 @@ export function DatabaseDetail() {
       {activeTab === 'backups' && <BackupsPanel dbId={db.id} dbName={db.name} />}
       {activeTab === 'logs' && <LogsPanel dbId={db.id} isRunning={isRunning} />}
       {activeTab === 'settings' && <SettingsPanel db={db} onDeleted={() => navigate('/databases')} />}
+
+      {/* Embedded Web Studio Modal */}
+      {embeddedStudioUrl && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-md nd-fade">
+          <div className="flex h-[90vh] w-[95vw] max-w-7xl flex-col rounded-2xl border border-white/15 bg-slate-950 shadow-2xl overflow-hidden">
+            <div className="flex items-center justify-between border-b border-white/10 px-4 py-3 bg-slate-900/80">
+              <div className="flex items-center gap-2.5">
+                <Database size={16} className="text-emerald-400" />
+                <span className="text-sm font-semibold text-slate-100">Web Database Studio — {db.name}</span>
+                <span className="rounded bg-emerald-500/10 px-2 py-0.5 font-mono text-[10px] text-emerald-400 font-bold uppercase">
+                  {db.engine}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <a
+                  href={embeddedStudioUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 text-xs text-indigo-400 hover:text-indigo-300 px-2 py-1"
+                >
+                  <ExternalLink size={13} /> Open in new tab
+                </a>
+                <Button size="sm" variant="ghost" onClick={() => setEmbeddedStudioUrl(null)}>
+                  ✕ Close
+                </Button>
+              </div>
+            </div>
+            <iframe
+              src={embeddedStudioUrl}
+              title="Web Studio"
+              className="h-full w-full border-0 bg-white"
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

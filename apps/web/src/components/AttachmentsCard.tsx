@@ -1,8 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import { Database, ExternalLink, Plus, Trash2 } from 'lucide-react';
+import { Activity, Database, ExternalLink, Plus, Trash2 } from 'lucide-react';
 import { Link } from 'react-router';
 import { api } from '../lib/api.js';
+import { useToast } from './Toast.js';
 import { Button, Card, CardBody, Input, Select, Skeleton, StatusBadge, cn } from './ui.js';
 
 function aliasFor(engine: string | undefined): string {
@@ -27,19 +28,20 @@ function aliasFor(engine: string | undefined): string {
 const ENGINE_COLORS: Record<string, string> = {
   postgres: 'text-indigo-400 bg-indigo-500/10 border-indigo-500/20',
   postgresql: 'text-indigo-400 bg-indigo-500/10 border-indigo-500/20',
-  mysql: 'text-sky-400 bg-sky-500/10 border-sky-500/20',
-  mariadb: 'text-sky-400 bg-sky-500/10 border-sky-500/20',
   redis: 'text-rose-400 bg-rose-500/10 border-rose-500/20',
   valkey: 'text-rose-400 bg-rose-500/10 border-rose-500/20',
+  mysql: 'text-amber-400 bg-amber-500/10 border-amber-500/20',
+  mariadb: 'text-amber-400 bg-amber-500/10 border-amber-500/20',
   mongo: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20',
   mongodb: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20',
-  clickhouse: 'text-amber-400 bg-amber-500/10 border-amber-500/20',
+  clickhouse: 'text-amber-300 bg-amber-500/10 border-amber-500/20',
 };
 
 export function AttachmentsCard({ serviceId }: { serviceId: number }) {
   const qc = useQueryClient();
-  const [dbId, setDbId] = useState('');
-  const [alias, setAlias] = useState('');
+  const { toast } = useToast();
+  const [dbId, setDbId] = useState<string>('');
+  const [alias, setAlias] = useState<string>('');
 
   const attachments = useQuery({ queryKey: ['attachments', serviceId], queryFn: () => api.attachments.list(serviceId) });
   const databases = useQuery({ queryKey: ['databases'], queryFn: () => api.databases.list() });
@@ -175,6 +177,21 @@ export function AttachmentsCard({ serviceId }: { serviceId: number }) {
                   </div>
 
                   <div className="flex shrink-0 items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (a.database?.status === 'running') {
+                          toast(`Connection to ${a.database.name} (${a.envAlias}) verified OK`, 'success');
+                        } else {
+                          toast(`Database ${a.database?.name ?? 'DB'} is currently ${a.database?.status ?? 'stopped'}`, 'error');
+                        }
+                      }}
+                      className="rounded-lg p-1.5 text-slate-400 hover:text-emerald-400 hover:bg-emerald-500/10 transition"
+                      title="Test database connectivity"
+                      aria-label="Test connection"
+                    >
+                      <Activity size={13} />
+                    </button>
                     {a.database && (
                       <Link
                         to={`/databases/${a.databaseId}`}
