@@ -28,7 +28,11 @@ export async function loginAction(): Promise<void> {
     if (err instanceof NineDeployError) {
       console.error(`✗ Login failed (${err.status}): ${err.message}`);
     } else {
-      console.error('✗ Login failed:', err instanceof Error ? err.message : err);
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('✗ Login failed:', msg);
+      if (msg.includes('fetch failed') || msg.includes('ECONNREFUSED') || msg.includes('ENOTFOUND')) {
+        console.error(`  Could not reach NineDeploy server at ${baseUrl}. Check your URL or ensure the server is running.`);
+      }
     }
     process.exitCode = 1;
   }

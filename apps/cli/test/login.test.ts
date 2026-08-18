@@ -115,4 +115,15 @@ describe('loginAction', () => {
     expect(errorSpy).toHaveBeenCalledWith('✗ Login failed:', 'boom');
     expect(process.exitCode).toBe(1);
   });
+
+  it('prints connection guidance when server is unreachable', async () => {
+    const login = vi.fn().mockRejectedValue(new Error('connect ECONNREFUSED 127.0.0.1:3000'));
+    h.createClient.mockReturnValue({ auth: { login } });
+
+    await loginAction();
+
+    expect(errorSpy).toHaveBeenCalledWith('✗ Login failed:', 'connect ECONNREFUSED 127.0.0.1:3000');
+    expect(errorSpy).toHaveBeenCalledWith('  Could not reach NineDeploy server at http://srv:3000. Check your URL or ensure the server is running.');
+    expect(process.exitCode).toBe(1);
+  });
 });

@@ -31,7 +31,11 @@ export async function setupAction(): Promise<void> {
       console.error(`✗ Setup failed (${err.status}): ${err.message}`);
       if (err.status === 409) console.error('  The instance already has an admin user.');
     } else {
-      console.error('✗ Setup failed:', err instanceof Error ? err.message : err);
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('✗ Setup failed:', msg);
+      if (msg.includes('fetch failed') || msg.includes('ECONNREFUSED') || msg.includes('ENOTFOUND')) {
+        console.error(`  Could not connect to NineDeploy server at ${baseUrl}. Ensure the server is running.`);
+      }
     }
     process.exitCode = 1;
   }

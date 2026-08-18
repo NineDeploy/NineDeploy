@@ -109,3 +109,27 @@ Migrations apply automatically upon server boot.
 | `NINEDEPLOY_JWT_SECRET` | *(required)* | 32-byte hex key for signing user auth tokens |
 | `NINEDEPLOY_MASTER_KEYS` | *(optional)* | Key ring for AES-256-GCM secret rotation (e.g. `0:hex,1:hex`) |
 | `NINEDEPLOY_PUBLIC_URL` | `http://localhost:3000` | Public root URL for webhooks and OAuth redirects |
+
+---
+
+## 💻 6. Managing with the Terminal CLI (`ninedeploy`)
+
+Once your server is running, install the CLI on your development machine to manage deployments directly from your terminal:
+
+```bash
+# 1. Install CLI globally
+npm install -g ninedeploy
+
+# 2. Complete initial administrator setup (for a new server)
+ninedeploy setup
+
+# Or authenticate with an existing instance:
+ninedeploy config --server https://panel.yourdomain.com
+ninedeploy login
+
+# 3. Check status and manage services
+ninedeploy whoami
+ninedeploy services list
+ninedeploy system dashboard
+```
+

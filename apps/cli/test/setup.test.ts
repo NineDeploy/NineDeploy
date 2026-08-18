@@ -151,4 +151,16 @@ describe('setupAction', () => {
     expect(errorSpy).toHaveBeenCalledWith('✗ Setup failed:', 'boom');
     expect(process.exitCode).toBe(1);
   });
+
+  it('prints connection guidance when fetch fails', async () => {
+    h.prompt.mockReset().mockResolvedValueOnce('http://srv:3000').mockResolvedValueOnce('admin@x.io').mockResolvedValueOnce('Ada');
+    const setup = vi.fn().mockRejectedValue(new Error('fetch failed'));
+    h.createClient.mockReturnValue({ auth: { setup } });
+
+    await setupAction();
+
+    expect(errorSpy).toHaveBeenCalledWith('✗ Setup failed:', 'fetch failed');
+    expect(errorSpy).toHaveBeenCalledWith('  Could not connect to NineDeploy server at http://srv:3000. Ensure the server is running.');
+    expect(process.exitCode).toBe(1);
+  });
 });
