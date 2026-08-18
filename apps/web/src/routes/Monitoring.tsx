@@ -39,6 +39,7 @@ import { formatBytes, toInt } from '../lib/format.js';
 
 export function Monitoring() {
   const { user: me } = useAuth();
+  const [selectedServerId, setSelectedServerId] = useState<string>('local');
   const [filterType, setFilterType] = useState<'all' | 'service' | 'database' | 'high-usage'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState<'grid' | 'table'>('grid');
@@ -49,8 +50,14 @@ export function Monitoring() {
     refetchInterval: 4000,
   });
 
+  const servers = useQuery({
+    queryKey: ['servers'],
+    queryFn: () => api.servers.list(),
+  });
+
   const host = stats.data?.host;
   const containers = stats.data?.containers ?? [];
+  const serverList = servers.data ?? [];
 
   const memPct = host && host.memTotalBytes > 0 ? Math.round((host.memUsedBytes / host.memTotalBytes) * 100) : 0;
   const diskPct = host && host.diskTotalBytes > 0 ? Math.round((host.diskUsedBytes / host.diskTotalBytes) * 100) : 0;
@@ -79,34 +86,135 @@ export function Monitoring() {
   // Aggregate telemetry
   const totalCpuUsage = containers.reduce((acc, c) => acc + c.cpuPct, 0);
   const totalMemUsageMb = containers.reduce((acc, c) => acc + c.memMb, 0);
+  const onlineServersCount = serverList.filter((s) => s.status === 'online').length + 1; // +1 for local
 
   return (
     <div className="space-y-8 nd-fade">
-      <PageHeader
-        icon={<Activity size={20} />}
-        title="Live Monitoring & Telemetry"
-        subtitle="Real-time host and container performance metrics, allocation breakdown, and threshold alerts."
-      />
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <PageHeader
+          icon={<Activity size={20} />}
+          title="Live Monitoring & Telemetry"
+          subtitle="Real-time host, cluster nodes, container metrics, allocation breakdown, and alerts."
+        />
+        {serverList.length > 0 && (
+          <div className="flex items-center gap-2 rounded-xl bg-white/[0.03] p-1.5 ring-1 ring-inset ring-white/10">
+            <Server size={14} className="text-indigo-400 ml-1.5" />
+            <span className="text-xs font-semibold text-slate-300">Cluster:</span>
+            <span className="text-xs text-emerald-400 font-mono font-medium">{onlineServersCount}/{serverList.length + 1} Nodes Online</span>
+          </div>
+        )}
+      </div>
 
-      {/* Host Overview Metric Cards */}
+      {/* Cluster Nodes Bar (When multiple servers exist) */}
+      {serverList.length > 0 && (
+        <Card className="p-4 bg-white/[0.02] border-white/[0.08]">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+            <div className="flex items-center gap-2">
+              <Server size={16} className="text-indigo-400" />
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">Cluster Nodes & Remote Agents</h3>
+            </div>
+            <Link to="/servers" className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1 font-medium">
+              Manage Servers <ArrowUpRight size={12} />
+            </Link>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {/* Primary Local Host Node */}
+            <button
+              type="button"
+              onClick={() => setSelectedServerId('local')}
+              className={cn(
+                'flex flex-col justify-between rounded-xl p-3.5 text-left transition ring-1 ring-inset',
+                selectedServerId === 'local'
+                  ? 'bg-indigo-500/10 ring-indigo-500/30 border-indigo-500/30 shadow-sm'
+                  : 'bg-white/[0.02] ring-white/10 hover:bg-white/[0.04]',
+              )}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="grid h-7 w-7 place-items-center rounded-lg bg-indigo-500/20 text-indigo-300">
+                    <Server size={14} />
+                  </span>
+                  <div>
+                    <div className="text-xs font-bold text-slate-200">Local Host (Primary)</div>
+                    <div className="text-[10px] font-mono text-slate-500">127.0.0.1 · Master Daemon</div>
+                  </div>
+                </div>
+                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-400 ring-1 ring-inset ring-emerald-500/20">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  active
+                </span>
+              </div>
+              <div className="mt-3 flex items-center justify-between border-t border-white/[0.06] pt-2 text-[11px] text-slate-400 font-mono">
+                <span>{host ? `${host.cpuCores} cores` : '—'}</span>
+                <span>{containers.length} workloads</span>
+              </div>
+            </button>
+
+            {/* Remote Cluster Nodes */}
+            {serverList.map((s) => {
+              const isOnline = s.status === 'online';
+              const isSelected = selectedServerId === String(s.id);
+              return (
+                <button
+                  key={s.id}
+                  type="button"
+                  onClick={() => setSelectedServerId(String(s.id))}
+                  className={cn(
+                    'flex flex-col justify-between rounded-xl p-3.5 text-left transition ring-1 ring-inset',
+                    isSelected
+                      ? 'bg-indigo-500/10 ring-indigo-500/30 border-indigo-500/30 shadow-sm'
+                      : 'bg-white/[0.02] ring-white/10 hover:bg-white/[0.04]',
+                  )}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className={cn('grid h-7 w-7 place-items-center rounded-lg', isOnline ? 'bg-emerald-500/10 text-emerald-400' : 'bg-slate-500/10 text-slate-400')}>
+                        <Server size={14} />
+                      </span>
+                      <div className="min-w-0">
+                        <div className="truncate text-xs font-bold text-slate-200">{s.name}</div>
+                        <div className="truncate text-[10px] font-mono text-slate-500">{s.host}:{s.port}</div>
+                      </div>
+                    </div>
+                    <span className={cn(
+                      'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset',
+                      isOnline ? 'bg-emerald-500/15 text-emerald-400 ring-emerald-500/20' : 'bg-rose-500/15 text-rose-400 ring-rose-500/20',
+                    )}>
+                      <span className={cn('h-1.5 w-1.5 rounded-full', isOnline ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400')} />
+                      {s.status}
+                    </span>
+                  </div>
+                  <div className="mt-3 flex items-center justify-between border-t border-white/[0.06] pt-2 text-[11px] text-slate-400 font-mono">
+                    <span>Remote Agent</span>
+                    <span>{s.lastSeenAt ? 'paired' : 'standby'}</span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </Card>
+      )}
+
+      {/* Host / Selected Node Overview Metric Cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
           icon={<Cpu size={18} className="text-indigo-400" />}
-          label="Host CPU"
+          label={selectedServerId === 'local' ? 'Host CPU' : 'Node CPU (Telemetry)'}
           value={host ? `${host.cpuCores} cores` : '—'}
           sub={host ? `load avg: ${host.load1.toFixed(2)} · total load: ${totalCpuUsage.toFixed(1)}%` : ''}
           tone="indigo"
         />
         <BarCard
           icon={<MemoryStick size={18} className="text-violet-400" />}
-          label="Host Memory"
+          label={selectedServerId === 'local' ? 'Host Memory' : 'Node Memory'}
           pct={memPct}
           text={host ? `${formatBytes(host.memUsedBytes)} / ${formatBytes(host.memTotalBytes)}` : '—'}
           sub={`${totalMemUsageMb.toFixed(0)} MB container allocation`}
         />
         <BarCard
           icon={<HardDrive size={18} className="text-amber-400" />}
-          label="Disk Storage"
+          label={selectedServerId === 'local' ? 'Disk Storage' : 'Node Storage'}
           pct={diskPct}
           text={host ? `${formatBytes(host.diskUsedBytes)} / ${formatBytes(host.diskTotalBytes)}` : '—'}
           sub={host ? `${formatBytes(host.diskTotalBytes - host.diskUsedBytes)} free` : ''}

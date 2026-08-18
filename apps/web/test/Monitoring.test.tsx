@@ -9,6 +9,7 @@ const apiMock = vi.hoisted(() => ({
     stats: { snapshot: vi.fn(), metrics: vi.fn() },
     alerts: { list: vi.fn(), create: vi.fn(), remove: vi.fn() },
     services: { list: vi.fn() },
+    servers: { list: vi.fn(), create: vi.fn(), remove: vi.fn(), test: vi.fn(), sshTest: vi.fn(), bootstrapLogs: vi.fn() },
     limits: { setService: vi.fn(), setDatabase: vi.fn() },
   },
 }));
@@ -46,6 +47,7 @@ describe('Monitoring', () => {
     apiMock.api.stats.metrics.mockResolvedValue({ points: [] } as never);
     apiMock.api.alerts.list.mockResolvedValue([] as never);
     apiMock.api.services.list.mockResolvedValue([] as never);
+    apiMock.api.servers.list.mockResolvedValue([] as never);
   });
 
   it('renders host overview with percentages', async () => {
@@ -407,5 +409,25 @@ describe('Monitoring', () => {
     const gridBtn = screen.getByTitle('Card Grid View');
     fireEvent.click(gridBtn);
     expect((await screen.findAllByText('api')).length).toBeGreaterThan(0);
+  });
+
+  it('renders cluster nodes selector when remote servers exist', async () => {
+    apiMock.api.stats.snapshot.mockResolvedValue(snapshot as never);
+    apiMock.api.servers.list.mockResolvedValue([
+      { id: 10, name: 'vps-eu-1', host: '195.201.45.10', port: 4600, status: 'online', lastSeenAt: new Date().toISOString() },
+      { id: 11, name: 'edge-us-2', host: '154.23.11.2', port: 4600, status: 'error', lastSeenAt: null },
+    ] as never);
+
+    renderWithProviders(<Monitoring />);
+    expect(await screen.findByText('Cluster Nodes & Remote Agents')).toBeInTheDocument();
+    expect(screen.getByText('2/3 Nodes Online')).toBeInTheDocument();
+    expect(screen.getByText('Local Host (Primary)')).toBeInTheDocument();
+    expect(screen.getByText('vps-eu-1')).toBeInTheDocument();
+    expect(screen.getByText('edge-us-2')).toBeInTheDocument();
+
+    // Select remote server
+    fireEvent.click(screen.getByText('vps-eu-1'));
+    expect(screen.getByText('Node CPU (Telemetry)')).toBeInTheDocument();
+    expect(screen.getByText('Node Memory')).toBeInTheDocument();
   });
 });

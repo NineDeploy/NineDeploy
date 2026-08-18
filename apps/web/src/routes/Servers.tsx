@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import {
+  Activity,
   CheckCircle2,
   Copy,
   FileText,
@@ -16,6 +17,7 @@ import {
   Trash2,
   XCircle,
 } from 'lucide-react';
+import { Link } from 'react-router';
 import type { ServerBootstrapResult, ServerSshTestResult } from '@ninedeploy/sdk';
 import { api } from '../lib/api.js';
 import { useToast } from '../components/Toast.js';
@@ -627,6 +629,14 @@ export function Servers() {
                   </td>
                   <td className="px-5 py-3 text-right">
                     <div className="flex items-center justify-end gap-3">
+                      <Link
+                        to="/monitoring"
+                        className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1 font-medium"
+                        title="View live metrics"
+                      >
+                        <Activity size={13} />
+                        metrics
+                      </Link>
                       <button
                         type="button"
                         onClick={() => setActiveLogServer({ id: s.id, name: s.name })}
