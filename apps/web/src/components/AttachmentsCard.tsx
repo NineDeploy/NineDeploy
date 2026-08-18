@@ -61,14 +61,14 @@ export function AttachmentsCard({ serviceId }: { serviceId: number }) {
   return (
     <Card>
       <CardBody className="space-y-4">
-        <div className="flex items-center justify-between border-b border-slate-100 dark:border-white/[0.06] pb-3">
+        <div className="flex items-center justify-between border-b border-white/[0.06] pb-3">
           <div className="flex items-center gap-2">
             <div className="grid h-7 w-7 place-items-center rounded-lg bg-emerald-500/10 text-emerald-400 ring-1 ring-inset ring-emerald-500/20">
               <Database size={15} />
             </div>
             <div>
-              <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-200">Attached Databases</h3>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400">
+              <h3 className="text-sm font-semibold text-slate-100">Attached Databases</h3>
+              <p className="text-[11px] text-slate-400">
                 Directly inject connection strings into this application container.
               </p>
             </div>
@@ -82,7 +82,7 @@ export function AttachmentsCard({ serviceId }: { serviceId: number }) {
         </div>
 
         {/* Attachment form */}
-        <div className="rounded-xl border border-slate-200 dark:border-white/[0.08] bg-slate-50/50 dark:bg-white/[0.02] p-3 space-y-2.5">
+        <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-3 space-y-2.5">
           <div className="space-y-2">
             <Select
               value={dbId}
@@ -120,7 +120,7 @@ export function AttachmentsCard({ serviceId }: { serviceId: number }) {
             </div>
           </div>
           {available.length === 0 && (
-            <p className="text-[11px] text-amber-500/90 dark:text-amber-300/90 flex items-center gap-1.5 pt-0.5">
+            <p className="text-[11px] text-amber-300/90 flex items-center gap-1.5 pt-0.5">
               <span>⚠️</span> No active databases running. Launch a database in the Databases tab first.
             </p>
           )}
@@ -134,10 +134,10 @@ export function AttachmentsCard({ serviceId }: { serviceId: number }) {
               <Skeleton className="h-12 w-full" />
             </div>
           ) : !attachments.data || attachments.data.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-slate-200 dark:border-white/10 p-4 text-center">
-              <Database size={20} className="mx-auto text-slate-400 dark:text-slate-600 mb-1" />
-              <p className="text-xs font-medium text-slate-600 dark:text-slate-400">No databases attached.</p>
-              <p className="text-[11px] text-slate-400 dark:text-slate-500">
+            <div className="rounded-xl border border-dashed border-white/10 p-4 text-center">
+              <Database size={20} className="mx-auto text-slate-600 mb-1" />
+              <p className="text-xs font-medium text-slate-400">No databases attached.</p>
+              <p className="text-[11px] text-slate-500">
                 Attach a managed database above to auto-wire connection environment variables.
               </p>
             </div>
@@ -148,19 +148,19 @@ export function AttachmentsCard({ serviceId }: { serviceId: number }) {
               return (
                 <div
                   key={a.id}
-                  className="group flex items-center justify-between gap-2 rounded-xl border border-slate-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.02] p-3 shadow-sm dark:shadow-none transition hover:border-indigo-500/30"
+                  className="group flex items-center justify-between gap-2 rounded-xl border border-white/[0.06] bg-white/[0.02] p-3 shadow-sm dark:shadow-none transition hover:border-indigo-500/30"
                 >
                   <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
                     <Database size={15} className="shrink-0 text-indigo-400" />
                     {a.database ? (
                       <Link
                         to={`/databases/${a.databaseId}`}
-                        className="truncate text-xs font-semibold text-slate-800 dark:text-slate-200 hover:text-indigo-400 transition"
+                        className="truncate text-xs font-semibold text-slate-100 hover:text-indigo-400 transition"
                       >
                         {a.database.name}
                       </Link>
                     ) : (
-                      <span className="truncate text-xs font-semibold text-slate-800 dark:text-slate-200">database</span>
+                      <span className="truncate text-xs font-semibold text-slate-100">database</span>
                     )}
                     {a.database && <StatusBadge status={a.database.status} />}
                     {engine && (
@@ -169,7 +169,7 @@ export function AttachmentsCard({ serviceId }: { serviceId: number }) {
                       </span>
                     )}
                     <span className="font-mono text-[10px] text-slate-400">→</span>
-                    <code className="rounded bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 font-mono text-[10px] text-emerald-600 dark:text-emerald-300 font-bold break-all">
+                    <code className="rounded bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 font-mono text-[10px] text-emerald-300 font-bold break-all">
                       {a.envAlias}
                     </code>
                   </div>
@@ -178,7 +178,7 @@ export function AttachmentsCard({ serviceId }: { serviceId: number }) {
                     {a.database && (
                       <Link
                         to={`/databases/${a.databaseId}`}
-                        className="rounded-lg p-1.5 text-slate-400 hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-white/5 transition"
+                        className="rounded-lg p-1.5 text-slate-400 hover:text-indigo-400 hover:bg-white/5 transition"
                         title="Open database details"
                       >
                         <ExternalLink size={13} />
