@@ -14,6 +14,7 @@ import { Logo } from './Logo.js';
 import { cn } from './ui.js';
 import { CommandPalette } from './CommandPalette.js';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher.js';
+import { ModeToggle } from './ModeToggle.js';
 
 interface NavItem { to: string; label: string; icon: LucideIcon }
 
@@ -258,7 +259,8 @@ export function Layout() {
               </>
             )}
           </div>
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-2">
+            <ModeToggle />
             <button type="button"
               onClick={toggleTheme}
               className="rounded-lg p-2 text-slate-500 transition hover:bg-white/[0.06] hover:text-slate-300"

@@ -5,6 +5,7 @@ import { Layout } from './components/Layout.js';
 import { Button, Card, EmptyState, FullScreenSpinner } from './components/ui.js';
 import { useAuth } from './lib/auth.js';
 import { WorkspaceProvider } from './lib/workspace.js';
+import { ModeProvider } from './lib/mode.js';
 import { Login } from './routes/Login.js';
 import { ForgotPassword } from './routes/ForgotPassword.js';
 import { ResetPassword } from './routes/ResetPassword.js';
@@ -65,7 +66,9 @@ export default function App() {
         element={
           <RequireAuth>
             <WorkspaceProvider>
-              <Layout />
+              <ModeProvider>
+                <Layout />
+              </ModeProvider>
             </WorkspaceProvider>
           </RequireAuth>
         }

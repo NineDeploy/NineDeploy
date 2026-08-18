@@ -1,8 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { type FormEvent, useState } from 'react';
-import { ArrowLeft, ArrowRight, Check, Database, HardDrive, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, Database, HardDrive, Sparkles, Terminal, X, Zap } from 'lucide-react';
 import { api } from '../lib/api.js';
 import { formatBytes } from '../lib/format.js';
+import { useExperienceMode } from '../lib/mode.js';
 import { Button, Input, cn } from './ui.js';
 
 const ENGINES = [
@@ -21,6 +22,7 @@ const STEPS = ['Engine', 'Details', 'Review'];
 
 export function DatabaseWizard({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient();
+  const { isAdvanced } = useExperienceMode();
   const [step, setStep] = useState(0);
   const [engine, setEngine] = useState<typeof ENGINES[number]['id'] | null>(null);
   const [name, setName] = useState('');
@@ -40,7 +42,7 @@ export function DatabaseWizard({ onClose }: { onClose: () => void }) {
   const create = useMutation({
     mutationFn: () =>
       api.databases.create({
-        name,
+        name: name.trim() || `${engine || 'app'}-db`,
         engine: engine!,
         version: version || undefined,
         existingVolume: selectedVolume || undefined,
@@ -71,7 +73,13 @@ export function DatabaseWizard({ onClose }: { onClose: () => void }) {
         {/* Header + stepper */}
         <div className="border-b border-white/5 p-5">
           <div className="mb-3 flex items-center justify-between">
-            <h2 className="flex items-center gap-2 text-lg font-semibold"><Database size={18} className="text-emerald-400" /> New database</h2>
+            <h2 className="flex items-center gap-2 text-lg font-semibold">
+              <Database size={18} className="text-emerald-400" />
+              <span>New database</span>
+              <span className={cn('ml-1 rounded-full px-2 py-0.5 text-[10px] font-semibold border inline-flex items-center gap-1', isAdvanced ? 'bg-amber-500/10 border-amber-500/30 text-amber-300' : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300')}>
+                {isAdvanced ? <><Terminal size={10} /> DevOps Pro</> : <><Sparkles size={10} /> Quick Mode</>}
+              </span>
+            </h2>
             <button type="button" onClick={onClose} className="rounded-lg p-1.5 text-slate-500 hover:bg-white/5 hover:text-slate-300"><X size={16} /></button>
           </div>
           <div className="flex items-center gap-2">
@@ -89,24 +97,49 @@ export function DatabaseWizard({ onClose }: { onClose: () => void }) {
 
         <form onSubmit={onSubmit} className="p-5">
           {step === 0 && (
-            <div className="grid grid-cols-2 gap-3">
-              {ENGINES.map((e) => (
-                <button
-                  key={e.id}
-                  type="button"
-                  onClick={() => setEngine(e.id)}
-                  className={cn(
-                    'flex items-center gap-3 rounded-xl border p-3 text-left transition',
-                    engine === e.id ? 'border-emerald-500/60 bg-emerald-500/[0.06]' : 'border-white/10 bg-white/[0.02] hover:border-white/20',
-                  )}
-                >
-                  <span className="text-2xl">{e.emoji}</span>
-                  <span>
-                    <span className="block text-sm font-medium text-slate-100">{e.label}</span>
-                    <span className="block text-[10px] text-slate-500">{e.hint}</span>
-                  </span>
-                </button>
-              ))}
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                {ENGINES.map((e) => (
+                  <button
+                    key={e.id}
+                    type="button"
+                    onClick={() => setEngine(e.id)}
+                    className={cn(
+                      'flex items-center gap-3 rounded-xl border p-3 text-left transition',
+                      engine === e.id ? 'border-emerald-500/60 bg-emerald-500/[0.06]' : 'border-white/10 bg-white/[0.02] hover:border-white/20',
+                    )}
+                  >
+                    <span className="text-2xl">{e.emoji}</span>
+                    <span>
+                      <span className="block text-sm font-medium text-slate-100">{e.label}</span>
+                      <span className="block text-[10px] text-slate-500">{e.hint}</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+
+              {!isAdvanced && engine && (
+                <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3 flex items-center justify-between">
+                  <div>
+                    <div className="text-xs font-semibold text-emerald-300 flex items-center gap-1">
+                      <Zap size={13} className="text-emerald-400" />
+                      1-Click Ready: <b>{name || `${engine}-db`}</b>
+                    </div>
+                    <div className="text-[10px] text-slate-400">
+                      Standard persistent storage & credentials configured automatically.
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={create.isPending}
+                    onClick={() => create.mutate()}
+                    className="bg-emerald-600 hover:bg-emerald-500 text-white"
+                  >
+                    {create.isPending ? 'Creating…' : 'Create Now'}
+                  </Button>
+                </div>
+              )}
             </div>
           )}
 

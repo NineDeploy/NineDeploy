@@ -1,11 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { type FormEvent, useEffect, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight, Check, Plus, Rocket, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, Plus, Rocket, Sparkles, Terminal, X, Zap } from 'lucide-react';
 import { useNavigate } from 'react-router';
 import type { Template } from '@ninedeploy/sdk';
 import { api } from '../lib/api.js';
 import { toInt } from '../lib/format.js';
 import { useProjectScope } from '../lib/projects.js';
+import { useExperienceMode } from '../lib/mode.js';
 import { useToast } from './Toast.js';
 import { Button, Input, Select, cn } from './ui.js';
 
@@ -24,6 +25,7 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
   const navigate = useNavigate();
   const qc = useQueryClient();
   const { toast } = useToast();
+  const { isAdvanced } = useExperienceMode();
   const { selectedId: projectId } = useProjectScope();
   const sources = useQuery({ queryKey: ['sources'], queryFn: () => api.sources.list() });
 
@@ -161,7 +163,11 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
         <div className="border-b border-white/5 p-5">
           <div className="mb-3 flex items-center justify-between">
             <h2 className="flex items-center gap-2 text-lg font-semibold">
-              <Rocket size={18} className="text-indigo-400" /> {template ? `Deploy ${template.name}` : 'New service'}
+              <Rocket size={18} className="text-indigo-400" />
+              <span>{template ? `Deploy ${template.name}` : 'New service'}</span>
+              <span className={cn('ml-1 rounded-full px-2 py-0.5 text-[10px] font-semibold border inline-flex items-center gap-1', isAdvanced ? 'bg-amber-500/10 border-amber-500/30 text-amber-300' : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300')}>
+                {isAdvanced ? <><Terminal size={10} /> DevOps Pro</> : <><Sparkles size={10} /> Quick Mode</>}
+              </span>
             </h2>
             <button type="button" onClick={() => !busyRef.current && onClose()} className="rounded-lg p-1.5 text-slate-500 hover:bg-white/5 hover:text-slate-300"><X size={16} /></button>
           </div>
@@ -212,6 +218,29 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
                 </>
               ) : (
                 <L label="Image"><Input value={image} onChange={(e) => setImage(e.target.value)} placeholder="n8nio/n8n" className="font-mono text-xs" /></L>
+              )}
+
+              {!isAdvanced && (
+                <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3.5 flex items-center justify-between">
+                  <div>
+                    <div className="text-xs font-semibold text-emerald-300 flex items-center gap-1.5">
+                      <Zap size={14} className="text-emerald-400" />
+                      Simple 1-Click Ready
+                    </div>
+                    <div className="text-[11px] text-slate-400">
+                      Standard ports and health probes will be auto-configured.
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={!canNext || deploy.isPending}
+                    onClick={() => deploy.mutate()}
+                    className="bg-emerald-600 hover:bg-emerald-500 text-white"
+                  >
+                    {deploy.isPending ? 'Deploying…' : 'Quick Deploy'}
+                  </Button>
+                </div>
               )}
             </div>
           )}
