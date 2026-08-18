@@ -551,9 +551,10 @@ describe('service', () => {
   });
 
   describe('setLimits', () => {
-    it('accepts optional fields', () => {
+    it('accepts optional and nullable fields', () => {
       expect(setLimits.safeParse({}).success).toBe(true);
       expect(setLimits.safeParse({ cpuShares: 1024, memLimitMb: 512 }).success).toBe(true);
+      expect(setLimits.safeParse({ cpuShares: null, memLimitMb: null }).success).toBe(true);
       bad(setLimits, { cpuShares: 262145 });
       bad(setLimits, { memLimitMb: -1 });
     });

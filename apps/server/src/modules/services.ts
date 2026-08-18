@@ -201,7 +201,14 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
   app.patch('/:id/limits', async (req) => {
     const id = num((req.params as { id: string }).id);
     const input = setLimits.parse(req.body);
-    const [svc] = await app.db.update(services).set(input).where(eq(services.id, id)).returning();
+    const updateData: { cpuShares?: number; memLimitMb?: number } = {};
+    if (input.cpuShares !== undefined) {
+      updateData.cpuShares = input.cpuShares && input.cpuShares > 0 ? input.cpuShares : 0;
+    }
+    if (input.memLimitMb !== undefined) {
+      updateData.memLimitMb = input.memLimitMb && input.memLimitMb > 0 ? input.memLimitMb : 0;
+    }
+    const [svc] = await app.db.update(services).set(updateData).where(eq(services.id, id)).returning();
     if (!svc) throw notFound('Service not found');
     return { cpuShares: svc.cpuShares, memLimitMb: svc.memLimitMb };
   });

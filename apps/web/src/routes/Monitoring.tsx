@@ -705,13 +705,17 @@ function LimitsRow({ kind, id, memLimitMb }: { kind: 'service' | 'database'; id:
 
   const save = useMutation({
     mutationFn: () => {
-      const input = { cpuShares: toInt(cpu, 0)!, memLimitMb: toInt(mem, 0)! };
+      const input = {
+        cpuShares: cpu.trim() ? toInt(cpu, 0) : null,
+        memLimitMb: mem.trim() ? toInt(mem, 0) : null,
+      };
       return kind === 'service' ? api.limits.setService(id, input) : api.limits.setDatabase(id, input);
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['stats'] });
       qc.invalidateQueries({ queryKey: ['live-stats-snapshot'] });
       qc.invalidateQueries({ queryKey: ['services'] });
+      qc.invalidateQueries({ queryKey: ['databases'] });
       toast('Limits updated successfully', 'success');
     },
     onError: () => toast('Could not update the limits', 'error'),

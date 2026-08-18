@@ -442,7 +442,7 @@ describe('DatabaseDetail', () => {
 
     const saveLimitsBtn = screen.getByRole('button', { name: 'Save resource limits' });
     fireEvent.click(saveLimitsBtn);
-    await waitFor(() => expect(api.databases.setLimits).toHaveBeenCalledWith(1, { cpuShares: undefined, memLimitMb: undefined }));
+    await waitFor(() => expect(api.databases.setLimits).toHaveBeenCalledWith(1, { cpuShares: null, memLimitMb: null }));
   });
 
   it('renders the Topology tab with visual schema', async () => {

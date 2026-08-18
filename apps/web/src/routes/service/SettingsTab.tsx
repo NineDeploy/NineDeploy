@@ -271,11 +271,13 @@ function LimitsCard({ svc }: { svc: Service }) {
   const save = useMutation({
     mutationFn: () =>
       api.limits.setService(svc.id, {
-        cpuShares: toInt(cpu, 0)!,
-        memLimitMb: toInt(mem, 0)!,
+        cpuShares: cpu.trim() ? toInt(cpu, 0) : null,
+        memLimitMb: mem.trim() ? toInt(mem, 0) : null,
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['service', svc.id] });
+      qc.invalidateQueries({ queryKey: ['services'] });
+      qc.invalidateQueries({ queryKey: ['live-stats-snapshot'] });
       toast('Limits saved — applied on next deploy', 'success');
     },
     onError: () => toast('Could not save limits', 'error'),

@@ -330,8 +330,8 @@ export type EnvVar = z.infer<typeof envVar>;
 
 // ── Resource limits ───────────────────────────────────────────────────────
 export const setLimits = z.object({
-  cpuShares: z.number().int().min(0).max(262144).optional(),
-  memLimitMb: z.number().int().min(0).optional(),
+  cpuShares: z.number().int().min(0).max(262144).nullable().optional(),
+  memLimitMb: z.number().int().min(0).nullable().optional(),
 });
 export type SetLimitsInput = z.infer<typeof setLimits>;
 

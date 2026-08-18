@@ -217,7 +217,14 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
     const d = await app.db.query.databases.findFirst({ where: eq(databases.id, num((req.params as { id: string }).id)) });
     if (!d) throw notFound('Database not found');
     const input = setLimits.parse(req.body);
-    const [updated] = await app.db.update(databases).set(input).where(eq(databases.id, d.id)).returning();
+    const updateData: { cpuShares?: number; memLimitMb?: number } = {};
+    if (input.cpuShares !== undefined) {
+      updateData.cpuShares = input.cpuShares && input.cpuShares > 0 ? input.cpuShares : 0;
+    }
+    if (input.memLimitMb !== undefined) {
+      updateData.memLimitMb = input.memLimitMb && input.memLimitMb > 0 ? input.memLimitMb : 0;
+    }
+    const [updated] = await app.db.update(databases).set(updateData).where(eq(databases.id, d.id)).returning();
     if (updated && updated.status === 'running') {
       await stopDatabase(updated, () => undefined);
       await startDatabase(updated, (line) => app.log.info({ component: 'database' }, line));

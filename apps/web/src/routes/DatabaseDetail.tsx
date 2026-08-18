@@ -829,11 +829,13 @@ function SettingsPanel({ db, onDeleted }: { db: IDatabaseDetail; onDeleted: () =
   const limitsMutation = useMutation({
     mutationFn: () =>
       api.databases.setLimits(db.id, {
-        cpuShares: cpuShares.trim() ? Number(cpuShares) : undefined,
-        memLimitMb: memLimitMb.trim() ? Number(memLimitMb) : undefined,
+        cpuShares: cpuShares.trim() ? Number(cpuShares) : null,
+        memLimitMb: memLimitMb.trim() ? Number(memLimitMb) : null,
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['database-detail', db.id] });
+      qc.invalidateQueries({ queryKey: ['databases'] });
+      qc.invalidateQueries({ queryKey: ['live-stats-snapshot'] });
       toast('Resource limits updated and applied', 'success');
     },
     onError: () => toast('Could not update limits', 'error'),
