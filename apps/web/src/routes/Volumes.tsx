@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import { ArrowUpRight, Database, ExternalLink, FolderOpen, HardDrive, Layers, Lock, Package, Server, Trash2 } from 'lucide-react';
+import { ArrowUpRight, Database, ExternalLink, FolderOpen, HardDrive, Layers, Lock, Package, Server, ShieldAlert, ShieldCheck, Trash2 } from 'lucide-react';
 import { Link } from 'react-router';
 import { api } from '../lib/api.js';
 import { useToast } from '../components/Toast.js';
@@ -15,6 +15,7 @@ export function Volumes() {
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const [confirmPrune, setConfirmPrune] = useState(false);
   const [browsing, setBrowsing] = useState<string | null>(null);
+  const [protectedVols, setProtectedVols] = useState<Record<string, boolean>>({});
   const remove = useMutation({
     mutationFn: (name: string) => api.volumes.remove(name),
     onSuccess: () => {
@@ -128,9 +129,21 @@ export function Volumes() {
                         <ExternalLink size={10} />
                       </Link>
                     )}
+                    {protectedVols[v.name] !== false && (
+                      <span className="inline-flex items-center gap-1 rounded bg-emerald-500/10 px-1.5 py-0.5 font-mono text-[10px] text-emerald-300 ring-1 ring-inset ring-emerald-500/20" title="Deletion protection is active for this volume">
+                        <ShieldCheck size={10} className="text-emerald-400" /> Protected
+                      </span>
+                    )}
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1.5">
+                    <button type="button"
+                      onClick={() => setProtectedVols((p) => ({ ...p, [v.name]: p[v.name] === false }))}
+                      className={cn('rounded-lg p-1.5 transition', protectedVols[v.name] !== false ? 'text-emerald-400 hover:bg-emerald-500/10' : 'text-slate-500 hover:bg-white/5 hover:text-slate-300')}
+                      title={protectedVols[v.name] !== false ? 'Deletion protection is ON (click to unlock)' : 'Deletion protection is OFF (click to protect)'}
+                    >
+                      {protectedVols[v.name] !== false ? <ShieldCheck size={14} /> : <ShieldAlert size={14} />}
+                    </button>
                     <button type="button"
                       onClick={() => setBrowsing(v.name)}
                       className="rounded-lg p-1.5 text-slate-500 transition hover:bg-white/5 hover:text-[var(--nd-accent)]"
@@ -140,9 +153,15 @@ export function Volumes() {
                     </button>
                     {!v.inUse && (
                       <button type="button"
-                        onClick={() => setPendingDelete(v.name)}
-                        className="rounded-lg p-1.5 text-slate-500 transition hover:bg-rose-500/10 hover:text-rose-400"
-                        title="Delete volume (destructive)"
+                        onClick={() => {
+                          if (protectedVols[v.name] !== false) {
+                            toast('This volume is protected from deletion. Unlock protection first.', 'info');
+                            return;
+                          }
+                          setPendingDelete(v.name);
+                        }}
+                        className={cn('rounded-lg p-1.5 transition', protectedVols[v.name] !== false ? 'text-slate-600 cursor-not-allowed' : 'text-slate-500 hover:bg-rose-500/10 hover:text-rose-400')}
+                        title={protectedVols[v.name] !== false ? 'Protected from deletion (unlock first)' : 'Delete volume (destructive)'}
                       >
                         <Trash2 size={14} />
                       </button>

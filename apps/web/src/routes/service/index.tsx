@@ -1,13 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import {
-  ArrowLeft, Copy, Download, ExternalLink, GitBranch, Play, Rocket, RotateCcw, Square, Terminal,
+  Activity, ArrowLeft, Copy, Download, ExternalLink, FileCode2, FolderTree, GitBranch, Globe, HardDrive, KeyRound, LayoutDashboard, Network, Play, Rocket, RotateCcw, Settings, ShieldAlert, Square, Terminal,
 } from 'lucide-react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { api, authedFetch } from '../../lib/api.js';
 import { ContainerTerminal } from '../../components/ContainerTerminal.js';
 import { useToast } from '../../components/Toast.js';
-import { Button, Card, CardBody, Skeleton, StatusBadge, Tabs } from '../../components/ui.js';
+import { Button, Card, CardBody, Skeleton, StatusBadge, cn } from '../../components/ui.js';
 import { downloadBlob } from '../../lib/format.js';
 import { OverviewTab } from './OverviewTab.js';
 import { ArchitectureTab } from './ArchitectureTab.js';
@@ -15,13 +15,29 @@ import { ManifestTab } from './ManifestTab.js';
 import { DeploysTab, IN_FLIGHT } from './DeploysTab.js';
 import { EnvironmentTab } from './EnvironmentTab.js';
 import { NetworkTab } from './NetworkTab.js';
+import { VolumesTab } from './VolumesTab.js';
 import { SettingsTab } from './SettingsTab.js';
 import { ActivityTab } from './ActivityTab.js';
 import { DangerZone } from './DangerZone.js';
 
 import { ContainerFileBrowser } from '../../components/ContainerFileBrowser.js';
 
-type TabId = 'overview' | 'terminal' | 'architecture' | 'manifest' | 'deploys' | 'environment' | 'network' | 'files' | 'settings' | 'activity' | 'danger';
+type TabId = 'overview' | 'terminal' | 'architecture' | 'manifest' | 'deploys' | 'environment' | 'network' | 'volumes' | 'files' | 'settings' | 'activity' | 'danger';
+
+const SERVICE_TABS: Array<{ id: TabId; label: string; icon: typeof LayoutDashboard }> = [
+  { id: 'overview', label: 'Overview', icon: LayoutDashboard },
+  { id: 'terminal', label: 'Terminal & Exec', icon: Terminal },
+  { id: 'architecture', label: 'Architecture', icon: Network },
+  { id: 'manifest', label: 'Manifest & Traefik', icon: FileCode2 },
+  { id: 'deploys', label: 'Deploys', icon: Rocket },
+  { id: 'environment', label: 'Environment', icon: KeyRound },
+  { id: 'network', label: 'Network & Domains', icon: Globe },
+  { id: 'volumes', label: 'Volumes & Storage', icon: HardDrive },
+  { id: 'files', label: 'File Browser', icon: FolderTree },
+  { id: 'settings', label: 'Settings', icon: Settings },
+  { id: 'activity', label: 'Activity Logs', icon: Activity },
+  { id: 'danger', label: 'Danger Zone', icon: ShieldAlert },
+];
 
 export function ServiceDetail() {
   const params = useParams();
@@ -249,74 +265,95 @@ export function ServiceDetail() {
         </div>
       )}
 
-      <Tabs
-        className="mt-6"
-        active={tab}
-        onChange={(t) => setTab(t as TabId)}
-        tabs={[
-          { id: 'overview', label: 'Overview' },
-          { id: 'terminal', label: 'Terminal & Exec' },
-          { id: 'architecture', label: 'Architecture' },
-          { id: 'manifest', label: 'Manifest & Traefik' },
-          { id: 'deploys', label: 'Deploys' },
-          { id: 'environment', label: 'Environment' },
-          { id: 'network', label: 'Network' },
-          { id: 'files', label: 'Files' },
-          { id: 'settings', label: 'Settings' },
-          { id: 'activity', label: 'Activity' },
-          { id: 'danger', label: 'Danger' },
-        ]}
-      />
+      {/* Service Detail Layout: Left Vertical Sidebar + Right Content Pane */}
+      <div className="mt-6 flex flex-col lg:flex-row items-start gap-6">
+        {/* Left Vertical Navigation Menu */}
+        <aside className="w-full lg:w-60 shrink-0">
+          <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-2 space-y-1">
+            <div className="px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+              Service Navigation
+            </div>
+            {SERVICE_TABS.map((t) => {
+              const Icon = t.icon;
+              const isActive = tab === t.id;
+              const isDanger = t.id === 'danger';
 
-      {tab === 'overview' && <OverviewTab serviceId={id} svc={svc} />}
-      {tab === 'terminal' && (
-        <div className="mt-5 space-y-4">
-          {svc.runtimeId ? (
-            <ContainerTerminal serviceId={id} serviceName={svc.name} />
-          ) : (
-            <Card>
-              <CardBody className="py-8 text-center text-slate-400">
-                <Terminal size={32} className="mx-auto mb-2 text-slate-600" />
-                <p className="text-sm font-semibold text-slate-300">Container is not deployed</p>
-                <p className="text-xs text-slate-500 mt-1">Deploy this service first to launch an interactive container shell.</p>
-              </CardBody>
-            </Card>
+              return (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => setTab(t.id)}
+                  className={cn(
+                    'w-full flex items-center gap-3 rounded-xl px-3 py-2 text-xs font-medium transition-all text-left',
+                    isActive
+                      ? isDanger
+                        ? 'bg-rose-500/15 text-rose-300 ring-1 ring-inset ring-rose-500/30 font-semibold'
+                        : 'bg-indigo-500/15 text-indigo-200 ring-1 ring-inset ring-indigo-500/30 font-semibold shadow-sm'
+                      : isDanger
+                        ? 'text-rose-400/80 hover:bg-rose-500/10 hover:text-rose-300'
+                        : 'text-slate-400 hover:bg-white/[0.04] hover:text-slate-200',
+                  )}
+                >
+                  <Icon size={15} className={cn(isActive ? (isDanger ? 'text-rose-400' : 'text-indigo-400') : 'opacity-70')} />
+                  <span>{t.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </aside>
+
+        {/* Right Content Pane */}
+        <main className="flex-1 min-w-0 w-full">
+          {tab === 'overview' && <OverviewTab serviceId={id} svc={svc} />}
+          {tab === 'terminal' && (
+            <div className="space-y-4">
+              {svc.runtimeId ? (
+                <ContainerTerminal serviceId={id} serviceName={svc.name} />
+              ) : (
+                <Card>
+                  <CardBody className="py-8 text-center text-slate-400">
+                    <Terminal size={32} className="mx-auto mb-2 text-slate-600" />
+                    <p className="text-sm font-semibold text-slate-300">Container is not deployed</p>
+                    <p className="text-xs text-slate-500 mt-1">Deploy this service first to launch an interactive container shell.</p>
+                  </CardBody>
+                </Card>
+              )}
+            </div>
           )}
-        </div>
-      )}
-      {tab === 'architecture' && <ArchitectureTab service={svc} />}
-      {tab === 'manifest' && <ManifestTab service={svc} />}
-      {tab === 'deploys' && (
-        <DeploysTab
-          serviceId={id}
-          deploys={deploys.data ?? []}
-          loading={deploys.isLoading}
-          activeId={activeDeploy}
-          onSelect={setActiveDeploy}
-        />
-      )}
-      {tab === 'environment' && <EnvironmentTab serviceId={id} />}
-      {tab === 'network' && <NetworkTab serviceId={id} svc={svc} />}
-      {tab === 'files' && (
-        <div className="mt-5">
-          <ContainerFileBrowser container={svc.runtimeId || `nd-svc-${svc.slug}`} />
-        </div>
-      )}
-      {tab === 'settings' && <SettingsTab serviceId={id} svc={svc} />}
-      {tab === 'activity' && <ActivityTab serviceId={id} name={svc.name} />}
-
-      {/* Danger zone lives in its own tab so it never reads as part of
-          everyday settings. */}
-      {tab === 'danger' && (
-        <DangerZone
-          slug={svc.slug}
-          name={svc.name}
-          confirmDelete={confirmDelete}
-          setConfirmDelete={setConfirmDelete}
-          onDelete={() => removeService.mutate()}
-          deleting={removeService.isPending}
-        />
-      )}
+          {tab === 'architecture' && <ArchitectureTab service={svc} />}
+          {tab === 'manifest' && <ManifestTab service={svc} />}
+          {tab === 'deploys' && (
+            <DeploysTab
+              serviceId={id}
+              deploys={deploys.data ?? []}
+              loading={deploys.isLoading}
+              activeId={activeDeploy}
+              onSelect={setActiveDeploy}
+            />
+          )}
+          {tab === 'environment' && <EnvironmentTab serviceId={id} />}
+          {tab === 'network' && <NetworkTab serviceId={id} svc={svc} />}
+          {tab === 'volumes' && <VolumesTab serviceId={id} svc={svc} />}
+          {tab === 'files' && (
+            <div>
+              <ContainerFileBrowser container={svc.runtimeId || `nd-svc-${svc.slug}`} />
+            </div>
+          )}
+          {tab === 'settings' && <SettingsTab serviceId={id} svc={svc} />}
+          {tab === 'activity' && <ActivityTab serviceId={id} name={svc.name} />}
+          {tab === 'danger' && (
+            <DangerZone
+              slug={svc.slug}
+              name={svc.name}
+              confirmDelete={confirmDelete}
+              setConfirmDelete={setConfirmDelete}
+              onDelete={() => removeService.mutate()}
+              deleting={removeService.isPending}
+            />
+          )}
+        </main>
+      </div>
     </div>
   );
 }
+
