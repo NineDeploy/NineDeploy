@@ -127,56 +127,111 @@ html:not([data-theme='light']) .border-white\/10 { border-color: rgba(34, 50, 78
 
 /* ── Light theme overrides ─────────────────────────────────────────────── */
 html[data-theme='light'] body {
-  background-color: #f4f7fb; /* website --nd-bg (light) */
+  background-color: #f8fafc;
   background-image:
-    radial-gradient(60rem 60rem at 80% -20%, color-mix(in srgb, var(--nd-accent) 6%, transparent), transparent 60%),
-    radial-gradient(50rem 50rem at -10% 10%, color-mix(in srgb, var(--nd-accent-bright) 4%, transparent), transparent 55%);
-  color: rgb(30 41 59);
+    radial-gradient(60rem 60rem at 80% -20%, color-mix(in srgb, var(--nd-accent) 8%, transparent), transparent 60%),
+    radial-gradient(50rem 50rem at -10% 10%, color-mix(in srgb, var(--nd-accent-bright) 6%, transparent), transparent 55%);
+  color: #0f172a;
 }
-html[data-theme='light'] ::selection { background: color-mix(in srgb, var(--nd-accent) 20%, transparent); }
+html[data-theme='light'] ::selection { background: color-mix(in srgb, var(--nd-accent) 25%, transparent); }
 
-/* Map dark surface utilities → light equivalents */
-html[data-theme='light'] .bg-slate-950 { background-color: #f4f7fb; }
-html[data-theme='light'] .bg-slate-950\/40 { background-color: rgba(248,250,252,.4); }
-html[data-theme='light'] .bg-slate-950\/60 { background-color: rgba(248,250,252,.6); }
-html[data-theme='light'] .bg-slate-950\/70 { background-color: rgba(248,250,252,.7); }
-html[data-theme='light'] .bg-slate-950\/80 { background-color: rgba(248,250,252,.8); }
-html[data-theme='light'] .bg-slate-900\/90 { background-color: rgba(255,255,255,.9); }
-html[data-theme='light'] .bg-slate-900\/95 { background-color: rgba(255,255,255,.95); }
-html[data-theme='light'] .bg-\[\#0a0a10\] { background-color: #f1f5f9; }
+/* Typography contrast in light mode */
+html[data-theme='light'] body .text-white { color: #0f172a; }
+html[data-theme='light'] body .text-slate-100 { color: #0f172a; }
+html[data-theme='light'] body .text-slate-200 { color: #1e293b; }
+html[data-theme='light'] body .text-slate-300 { color: #334155; }
+html[data-theme='light'] body .text-slate-400 { color: #475569; }
+html[data-theme='light'] body .text-slate-500 { color: #64748b; }
+html[data-theme='light'] body .text-slate-600 { color: #64748b; }
 
-html[data-theme='light'] .text-slate-100 { color: #1e293b; }
-html[data-theme='light'] .text-slate-200 { color: #334155; }
-html[data-theme='light'] .text-slate-300 { color: #475569; }
+/* Surfaces, Cards, and Containers in light mode */
+html[data-theme='light'] body .bg-slate-950 { background-color: #ffffff; }
+html[data-theme='light'] body .bg-slate-950\/40 { background-color: rgba(255, 255, 255, 0.8); }
+html[data-theme='light'] body .bg-slate-950\/60 { background-color: rgba(255, 255, 255, 0.9); }
+html[data-theme='light'] body .bg-slate-950\/70 { background-color: rgba(255, 255, 255, 0.92); }
+html[data-theme='light'] body .bg-slate-950\/80 { background-color: rgba(255, 255, 255, 0.95); }
+html[data-theme='light'] body .bg-slate-900 { background-color: #ffffff; }
+html[data-theme='light'] body .bg-slate-900\/90 { background-color: rgba(255, 255, 255, 0.96); }
+html[data-theme='light'] body .bg-slate-900\/95 { background-color: rgba(255, 255, 255, 0.98); }
+html[data-theme='light'] body .bg-\[\#0a0a10\] { background-color: #f1f5f9; }
 
-html[data-theme='light'] .border-white\/\[0\.04\] { border-color: rgba(0,0,0,.06); }
-html[data-theme='light'] .border-white\/\[0\.05\] { border-color: rgba(0,0,0,.07); }
-html[data-theme='light'] .border-white\/\[0\.06\] { border-color: rgba(0,0,0,.08); }
-html[data-theme='light'] .border-white\/\[0\.08\] { border-color: rgba(0,0,0,.1); }
-html[data-theme='light'] .border-white\/\[0\.1\] { border-color: rgba(0,0,0,.12); }
-html[data-theme='light'] .border-white\/5 { border-color: rgba(0,0,0,.06); }
-html[data-theme='light'] .border-white\/10 { border-color: rgba(0,0,0,.1); }
+/* Translucent dark-mode helpers mapped to clean light surfaces */
+html[data-theme='light'] body .bg-white\/\[0\.015\],
+html[data-theme='light'] body .bg-white\/\[0\.02\],
+html[data-theme='light'] body .bg-white\/\[0\.025\],
+html[data-theme='light'] body .bg-white\/\[0\.03\],
+html[data-theme='light'] body .bg-white\/\[0\.04\],
+html[data-theme='light'] body .bg-white\/\[0\.06\] {
+  background-color: #ffffff;
+  box-shadow: 0 1px 3px 0 rgba(15, 23, 42, 0.05), 0 1px 2px -1px rgba(15, 23, 42, 0.05);
+}
 
-html[data-theme='light'] .bg-white\/\[0\.015\] { background-color: rgba(0,0,0,.015); }
-html[data-theme='light'] .bg-white\/\[0\.02\] { background-color: rgba(0,0,0,.02); }
-html[data-theme='light'] .bg-white\/\[0\.025\] { background-color: rgba(0,0,0,.025); }
-html[data-theme='light'] .bg-white\/\[0\.03\] { background-color: rgba(0,0,0,.03); }
-html[data-theme='light'] .bg-white\/\[0\.04\] { background-color: rgba(0,0,0,.04); }
-html[data-theme='light'] .bg-white\/\[0\.06\] { background-color: rgba(0,0,0,.06); }
-html[data-theme='light'] .bg-white\/\[0\.08\] { background-color: rgba(0,0,0,.08); }
-html[data-theme='light'] .bg-white\/\[0\.1\] { background-color: rgba(0,0,0,.1); }
-html[data-theme='light'] .bg-white\/\[0\.16\] { background-color: rgba(0,0,0,.08); }
-html[data-theme='light'] .bg-white\/5 { background-color: rgba(0,0,0,.04); }
-html[data-theme='light'] .bg-white\/10 { background-color: rgba(0,0,0,.06); }
+html[data-theme='light'] body .bg-white\/\[0\.08\],
+html[data-theme='light'] body .bg-white\/\[0\.1\],
+html[data-theme='light'] body .bg-white\/\[0\.16\],
+html[data-theme='light'] body .bg-white\/5,
+html[data-theme='light'] body .bg-white\/10 {
+  background-color: #f1f5f9;
+}
 
-html[data-theme='light'] .bg-black\/20 { background-color: rgba(0,0,0,.06); }
-html[data-theme='light'] .bg-black\/30 { background-color: rgba(255,255,255,.4); }
-html[data-theme='light'] .bg-black\/40 { background-color: rgba(0,0,0,.3); }
-html[data-theme='light'] .bg-black\/60 { background-color: rgba(0,0,0,.3); }
+/* Crisp, subtle borders for light mode */
+html[data-theme='light'] body .border-white\/\[0\.04\],
+html[data-theme='light'] body .border-white\/\[0\.05\],
+html[data-theme='light'] body .border-white\/\[0\.06\],
+html[data-theme='light'] body .border-white\/\[0\.08\],
+html[data-theme='light'] body .border-white\/\[0\.1\],
+html[data-theme='light'] body .border-white\/15,
+html[data-theme='light'] body .border-white\/5,
+html[data-theme='light'] body .border-white\/10 {
+  border-color: #e2e8f0;
+}
+
+/* Ring utilities */
+html[data-theme='light'] body .ring-white\/10,
+html[data-theme='light'] body .ring-white\/5 {
+  --tw-ring-color: #e2e8f0;
+}
+
+/* Inputs, Textareas and Dropdowns in light mode */
+html[data-theme='light'] body input:not([type='checkbox']):not([type='radio']),
+html[data-theme='light'] body textarea,
+html[data-theme='light'] body select,
+html[data-theme='light'] body .bg-black\/20,
+html[data-theme='light'] body .bg-black\/30,
+html[data-theme='light'] body .bg-black\/40 {
+  background-color: #ffffff;
+  color: #0f172a;
+  border-color: #cbd5e1;
+}
+html[data-theme='light'] body input::placeholder,
+html[data-theme='light'] body textarea::placeholder {
+  color: #94a3b8;
+}
+
+/* Hover states in light mode */
+html[data-theme='light'] body .hover\:bg-white\/\[0\.04\]:hover,
+html[data-theme='light'] body .hover\:bg-white\/\[0\.06\]:hover,
+html[data-theme='light'] body .hover\:bg-white\/\[0\.08\]:hover,
+html[data-theme='light'] body .hover\:bg-white\/\[0\.1\]:hover,
+html[data-theme='light'] body .hover\:bg-white\/5:hover,
+html[data-theme='light'] body .hover\:bg-white\/10:hover {
+  background-color: #f8fafc;
+}
+
+html[data-theme='light'] body .hover\:border-white\/15:hover {
+  border-color: #cbd5e1;
+}
+
+/* Code & Pre blocks */
+html[data-theme='light'] body pre,
+html[data-theme='light'] body code:not(.bg-transparent) {
+  background-color: #f1f5f9;
+  color: #0f172a;
+}
 
 /* Scrollbars in light mode */
-html[data-theme='light'] * { scrollbar-color: rgba(100,116,139,.3) transparent; }
-html[data-theme='light'] *::-webkit-scrollbar-thumb { background: rgba(100,116,139,.25); }
+html[data-theme='light'] * { scrollbar-color: rgba(148, 163, 184, 0.4) transparent; }
+html[data-theme='light'] *::-webkit-scrollbar-thumb { background: rgba(148, 163, 184, 0.35); }
 
 /* ── Animations ────────────────────────────────────────────────────────── */
 /* NOTE: never animate `transform` here — a persisted transform (fill-mode both)
