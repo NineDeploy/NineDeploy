@@ -113,7 +113,9 @@ export default fp(
 
       // Run runtime self-healing column check
       await ensureEssentialColumns(db);
-      await ensureAdminUser(db);
+      if (process.env.NODE_ENV !== 'test' && !config.isTest) {
+        await ensureAdminUser(db);
+      }
 
       fastify.decorate('db', db);
     }
