@@ -207,14 +207,14 @@ export const deploysRoutes: FastifyPluginAsync = async (app) => {
     const child = hasPty
       ? spawn(
           'python3',
-          ['-c', 'import os,pty; pty.spawn(["docker","exec","-i","-t","--",os.environ["ND_EXEC_CONTAINER"],"sh"])'],
+          ['-c', 'import os,pty; pty.spawn(["docker","exec","-i","-t","-e","TERM=xterm","--",os.environ["ND_EXEC_CONTAINER"],"sh"])'],
           {
             env: { ...process.env, ND_EXEC_CONTAINER: targetContainer },
             windowsHide: true,
             stdio: ['pipe', 'pipe', 'pipe'],
           },
         )
-      : spawn('docker', ['exec', '-i', '--', targetContainer, 'sh'], {
+      : spawn('docker', ['exec', '-i', '-e', 'TERM=xterm', '--', targetContainer, 'sh', '-i'], {
           windowsHide: true,
           stdio: ['pipe', 'pipe', 'pipe'],
         });

@@ -40,6 +40,7 @@ export function ContainerTerminal({ serviceId, serviceName, onClose }: Container
         cursorStyle: 'block',
         fontSize: 13,
         lineHeight: 1.2,
+        convertEol: true,
         fontFamily: "'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, monospace",
         theme: {
           background: '#0a101b',
@@ -70,7 +71,11 @@ export function ContainerTerminal({ serviceId, serviceName, onClose }: Container
       term.open(containerRef.current);
       termRef.current = term;
       fitRef.current = fit;
-      setTimeout(() => fit.fit(), 50);
+      term.focus();
+      setTimeout(() => {
+        fit.fit();
+        term.focus();
+      }, 50);
 
       term.onData((data) => {
         if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
