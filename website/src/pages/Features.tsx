@@ -3,13 +3,16 @@ import {
   AlarmClockCheck,
   Bell,
   Boxes,
+  Building2,
   CalendarClock,
   Container,
   Copy,
   Database,
+  FileCode,
   FileStack,
   GitBranch,
   Globe,
+  HardDrive,
   KeyRound,
   Lock,
   MonitorSmartphone,
@@ -17,6 +20,7 @@ import {
   RotateCcw,
   ScrollText,
   Server,
+  Shield,
   ShieldCheck,
   FolderTree,
   Terminal as TerminalIcon,
@@ -65,6 +69,11 @@ const groups: {
         title: "1-Click Demo Stack",
         body: "Instant pre-configured demo stack with PostgreSQL database, Next.js Docker standalone container, and Next.js PM2 cluster service.",
       },
+      {
+        icon: GitBranch,
+        title: "Ephemeral PR Previews",
+        body: "Automatic isolated staging environments generated on pull request events with custom lifecycle hooks and teardown.",
+      },
     ],
   },
   {
@@ -72,8 +81,13 @@ const groups: {
     items: [
       {
         icon: Database,
-        title: "Managed databases",
-        body: "PostgreSQL, MySQL, MariaDB, Redis, MongoDB — idempotent starts, CPU/memory limits, encrypted credentials, auto-injected connection strings.",
+        title: "Extended Managed Databases",
+        body: "PostgreSQL (pgvector), MySQL, MariaDB, Redis, Valkey, ClickHouse, Meilisearch, RabbitMQ, and MongoDB with one-click provisioning and Web Studio.",
+      },
+      {
+        icon: FileCode,
+        title: "Live Container File Manager",
+        body: "Direct in-browser container filesystem explorer with file editing, drag-and-drop upload/download, and volume inspection.",
       },
       {
         icon: Copy,
@@ -97,8 +111,8 @@ const groups: {
     items: [
       {
         icon: Globe,
-        title: "Traefik ingress",
-        body: "The only exposed ports on your box are 80/443. App containers publish nothing by default — Traefik routes by container name over a shared network.",
+        title: "Traefik ingress & Middlewares",
+        body: "Dynamic routing with IP allowlists, Rate Limiting, Basic Auth, and custom security headers — only 80/443 exposed on the host.",
       },
       {
         icon: Network,
@@ -126,14 +140,34 @@ const groups: {
     title: "System",
     items: [
       {
+        icon: Building2,
+        title: "Workspaces & Team RBAC",
+        body: "Organize applications across isolated workspaces, invite team members, and assign fine-grained roles (Owner, Admin, Member, Viewer).",
+      },
+      {
+        icon: Shield,
+        title: "SSO & OIDC Authentication",
+        body: "Single Sign-On integration with Google, GitHub, Okta, and generic OpenID Connect providers with auto-enrollment toggles.",
+      },
+      {
+        icon: HardDrive,
+        title: "Log Drains & Auto-Prune",
+        body: "Forward logs to Loki, Datadog, Vector, or Syslog in real time. Automatic disk cleanup pruning dangling images and old artifacts.",
+      },
+      {
+        icon: Waypoints,
+        title: "SSH Auto-Provisioner Fleet",
+        body: "Register and zero-touch bootstrap remote Linux servers via SSH with automatic Docker installation and agent pairing.",
+      },
+      {
         icon: Boxes,
         title: "Microkernel & Plugin Hub",
         body: "Modular microkernel architecture with hot-swappable plugins, custom dashboard menus, extensible hooks, and dual-vault config store.",
       },
       {
         icon: KeyRound,
-        title: "Serious auth",
-        body: "Argon2id, JWT with stateless global revocation, TOTP 2FA, brute-force lockout (5 fails → 15 min), single-use reset links, registration toggle.",
+        title: "Serious auth & Passkeys",
+        body: "Argon2id, Passkeys (WebAuthn), JWT with stateless revocation, TOTP 2FA, brute-force lockout (5 fails → 15 min), single-use reset links.",
       },
       {
         icon: ScrollText,
@@ -149,11 +183,6 @@ const groups: {
         icon: Bell,
         title: "Notifications",
         body: "Telegram, Discord, Slack, ntfy, SMTP email and generic webhooks — event filters, retries with backoff, delivery log.",
-      },
-      {
-        icon: Waypoints,
-        title: "Multi-server fleet",
-        body: "Register agent hosts with one-time tokens. Typed-operation protocol — regex-validated operands, never a program name or raw argv.",
       },
       {
         icon: MonitorSmartphone,
