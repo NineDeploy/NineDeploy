@@ -1,17 +1,22 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertCircle, CheckCircle2, Database, Globe, Link2, Package, Rocket, Server, Sparkles, Upload, XCircle } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Cpu, Database, Globe, HardDrive, Link2, MemoryStick, Package, Rocket, Server, Sparkles, Upload, XCircle } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { api } from '../lib/api.js';
 import { useToast } from '../components/Toast.js';
 import { Button, Card, CardBody, ErrorCard, Skeleton, cn } from '../components/ui.js';
-import { formatDateTime } from '../lib/format.js';
+import { formatBytes, formatDateTime } from '../lib/format.js';
 
 export function Dashboard() {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const { toast } = useToast();
   const dash = useQuery({ queryKey: ['dashboard'], queryFn: () => api.dashboard.get(), refetchInterval: 5000 });
+  const snapshot = useQuery({
+    queryKey: ['live-stats-snapshot'],
+    queryFn: () => api.stats.snapshot(),
+    refetchInterval: 3000,
+  });
   const importRef = useRef<HTMLInputElement>(null);
   const [importing, setImporting] = useState(false);
 
@@ -65,6 +70,10 @@ export function Dashboard() {
   const allHealthy = data.health.every((h) => h.healthy || h.status !== 'running');
   const unhealthyCount = data.health.filter((h) => !h.healthy && h.status === 'running').length;
 
+  const host = snapshot.data?.host;
+  const memPct = host && host.memTotalBytes > 0 ? Math.round((host.memUsedBytes / host.memTotalBytes) * 100) : 0;
+  const diskPct = host && host.diskTotalBytes > 0 ? Math.round((host.diskUsedBytes / host.diskTotalBytes) * 100) : 0;
+
   return (
     <div className="nd-fade space-y-5">
       {/* Hero status banner */}
@@ -104,10 +113,78 @@ export function Dashboard() {
             </p>
           </div>
           <div className="ml-auto hidden items-center gap-1.5 rounded-full bg-white/[0.04] px-3 py-1 text-xs text-slate-400 sm:flex">
-            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" /> Live · refreshes every 5s
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" /> Live · refreshes every 3s
           </div>
         </div>
       </div>
+
+      {/* Host Infrastructure Telemetry (CPU / RAM / Disk) */}
+      {host && (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <Card className="p-4 bg-white/[0.02]">
+            <div className="flex items-center justify-between text-xs mb-2">
+              <span className="flex items-center gap-1.5 text-slate-400 font-medium">
+                <Cpu size={14} className="text-indigo-400" /> Host CPU Load
+              </span>
+              <span className="font-mono text-xs font-semibold text-slate-200">
+                {host.load1 != null ? host.load1.toFixed(2) : '0.00'} loadavg
+              </span>
+            </div>
+            <div className="flex items-center justify-between text-[11px] font-mono text-slate-400 mb-1.5">
+              <span>{host.cpuCores} Cores</span>
+              <span className="text-indigo-300 font-medium">{Math.min(100, Math.round((host.load1 / Math.max(1, host.cpuCores)) * 100))}%</span>
+            </div>
+            <div className="h-1.5 overflow-hidden rounded-full bg-white/5">
+              <div
+                className="h-full rounded-full bg-indigo-500 transition-all duration-500"
+                style={{ width: `${Math.min(100, Math.max(3, (host.load1 / Math.max(1, host.cpuCores)) * 100))}%` }}
+              />
+            </div>
+          </Card>
+
+          <Card className="p-4 bg-white/[0.02]">
+            <div className="flex items-center justify-between text-xs mb-2">
+              <span className="flex items-center gap-1.5 text-slate-400 font-medium">
+                <MemoryStick size={14} className="text-emerald-400" /> Memory (RAM)
+              </span>
+              <span className="font-mono text-xs font-semibold text-slate-200">
+                {memPct}%
+              </span>
+            </div>
+            <div className="flex items-center justify-between text-[11px] font-mono text-slate-400 mb-1.5">
+              <span>{formatBytes(host.memUsedBytes)}</span>
+              <span>{formatBytes(host.memTotalBytes)}</span>
+            </div>
+            <div className="h-1.5 overflow-hidden rounded-full bg-white/5">
+              <div
+                className={cn('h-full rounded-full transition-all duration-500', memPct > 85 ? 'bg-rose-500' : memPct > 65 ? 'bg-amber-500' : 'bg-emerald-500')}
+                style={{ width: `${Math.min(100, Math.max(3, memPct))}%` }}
+              />
+            </div>
+          </Card>
+
+          <Card className="p-4 bg-white/[0.02]">
+            <div className="flex items-center justify-between text-xs mb-2">
+              <span className="flex items-center gap-1.5 text-slate-400 font-medium">
+                <HardDrive size={14} className="text-amber-400" /> Disk Storage
+              </span>
+              <span className="font-mono text-xs font-semibold text-slate-200">
+                {diskPct}%
+              </span>
+            </div>
+            <div className="flex items-center justify-between text-[11px] font-mono text-slate-400 mb-1.5">
+              <span>{formatBytes(host.diskUsedBytes)}</span>
+              <span>{formatBytes(host.diskTotalBytes)}</span>
+            </div>
+            <div className="h-1.5 overflow-hidden rounded-full bg-white/5">
+              <div
+                className={cn('h-full rounded-full transition-all duration-500', diskPct > 85 ? 'bg-rose-500' : diskPct > 70 ? 'bg-amber-500' : 'bg-amber-500/80')}
+                style={{ width: `${Math.min(100, Math.max(3, diskPct))}%` }}
+              />
+            </div>
+          </Card>
+        </div>
+      )}
 
       {/* Stats grid */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
@@ -188,47 +265,64 @@ export function Dashboard() {
             {data.health.map((h) => {
               const isRunning = h.status === 'running';
               const isHealthy = h.healthy;
+              const liveStat = snapshot.data?.containers.find((c) => c.refId === h.serviceId && c.kind === 'service');
+
               return (
                 <Link key={h.serviceId} to={`/services/${h.serviceId}`}>
-                  <Card interactive className="group p-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2.5">
-                        <div className={cn(
-                          'grid h-9 w-9 place-items-center rounded-lg ring-1 ring-inset transition',
-                          isRunning && isHealthy ? 'bg-emerald-500/10 text-emerald-300 ring-emerald-500/20' :
-                          isRunning && !isHealthy ? 'bg-rose-500/10 text-rose-300 ring-rose-500/20' :
-                          h.status === 'stopped' ? 'bg-slate-500/10 text-slate-400 ring-slate-500/20' :
-                          'bg-amber-500/10 text-amber-300 ring-amber-500/20',
-                        )}>
-                          {isRunning && isHealthy ? <CheckCircle2 size={17} /> :
-                           isRunning && !isHealthy ? <XCircle size={17} /> :
-                           h.status === 'stopped' ? <Server size={17} /> :
-                           <AlertCircle size={17} />}
-                        </div>
-                        <div>
-                          <div className="text-sm font-medium text-slate-200 group-hover:text-white">{h.name}</div>
-                          <div className="font-mono text-[10px] text-slate-500">{h.type} · {h.commitSha ?? '—'}</div>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        {h.responseMs != null && (
+                  <Card interactive className="group p-4 flex flex-col justify-between">
+                    <div>
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2.5">
                           <div className={cn(
-                            'font-mono text-xs font-medium',
-                            h.responseMs < 100 ? 'text-emerald-300' : h.responseMs < 500 ? 'text-amber-300' : 'text-rose-300',
+                            'grid h-9 w-9 place-items-center rounded-lg ring-1 ring-inset transition',
+                            isRunning && isHealthy ? 'bg-emerald-500/10 text-emerald-300 ring-emerald-500/20' :
+                            isRunning && !isHealthy ? 'bg-rose-500/10 text-rose-300 ring-rose-500/20' :
+                            h.status === 'stopped' ? 'bg-slate-500/10 text-slate-400 ring-slate-500/20' :
+                            'bg-amber-500/10 text-amber-300 ring-amber-500/20',
                           )}>
-                            {h.responseMs}ms
+                            {isRunning && isHealthy ? <CheckCircle2 size={17} /> :
+                             isRunning && !isHealthy ? <XCircle size={17} /> :
+                             h.status === 'stopped' ? <Server size={17} /> :
+                             <AlertCircle size={17} />}
                           </div>
-                        )}
-                        <div className={cn(
-                          'text-[10px] font-medium uppercase',
-                          isRunning && isHealthy ? 'text-emerald-400' :
-                          isRunning && !isHealthy ? 'text-rose-400' :
-                          h.status === 'stopped' ? 'text-slate-500' : 'text-amber-400',
-                        )}>
-                          {isRunning && isHealthy ? 'healthy' : isRunning && !isHealthy ? 'unhealthy' : h.status}
+                          <div>
+                            <div className="text-sm font-medium text-slate-200 group-hover:text-white">{h.name}</div>
+                            <div className="font-mono text-[10px] text-slate-500">{h.type} · {h.commitSha ?? '—'}</div>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          {h.responseMs != null && (
+                            <div className={cn(
+                              'font-mono text-xs font-medium',
+                              h.responseMs < 100 ? 'text-emerald-300' : h.responseMs < 500 ? 'text-amber-300' : 'text-rose-300',
+                            )}>
+                              {h.responseMs}ms
+                            </div>
+                          )}
+                          <div className={cn(
+                            'text-[10px] font-medium uppercase',
+                            isRunning && isHealthy ? 'text-emerald-400' :
+                            isRunning && !isHealthy ? 'text-rose-400' :
+                            h.status === 'stopped' ? 'text-slate-500' : 'text-amber-400',
+                          )}>
+                            {isRunning && isHealthy ? 'healthy' : isRunning && !isHealthy ? 'unhealthy' : h.status}
+                          </div>
                         </div>
                       </div>
+
+                      {/* Live Telemetry Badges if running */}
+                      {isRunning && (
+                        <div className="mt-2.5 flex items-center gap-1.5">
+                          <span className="inline-flex items-center gap-1 rounded bg-indigo-500/10 px-1.5 py-0.5 font-mono text-[10px] text-indigo-300 ring-1 ring-inset ring-indigo-500/20">
+                            <Cpu size={10} className="text-indigo-400" /> {liveStat ? `${liveStat.cpuPct.toFixed(1)}%` : '0.0%'}
+                          </span>
+                          <span className="inline-flex items-center gap-1 rounded bg-emerald-500/10 px-1.5 py-0.5 font-mono text-[10px] text-emerald-300 ring-1 ring-inset ring-emerald-500/20">
+                            <MemoryStick size={10} className="text-emerald-400" /> {liveStat ? `${liveStat.memMb.toFixed(1)} MiB` : '0.0 MiB'}
+                          </span>
+                        </div>
+                      )}
                     </div>
+
                     {/* Health bar */}
                     <div className="mt-3 h-1 overflow-hidden rounded-full bg-white/5">
                       <div

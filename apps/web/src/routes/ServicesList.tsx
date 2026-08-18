@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
-import { GitBranch, Plus, Search, Server } from 'lucide-react';
+import { Cpu, GitBranch, HardDrive, MemoryStick, Plus, Search, Server } from 'lucide-react';
 import { Link } from 'react-router';
 import { api } from '../lib/api.js';
 import { useProjectScope } from '../lib/projects.js';
@@ -15,6 +15,12 @@ export function ServicesList() {
   const { data: services, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['services', selectedId],
     queryFn: () => api.services.list(selectedId != null ? `?projectId=${selectedId}` : ''),
+  });
+
+  const snapshot = useQuery({
+    queryKey: ['live-stats-snapshot'],
+    queryFn: () => api.stats.snapshot(),
+    refetchInterval: 3000,
   });
 
   const filteredServices = useMemo(() => {
@@ -126,36 +132,65 @@ export function ServicesList() {
             </Card>
           ) : (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {filteredServices.map((s) => (
-                <Link key={s.id} to={`/services/${s.id}`} className="block">
-                  <Card interactive className="group h-full p-5">
-                    <div className="flex items-start justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className="grid h-10 w-10 place-items-center rounded-xl bg-white/[0.04] text-slate-400 ring-1 ring-inset ring-white/10 transition group-hover:text-indigo-300">
-                          <Server size={18} />
-                        </div>
-                        <div>
-                          <div className="font-semibold leading-tight text-slate-100 group-hover:text-white">{s.name}</div>
-                          <div className="font-mono text-[11px] text-slate-500">{s.slug}</div>
-                        </div>
-                      </div>
-                      <StatusBadge status={s.status} />
-                    </div>
+              {filteredServices.map((s) => {
+                const liveStat = snapshot.data?.containers.find((c) => c.refId === s.id && c.kind === 'service');
+                const isRunning = s.status === 'running';
 
-                    <div className="mt-5 flex items-center gap-4 text-xs text-slate-500">
-                      <span className="font-mono uppercase tracking-wide text-slate-400">{s.type}</span>
-                      <span className="flex items-center gap-1">
-                        <GitBranch size={12} /> {s.branch}
-                      </span>
-                      {s.publishedPort ? (
-                        <span className="font-mono text-emerald-400">:{s.publishedPort}</span>
-                      ) : s.port ? (
-                        <span className="font-mono">:{s.port}</span>
-                      ) : null}
-                    </div>
-                  </Card>
-                </Link>
-              ))}
+                return (
+                  <Link key={s.id} to={`/services/${s.id}`} className="block">
+                    <Card interactive className="group h-full p-5 flex flex-col justify-between">
+                      <div>
+                        <div className="flex items-start justify-between">
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-white/[0.04] text-slate-400 ring-1 ring-inset ring-white/10 transition group-hover:text-indigo-300">
+                              <Server size={18} />
+                            </div>
+                            <div className="min-w-0">
+                              <div className="font-semibold leading-tight text-slate-100 group-hover:text-white truncate">{s.name}</div>
+                              <div className="font-mono text-[11px] text-slate-500 truncate">{s.slug}</div>
+                            </div>
+                          </div>
+                          <StatusBadge status={s.status} />
+                        </div>
+
+                        {/* Live CPU & RAM Telemetry Badges */}
+                        {isRunning && (
+                          <div className="mt-3.5 flex flex-wrap items-center gap-2">
+                            <span className="inline-flex items-center gap-1 rounded-md bg-indigo-500/10 px-2 py-0.5 font-mono text-[10px] font-semibold text-indigo-300 ring-1 ring-inset ring-indigo-500/20">
+                              <Cpu size={11} className="text-indigo-400" />
+                              {liveStat ? `${liveStat.cpuPct.toFixed(1)}%` : '0.0%'}
+                            </span>
+                            <span className="inline-flex items-center gap-1 rounded-md bg-emerald-500/10 px-2 py-0.5 font-mono text-[10px] font-semibold text-emerald-300 ring-1 ring-inset ring-emerald-500/20">
+                              <MemoryStick size={11} className="text-emerald-400" />
+                              {liveStat ? `${liveStat.memMb.toFixed(1)} MiB` : '0.0 MiB'}
+                            </span>
+                            {s.volumeMount && (
+                              <span className="inline-flex items-center gap-1 rounded-md bg-amber-500/10 px-2 py-0.5 font-mono text-[10px] font-semibold text-amber-300 ring-1 ring-inset ring-amber-500/20" title={`Volume mounted at ${s.volumeMount}`}>
+                                <HardDrive size={11} className="text-amber-400" />
+                                {s.volumeMount}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="mt-4 pt-3 border-t border-white/[0.04] flex items-center justify-between text-xs text-slate-500">
+                        <div className="flex items-center gap-3">
+                          <span className="font-mono uppercase tracking-wide text-slate-400 text-[10px]">{s.type}</span>
+                          <span className="flex items-center gap-1 font-mono text-[11px]">
+                            <GitBranch size={11} /> {s.branch}
+                          </span>
+                        </div>
+                        {s.publishedPort ? (
+                          <span className="font-mono text-emerald-400 font-semibold">:{s.publishedPort}</span>
+                        ) : s.port ? (
+                          <span className="font-mono">:{s.port}</span>
+                        ) : null}
+                      </div>
+                    </Card>
+                  </Link>
+                );
+              })}
             </div>
           )}
         </div>
