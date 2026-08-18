@@ -119,6 +119,65 @@ export function Dashboard() {
         <StatCard icon={<Package size={15} />} label="Containers" value={s.containers} sub="docker" tone="slate" />
       </div>
 
+      {/* Quick Actions Hub */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <Link to="/hub" className="group">
+          <Card interactive className="p-4 transition-all duration-200 group-hover:border-indigo-500/30 group-hover:bg-indigo-500/[0.03]">
+            <div className="flex items-center gap-3">
+              <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-indigo-500/10 text-indigo-400 ring-1 ring-inset ring-indigo-500/20 group-hover:bg-indigo-500/20 group-hover:scale-105 transition-transform">
+                <Rocket size={18} />
+              </div>
+              <div className="min-w-0">
+                <h3 className="text-sm font-semibold text-white group-hover:text-indigo-300 transition-colors">Deploy New Service</h3>
+                <p className="truncate text-xs text-slate-400">Git repo, Dockerfile or image</p>
+              </div>
+            </div>
+          </Card>
+        </Link>
+
+        <Link to="/databases" className="group">
+          <Card interactive className="p-4 transition-all duration-200 group-hover:border-emerald-500/30 group-hover:bg-emerald-500/[0.03]">
+            <div className="flex items-center gap-3">
+              <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-emerald-500/10 text-emerald-400 ring-1 ring-inset ring-emerald-500/20 group-hover:bg-emerald-500/20 group-hover:scale-105 transition-transform">
+                <Database size={18} />
+              </div>
+              <div className="min-w-0">
+                <h3 className="text-sm font-semibold text-white group-hover:text-emerald-300 transition-colors">Managed Databases</h3>
+                <p className="truncate text-xs text-slate-400">PostgreSQL, Redis, MySQL</p>
+              </div>
+            </div>
+          </Card>
+        </Link>
+
+        <Link to="/servers" className="group">
+          <Card interactive className="p-4 transition-all duration-200 group-hover:border-sky-500/30 group-hover:bg-sky-500/[0.03]">
+            <div className="flex items-center gap-3">
+              <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-sky-500/10 text-sky-400 ring-1 ring-inset ring-sky-500/20 group-hover:bg-sky-500/20 group-hover:scale-105 transition-transform">
+                <Server size={18} />
+              </div>
+              <div className="min-w-0">
+                <h3 className="text-sm font-semibold text-white group-hover:text-sky-300 transition-colors">Cluster Nodes</h3>
+                <p className="truncate text-xs text-slate-400">Multi-server &amp; edge agents</p>
+              </div>
+            </div>
+          </Card>
+        </Link>
+
+        <Link to="/monitoring" className="group">
+          <Card interactive className="p-4 transition-all duration-200 group-hover:border-amber-500/30 group-hover:bg-amber-500/[0.03]">
+            <div className="flex items-center gap-3">
+              <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-amber-500/10 text-amber-400 ring-1 ring-inset ring-amber-500/20 group-hover:bg-amber-500/20 group-hover:scale-105 transition-transform">
+                <Sparkles size={18} />
+              </div>
+              <div className="min-w-0">
+                <h3 className="text-sm font-semibold text-white group-hover:text-amber-300 transition-colors">Live Telemetry</h3>
+                <p className="truncate text-xs text-slate-400">CPU, memory &amp; container metrics</p>
+              </div>
+            </div>
+          </Card>
+        </Link>
+      </div>
+
       {/* Service health grid */}
       <div>
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">Service Health</h2>
