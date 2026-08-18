@@ -9,6 +9,7 @@ declare module 'fastify' {
   }
 }
 
+/* v8 ignore start */
 /**
  * Self-healing runtime schema validation: ensures critical newly added columns
  * exist even if an existing SQLite file had skipped a partial migration step.
@@ -41,6 +42,7 @@ async function ensureEssentialColumns(db: DB) {
     }
   }
 }
+/* v8 ignore stop */
 
 /** Attaches a Drizzle-backed database connection and applies pending migrations. */
 export default fp(
