@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
@@ -206,6 +207,15 @@ export function ContainerTerminal({ serviceId, serviceName, onClose }: Container
   useEffect(() => {
     connect();
 
+    const containerEl = containerRef.current;
+    let observer: ResizeObserver | null = null;
+    if (containerEl && typeof ResizeObserver !== 'undefined') {
+      observer = new ResizeObserver(() => {
+        if (fitRef.current) fitRef.current.fit();
+      });
+      observer.observe(containerEl);
+    }
+
     const onResize = () => {
       if (fitRef.current) fitRef.current.fit();
     };
@@ -219,6 +229,7 @@ export function ContainerTerminal({ serviceId, serviceName, onClose }: Container
     window.addEventListener('beforeunload', onBeforeUnload);
 
     return () => {
+      if (observer) observer.disconnect();
       window.removeEventListener('resize', onResize);
       window.removeEventListener('beforeunload', onBeforeUnload);
       if (wsRef.current) {
@@ -239,7 +250,11 @@ export function ContainerTerminal({ serviceId, serviceName, onClose }: Container
   useEffect(() => {
     const timer = setTimeout(() => {
       if (fitRef.current) fitRef.current.fit();
-    }, fullscreen ? 150 : 50);
+      if (termRef.current) {
+        termRef.current.scrollToBottom();
+        termRef.current.focus();
+      }
+    }, fullscreen ? 100 : 50);
     return () => clearTimeout(timer);
   }, [fullscreen]);
 
@@ -261,11 +276,11 @@ export function ContainerTerminal({ serviceId, serviceName, onClose }: Container
     }
   };
 
-  const terminalBody = (
+  const content = (
     <div
       className={cn(
         'overflow-hidden rounded-2xl border border-white/15 bg-[#0a101b] shadow-2xl transition-all duration-200 flex flex-col',
-        fullscreen ? 'h-[94vh] w-[96vw] max-w-7xl' : 'w-full',
+        fullscreen ? 'h-[92vh] w-[95vw] max-w-7xl' : 'w-full',
       )}
     >
       {/* Terminal Titlebar */}
@@ -370,19 +385,20 @@ export function ContainerTerminal({ serviceId, serviceName, onClose }: Container
         ref={containerRef}
         className={cn(
           'p-3 focus:outline-none overflow-hidden flex-1',
-          fullscreen ? 'h-[calc(94vh-4rem)]' : 'h-80',
+          fullscreen ? 'min-h-[400px]' : 'min-h-[320px] h-80',
         )}
       />
     </div>
   );
 
-  if (fullscreen) {
-    return (
-      <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-4 backdrop-blur-md nd-fade">
-        {terminalBody}
-      </div>
+  if (fullscreen && typeof document !== 'undefined') {
+    return createPortal(
+      <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/85 p-4 backdrop-blur-md">
+        {content}
+      </div>,
+      document.body,
     );
   }
 
-  return terminalBody;
+  return content;
 }
