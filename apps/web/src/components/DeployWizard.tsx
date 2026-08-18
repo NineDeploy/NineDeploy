@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { type FormEvent, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { ArrowLeft, ArrowRight, Check, Plus, Rocket, Sparkles, Terminal, X, Zap } from 'lucide-react';
 import { useNavigate } from 'react-router';
 import type { Template } from '@ninedeploy/sdk';
@@ -149,27 +150,34 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
 
   const setEnv = (i: number, patch: Partial<EnvRow>) => setEnvRows((rows) => rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-6">
-      <button type="button" aria-label="Close dialog" tabIndex={-1} aria-hidden="true" onClick={() => !busyRef.current && onClose()} className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+  const wizardContent = (
+    <div className="fixed inset-0 z-[9999] flex items-end justify-center sm:items-center p-4 sm:p-6">
+      <button
+        type="button"
+        aria-label="Close dialog"
+        tabIndex={-1}
+        aria-hidden="true"
+        onClick={() => !busyRef.current && onClose()}
+        className="absolute inset-0 bg-black/75 backdrop-blur-sm transition-opacity"
+      />
       <div
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-label={template ? `Deploy ${template.name}` : 'New service'}
-        className="nd-fade relative flex max-h-[92vh] w-full max-w-xl flex-col overflow-hidden rounded-t-2xl border border-white/10 bg-slate-950 shadow-2xl sm:rounded-2xl"
+        className="nd-fade relative flex max-h-[92vh] w-full max-w-xl flex-col overflow-hidden rounded-2xl border border-white/10 bg-slate-950 shadow-2xl z-10"
       >
         {/* Header + stepper */}
         <div className="border-b border-white/5 p-5">
           <div className="mb-3 flex items-center justify-between">
-            <h2 className="flex items-center gap-2 text-lg font-semibold">
+            <h2 className="flex items-center gap-2 text-lg font-semibold text-slate-100">
               <Rocket size={18} className="text-indigo-400" />
               <span>{template ? `Deploy ${template.name}` : 'New service'}</span>
               <span className={cn('ml-1 rounded-full px-2 py-0.5 text-[10px] font-semibold border inline-flex items-center gap-1', isAdvanced ? 'bg-amber-500/10 border-amber-500/30 text-amber-300' : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300')}>
                 {isAdvanced ? <><Terminal size={10} /> DevOps Pro</> : <><Sparkles size={10} /> Quick Mode</>}
               </span>
             </h2>
-            <button type="button" onClick={() => !busyRef.current && onClose()} className="rounded-lg p-1.5 text-slate-500 hover:bg-white/5 hover:text-slate-300"><X size={16} /></button>
+            <button type="button" onClick={() => !busyRef.current && onClose()} className="rounded-lg p-1.5 text-slate-400 hover:bg-white/10 hover:text-slate-200 transition"><X size={16} /></button>
           </div>
           <div className="flex items-center gap-2">
             {STEPS.map((label, i) => (
@@ -192,7 +200,7 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
               <div className="grid grid-cols-2 gap-3">
                 <L label="Type">
                   <Select value={type} onChange={(e) => setType(e.target.value as 'docker' | 'pm2' | 'compose')}>
-                    <option value="docker">Docker</option>
+                    <option value="docker">Docker / Nixpacks</option>
                     <option value="compose">Compose</option>
                     <option value="pm2">PM2</option>
                   </Select>
@@ -228,7 +236,7 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
                       Simple 1-Click Ready
                     </div>
                     <div className="text-[11px] text-slate-400">
-                      Standard ports and health probes will be auto-configured.
+                      Standard web server ports and healthchecks are automatically configured.
                     </div>
                   </div>
                   <Button
@@ -245,54 +253,86 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
             </div>
           )}
 
-          {/* Step 2: Runtime */}
+          {/* Step 2: Runtime (Ports & Volumes) */}
           {step === 1 && (
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-3">
-                <L label="Container port"><Input value={port} onChange={(e) => setPort(e.target.value)} placeholder="3000" /></L>
-                <L label="Direct host port (optional)"><Input value={publishedPort} onChange={(e) => setPublishedPort(e.target.value)} placeholder="e.g. 8080" /></L>
+                <L label="Internal Port"><Input value={port} onChange={(e) => setPort(e.target.value)} placeholder="3000" className="font-mono text-xs" /></L>
+                <L label="Public Host Port (optional)"><Input value={publishedPort} onChange={(e) => setPublishedPort(e.target.value)} placeholder="e.g. 8080" className="font-mono text-xs" /></L>
               </div>
-              <L label="Persistent volume (container path)"><Input value={volumeMount} onChange={(e) => setVolumeMount(e.target.value)} placeholder="/app/data" className="font-mono text-xs" /></L>
-              <L label="Health check path"><Input value={healthPath} onChange={(e) => setHealthPath(e.target.value)} placeholder="/" className="font-mono text-xs" /></L>
-              <p className="rounded-lg bg-white/[0.03] px-3 py-2 text-xs text-slate-500">Direct host port publishes a TCP port without requiring a domain. Leave volume empty for ephemeral storage.</p>
-            </div>
-          )}
+              <L label="Persistent Volume Mount"><Input value={volumeMount} onChange={(e) => setVolumeMount(e.target.value)} placeholder="/app/data" className="font-mono text-xs" /></L>
+              <L label="Healthcheck Path"><Input value={healthPath} onChange={(e) => setHealthPath(e.target.value)} placeholder="/" className="font-mono text-xs" /></L>
 
-          {/* Step 3: Environment */}
-          {step === 2 && (
-            <div className="space-y-2">
-              {template?.requires && (
-                <p className="rounded-lg bg-amber-500/[0.06] px-3 py-2 text-xs text-amber-200 ring-1 ring-inset ring-amber-500/20">
-                  {template.requires}
-                </p>
-              )}
               {dbEngine && (
-                <label className="flex items-center gap-2 rounded-lg bg-emerald-500/[0.06] px-3 py-2 text-xs text-emerald-200 ring-1 ring-inset ring-emerald-500/20">
-                  <input type="checkbox" checked={autoDb} onChange={(e) => setAutoDb(e.target.checked)} className="accent-emerald-400" />
-                  Create and attach a managed <b>{dbEngine}</b> database (DATABASE_URL injected automatically)
-                </label>
-              )}
-              {envRows.length === 0 && <p className="py-2 text-xs text-slate-600">No environment variables.</p>}
-              {envRows.map((row, i) => (
-                <div key={row.key ? `k-${row.key}-${i}` : `env-${i}`} className="flex items-center gap-2">
-                  <Input value={row.key} onChange={(e) => setEnv(i, { key: e.target.value })} placeholder="KEY" className="h-9 w-32 font-mono text-xs" />
-                  <Input value={row.value} onChange={(e) => setEnv(i, { value: e.target.value })} placeholder="value" type={row.secret ? 'password' : 'text'} className="h-9 flex-1 font-mono text-xs" />
-                  <button type="button" onClick={() => setEnv(i, { secret: !row.secret })} className={cn('rounded px-2 py-1 text-[10px] uppercase', row.secret ? 'bg-amber-500/20 text-amber-300' : 'bg-white/5 text-slate-500')} title="Toggle secret">sec</button>
-                  <button type="button" onClick={() => setEnvRows((r) => r.filter((_, idx) => idx !== i))} className="text-slate-600 hover:text-rose-400"><X size={14} /></button>
+                <div className="rounded-xl border border-indigo-500/20 bg-indigo-500/5 p-3.5 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="text-xs font-semibold text-indigo-300">Managed {dbEngine} Database</div>
+                      <div className="text-[11px] text-slate-400">Auto-create and attach a dedicated {dbEngine} database</div>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={autoDb}
+                      onChange={(e) => setAutoDb(e.target.checked)}
+                      className="h-4 w-4 rounded border-white/20 bg-black/40 text-indigo-500 focus:ring-indigo-500/30"
+                    />
+                  </div>
                 </div>
-              ))}
-              <Button type="button" variant="secondary" size="sm" onClick={() => setEnvRows((r) => [...r, { key: '', value: '', secret: false }])}><Plus size={13} /> Add variable</Button>
+              )}
             </div>
           )}
 
-          {/* Step 4: Resources */}
+          {/* Step 3: Environment Variables */}
+          {step === 2 && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium text-slate-400">Environment variables</span>
+                <Button type="button" size="sm" variant="ghost" onClick={() => setEnvRows((r) => [...r, { key: '', value: '', secret: false }])} className="h-7 text-xs">
+                  <Plus size={13} /> Add variable
+                </Button>
+              </div>
+              {envRows.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-white/10 p-6 text-center text-xs text-slate-500">
+                  No environment variables defined yet.
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                  {envRows.map((r, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <Input
+                        value={r.key}
+                        onChange={(e) => setEnv(i, { key: e.target.value })}
+                        placeholder="KEY"
+                        className="font-mono text-xs flex-1"
+                      />
+                      <Input
+                        value={r.value}
+                        type={r.secret ? 'password' : 'text'}
+                        onChange={(e) => setEnv(i, { value: e.target.value })}
+                        placeholder="VALUE"
+                        className="font-mono text-xs flex-1"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setEnvRows((rows) => rows.filter((_, idx) => idx !== i))}
+                        className="rounded p-1.5 text-slate-500 hover:text-rose-400"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Step 4: Resource Limits */}
           {step === 3 && (
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-3">
                 <L label="CPU shares (0 = unlimited)"><Input value={cpuShares} onChange={(e) => setCpuShares(e.target.value)} placeholder="512" className="font-mono text-xs" /></L>
                 <L label="Memory limit MB (0 = unlimited)"><Input value={memLimitMb} onChange={(e) => setMemLimitMb(e.target.value)} placeholder="256" className="font-mono text-xs" /></L>
               </div>
-              <p className="rounded-lg bg-white/[0.03] px-3 py-2 text-xs text-slate-500">Optional caps applied when the container starts.</p>
             </div>
           )}
 
@@ -312,7 +352,7 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
         </form>
 
         {/* Footer */}
-        <div className="flex items-center justify-between border-t border-white/5 p-4">
+        <div className="flex items-center justify-between border-t border-white/5 p-4 bg-slate-950/50">
           <Button type="button" variant="ghost" size="sm" onClick={back} className={cn(step === 0 && 'invisible')}><ArrowLeft size={14} /> Back</Button>
           <div className="flex items-center gap-3">
             {dbStatus && <span className="text-xs text-emerald-300">{dbStatus}</span>}
@@ -325,6 +365,12 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
       </div>
     </div>
   );
+
+  if (typeof document !== 'undefined') {
+    return createPortal(wizardContent, document.body);
+  }
+
+  return wizardContent;
 }
 
 function L({ label, children }: { label: string; children: React.ReactNode }) {

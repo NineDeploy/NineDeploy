@@ -66,21 +66,43 @@ async function buildWithNixpacks(
   workDir: string,
   log: (line: string) => void,
 ): Promise<void> {
-  // Fail fast with a actionable message rather than a bare ENOENT when the
-  // host never installed the CLI.
+  let hasCli = false;
   try {
     await capture('nixpacks', ['--version']);
+    hasCli = true;
   } catch {
-    throw new Error(
-      'nixpacks is not installed on this server — install it (curl -sSL https://nixpacks.com/install.sh | bash) or add a Dockerfile to the repo',
-    );
+    hasCli = false;
   }
-  const args = ['build', baseDir, '--name', target];
-  if (buildConfig?.installCmd) args.push('--install-cmd', buildConfig.installCmd);
-  if (buildConfig?.buildCmd) args.push('--build-cmd', buildConfig.buildCmd);
-  if (buildConfig?.startCmd) args.push('--start-cmd', buildConfig.startCmd);
-  log(`nixpacks build ${baseDir} …`);
-  await run('nixpacks', args, { cwd: workDir }, log);
+
+  const customArgs: string[] = [];
+  if (buildConfig?.installCmd) customArgs.push('--install-cmd', buildConfig.installCmd);
+  if (buildConfig?.buildCmd) customArgs.push('--build-cmd', buildConfig.buildCmd);
+  if (buildConfig?.startCmd) customArgs.push('--start-cmd', buildConfig.startCmd);
+
+  if (hasCli) {
+    const args = ['build', baseDir, '--name', target, ...customArgs];
+    log(`⚡ nixpacks CLI build: ${baseDir} …`);
+    await run('nixpacks', args, { cwd: workDir }, log);
+  } else {
+    log('🐳 Nixpacks CLI not found on host — using standalone ghcr.io/railwayapp/nixpacks container …');
+    const dockerArgs = [
+      'run',
+      '--rm',
+      '-v',
+      '/var/run/docker.sock:/var/run/docker.sock',
+      '-v',
+      `${workDir}:/app`,
+      '-w',
+      '/app',
+      'ghcr.io/railwayapp/nixpacks:latest',
+      'build',
+      '.',
+      '--name',
+      target,
+      ...customArgs,
+    ];
+    await run('docker', dockerArgs, { cwd: workDir }, log);
+  }
 }
 
 /** Docker builder: BuildKit image build + container run/stop via the docker CLI. */
