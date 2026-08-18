@@ -12,7 +12,7 @@ Self-hosted deployment platform. Deploy apps from Git or a container registry in
 
 NineDeploy is a self-hosted PaaS that runs on your own server. It wraps PM2 and Docker behind a web dashboard and CLI, gives you Traefik for HTTPS routing, and handles webhooks, managed databases, monitoring, notifications, and Cloudflare Tunnels.
 
-Deploy from a Git repository, a container image, or the built-in template hub with 48 one-click apps. All state stays on your server in a single SQLite database — no external dependencies. Every source file across the monorepo is held at **100% test coverage**, enforced in CI.
+Deploy from a Git repository, a container image, or the built-in template hub with 100+ one-click apps. All state stays on your server in a single SQLite database — no external dependencies. Every source file across the monorepo is held at **100% test coverage**, enforced in CI.
 
 **Highlights**
 
@@ -24,7 +24,7 @@ Deploy from a Git repository, a container image, or the built-in template hub wi
 - 🔒 **Security-first** — Argon2id, Passkeys (WebAuthn), JWT + TOTP 2FA, AES-256-GCM secrets with key rotation, IP allowlisting, Rate Limiting
 - 🌐 **Automatic HTTPS & Ingress** — Traefik ingress with wildcard certificates via ACME DNS-01, custom middlewares, Cloudflare Tunnels
 - 📦 **Multi-server & SSH Provisioning** — register and bootstrap remote hosts running the NineDeploy agent
-- 🤖 **Clients & AI** — web dashboard, `ninedeploy` CLI, TypeScript SDK, and an MCP server for AI assistants
+- 🤖 **Clients & AI** — web dashboard, `ninedeploy` CLI, TypeScript SDK, and an MCP server (26 tools) for AI assistants
 
 ## Contents
 
@@ -151,7 +151,7 @@ Open `http://localhost:5173` and create the first admin account. Requires Node �
 - **Wildcard SSL (DNS-01)** — ACME DNS challenge via Cloudflare/DigitalOcean/Hetzner/Linode/Gandi/DuckDNS API tokens (encrypted at rest, delivered to Traefik via docker `--env-file`); one `*.your-domain` certificate issued up front and routed with `HostRegexp`
 - **Monitoring** — live CPU/memory per container + host overview + **alert rules**
 - **Alerting** — threshold rules on `cpu` (%), `memory` (MiB), and `cert-expiry` (days); sustained-breach duration windows (30 s samples), one-shot firing with cooldown, recovery notifications — delivered through the notification channels
-- **Template Hub** — 48 one-click apps from a schema-validated JSON registry (swappable source with caching/fallback); secret env values are **auto-generated at deploy time** (registry defaults like `changeme` never ship), templates that need a database (Umami, WordPress, Ghost, BookStack, Strapi) get one **auto-provisioned and attached** (`DATABASE_URL` injected)
+- **Template Hub** — 100+ one-click apps from a schema-validated JSON registry (swappable source with caching/fallback); secret env values are **auto-generated at deploy time** (registry defaults like `changeme` never ship), templates that need a database (Umami, WordPress, Ghost, BookStack, Strapi) get one **auto-provisioned and attached** (`DATABASE_URL` injected)
 - **Topology** — interactive graph of services ↔ databases ↔ domains
 - **Notifications** — Telegram / Discord / Slack / ntfy / email (SMTP, encrypted credentials) / generic webhooks, with event filters, timeouts, HTML-safe messages, and retry with exponential backoff (3 attempts)
 - **Multi-user** — roles, audit log, activity feed, registration toggle, ACME email setting

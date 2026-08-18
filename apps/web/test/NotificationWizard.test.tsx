@@ -330,11 +330,12 @@ describe('NotificationWizard', () => {
 
   it('closes via X and the backdrop', async () => {
     const user = userEvent.setup();
-    const { container, onClose } = renderWizard();
-    const closeBtn = container.querySelector('h2 + button') as HTMLButtonElement;
+    const { onClose } = renderWizard();
+    const closeBtn = screen.getByRole('button', { name: 'Close dialog' });
     await user.click(closeBtn);
     expect(onClose).toHaveBeenCalledTimes(1);
-    await user.click(screen.getByText('New Notification').closest('.fixed')!.firstElementChild as HTMLElement);
+    const backdrop = screen.getByRole('button', { name: 'Close dialog', hidden: true });
+    fireEvent.click(backdrop);
     expect(onClose).toHaveBeenCalledTimes(2);
   });
 

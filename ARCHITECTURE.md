@@ -82,7 +82,7 @@ ninedeploy/                       pnpm 11 workspace + Turborepo
 │   │   │   │                      agentClient, spawnValidated, sdNotify,
 │   │   │   │                      exec, git, settings, audit, events, notifier,
 │   │   │   │                      alerting, s3, backupRemote, webhooks, errors
-│   │   │   ├── templates/         48-entry template registry (schema-validated
+│   │   │   ├── templates/         100+ entry template registry (schema-validated
 │   │   │   │                      bundle; DB/env source override)
 │   │   │   ├── agent.ts           remote-host agent mode (NINEDEPLOY_AGENT=1)
 │   │   │   └── version.ts         VERSION + changelog
@@ -466,7 +466,7 @@ endpoints and exposes `/projects` CRUD.
   - **Activity** — per-service filtered audit trail (`GET /activity`)
   - **Danger zone** — typed-name delete confirmation, with the service's data
     volume surfaced from the volume inventory
-- **Other pages** — Hub (48-entry template gallery), Databases (wizard:
+- **Other pages** — Hub (100+ entry template gallery), Databases (wizard:
   managed Postgres/MySQL/Redis/Mongo), Domains, Tunnels (Cloudflare), Users,
   Volumes (StorageGauge), Topology (xyflow service graph), Backups (DB
   snapshots + S3 destinations), Sources (private repo credentials), Servers

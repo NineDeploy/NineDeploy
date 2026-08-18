@@ -1,12 +1,66 @@
 const releases = [
   {
+    version: "0.2.0",
+    date: "2026-08",
+    status: "current",
+    notes: [
+      {
+        t: "Workspaces & SSO",
+        items: [
+          "Multi-tenant workspace isolation with Owner / Admin / Member / Viewer RBAC",
+          "OpenID Connect (OIDC) Single Sign-On (Google, GitHub, Okta, Keycloak)",
+          "WebAuthn Passkeys hardware authentication & TOTP 2FA",
+          "Zero-touch SSH remote server provisioning & auto-discovery",
+        ],
+      },
+      {
+        t: "Microkernel & Extensions",
+        items: [
+          "Microkernel event bus and waterfall hook pipeline (deploy.before / deploy.after)",
+          "Central Configuration Center with Dual-Vault AES-256-GCM encryption",
+          "Plugin SDK with MenuRegistry and ServiceRegistry driver interchange",
+          "26-tool Model Context Protocol (MCP) server for AI assistants",
+        ],
+      },
+      {
+        t: "Databases & Operations",
+        items: [
+          "Extended managed engines: Postgres (pgvector), MySQL, MariaDB, Redis, Valkey, ClickHouse, Meilisearch, RabbitMQ, Mongo",
+          "Live in-browser Container Filesystem Manager with drag & drop",
+          "Sustained-breach alerting rules with Telegram, Discord, Slack, Ntfy, Webhook, SMTP",
+          "Ephemeral PR preview staging environments and 1-click demo stack",
+        ],
+      },
+    ],
+  },
+  {
     version: "0.1.0",
     date: "2026-08",
-    status: "pre-release",
+    status: "stable",
     notes: [
-      { t: "Dokploy-parity wave", items: ["Deploy cancel", "Webhook watch paths", "Cron-scheduled jobs", "S3 backup destinations", "TOTP 2FA", "Compose service type", "Multi-server agents", "Service migration bundles", "Password reset flow", "Release-channel installer"] },
-      { t: "UX/API overhaul", items: ["Single-level projects", "Tabbed service detail", "Build-config PATCH", "Command palette", "6 accent themes"] },
-      { t: "Hardening", items: ["Login lockout", "Update-check guard", "About guard", "systemd watchdog (sd_notify)"] },
+      {
+        t: "Dokploy-parity wave",
+        items: [
+          "Deploy cancellation at all pipeline stages",
+          "Webhook watch paths & monorepo path filters",
+          "Cron-scheduled jobs and container commands",
+          "S3 off-site backup destinations with SigV4 client",
+          "Compose service type with ndcmp- prefix",
+          "Multi-server typed agent protocol",
+          "Service export/import migration bundles",
+          "Brute-force lockout & password reset flows",
+        ],
+      },
+      {
+        t: "UX & Engine",
+        items: [
+          "Command palette (Ctrl/Cmd+K)",
+          "Real-time WebSocket build log streaming with replay",
+          "Tabbed service detail with live container metrics",
+          "Digest-pinned zero-downtime blue-green rollback",
+          "systemd notify watchdog integration",
+        ],
+      },
     ],
   },
   {
@@ -14,7 +68,17 @@ const releases = [
     date: "2026-07",
     status: "internal",
     notes: [
-      { t: "Foundations", items: ["Fastify core + Zod schemas + typed SDK", "Blue-green Docker builder, PM2 builder", "Traefik ingress + wildcard DNS-01", "Managed databases + encrypted backups", "Alerting, notifications, audit log", "48-template hub with auto-secrets"] },
+      {
+        t: "Foundations",
+        items: [
+          "Fastify core + Zod schemas + typed SDK",
+          "Blue-green Docker builder & PM2 process supervisor",
+          "Traefik ingress + ACME HTTP-01 & DNS-01 wildcard certificates",
+          "Managed databases + AES-256 encrypted backups",
+          "Alerting, notifications, and immutable audit logs",
+          "52-template app store with automatic secret provisioning",
+        ],
+      },
     ],
   },
 ];

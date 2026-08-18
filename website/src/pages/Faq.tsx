@@ -4,31 +4,35 @@ import { ChevronDown } from "lucide-react";
 const faqs = [
   {
     q: "How is this different from Dokploy / Coolify?",
-    a: "NineDeploy is deliberately smaller and stricter: a single SQLite core (no external Postgres/Redis), 100% enforced test coverage, a typed-operation agent protocol instead of raw shell over the wire, and digest-pinned rollbacks. If you want a PaaS that reads like a well-audited codebase, this is it.",
+    a: "NineDeploy is deliberately smaller, faster, and stricter: a single SQLite core with zero external database dependencies, 100% enforced test coverage across the entire monorepo, a typed-operation agent protocol instead of raw arbitrary shell over the wire, digest-pinned rollbacks, and an integrated microkernel plugin SDK. If you want a self-hosted PaaS that reads like an enterprise-audited codebase, this is it.",
   },
   {
     q: "Does it really need only SQLite?",
-    a: "Yes. All state — users, services, deployments, metrics, backups metadata — lives in one .data directory with a single SQLite file. WAL is intentionally off so backup tarballs can safely copy the file.",
+    a: "Yes. All state — users, workspaces, services, deployments, metrics, alerting rules, and backups metadata — lives in one .data directory with a single SQLite file. WAL mode is handled synchronously so backup tarballs and point-in-time snapshots can safely copy the database cleanly.",
   },
   {
     q: "Can I run it in Docker?",
-    a: "Yes — the published image mounts the host Docker socket with a /data volume. PM2-managed services need the bare-metal (systemd) install because they run on the host; Docker and Compose services and all 48 hub templates work in both modes.",
+    a: "Yes — the published Docker image mounts the host Docker socket with a persistent /data volume. PM2-managed bare-metal services require the systemd install because they run natively on the host; Docker containers, Docker Compose stacks, and all 52 template apps work seamlessly in both modes.",
   },
   {
-    q: "What about zero-downtime?",
-    a: "Docker services deploy blue-green: the new container is healthchecked on the container network before Traefik flips routing, and the old container only retires after the flip. On failure the previous version keeps serving. PM2 services can't share a port, so they deploy stop-then-start with automatic rollback.",
+    q: "How does zero-downtime blue-green deployment work?",
+    a: "Docker services deploy blue-green: the new container is provisioned and healthchecked directly on the internal container network before Traefik dynamically flips routing. The old container is only retired after the switchover succeeds. If the healthcheck fails, the new container is purged and the healthy version continues serving without interruption.",
   },
   {
-    q: "How do multi-server agents stay safe?",
-    a: "Agents expose a fixed table of typed operations (docker pull/build/run, compose up/down, git clone/checkout, env-file write). Requests never carry a program name or raw argv, every operand is regex-validated on both ends, and auth uses a shared token compared timing-safely as sha256.",
+    q: "How do multi-server remote agents stay secure?",
+    a: "Remote agents expose a strictly typed operation protocol (docker pull/build/run, compose up/down, git checkout, env injection). Requests never carry raw shell argv or executable binaries. Every operand is strictly regex-validated on both ends, and communications use timing-safe SHA-256 tokens.",
   },
   {
-    q: "Is there an API for CI?",
-    a: "Everything the dashboard does goes through the /v1 REST API with bearer tokens, a typed TypeScript SDK, a CLI, and an MCP server (15 tools) for AI assistants. Pick whichever fits your pipeline.",
+    q: "Is there an API, CLI, and AI integration for automation?",
+    a: "Everything in NineDeploy is API-first. You get the /v1 REST API with bearer tokens, a typed TypeScript SDK, an interactive CLI (`ninedeploy`), and an official Model Context Protocol (MCP) server with 26 tools for AI assistants (Claude Desktop, Cursor, Antigravity, Cline) to manage deployments, metrics, and configurations.",
+  },
+  {
+    q: "What authentication and Single Sign-On methods are supported?",
+    a: "NineDeploy supports Passwordless Passkeys (WebAuthn / FIDO2), OpenID Connect (OIDC) SSO for Google, GitHub, Okta, Keycloak, and custom identity providers, plus RFC 6238 TOTP Two-Factor Authentication (2FA) and Argon2id password hashing with brute-force lockout protection.",
   },
   {
     q: "What happens to my data on upgrade?",
-    a: "The installer snapshots the SQLite file and master key to .data/upgrade-backups/ before touching anything, applies additive forward-only migrations, and gates the restart on /health. The systemd watchdog restarts the process if the event loop ever hangs.",
+    a: "The installer automatically snapshots the SQLite database and encryption master keys to `.data/upgrade-backups/` before applying any changes. Migrations are strictly forward-only and self-applying, and the systemd watchdog gates success on the `/health` endpoint before completing the upgrade.",
   },
 ];
 
