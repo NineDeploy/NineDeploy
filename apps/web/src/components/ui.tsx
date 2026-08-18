@@ -36,8 +36,8 @@ type Size = 'sm' | 'md' | 'lg';
 const VARIANTS: Record<Variant, string> = {
   primary:
     'text-white shadow-lg shadow-indigo-500/25 hover:shadow-indigo-500/40 hover:brightness-110 [background-image:linear-gradient(135deg,var(--nd-accent),var(--nd-accent-strong))]',
-  secondary: 'bg-white/[0.06] hover:bg-white/[0.1] text-slate-100 ring-1 ring-inset ring-white/10',
-  ghost: 'hover:bg-white/[0.08] text-slate-300',
+  secondary: 'bg-white dark:bg-white/[0.06] hover:bg-slate-50 dark:hover:bg-white/[0.1] text-slate-800 dark:text-slate-100 ring-1 ring-inset ring-slate-300 dark:ring-white/10 shadow-sm',
+  ghost: 'hover:bg-slate-100 dark:hover:bg-white/[0.08] text-slate-700 dark:text-slate-300',
   danger: 'bg-rose-500/90 hover:bg-rose-500 text-white',
 };
 const SIZES: Record<Size, string> = { sm: 'h-8 px-3 text-xs', md: 'h-10 px-4 text-sm', lg: 'h-11 px-5 text-sm' };
@@ -72,9 +72,9 @@ export function Card({
   return (
     <div
       className={cn(
-        'rounded-2xl border border-white/[0.08] bg-white/[0.025] backdrop-blur-sm',
+        'rounded-2xl border border-slate-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.025] backdrop-blur-sm shadow-sm dark:shadow-none',
         interactive &&
-          'cursor-pointer transition-all duration-200 hover:border-white/15 hover:bg-white/[0.04] hover:shadow-xl hover:shadow-black/40',
+          'cursor-pointer transition-all duration-200 hover:border-slate-300 dark:hover:border-white/15 hover:bg-slate-50 dark:hover:bg-white/[0.04] hover:shadow-md dark:hover:shadow-xl dark:hover:shadow-black/40',
         className,
       )}
       {...props}
@@ -90,7 +90,7 @@ export function CardBody({ className, children }: { className?: string; children
 
 // ── Inputs ────────────────────────────────────────────────────────────────
 const fieldBase =
-  'w-full rounded-lg bg-black/30 px-3 text-sm text-slate-100 ring-1 ring-inset ring-white/10 placeholder:text-slate-500 transition focus:outline-none focus:ring-2 focus:ring-indigo-400/60 focus:bg-black/40';
+  'w-full rounded-lg bg-white dark:bg-black/30 px-3 text-sm text-slate-900 dark:text-slate-100 ring-1 ring-inset ring-slate-300 dark:ring-white/10 placeholder:text-slate-400 dark:placeholder:text-slate-500 transition focus:outline-none focus:ring-2 focus:ring-indigo-400/60 focus:bg-white dark:focus:bg-black/40 shadow-sm dark:shadow-none';
 
 export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(function Input(
   { className, ...props },
@@ -118,8 +118,8 @@ export function Field({ label, hint, children }: { label: string; hint?: string;
   return (
     <div>
       <div className="flex items-center justify-between mb-1.5">
-        <span className="block text-xs font-medium uppercase tracking-wide text-slate-400">{label}</span>
-        {hint && <span className="text-[11px] text-slate-500">{hint}</span>}
+        <span className="block text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-400">{label}</span>
+        {hint && <span className="text-[11px] text-slate-500 dark:text-slate-400">{hint}</span>}
       </div>
       {children}
     </div>
