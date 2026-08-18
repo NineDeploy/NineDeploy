@@ -646,16 +646,26 @@ function BarCard({
 
 function ContainerCard({ c }: { c: import('@ninedeploy/sdk').ContainerStat }) {
   const isService = c.kind === 'service';
-  const card = (
-    <Card interactive className="p-5">
+  return (
+    <Card className="p-5">
       <div className="flex items-start justify-between">
-        <div className="flex items-center gap-2.5">
-          <div className={cn('grid h-9 w-9 place-items-center rounded-xl ring-1 ring-inset ring-white/10', isService ? 'bg-indigo-500/10 text-indigo-300' : 'bg-emerald-500/10 text-emerald-300')}>
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className={cn('grid h-9 w-9 shrink-0 place-items-center rounded-xl ring-1 ring-inset ring-white/10', isService ? 'bg-indigo-500/10 text-indigo-300' : 'bg-emerald-500/10 text-emerald-300')}>
             {isService ? <Server size={16} /> : <Database size={16} />}
           </div>
-          <div>
-            <div className="font-semibold leading-tight">{c.refName}</div>
-            <div className="font-mono text-[10px] text-slate-500">{c.engine ?? c.name}</div>
+          <div className="min-w-0">
+            {isService ? (
+              <Link to={`/services/${c.refId}`} className="font-semibold leading-tight text-slate-100 hover:text-indigo-300 transition-colors inline-flex items-center gap-1 truncate">
+                <span>{c.refName}</span>
+                <ArrowUpRight size={12} className="opacity-60 shrink-0" />
+              </Link>
+            ) : (
+              <Link to={`/databases/${c.refId}`} className="font-semibold leading-tight text-slate-100 hover:text-emerald-300 transition-colors inline-flex items-center gap-1 truncate">
+                <span>{c.refName}</span>
+                <ArrowUpRight size={12} className="opacity-60 shrink-0" />
+              </Link>
+            )}
+            <div className="font-mono text-[10px] text-slate-500 truncate">{c.engine ?? c.name}</div>
           </div>
         </div>
         <StatusBadge status="running" />
@@ -679,14 +689,12 @@ function ContainerCard({ c }: { c: import('@ninedeploy/sdk').ContainerStat }) {
       <LimitsRow kind={c.kind} id={c.refId} memLimitMb={c.memLimitMb} />
     </Card>
   );
-  // Service cards link to their detail page; the interactive affordance is real.
-  return isService ? <Link to={`/services/${c.refId}`}>{card}</Link> : card;
 }
 
 function ServiceSpark({ id }: { id: number }) {
   const q = useQuery({ queryKey: ['metrics', id, 'cpu'], queryFn: () => api.stats.metrics(id, { kind: 'cpu', minutes: 60 }), refetchInterval: 15000 });
-  const pts = (q.data?.points ?? []).map((p) => p.value / 100);
-  return <Sparkline points={pts} width={130} height={34} />;
+  const pts = (q.data?.points ?? []).map((p) => p.value);
+  return <Sparkline points={pts.length > 0 ? pts : [0, 0]} width={130} height={34} />;
 }
 
 function LimitsRow({ kind, id, memLimitMb }: { kind: 'service' | 'database'; id: number; memLimitMb: number }) {
@@ -702,7 +710,9 @@ function LimitsRow({ kind, id, memLimitMb }: { kind: 'service' | 'database'; id:
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['stats'] });
-      toast('Limits updated', 'success');
+      qc.invalidateQueries({ queryKey: ['live-stats-snapshot'] });
+      qc.invalidateQueries({ queryKey: ['services'] });
+      toast('Limits updated successfully', 'success');
     },
     onError: () => toast('Could not update the limits', 'error'),
   });
@@ -710,6 +720,7 @@ function LimitsRow({ kind, id, memLimitMb }: { kind: 'service' | 'database'; id:
   // local form submit
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
+    e.stopPropagation();
     save.mutate();
   };
 
@@ -723,12 +734,28 @@ function LimitsRow({ kind, id, memLimitMb }: { kind: 'service' | 'database'; id:
   }, [id, memLimitMb]);
 
   return (
-    <form onSubmit={onSubmit} className="mt-4 flex items-center gap-2 border-t border-white/5 pt-3">
+    <form onSubmit={onSubmit} onClick={(e) => e.stopPropagation()} className="mt-4 flex items-center gap-2 border-t border-white/5 pt-3">
       <span className="text-[10px] uppercase tracking-wide text-slate-500">Limits</span>
-      <Input value={cpu} onChange={(e) => setCpu(e.target.value)} placeholder="cpu shares" className="h-7 w-24 font-mono text-[11px]" />
-      <Input value={mem} onChange={(e) => setMem(e.target.value)} placeholder="mem MB" className="h-7 w-20 font-mono text-[11px]" />
-      <Button type="submit" size="sm" variant="ghost" className="ml-auto h-7 px-2 text-[11px]" disabled={save.isPending}>
-        {save.isPending ? '…' : 'Save'}
+      <Input
+        value={cpu}
+        onChange={(e) => setCpu(e.target.value)}
+        placeholder="cpu shares"
+        className="h-7 w-24 font-mono text-[11px]"
+      />
+      <Input
+        value={mem}
+        onChange={(e) => setMem(e.target.value)}
+        placeholder="mem MB"
+        className="h-7 w-20 font-mono text-[11px]"
+      />
+      <Button
+        type="submit"
+        size="sm"
+        variant="secondary"
+        className="ml-auto h-7 px-2.5 text-[11px] font-medium text-indigo-300 hover:text-white"
+        disabled={save.isPending}
+      >
+        {save.isPending ? 'Saving…' : 'Save'}
       </Button>
     </form>
   );
