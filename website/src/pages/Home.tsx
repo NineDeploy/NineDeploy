@@ -124,10 +124,10 @@ export function Home() {
         <div className="mx-auto max-w-7xl px-4 pt-16 pb-20 md:pt-24 md:pb-28 grid lg:grid-cols-2 gap-12 items-center">
           <div>
             <div className="flex flex-wrap gap-2 mb-6">
-              <span className="tag bg-black text-white dark:bg-phosphor dark:text-void border-black dark:border-phosphor">
+              <span className="tag tag-accent">
                 self-hosted PaaS
               </span>
-              <span className="tag">v0.1.0</span>
+              <span className="tag font-bold">v0.2.0</span>
               <span className="tag">100% test coverage</span>
             </div>
             <h1 className="text-5xl md:text-7xl font-bold leading-[0.95] tracking-tight">

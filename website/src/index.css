@@ -162,13 +162,10 @@ body {
 }
 
 .tag {
-  @apply inline-flex items-center gap-1.5 border px-2 py-0.5 text-[11px] uppercase tracking-widest font-mono;
-  border-color: var(--color-edge);
-  color: #3d4f66;
+  @apply inline-flex items-center gap-1.5 border border-edge dark:border-line px-2 py-0.5 text-[11px] uppercase tracking-widest font-mono text-[#3d4f66] dark:text-[#9fb0c6];
 }
-.dark .tag {
-  border-color: var(--color-line);
-  color: #9fb0c6;
+.tag-accent {
+  @apply border-ink bg-ink text-white dark:border-phosphor dark:bg-phosphor dark:text-void font-bold;
 }
 
 .link-underline {
