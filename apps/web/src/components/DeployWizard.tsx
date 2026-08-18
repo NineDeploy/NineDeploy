@@ -1,6 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { type FormEvent, useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { ArrowLeft, ArrowRight, Check, Plus, Rocket, Sparkles, Terminal, X, Zap } from 'lucide-react';
 import { useNavigate } from 'react-router';
 import type { Template } from '@ninedeploy/sdk';
@@ -29,9 +28,11 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
   const { isAdvanced } = useExperienceMode();
   const { selectedId: projectId } = useProjectScope();
   const sources = useQuery({ queryKey: ['sources'], queryFn: () => api.sources.list() });
+  const servers = useQuery({ queryKey: ['servers'], queryFn: () => api.servers.list() });
 
   const [step, setStep] = useState(0);
   const [name, setName] = useState(template?.name ?? '');
+  const [serverId, setServerId] = useState('');
   const dialogRef = useRef<HTMLDivElement>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
 
@@ -97,6 +98,7 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
         name,
         type,
         projectId: projectId ?? undefined,
+        ...(serverId ? { serverId: toInt(serverId) } : {}),
         repoUrl: mode === 'repo' ? repoUrl : undefined,
         image: mode === 'image' ? image : undefined,
         branch,
@@ -330,6 +332,31 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
               <L label="Persistent Volume Mount"><Input value={volumeMount} onChange={(e) => setVolumeMount(e.target.value)} placeholder="/app/data" className="font-mono text-xs" /></L>
               <L label="Healthcheck Path"><Input value={healthPath} onChange={(e) => setHealthPath(e.target.value)} placeholder="/" className="font-mono text-xs" /></L>
 
+              {servers.data && servers.data.length > 0 && (
+                <L label="Target Server Node (Cluster Deployment)">
+                  <Select value={serverId} onChange={(e) => setServerId(e.target.value)}>
+                    <option value="">Local Server (Primary / Master Node)</option>
+                    {servers.data
+                      .filter((s) => s.status !== 'pending')
+                      .map((s) => (
+                        <option key={s.id} value={String(s.id)}>
+                          🖥️ {s.name} ({s.host}:{s.port}) · {s.status}
+                        </option>
+                      ))}
+                  </Select>
+                </L>
+              )}
+            </div>
+          )}
+
+          {/* Step 3: Environment Variables */}
+          {step === 2 && (
+            <div className="space-y-3">
+              {template?.requires && (
+                <div className="rounded-xl border border-indigo-500/20 bg-indigo-500/5 p-3 text-xs text-indigo-300">
+                  {template.requires}
+                </div>
+              )}
               {dbEngine && (
                 <div className="rounded-xl border border-indigo-500/20 bg-indigo-500/5 p-3.5 space-y-2">
                   <div className="flex items-center justify-between">
@@ -346,12 +373,6 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
                   </div>
                 </div>
               )}
-            </div>
-          )}
-
-          {/* Step 3: Environment Variables */}
-          {step === 2 && (
-            <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-medium text-slate-400">Environment variables</span>
                 <Button type="button" size="sm" variant="ghost" onClick={() => setEnvRows((r) => [...r, { key: '', value: '', secret: false }])} className="h-7 text-xs">
@@ -360,7 +381,7 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
               </div>
               {envRows.length === 0 ? (
                 <div className="rounded-xl border border-dashed border-white/10 p-6 text-center text-xs text-slate-500">
-                  No environment variables defined yet.
+                  No environment variables.
                 </div>
               ) : (
                 <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
@@ -376,13 +397,22 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
                         value={r.value}
                         type={r.secret ? 'password' : 'text'}
                         onChange={(e) => setEnv(i, { value: e.target.value })}
-                        placeholder="VALUE"
+                        placeholder="value"
                         className="font-mono text-xs flex-1"
                       />
                       <button
                         type="button"
+                        title="Toggle secret"
+                        onClick={() => setEnv(i, { secret: !r.secret })}
+                        className={cn('rounded p-1.5 text-xs transition', r.secret ? 'bg-amber-500/20 text-amber-300' : 'text-slate-500 hover:text-slate-300')}
+                      >
+                        🔒
+                      </button>
+                      <button
+                        type="button"
+                        title="Remove"
                         onClick={() => setEnvRows((rows) => rows.filter((_, idx) => idx !== i))}
-                        className="rounded p-1.5 text-slate-500 hover:text-rose-400"
+                        className="rounded p-1.5 text-slate-500 hover:text-rose-400 text-xs"
                       >
                         ✕
                       </button>
@@ -432,11 +462,6 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
       </div>
     </div>
   );
-
-  if (typeof document !== 'undefined') {
-    return createPortal(wizardContent, document.body);
-  }
-
   return wizardContent;
 }
 

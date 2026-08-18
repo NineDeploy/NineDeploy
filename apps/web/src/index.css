@@ -349,3 +349,24 @@ html[data-theme='light'] *::-webkit-scrollbar-thumb { background: rgba(148, 163,
   to   { opacity: 1; }
 }
 .nd-fade { animation: nd-fade-in .25s ease-out both; }
+
+/* ── Terminal (XTerm.js) ─────────────────────────────────────────────────── */
+.terminal-container .xterm {
+  height: 100%;
+  width: 100%;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 8px 12px;
+}
+
+.terminal-container .xterm .xterm-screen {
+  height: 100%;
+  width: 100%;
+}
+
+.terminal-container .xterm .xterm-viewport {
+  overflow-y: auto;
+}

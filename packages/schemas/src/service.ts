@@ -12,6 +12,7 @@ export const createService = z.object({
   repoUrl: z.url().optional(),
   branch: z.string().min(1).max(200).default('main'),
   sourceId: z.number().int().positive().optional(),
+  serverId: z.number().int().positive().nullable().optional(),
   image: z.string().optional(),
   volumeMount: z.string().optional(),
   /** Compose deploys: the main service in the compose file (health/routing
@@ -58,6 +59,7 @@ export const updateService = z.object({
   repoUrl: z.url().optional(),
   branch: z.string().min(1).max(200).optional(),
   sourceId: z.number().int().positive().optional(),
+  serverId: z.number().int().positive().nullable().optional(),
   image: z.string().optional(),
   volumeMount: z.string().optional(),
   composeService: z.string().min(1).max(200).optional(),
@@ -95,6 +97,7 @@ export type UpdateServiceInput = z.input<typeof updateService>;
 export const service = z.object({
   id: z.number().int(),
   projectId: z.number().int().nullable(),
+  serverId: z.number().int().nullable().optional(),
   name: z.string(),
   slug: z.string(),
   type: serviceType,

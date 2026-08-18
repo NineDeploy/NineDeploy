@@ -60,7 +60,7 @@ export function createFakeApiModule() {
       },
     },
     workspaces: {
-      list: vi.fn(),
+      list: vi.fn().mockResolvedValue([]),
       get: vi.fn(),
       create: vi.fn(),
       update: vi.fn(),
@@ -70,7 +70,7 @@ export function createFakeApiModule() {
       removeMember: vi.fn(),
     },
     services: {
-      list: vi.fn(),
+      list: vi.fn().mockResolvedValue([]),
       get: vi.fn(),
       create: vi.fn(),
       update: vi.fn(),
@@ -110,11 +110,11 @@ export function createFakeApiModule() {
       testChannel: vi.fn(),
       log: vi.fn(),
     },
-    sources: { list: vi.fn(), create: vi.fn(), update: vi.fn(), remove: vi.fn() },
-    projects: { list: vi.fn(), create: vi.fn(), update: vi.fn(), remove: vi.fn() },
+    sources: { list: vi.fn().mockResolvedValue([]), create: vi.fn(), update: vi.fn(), remove: vi.fn() },
+    projects: { list: vi.fn().mockResolvedValue([]), create: vi.fn(), update: vi.fn(), remove: vi.fn() },
     webhooks: { list: vi.fn(), create: vi.fn(), remove: vi.fn() },
     databases: {
-      list: vi.fn(),
+      list: vi.fn().mockResolvedValue([]),
       create: vi.fn(),
       get: vi.fn(),
       remove: vi.fn(),
@@ -146,7 +146,7 @@ export function createFakeApiModule() {
     backupDestinations: { list: vi.fn(), create: vi.fn(), update: vi.fn(), remove: vi.fn(), test: vi.fn() },
     jobs: { list: vi.fn(), create: vi.fn(), update: vi.fn(), remove: vi.fn(), run: vi.fn(), runs: vi.fn() },
     servers: {
-      list: vi.fn(),
+      list: vi.fn().mockResolvedValue([]),
       create: vi.fn(),
       remove: vi.fn(),
       test: vi.fn(),

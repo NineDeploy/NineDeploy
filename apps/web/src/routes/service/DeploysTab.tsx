@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { GitCompare, RotateCcw, X } from 'lucide-react';
+import { Activity, GitCompare, RotateCcw, X } from 'lucide-react';
 import { useState } from 'react';
 import type { Deployment } from '@ninedeploy/sdk';
 import { api } from '../../lib/api.js';
@@ -49,33 +49,38 @@ export function DeploysTab({
   });
 
   return (
-    <div className="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-5">
-      <div className="space-y-5 lg:col-span-2">
-        <DeploymentsCard
-          deploys={deploys}
-          activeId={activeId}
-          onSelect={onSelect}
-          onRollback={(depId) => {
-            rollback.mutate(depId);
-            onSelect(null);
-          }}
-          onCancel={(depId) => cancelDeploy.mutate(depId)}
-          loading={loading}
-        />
-      </div>
+    <div className="mt-5 space-y-5">
+      <DeploymentsCard
+        deploys={deploys}
+        activeId={activeId}
+        onSelect={onSelect}
+        onRollback={(depId) => {
+          rollback.mutate(depId);
+          onSelect(null);
+        }}
+        onCancel={(depId) => cancelDeploy.mutate(depId)}
+        loading={loading}
+      />
 
-      <Card className="lg:col-span-3">
+      <Card>
         <CardBody className="flex h-full flex-col">
-          <div className="mb-3 flex items-center justify-between">
-            <div className="flex items-center gap-2 text-sm font-medium text-slate-300">
-              <span className="flex h-2 w-2 items-center justify-center">
-                <span className={cn('h-2 w-2 rounded-full', inFlight ? 'bg-amber-400' : 'bg-slate-600')} />
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2.5">
+              <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/[0.07] bg-white/[0.03] text-slate-400">
+                <Activity size={15} />
               </span>
-              Live log {activeDeployRow ? `· #${activeDeployRow.id}` : ''}
+              <div>
+                <div className="text-sm font-medium text-slate-200">Deployment output</div>
+                <div className="mt-0.5 text-[11px] text-slate-500">
+                  {activeDeployRow
+                    ? `Deployment #${activeDeployRow.id} · ${activeDeployRow.commitSha?.slice(0, 7) ?? 'no commit'}`
+                    : 'Select a deployment to inspect its output'}
+                </div>
+              </div>
             </div>
             {inFlight && (
-              <span className="flex items-center gap-1.5 text-xs text-amber-300">
-                <Spinner className="h-3 w-3" /> building
+              <span className="flex items-center gap-1.5 rounded-full border border-amber-400/20 bg-amber-400/10 px-2.5 py-1 text-[11px] text-amber-300">
+                <Spinner className="h-3 w-3" /> Live deployment
               </span>
             )}
           </div>
@@ -102,7 +107,7 @@ function ConfigDiffCard({ serviceId, deploymentId }: { serviceId: number; deploy
   });
 
   return (
-    <Card className="lg:col-span-3">
+    <Card>
       <CardBody>
         <button
           type="button"
@@ -167,25 +172,33 @@ function DeploymentsCard({
   return (
     <Card>
       <CardBody>
-        <div className="mb-3 text-sm font-medium text-slate-300">Deployments</div>
+        <div className="mb-3 flex items-end justify-between gap-3">
+          <div>
+            <div className="text-sm font-medium text-slate-300">Deployments</div>
+            <p className="mt-0.5 text-[11px] text-slate-600">Select a release to inspect its pipeline and output.</p>
+          </div>
+          {deploys.length > 0 && <span className="text-[11px] text-slate-600">{deploys.length} total</span>}
+        </div>
         {loading ? (
           <Skeleton className="h-8 w-full" />
         ) : deploys.length === 0 ? (
           <p className="py-2 text-xs text-slate-600">No deployments yet.</p>
         ) : (
-          <ul className="space-y-1">
+          <ul className="flex gap-2 overflow-x-auto pb-1">
             {deploys.map((d, i) => {
               const duration =
                 d.startedAt && d.finishedAt
                   ? Math.max(1, Math.round((new Date(d.finishedAt).getTime() - new Date(d.startedAt).getTime()) / 1000))
                   : null;
               return (
-                <li key={d.id} className="group flex items-center gap-1">
+                <li key={d.id} className="group flex min-w-[15rem] items-center gap-1">
                   <button type="button"
                     onClick={() => onSelect(d.id)}
                     className={cn(
-                      'flex flex-1 items-center justify-between rounded-lg px-3 py-2 text-left text-sm transition',
-                      d.id === activeId ? 'bg-white/[0.08]' : 'hover:bg-white/[0.04]',
+                      'flex flex-1 items-center justify-between rounded-lg border px-3 py-2.5 text-left text-sm transition',
+                      d.id === activeId
+                        ? 'border-blue-500/30 bg-blue-500/[0.08]'
+                        : 'border-white/[0.06] bg-white/[0.015] hover:bg-white/[0.04]',
                     )}
                   >
                     <span className="min-w-0">

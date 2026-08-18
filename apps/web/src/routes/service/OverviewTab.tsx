@@ -190,7 +190,7 @@ function DeploymentQuickCard({ serviceId }: { serviceId: number }) {
 
             <div className="flex items-center gap-2">
               <Link
-                to={`/services/${serviceId}?tab=logs`}
+                to={`/services/${serviceId}?tab=deploys`}
                 className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-white/[0.08] transition"
               >
                 <Terminal size={13} /> View Live Logs &rarr;

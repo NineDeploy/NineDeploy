@@ -1,19 +1,46 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { screen, waitFor, fireEvent } from '@testing-library/react';
-import { Servers } from '../src/routes/Servers.js';
-import { api } from '../src/lib/api.js';
-import { mockOf, renderWithProviders } from './helpers.js';
 
-vi.mock('../src/lib/api.js', async () => {
-  const { createFakeApiModule } = await import('./helpers.js');
-  return createFakeApiModule();
-});
+const apiMock = vi.hoisted(() => ({
+  api: {
+    servers: {
+      list: vi.fn(),
+      create: vi.fn(),
+      remove: vi.fn(),
+      test: vi.fn(),
+      approve: vi.fn(),
+      reject: vi.fn(),
+      sshTest: vi.fn(),
+      sshBootstrap: vi.fn(),
+      bootstrapLogs: vi.fn(),
+    },
+    services: { list: vi.fn() },
+    databases: { list: vi.fn() },
+    workspaces: { list: vi.fn() },
+    projects: { list: vi.fn() },
+    sources: { list: vi.fn() },
+    auth: { me: vi.fn(), status: vi.fn() },
+  },
+  deployLogsWsUrl: vi.fn(() => 'ws://localhost/v1/logs'),
+}));
+
+vi.mock('../src/lib/api.js', () => apiMock);
 
 const toastSpy = vi.hoisted(() => ({ toast: vi.fn() }));
 vi.mock('../src/components/Toast.js', () => ({
   ToastProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   useToast: () => toastSpy,
 }));
+
+const authMock = vi.hoisted(() => ({
+  AuthProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  useAuth: () => ({ user: { id: 1, email: 'admin@ninedeploy.com', role: 'admin' }, status: 'ready', logout: vi.fn() }),
+}));
+vi.mock('../src/lib/auth.js', () => authMock);
+
+import { Servers } from '../src/routes/Servers.js';
+import { api } from '../src/lib/api.js';
+import { mockOf, renderWithProviders } from './helpers.js';
 
 const servers = [
   { id: 1, name: 'edge-1', host: '10.0.0.5', port: 4600, status: 'online', lastSeenAt: '2026-01-01T00:00:00Z' },
@@ -24,6 +51,8 @@ describe('Servers', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     toastSpy.toast.mockClear();
+    mockOf(api.services.list).mockResolvedValue([] as never);
+    mockOf(api.databases.list).mockResolvedValue([] as never);
     Object.defineProperty(navigator, 'clipboard', {
       value: { writeText: vi.fn().mockResolvedValue(undefined) },
       configurable: true,

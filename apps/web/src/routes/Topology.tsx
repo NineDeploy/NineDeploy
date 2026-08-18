@@ -19,6 +19,7 @@ import {
   ArrowUpRight,
   Boxes,
   Database,
+  Download,
   Globe,
   HardDrive,
   Lock,
@@ -30,7 +31,7 @@ import {
 import { api } from '../lib/api.js';
 import type { TopologyGraph } from '@ninedeploy/sdk';
 import { Button, ErrorCard, PageHeader, StatusBadge, cn } from '../components/ui.js';
-import { formatBytes } from '../lib/format.js';
+import { downloadBlob, formatBytes } from '../lib/format.js';
 
 // Layout Column Offsets
 const DOMAIN_X = 30;
@@ -654,6 +655,24 @@ export function Topology() {
                 Reset
               </Button>
             )}
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => {
+                if (graph.data) {
+                  downloadBlob(
+                    new Blob([JSON.stringify(graph.data, null, 2)], { type: 'application/json' }),
+                    `ninedeploy-topology-${new Date().toISOString().slice(0, 10)}.json`,
+                  );
+                }
+              }}
+              disabled={!graph.data || graph.isLoading}
+              title="Export Architecture Manifest (JSON)"
+              className="text-xs flex items-center gap-1.5"
+            >
+              <Download size={13} />
+              <span className="hidden sm:inline">Export</span>
+            </Button>
             <Button
               size="sm"
               variant="secondary"

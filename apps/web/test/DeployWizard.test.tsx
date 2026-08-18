@@ -4,11 +4,13 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ToastProvider } from '../src/components/Toast.js';
+import { ModeProvider } from '../src/lib/mode.js';
 import { deferred } from './web-utils.js';
 
 const apiMock = vi.hoisted(() => ({
   api: {
-    sources: { list: vi.fn() },
+    sources: { list: vi.fn(), repos: vi.fn(), branches: vi.fn() },
+    servers: { list: vi.fn() },
     services: { create: vi.fn() },
     env: { create: vi.fn() },
     deploys: { trigger: vi.fn() },
@@ -56,12 +58,14 @@ function renderTree(ui: React.ReactElement, queryClient: QueryClient) {
   return render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={['/new']}>
-        <ToastProvider>
-          {ui}
-          <Routes>
-            <Route path="*" element={<LocationProbe />} />
-          </Routes>
-        </ToastProvider>
+        <ModeProvider>
+          <ToastProvider>
+            {ui}
+            <Routes>
+              <Route path="*" element={<LocationProbe />} />
+            </Routes>
+          </ToastProvider>
+        </ModeProvider>
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -70,9 +74,11 @@ function renderTree(ui: React.ReactElement, queryClient: QueryClient) {
 describe('DeployWizard', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    localStorage.setItem('ninedeploy:experience_mode', 'advanced');
     apiMock.api.sources.list.mockResolvedValue([
       { id: 3, name: 'github-app', type: 'github' },
     ]);
+    apiMock.api.servers.list.mockResolvedValue([]);
     apiMock.api.services.create.mockResolvedValue({ id: 42, name: 'app' });
     apiMock.api.env.create.mockResolvedValue({ id: 1, key: 'K', value: 'v', isSecret: false });
     apiMock.api.databases.create.mockResolvedValue({ id: 7, name: 'db', engine: 'postgres', status: 'creating' });
@@ -86,7 +92,7 @@ describe('DeployWizard', () => {
     expect(screen.getByText('New service')).toBeInTheDocument();
     expect(screen.getByText('Git repo')).toBeInTheDocument();
     expect(screen.getByPlaceholderText('https://github.com/you/repo')).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByText('github-app')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/github-app/)).toBeInTheDocument());
   });
 
   it('renders the image flow when a template is provided', () => {
@@ -337,7 +343,7 @@ describe('DeployWizard', () => {
     expect(screen.queryByText('No environment variables.')).not.toBeInTheDocument();
     const back = screen.getByRole('button', { name: /back/i });
     await user.click(back);
-    const removeBtn = screen.getAllByRole('button')[2];
+    const removeBtn = screen.getByTitle('Remove');
     await user.click(removeBtn);
     expect(screen.getByText('No environment variables.')).toBeInTheDocument();
   });
@@ -421,7 +427,7 @@ describe('DeployWizard', () => {
   it('selects a private source in repo mode', async () => {
     const user = userEvent.setup();
     renderWizard();
-    await waitFor(() => expect(screen.getByText('github-app')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/github-app/)).toBeInTheDocument());
     await user.selectOptions(screen.getAllByRole('combobox')[1], '3');
     await user.type(screen.getByPlaceholderText('my-app'), 'app');
     await user.type(screen.getByPlaceholderText('https://github.com/you/repo'), 'https://github.com/x/y');

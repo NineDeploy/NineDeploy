@@ -215,13 +215,59 @@ export function Servers() {
     setOpen(false);
   };
 
+  const totalNodes = (registeredServers.length || 0) + 1; // +1 Master
+  const onlineNodes = registeredServers.filter((s) => s.status === 'online').length + 1;
+
   return (
     <div className="max-w-4xl space-y-6">
       <PageHeader
         icon={<ServerIcon size={18} />}
-        title="Servers"
-        subtitle="Remote nodes running the NineDeploy agent — zero-touch SSH onboarding or auto-discovery."
+        title="Servers & Cluster"
+        subtitle="Multi-node hybrid cluster orchestration — remote edge nodes, SSH auto-onboarding, and cross-server deployments."
       />
+
+      {/* Cluster Capacity Overview */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <Card className="p-4 bg-slate-900/60 border-white/[0.08]">
+          <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
+            <span>Cluster Nodes</span>
+            <ServerIcon size={15} className="text-indigo-400" />
+          </div>
+          <div className="text-xl font-bold text-slate-100 flex items-baseline gap-2">
+            {totalNodes} <span className="text-xs font-normal text-slate-400">({onlineNodes} healthy)</span>
+          </div>
+          <div className="mt-2 flex items-center gap-1.5 text-[11px] text-emerald-400">
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+            1 Primary Master + {registeredServers.length} Edge Nodes
+          </div>
+        </Card>
+
+        <Card className="p-4 bg-slate-900/60 border-white/[0.08]">
+          <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
+            <span>Edge Infrastructure</span>
+            <HardDrive size={15} className="text-blue-400" />
+          </div>
+          <div className="text-xl font-bold text-slate-100 flex items-baseline gap-2">
+            {registeredServers.length} <span className="text-xs font-normal text-slate-400">registered</span>
+          </div>
+          <div className="mt-2 text-[11px] text-slate-400">
+            SSH Automated & Auto-Discovery
+          </div>
+        </Card>
+
+        <Card className="p-4 bg-slate-900/60 border-white/[0.08]">
+          <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
+            <span>Cluster Health</span>
+            <CheckCircle2 size={15} className="text-emerald-400" />
+          </div>
+          <div className="text-xl font-bold text-emerald-400 flex items-baseline gap-2">
+            {Math.round((onlineNodes / totalNodes) * 100)}%
+          </div>
+          <div className="mt-2 text-[11px] text-slate-400">
+            Traefik Auto-Proxy & Mesh Active
+          </div>
+        </Card>
+      </div>
 
       {/* Auto-Join Quick Instructions Banner */}
       <Card className="border-indigo-500/20 bg-indigo-500/[0.03]">
@@ -604,58 +650,58 @@ export function Servers() {
         <Card><EmptyState icon={<HardDrive size={26} />} title="No remote servers" hint="Everything deploys on this host. Use SSH Onboarding or run the auto-join command on a node." /></Card>
       ) : (
         <Card className="overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-white/5 text-left text-xs uppercase tracking-wide text-slate-500">
-                <th className="px-5 py-3 font-medium">Server</th>
-                <th className="px-5 py-3 font-medium">Address</th>
-                <th className="px-5 py-3 font-medium">Status</th>
-                <th className="px-5 py-3" />
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-white/5 text-left text-xs uppercase tracking-wide text-slate-500">
+              <th className="px-5 py-3 font-medium">Server</th>
+              <th className="px-5 py-3 font-medium">Address</th>
+              <th className="px-5 py-3 font-medium">Status</th>
+              <th className="px-5 py-3" />
+            </tr>
+          </thead>
+          <tbody>
+            {registeredServers.map((s) => (
+              <tr key={s.id} className="border-b border-white/5 last:border-0 hover:bg-white/[0.02]">
+                <td className="px-5 py-3 font-medium text-slate-200">{s.name}</td>
+                <td className="px-5 py-3 font-mono text-xs text-slate-400">{s.host}:{s.port}</td>
+                <td className="px-5 py-3">
+                  <span className={cn(
+                    'inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs ring-1 ring-inset',
+                    s.status === 'online' ? 'bg-emerald-500/15 text-emerald-300 ring-emerald-500/20' : s.status === 'error' ? 'bg-rose-500/15 text-rose-300 ring-rose-500/20' : 'bg-slate-500/15 text-slate-400 ring-slate-500/20',
+                  )}>
+                    {s.status}
+                    {s.lastSeenAt && <span className="text-[10px] opacity-70">· {formatRelative(s.lastSeenAt)}</span>}
+                  </span>
+                </td>
+                <td className="px-5 py-3 text-right">
+                  <div className="flex items-center justify-end gap-3">
+                    <Link
+                      to="/monitoring"
+                      className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1 font-medium"
+                      title="View live metrics"
+                    >
+                      <Activity size={13} />
+                      metrics
+                    </Link>
+                    <button
+                      type="button"
+                      onClick={() => setActiveLogServer({ id: s.id, name: s.name })}
+                      className="text-xs text-slate-500 hover:text-indigo-300 flex items-center gap-1"
+                      title="View bootstrap logs"
+                    >
+                      <FileText size={13} />
+                      logs
+                    </button>
+                    <button type="button" onClick={() => test.mutate(s.id)} className="text-xs text-slate-500 hover:text-indigo-300" title="Test connectivity">
+                      test
+                    </button>
+                    <button type="button" onClick={() => setPendingDelete({ id: s.id, name: s.name })} className="text-slate-600 transition hover:text-rose-400" title="Remove server">
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {registeredServers.map((s) => (
-                <tr key={s.id} className="border-b border-white/5 last:border-0 hover:bg-white/[0.02]">
-                  <td className="px-5 py-3 font-medium text-slate-200">{s.name}</td>
-                  <td className="px-5 py-3 font-mono text-xs text-slate-400">{s.host}:{s.port}</td>
-                  <td className="px-5 py-3">
-                    <span className={cn(
-                      'inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs ring-1 ring-inset',
-                      s.status === 'online' ? 'bg-emerald-500/15 text-emerald-300 ring-emerald-500/20' : s.status === 'error' ? 'bg-rose-500/15 text-rose-300 ring-rose-500/20' : 'bg-slate-500/15 text-slate-400 ring-slate-500/20',
-                    )}>
-                      {s.status}
-                      {s.lastSeenAt && <span className="text-[10px] opacity-70">· {formatRelative(s.lastSeenAt)}</span>}
-                    </span>
-                  </td>
-                  <td className="px-5 py-3 text-right">
-                    <div className="flex items-center justify-end gap-3">
-                      <Link
-                        to="/monitoring"
-                        className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1 font-medium"
-                        title="View live metrics"
-                      >
-                        <Activity size={13} />
-                        metrics
-                      </Link>
-                      <button
-                        type="button"
-                        onClick={() => setActiveLogServer({ id: s.id, name: s.name })}
-                        className="text-xs text-slate-500 hover:text-indigo-300 flex items-center gap-1"
-                        title="View bootstrap logs"
-                      >
-                        <FileText size={13} />
-                        logs
-                      </button>
-                      <button type="button" onClick={() => test.mutate(s.id)} className="text-xs text-slate-500 hover:text-indigo-300" title="Test connectivity">
-                        test
-                      </button>
-                      <button type="button" onClick={() => setPendingDelete({ id: s.id, name: s.name })} className="text-slate-600 transition hover:text-rose-400" title="Remove server">
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+            ))}
             </tbody>
           </table>
         </Card>

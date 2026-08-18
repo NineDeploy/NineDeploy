@@ -48,7 +48,7 @@ describe('PipelineStepper', () => {
     const stages = parsePipelineStages(rawLogs, 'cancelled');
     const prepareStage = stages.find((s) => s.id === 'PREPARE');
     expect(prepareStage?.status).toBe('failed');
-    expect(prepareStage?.detail).toBe('Dağıtım iptal edildi');
+    expect(prepareStage?.detail).toBe('Deployment cancelled');
   });
 
   it('renders interactive stepper buttons and handles stage click', () => {
@@ -65,10 +65,10 @@ describe('PipelineStepper', () => {
       />
     );
 
-    expect(screen.getByText('Zero-Downtime Blue/Green Pipeline')).toBeInTheDocument();
-    expect(screen.getByText('Hazırlık')).toBeInTheDocument();
+    expect(screen.getByText('Zero-downtime deployment')).toBeInTheDocument();
+    expect(screen.getByText('Prepare')).toBeInTheDocument();
 
-    const prepBtn = screen.getByText('Hazırlık').closest('button');
+    const prepBtn = screen.getByText('Prepare').closest('button');
     expect(prepBtn).toBeTruthy();
     fireEvent.click(prepBtn!);
     expect(onStageClick).toHaveBeenCalledWith('PREPARE');
@@ -81,7 +81,7 @@ describe('PipelineStepper', () => {
         deployStatus="failed"
       />
     );
-    expect(screen.getByText('Slot: Rolled Back')).toBeInTheDocument();
+    expect(screen.getByText('Rolled back')).toBeInTheDocument();
 
     rerender(
       <PipelineStepper
@@ -89,6 +89,6 @@ describe('PipelineStepper', () => {
         deployStatus="running"
       />
     );
-    expect(screen.getByText('Slot: Active (Live)')).toBeInTheDocument();
+    expect(screen.getByText('All traffic is now served by the new release.')).toBeInTheDocument();
   });
 });
