@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
-import { Fingerprint, KeyRound, MonitorSmartphone, Smartphone } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Fingerprint, KeyRound, MonitorSmartphone, QrCode, Smartphone } from 'lucide-react';
+import QRCode from 'qrcode';
 import { api, setSessionTokens } from '../../lib/api.js';
 import { useToast } from '../../components/Toast.js';
 import { Button, Card, CardBody, Skeleton } from '../../components/ui.js';
@@ -247,12 +248,30 @@ function SessionsCard() {
 function TwoFactorCard() {
   const { toast } = useToast();
   const [setup, setSetup] = useState<{ secret: string; otpauthUri: string } | null>(null);
+  const [qrUrl, setQrUrl] = useState<string | null>(null);
   const [code, setCode] = useState('');
   const [setupPassword, setSetupPassword] = useState('');
   const [showSetupPassword, setShowSetupPassword] = useState(false);
   const [disablePassword, setDisablePassword] = useState('');
   const [disableCode, setDisableCode] = useState('');
   const [showDisable, setShowDisable] = useState(false);
+
+  useEffect(() => {
+    if (setup?.otpauthUri) {
+      QRCode.toDataURL(setup.otpauthUri, {
+        margin: 2,
+        width: 220,
+        color: {
+          dark: '#000000',
+          light: '#ffffff',
+        },
+      })
+        .then(setQrUrl)
+        .catch(() => setQrUrl(null));
+    } else {
+      setQrUrl(null);
+    }
+  }, [setup?.otpauthUri]);
 
   // The server requires the account password when regenerating the secret of
   // an already-enabled 2FA — always offer the field.
@@ -345,49 +364,78 @@ function TwoFactorCard() {
         )}
 
         {setup && (
-          <div className="max-w-md space-y-3 rounded-lg border border-amber-500/30 bg-amber-500/[0.06] p-4">
-            <p className="text-xs font-medium text-amber-200">
-              Add this secret to your authenticator app (Google Authenticator, 1Password, Aegis…), then confirm with a code.
-            </p>
-            <div className="flex items-center gap-2">
-              <code className="min-w-0 flex-1 break-all rounded bg-black/40 px-2 py-1.5 font-mono text-[11px] text-amber-100">
-                {setup.secret}
-              </code>
-              <button type="button" onClick={() => copy(setup.secret)} className="shrink-0 text-xs font-medium text-amber-200 hover:text-amber-100">
-                Copy
-              </button>
+          <div className="max-w-md space-y-4 rounded-2xl border border-amber-500/30 bg-amber-500/[0.04] p-5">
+            <div>
+              <p className="text-sm font-semibold text-amber-200 flex items-center gap-1.5">
+                <QrCode size={16} /> Scan QR Code with Authenticator
+              </p>
+              <p className="text-xs text-slate-400 mt-1">
+                Scan this QR code with Google Authenticator, 1Password, Bitwarden, or Aegis.
+              </p>
             </div>
-            <div className="flex items-center gap-2">
-              <code className="min-w-0 flex-1 truncate rounded bg-black/40 px-2 py-1.5 font-mono text-[10px] text-amber-100/80" title={setup.otpauthUri}>
-                {setup.otpauthUri}
-              </code>
-              <button type="button" onClick={() => copy(setup.otpauthUri)} className="shrink-0 text-xs font-medium text-amber-200 hover:text-amber-100">
-                Copy URI
-              </button>
+
+            {/* Visual QR Code Box */}
+            <div className="flex justify-center py-2">
+              <div className="rounded-2xl bg-white p-3.5 shadow-xl ring-4 ring-white/10">
+                {qrUrl ? (
+                  <img
+                    src={qrUrl}
+                    alt="Two-factor authentication QR code"
+                    className="h-44 w-44 rounded-lg object-contain block"
+                  />
+                ) : (
+                  <div className="h-44 w-44 flex items-center justify-center text-xs text-slate-500 font-mono">
+                    Generating QR…
+                  </div>
+                )}
+              </div>
             </div>
+
+            <div className="space-y-2 pt-1">
+              <div className="text-[11px] font-medium text-slate-400">Manual Entry Secret Key:</div>
+              <div className="flex items-center gap-2">
+                <code className="min-w-0 flex-1 break-all rounded-lg bg-black/50 px-2.5 py-2 font-mono text-xs text-amber-200 border border-white/5">
+                  {setup.secret}
+                </code>
+                <Button size="sm" variant="secondary" onClick={() => copy(setup.secret)} className="shrink-0 text-xs">
+                  Copy
+                </Button>
+              </div>
+            </div>
+
             <form
               onSubmit={(e) => {
                 e.preventDefault();
                 if (code.length === 6) enable.mutate();
               }}
-              className="flex items-end gap-2"
+              className="space-y-3 pt-3 border-t border-white/[0.06]"
             >
-              <label className="flex-1">
-                <span className="mb-1 block text-xs text-amber-200/70">Confirm with a 6-digit code</span>
-                <input
-                  value={code}
-                  onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                  inputMode="numeric"
-                  placeholder="123456"
-                  className="w-36 rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-2 font-mono text-sm outline-none focus:border-indigo-500"
-                />
+              <label className="block">
+                <span className="mb-1.5 block text-xs font-medium text-amber-200">
+                  Verify with 6-digit Authenticator Code
+                </span>
+                <div className="flex items-center gap-2">
+                  <input
+                    value={code}
+                    onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    inputMode="numeric"
+                    placeholder="123456"
+                    className="w-36 rounded-lg border border-slate-700 bg-slate-900/80 px-3 py-2 font-mono text-base tracking-widest text-center text-white outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                  />
+                  <Button type="submit" size="md" disabled={code.length !== 6 || enable.isPending}>
+                    {enable.isPending ? 'Verifying…' : 'Enable 2FA'}
+                  </Button>
+                </div>
               </label>
-              <Button type="submit" size="sm" disabled={code.length !== 6 || enable.isPending}>
-                {enable.isPending ? 'Verifying…' : 'Enable'}
-              </Button>
-              <button type="button" onClick={() => setSetup(null)} className="text-xs text-amber-200/70 hover:underline">
-                Cancel
-              </button>
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setSetup(null)}
+                  className="text-xs text-slate-400 hover:text-slate-200 hover:underline"
+                >
+                  Cancel setup
+                </button>
+              </div>
             </form>
           </div>
         )}
