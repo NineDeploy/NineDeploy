@@ -6,9 +6,8 @@ import { mockOf, renderRoute } from './helpers.js';
 
 vi.mock('../src/lib/api.js', async () => {
   const { createFakeApiModule } = await import('./helpers.js');
-  const mod = createFakeApiModule();
   return {
-    ...mod,
+    ...createFakeApiModule(),
     authedFetch: vi.fn(),
   };
 });

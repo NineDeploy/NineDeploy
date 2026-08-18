@@ -1,9 +1,14 @@
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { env } from './env.js';
 
-/** Resolve a possibly-relative path against the process cwd. */
-const resolve = (p: string) => (p.startsWith('file:') ? p : path.isAbsolute(p) ? p : path.resolve(process.cwd(), p));
+const here = path.dirname(fileURLToPath(import.meta.url));
+// Locate monorepo root (two levels up from apps/server/src or apps/server/dist)
+const repoRoot = existsSync(path.resolve(here, '../../package.json')) ? path.resolve(here, '../..') : process.cwd();
+
+/** Resolve a possibly-relative path against the repoRoot if not absolute. */
+const resolve = (p: string) => (p.startsWith('file:') ? p : path.isAbsolute(p) ? p : path.resolve(repoRoot, p));
 
 const dataDir = resolve(env.NINEDEPLOY_DATA_DIR);
 mkdirSync(dataDir, { recursive: true });
