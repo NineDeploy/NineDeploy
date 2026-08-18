@@ -1,0 +1,111 @@
+# Quickstart Guide
+
+This guide walks you through installing, configuring, upgrading, and running **NineDeploy**.
+
+---
+
+## ⚡ 1. Production Installation (Bare-Metal / Recommended)
+
+Bare-metal Linux is the recommended production deployment mode: NineDeploy runs as a hardened systemd service with direct Docker daemon and PM2 process management.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/NineDeploy/NineDeploy/main/install.sh | bash
+```
+
+### What the installer does:
+1. Detects or installs **Node.js (≥22.13)** and **pnpm (v11 via Corepack)**.
+2. Verifies Docker daemon connectivity.
+3. Clones or updates the repository to `~/ninedeploy`.
+4. Builds the monorepo packages.
+5. Generates a secure `.env` file with random 32-byte JWT secrets.
+6. Runs initial SQLite migrations via Drizzle.
+7. Installs and starts the hardened `ninedeploy.service` under systemd.
+
+### Hardened Systemd Service Features:
+- `Type=notify` with dependency-free `sd_notify` watchdog pings (`WatchdogSec=90`). If the event loop hangs, systemd restarts the daemon.
+- `ProtectSystem=strict` with write access restricted strictly to `.data/`.
+- `NoNewPrivileges=true` and `PrivateTmp=true`.
+- `Restart=always` with exponential backoff.
+
+---
+
+## 🐳 2. Docker Installation (Containerized)
+
+If you prefer running NineDeploy itself inside Docker:
+
+```bash
+docker run -d --name ninedeploy \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  --group-add $(getent group docker | cut -d: -f3) \
+  -v ninedeploy-data:/data \
+  -p 3000:3000 \
+  -e NINEDEPLOY_DATA_DIR=/data \
+  -e NINEDEPLOY_DB_PATH=/data/ninedeploy.db \
+  -e NINEDEPLOY_JWT_SECRET=$(openssl rand -hex 32) \
+  -e NINEDEPLOY_PUBLIC_URL=https://your-domain.com \
+  ghcr.io/ninedeploy/ninedeploy:latest
+```
+
+> **Note on Permissions**: The `--group-add` argument is required so the non-root `ninedeploy` user inside the container can interact with the host's `/var/run/docker.sock`.
+
+---
+
+## 💻 3. Local Development from Source
+
+```bash
+# 1. Clone the repository
+git clone https://github.com/NineDeploy/NineDeploy.git
+cd NineDeploy
+
+# 2. Install dependencies & build
+pnpm install
+cp .env.example .env
+pnpm build
+
+# 3. Start development server (API on :3000, Web UI on :5173)
+pnpm dev
+```
+
+Open `http://localhost:5173` in your browser to create the initial admin account.
+
+---
+
+## 🔄 4. Upgrading NineDeploy
+
+### In-Place Upgrade (Bare-Metal):
+Re-running the installation script performs a seamless, zero-data-loss upgrade:
+```bash
+# Upgrade to latest release tag (default)
+curl -fsSL https://raw.githubusercontent.com/NineDeploy/NineDeploy/main/install.sh | bash
+
+# Pin to a specific version
+bash install.sh --version v0.2.0
+
+# Track edge (main branch)
+bash install.sh --channel main
+```
+
+**Upgrade Safety Mechanism**:
+Before pulling updates or applying migrations, the installer automatically snapshots `.data/ninedeploy.db` and `.data/master.key` to `.data/upgrade-backups/pre-update-YYYYMMDD-HHMMSS.tar.gz`.
+
+### Docker Upgrade:
+```bash
+docker pull ghcr.io/ninedeploy/ninedeploy:latest
+docker stop ninedeploy && docker rm ninedeploy
+# Re-run docker run command with existing ninedeploy-data volume
+```
+Migrations apply automatically upon server boot.
+
+---
+
+## ⚙️ 5. Key Environment Variables
+
+| Variable | Default | Description |
+| :--- | :--- | :--- |
+| `NINEDEPLOY_PORT` | `3000` | HTTP port for API & built Web Dashboard |
+| `NINEDEPLOY_HOST` | `127.0.0.1` | Binding address (`0.0.0.0` in Docker) |
+| `NINEDEPLOY_DATA_DIR` | `./.data` | Directory for SQLite DB, repos, logs, backups |
+| `NINEDEPLOY_DB_PATH` | `./.data/ninedeploy.db` | Absolute path to SQLite database file |
+| `NINEDEPLOY_JWT_SECRET` | *(required)* | 32-byte hex key for signing user auth tokens |
+| `NINEDEPLOY_MASTER_KEYS` | *(optional)* | Key ring for AES-256-GCM secret rotation (e.g. `0:hex,1:hex`) |
+| `NINEDEPLOY_PUBLIC_URL` | `http://localhost:3000` | Public root URL for webhooks and OAuth redirects |
