@@ -34,6 +34,10 @@ const faqs = [
     q: "What happens to my data on upgrade?",
     a: "The installer automatically snapshots the SQLite database and encryption master keys to `.data/upgrade-backups/` before applying any changes. Migrations are strictly forward-only and self-applying, and the systemd watchdog gates success on the `/health` endpoint before completing the upgrade.",
   },
+  {
+    q: "Can I deploy heavy templates (like n8n, Supabase, Postgres) on a 1GB/2GB RAM VPS?",
+    a: "Yes. NineDeploy's one-click installer automatically detects low-memory Linux hosts and configures a 2GB swapfile so Docker can reliably extract large multi-layer images without triggering kernel OOM (Out Of Memory) kills.",
+  },
 ];
 
 export function Faq() {

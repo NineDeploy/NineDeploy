@@ -103,6 +103,34 @@ if ! docker info &>/dev/null 2>&1; then
 fi
 ok "Docker $(docker --version | awk '{print $3}' | tr -d ',')"
 
+# Swap space (Linux)
+# Low-memory VPS nodes (<= 4GB RAM) without swap risk OOM-kills when pulling
+# or unpacking large Docker images (e.g. n8n, Supabase, Postgres).
+if [ "$(uname -s)" = "Linux" ]; then
+  SWAP_TOTAL=$(free -m 2>/dev/null | awk '/^Swap:/ {print $2}' || echo "0")
+  if [ -n "$SWAP_TOTAL" ] && [ "${SWAP_TOTAL:-0}" -lt 1024 ]; then
+    MEM_TOTAL=$(free -m 2>/dev/null | awk '/^Mem:/ {print $2}' || echo "2048")
+    if [ "${MEM_TOTAL:-2048}" -le 4096 ]; then
+      info "Low swap detected (${SWAP_TOTAL:-0}MB on ${MEM_TOTAL:-2048}MB RAM). Configuring 2GB swapfile for reliable Docker operations…"
+      if [ ! -f /swapfile ]; then
+        (sudo fallocate -l 2G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=2048) 2>/dev/null || true
+        sudo chmod 600 /swapfile 2>/dev/null || true
+        sudo mkswap /swapfile >/dev/null 2>&1 || true
+      fi
+      if sudo swapon /swapfile >/dev/null 2>&1; then
+        ok "2GB swapfile activated"
+        if ! grep -q '/swapfile' /etc/fstab 2>/dev/null; then
+          echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab >/dev/null 2>&1 || true
+        fi
+      else
+        warn "Could not activate swapfile (may be running inside container or non-root) — continuing."
+      fi
+    fi
+  elif [ -n "$SWAP_TOTAL" ] && [ "${SWAP_TOTAL:-0}" -ge 1024 ]; then
+    ok "Swap space (${SWAP_TOTAL}MB)"
+  fi
+fi
+
 # ── 2. Resolve the version to install ──────────────────────────────────────
 #
 # Channel:

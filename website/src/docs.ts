@@ -576,6 +576,23 @@ curl http://<remote-node-ip>:3001/health
 # Verify firewall allows port 3001 from the controller IP:
 sudo ufw allow from <controller-ip> to any port 3001 proto tcp`,
       },
+      { kind: "h2", text: "6. Docker Pull Exits with Code 143 (Out-of-Memory / OOM)" },
+      {
+        kind: "p",
+        text: "Symptom: Pulling large multi-layer images (e.g. n8n, Supabase, Postgres) fails with `docker pull exited with code 143` on 1GB/2GB VPS nodes without swap.",
+      },
+      {
+        kind: "code",
+        body: `# Allocate and activate 2GB swap space on your Linux VPS:
+sudo fallocate -l 2G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=2048
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+
+# Or pre-pull the image on host terminal:
+docker pull <image-name>`,
+      },
     ],
   },
 ];

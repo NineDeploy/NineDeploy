@@ -120,3 +120,36 @@ This inspects:
 - NineDeploy HTTP API response and latency
 - Local session token validity and user roles
 
+---
+
+## 🧠 8. Docker Pull Exits with Code 143 (Out-of-Memory / OOM Killer)
+
+**Symptoms**:
+- Pulling or deploying large Docker images/templates (e.g. `n8nio/n8n`, `supabase`, `postgres`) fails with:
+  ```
+  ✗ Deployment failed: `docker pull n8nio/n8n` exited with code 143
+  ```
+- `dmesg -T` logs `Out of memory: Killed process` or kernel OOM killer activity.
+
+**Cause**:
+- Unpacking large multi-layer Docker images consumes significant memory and I/O. On low-memory VPS instances (1 GB – 2 GB RAM) without swap space, the Linux kernel terminates the pull process with `SIGTERM` (code 143: 128 + 15).
+
+**Resolution**:
+1. **Enable Swap Memory (Recommended)**:
+   ```bash
+   # Allocate and activate 2 GB - 4 GB swapfile
+   sudo fallocate -l 2G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=2048
+   sudo chmod 600 /swapfile
+   sudo mkswap /swapfile
+   sudo swapon /swapfile
+   
+   # Make permanent across reboots
+   echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+   ```
+2. **Pre-pull the image on host terminal**:
+   ```bash
+   docker pull <image-name>
+   ```
+   Once cached locally in Docker Engine, redeploying from the NineDeploy Dashboard will start immediately without pulling.
+
+
