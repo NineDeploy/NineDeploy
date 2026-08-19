@@ -8,6 +8,7 @@ vi.mock('../src/lib/serverRunner.js', () => ({
   isDockerAvailable: vi.fn(),
   getContainerState: vi.fn(),
   isServerReachable: vi.fn(),
+  startServerContainer: vi.fn(),
 }));
 
 vi.mock('../src/config.js', () => ({
@@ -77,7 +78,7 @@ describe('doctorAction', () => {
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('not created'));
   });
 
-  it('handles unreachable server and invalid token with issues summary', async () => {
+  it('handles unreachable server and invalid token with issues summary and prescriptions', async () => {
     vi.mocked(serverRunner.isDockerAvailable).mockResolvedValue(true);
     vi.mocked(serverRunner.getContainerState).mockResolvedValue({ exists: true, running: true, status: 'running' });
     vi.mocked(configMod.loadConfig).mockReturnValue({ baseUrl: 'http://localhost:3000', token: 'bad-tok' });
@@ -89,5 +90,34 @@ describe('doctorAction', () => {
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('unreachable'));
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('invalid or expired'));
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Found 2 issue(s)'));
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Prescriptions & Solutions'));
+  });
+
+  it('heals stopped container and missing data directory when --fix is provided', async () => {
+    vi.mocked(serverRunner.isDockerAvailable).mockResolvedValue(true);
+    vi.mocked(serverRunner.getContainerState).mockResolvedValue({ exists: true, running: false, status: 'exited' });
+    vi.mocked(serverRunner.startServerContainer).mockResolvedValue(undefined as any);
+    vi.mocked(configMod.loadConfig).mockReturnValue({ baseUrl: 'http://localhost:3000', token: 'tok' });
+    vi.mocked(serverRunner.isServerReachable).mockResolvedValue(true);
+    (mockClient.auth.me as any).mockResolvedValue({ email: 'admin@nine.io', role: 'admin' });
+
+    await doctorAction(mockClient, { fix: true });
+
+    expect(serverRunner.startServerContainer).toHaveBeenCalled();
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Healed Issues (--fix)'));
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Started stopped ninedeploy Docker container'));
+  });
+
+  it('handles --fix failure gracefully when starting container errors', async () => {
+    vi.mocked(serverRunner.isDockerAvailable).mockResolvedValue(true);
+    vi.mocked(serverRunner.getContainerState).mockResolvedValue({ exists: true, running: false, status: 'exited' });
+    vi.mocked(serverRunner.startServerContainer).mockRejectedValue(new Error('port busy'));
+    vi.mocked(configMod.loadConfig).mockReturnValue({ baseUrl: 'http://localhost:3000', token: 'tok' });
+    vi.mocked(serverRunner.isServerReachable).mockResolvedValue(true);
+    (mockClient.auth.me as any).mockResolvedValue({ email: 'admin@nine.io', role: 'admin' });
+
+    await doctorAction(mockClient, { fix: true });
+
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('port busy'));
   });
 });

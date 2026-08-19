@@ -335,7 +335,8 @@ deploys.command('watch <serviceId> <deployId>').description('Stream a deployment
 program
   .command('doctor')
   .description('Run system, Docker, server connectivity, and auth diagnostics')
-  .action(() => doctorAction(getClient()));
+  .option('--fix', 'Automatically attempt to heal and repair detected issues')
+  .action((opts: { fix?: boolean }) => doctorAction(getClient(), opts));
 
 // ── Banner on bare `ninedeploy` ───────────────────────────────────────────
 if (process.argv.length <= 2) {

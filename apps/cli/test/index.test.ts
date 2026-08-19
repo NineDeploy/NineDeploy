@@ -732,6 +732,6 @@ describe('delegating actions', () => {
     expect(h.setupAction).toHaveBeenCalled();
 
     await findCommand('doctor').actionFn!();
-    expect(h.doctorAction).toHaveBeenCalledWith(client);
+    expect(h.doctorAction).toHaveBeenCalledWith(client, undefined);
   });
 });
