@@ -1,4 +1,4 @@
-export const VERSION = '0.2.15';
+export const VERSION = '0.2.16';
 
 export interface ChangelogEntry {
   version: string;
@@ -8,6 +8,16 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.2.16',
+    date: '2026-08-20',
+    title: 'Panel Autofill Rejection',
+    changes: [
+      'Authenticated panel inputs reject browser and password-manager autofill, autocomplete, autocorrect, and spellcheck',
+      'Dynamically mounted dialog and plugin fields inherit the same no-autofill policy',
+      'The Settings filter stays locked until deliberate interaction and clears detected browser autofill injection',
+    ],
+  },
   {
     version: '0.2.15',
     date: '2026-08-20',
