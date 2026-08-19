@@ -28,25 +28,20 @@ describe('bare-metal systemd installation policy', () => {
     expect(rootFile('apps/server/src/agent.ts')).not.toContain('sdNotify');
   });
 
-  it('only restarts Docker for persistent snapshot failures when running containers are restart-managed', () => {
+  it('reuses a verified Traefik image or falls back immediately without mutating Docker state', () => {
     const installer = rootFile('install.sh');
 
-    expect(installer).toContain("grep -Eqi 'extraction snapshot|target snapshot .*already exists|parent snapshot .*does not exist'");
-    expect(installer).toContain('always|unless-stopped)');
-    expect(installer).toContain('Docker daemon restart was not attempted because these running containers lack a safe restart policy');
-    expect(installer).toContain('sudo systemctl restart docker');
-    expect(installer).toContain("'{{.State.Running}}'");
-    expect(installer).toContain('docker start "$CONTAINER_ID"');
-    expect(installer).toContain('repair_orphaned_containerd_snapshot');
-    expect(installer).toContain('[Aa]lready[[:space:]]*[Ee]xists');
-    expect(installer).toContain('ctr --namespace moby snapshots --snapshotter "$SNAPSHOTTER" info');
-    expect(installer).toContain('"kind"[[:space:]]*:[[:space:]]*"committed"');
-    expect(installer).toContain('$2 == parent');
-    expect(installer).toContain('ctr --namespace moby snapshots --snapshotter "$SNAPSHOTTER" remove');
+    expect(installer).toContain('traefik_image_usable');
+    expect(installer).toContain('Existing Traefik v3 image verified; skipping registry pull');
+    expect(installer).toContain('PULL_OUTPUT=$(docker pull traefik:3 2>&1)');
+    expect(installer).toContain('switching immediately to the verified layer-free Traefik image');
     expect(installer).toContain('build_traefik_fallback_image');
     expect(installer).toContain('checksums.txt');
     expect(installer).toContain('ACTUAL_SHA=$(sha256sum');
     expect(installer).toContain("--change 'ENTRYPOINT [\"/traefik\"]'");
     expect(installer).toContain('docker run --rm traefik:3 version');
+    expect(installer).not.toContain('sudo systemctl restart docker');
+    expect(installer).not.toContain('docker image prune');
+    expect(installer).not.toContain('ctr --namespace moby snapshots');
   });
 });

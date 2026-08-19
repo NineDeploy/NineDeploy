@@ -163,102 +163,14 @@ if ! docker network inspect ninedeploy >/dev/null 2>&1; then
   docker network create ninedeploy >/dev/null || fail "Could not create the required Docker network 'ninedeploy'"
 fi
 
-# Docker 29+ uses containerd's snapshotter by default. Interrupted or racing
-# unpack operations can leave transient extraction metadata which reports
-# AlreadyExists / missing-parent errors on the next pull. Retry only this known
-# class, ask Docker to GC unused dangling images, and restart the daemon only
-# when every running container has a restart policy that lets us verify and
-# recover it afterward. Never mutate /var/lib/containerd directly.
-repair_orphaned_containerd_snapshot() {
-  SNAPSHOT_KEY="$1"
-  printf '%s\n' "$SNAPSHOT_KEY" | grep -Eq '^sha256:[0-9a-f]{64}$' || return 1
-  command -v ctr >/dev/null 2>&1 || return 1
-
-  SNAPSHOTTER=$(docker info --format '{{.Driver}}' 2>/dev/null || true)
-  [ "$SNAPSHOTTER" = "overlayfs" ] || return 1
-
-  SNAPSHOT_INFO=$(sudo ctr --namespace moby snapshots --snapshotter "$SNAPSHOTTER" info "$SNAPSHOT_KEY" 2>/dev/null) || return 1
-  if ! printf '%s\n' "$SNAPSHOT_INFO" | grep -Eqi '"kind"[[:space:]]*:[[:space:]]*"committed"'; then
-    warn "Refusing to repair snapshot $SNAPSHOT_KEY because it is not a committed image-layer snapshot."
-    return 1
-  fi
-
-  SNAPSHOT_LIST=$(sudo ctr --namespace moby snapshots --snapshotter "$SNAPSHOTTER" list 2>/dev/null) || return 1
-  if printf '%s\n' "$SNAPSHOT_LIST" | awk -v parent="$SNAPSHOT_KEY" 'NR > 1 && $2 == parent { found=1 } END { exit !found }'; then
-    warn "Refusing to repair snapshot $SNAPSHOT_KEY because another snapshot depends on it."
-    return 1
-  fi
-
-  warn "Removing verified orphaned containerd snapshot $SNAPSHOT_KEY before one final pull…"
-  sudo ctr --namespace moby snapshots --snapshotter "$SNAPSHOTTER" remove "$SNAPSHOT_KEY" >/dev/null || return 1
-}
-
-pull_required_image() {
-  IMAGE="$1"
-  SNAPSHOT_FAILURE=false
-  for ATTEMPT in 1 2 3; do
-    PULL_OUTPUT=$(docker pull "$IMAGE" 2>&1) && {
-      printf '%s\n' "$PULL_OUTPUT"
-      return 0
-    }
-    printf '%s\n' "$PULL_OUTPUT" >&2
-    if ! printf '%s' "$PULL_OUTPUT" | grep -Eqi 'extraction snapshot|target snapshot .*already exists|parent snapshot .*does not exist'; then
-      return 1
-    fi
-    SNAPSHOT_FAILURE=true
-    warn "Docker snapshot extraction race while pulling $IMAGE (attempt $ATTEMPT/3); running safe image GC before retry…"
-    docker image prune -f >/dev/null 2>&1 || true
-    sleep $((ATTEMPT * 2))
-  done
-
-  if [ "$SNAPSHOT_FAILURE" = true ] && command -v systemctl &>/dev/null; then
-    RUNNING_IDS=$(docker ps -q 2>/dev/null || true)
-    RESTART_SAFE=true
-    BLOCKING_CONTAINERS=""
-    for CONTAINER_ID in $RUNNING_IDS; do
-      RESTART_POLICY=$(docker inspect "$CONTAINER_ID" --format '{{.HostConfig.RestartPolicy.Name}}' 2>/dev/null || echo unknown)
-      case "$RESTART_POLICY" in
-        always|unless-stopped) ;;
-        *)
-          RESTART_SAFE=false
-          CONTAINER_NAME=$(docker inspect "$CONTAINER_ID" --format '{{.Name}}' 2>/dev/null | sed 's|^/||' || echo "$CONTAINER_ID")
-          BLOCKING_CONTAINERS="${BLOCKING_CONTAINERS} ${CONTAINER_NAME}(${RESTART_POLICY})"
-          ;;
-      esac
-    done
-
-    if [ "$RESTART_SAFE" != true ]; then
-      warn "Docker daemon restart was not attempted because these running containers lack a safe restart policy:${BLOCKING_CONTAINERS}"
-      return 1
-    fi
-
-    RUNNING_COUNT=$(printf '%s\n' "$RUNNING_IDS" | awk 'NF {n++} END {print n+0}')
-    warn "Snapshot metadata is still stale; restarting Docker once (${RUNNING_COUNT} restart-managed containers will be verified)…"
-    sudo systemctl restart docker || return 1
-    for WAIT_STEP in $(seq 1 30); do
-      docker info >/dev/null 2>&1 && break
-      sleep 1
-      [ "$WAIT_STEP" = "30" ] && return 1
-    done
-    for CONTAINER_ID in $RUNNING_IDS; do
-      if [ "$(docker inspect "$CONTAINER_ID" --format '{{.State.Running}}' 2>/dev/null || true)" != "true" ]; then
-        warn "Restart-managed container $CONTAINER_ID did not return automatically; starting it explicitly…"
-        docker start "$CONTAINER_ID" >/dev/null || return 1
-      fi
-    done
-    FINAL_PULL_OUTPUT=$(docker pull "$IMAGE" 2>&1) && {
-      printf '%s\n' "$FINAL_PULL_OUTPUT"
-      return 0
-    }
-    printf '%s\n' "$FINAL_PULL_OUTPUT" >&2
-    STALE_SNAPSHOT_KEY=$(printf '%s\n' "$FINAL_PULL_OUTPUT" | sed -nE 's/.*target snapshot "(sha256:[0-9a-f]{64})".*[Aa]lready[[:space:]]*[Ee]xists.*/\1/p' | head -n 1)
-    if [ -n "$STALE_SNAPSHOT_KEY" ] && repair_orphaned_containerd_snapshot "$STALE_SNAPSHOT_KEY"; then
-      docker pull "$IMAGE"
-      return $?
-    fi
-    return 1
-  fi
-  return 1
+# Docker 29's containerd store can retain a broken Alpine snapshot forever.
+# Do not loop, prune, restart Docker, or mutate containerd metadata here. A
+# single registry attempt is enough; the verified binary fallback below has no
+# dependency on the conflicting Alpine layer.
+traefik_image_usable() {
+  docker image inspect traefik:3 >/dev/null 2>&1 || return 1
+  IMAGE_VERSION=$(docker run --rm traefik:3 version 2>/dev/null || true)
+  printf '%s\n' "$IMAGE_VERSION" | grep -Eq 'Version:[[:space:]]+3\.'
 }
 
 build_traefik_fallback_image() {
@@ -314,8 +226,16 @@ build_traefik_fallback_image() {
   ok "Verified minimal Traefik ${TRAEFIK_RELEASE} image created without the corrupt Alpine snapshot"
 }
 
-if ! pull_required_image traefik:3; then
-  build_traefik_fallback_image || fail "Could not provision Traefik from Docker Hub or verified upstream release assets; ingress cannot operate"
+if traefik_image_usable; then
+  ok "Existing Traefik v3 image verified; skipping registry pull"
+else
+  if PULL_OUTPUT=$(docker pull traefik:3 2>&1) && traefik_image_usable; then
+    printf '%s\n' "$PULL_OUTPUT"
+  else
+    printf '%s\n' "$PULL_OUTPUT" >&2
+    warn "Docker Hub image is unusable; switching immediately to the verified layer-free Traefik image…"
+    build_traefik_fallback_image || fail "Could not provision Traefik from Docker Hub or verified upstream release assets; ingress cannot operate"
+  fi
 fi
 
 # Free ports 80/443 if default apache2/nginx are occupying them on Linux
