@@ -23,7 +23,19 @@ ok()    { echo -e "${GREEN}✓${NC}  $*"; }
 warn()  { echo -e "${YELLOW}⚠${NC}  $*"; }
 fail()  { echo -e "${RED}✗${NC}  $*"; exit 1; }
 
-INSTALL_DIR="${NINEDEPLOY_INSTALL_DIR:-$HOME/ninedeploy}"
+if [ -z "${NINEDEPLOY_INSTALL_DIR:-}" ]; then
+  if [ -f "./package.json" ] && [ -d "./apps/server" ]; then
+    INSTALL_DIR="$(pwd)"
+  elif [ -d "/opt/ninedeploy" ] && [ -f "/opt/ninedeploy/package.json" ]; then
+    INSTALL_DIR="/opt/ninedeploy"
+  elif [ -d "$HOME/ninedeploy" ]; then
+    INSTALL_DIR="$HOME/ninedeploy"
+  else
+    INSTALL_DIR="$HOME/ninedeploy"
+  fi
+else
+  INSTALL_DIR="$NINEDEPLOY_INSTALL_DIR"
+fi
 REPO_URL="https://github.com/NineDeploy/NineDeploy.git"
 NEEDS_CLONE=false
 
@@ -241,6 +253,13 @@ pnpm install --frozen-lockfile
 
 info "Building…"
 pnpm build
+
+# Link global CLI executable
+if [ -f "$INSTALL_DIR/apps/cli/dist/index.js" ]; then
+  chmod +x "$INSTALL_DIR/apps/cli/dist/index.js" 2>/dev/null || true
+  sudo ln -sf "$INSTALL_DIR/apps/cli/dist/index.js" /usr/local/bin/ninedeploy 2>/dev/null || true
+  ok "CLI symlinked to /usr/local/bin/ninedeploy"
+fi
 
 # ── 4. Configure ──────────────────────────────────────────────────────────
 
