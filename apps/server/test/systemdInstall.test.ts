@@ -15,7 +15,8 @@ describe('bare-metal systemd installation policy', () => {
   it('migrates stale watchdog installations and verifies effective settings', () => {
     const installer = rootFile('install.sh');
 
-    expect(installer).toContain('99-ninedeploy-runtime-safety.conf');
+    expect(installer).toContain('zzzz-ninedeploy-runtime-safety.conf');
+    expect(installer).toContain('DATA_DIR=$(cd "$DATA_DIR_SETTING" && pwd -P)');
     expect(installer).toContain("'Type=simple'");
     expect(installer).toContain("'WatchdogSec=0'");
     expect(installer).toContain('EFFECTIVE_TYPE=$(systemctl show ninedeploy --property=Type --value)');

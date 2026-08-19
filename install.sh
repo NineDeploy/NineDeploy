@@ -356,8 +356,13 @@ if [ "$(uname -s)" = "Linux" ] && command -v systemctl &>/dev/null; then
   if [ ! -f "$UNIT_TEMPLATE" ]; then
     fail "systemd/ninedeploy.service not found in the repo — re-run ./install.sh"
   fi
-  DATA_DIR="${NINEDEPLOY_DATA_DIR:-$INSTALL_DIR/.data}"
-  mkdir -p "$DATA_DIR"
+  DATA_DIR_SETTING="${NINEDEPLOY_DATA_DIR:-$INSTALL_DIR/.data}"
+  mkdir -p "$DATA_DIR_SETTING"
+  # Environment files commonly use NINEDEPLOY_DATA_DIR=./.data. systemd
+  # requires every ReadWritePaths= operand to be absolute, so resolve the
+  # configured directory from the installer's current INSTALL_DIR before
+  # rendering the unit.
+  DATA_DIR=$(cd "$DATA_DIR_SETTING" && pwd -P)
   SERVICE_FILE="/etc/systemd/system/ninedeploy.service"
   UNIT_STAGE_DIR=$(mktemp -d)
   UNIT_STAGE_FILE="$UNIT_STAGE_DIR/ninedeploy.service"
@@ -387,8 +392,12 @@ if [ "$(uname -s)" = "Linux" ] && command -v systemctl &>/dev/null; then
   # installer-owned, last-applied safety override for both fresh installs and
   # in-place upgrades. User overrides that sort later are detected below.
   RUNTIME_DROPIN_DIR="/etc/systemd/system/ninedeploy.service.d"
-  RUNTIME_DROPIN="$RUNTIME_DROPIN_DIR/99-ninedeploy-runtime-safety.conf"
+  RUNTIME_DROPIN="$RUNTIME_DROPIN_DIR/zzzz-ninedeploy-runtime-safety.conf"
   sudo mkdir -p "$RUNTIME_DROPIN_DIR"
+  # v0.2.4 briefly used a numeric prefix which sorts before the conventional
+  # override.conf name. Remove only that installer-owned obsolete file; keep
+  # every administrator-owned drop-in intact.
+  sudo rm -f "$RUNTIME_DROPIN_DIR/99-ninedeploy-runtime-safety.conf"
   printf '%s\n' \
     '# Managed by NineDeploy install.sh — do not enable a service watchdog.' \
     '[Service]' \
