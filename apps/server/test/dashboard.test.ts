@@ -8,6 +8,7 @@ const execMocks = vi.hoisted(() => ({
   run: vi.fn(async (_c: unknown, _a: unknown, _o: unknown, sink?: (l: string) => void) => { sink?.('out'); }),
 }));
 vi.mock('../src/lib/exec.js', () => execMocks);
+vi.mock('../src/lib/dockerPull.js', () => ({ ensureDockerImage: vi.fn(async () => undefined) }));
 
 describe('dashboard routes', () => {
   beforeEach(() => {

@@ -15,6 +15,8 @@ const h = vi.hoisted(() => {
 
 vi.mock('../src/lib/crypto.js', () => ({ decrypt: h.decrypt }));
 vi.mock('../src/lib/exec.js', () => ({ run: h.run, capture: vi.fn(), sleep: vi.fn() }));
+const dockerPullMocks = vi.hoisted(() => ({ ensureDockerImage: vi.fn(async () => undefined) }));
+vi.mock('../src/lib/dockerPull.js', () => dockerPullMocks);
 vi.mock('../src/config.js', () => ({ config: h.config }));
 
 const base = mkdtempSync(path.join(os.tmpdir(), 'nd-tunnel-'));
@@ -41,6 +43,7 @@ describe('startTunnel', () => {
 
     await startTunnel(tunnel, log);
 
+    expect(dockerPullMocks.ensureDockerImage).toHaveBeenCalledWith('cloudflare/cloudflared:latest', log);
     expect(h.decrypt).toHaveBeenCalledWith('enc-token');
     expect(log).toHaveBeenCalledWith('Starting Cloudflare Tunnel web (nd-tunnel-web) …');
     const args = h.run.mock.calls[0]![1] as unknown[];

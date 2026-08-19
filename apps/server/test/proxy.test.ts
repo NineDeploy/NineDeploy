@@ -19,6 +19,7 @@ const h = vi.hoisted(() => {
 });
 
 vi.mock('../src/lib/exec.js', () => ({ capture: h.capture, run: h.run, sleep: h.sleep }));
+vi.mock('../src/lib/dockerPull.js', () => ({ ensureDockerImage: vi.fn(async () => undefined) }));
 vi.mock('../src/config.js', () => ({ config: h.config }));
 
 const base = mkdtempSync(path.join(os.tmpdir(), 'nd-proxy-'));

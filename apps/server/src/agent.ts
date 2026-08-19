@@ -1,6 +1,7 @@
 import { buildAgentApp } from './agentApp.js';
 import { tokenMatches } from './lib/agentClient.js';
 import { spawnValidated } from './lib/spawnValidated.js';
+import { pullDockerImage } from './lib/dockerPull.js';
 
 /**
  * Agent mode (NINEDEPLOY_AGENT=1): a minimal HTTP surface for the core to run
@@ -200,6 +201,11 @@ export async function runOp(op: string, params: Params, onLine: (l: string) => v
   }
   if (op === 'file.deleteEnv') {
     await deleteEnvFileOp(params);
+    return 0;
+  }
+  if (op === 'docker.pull') {
+    const image = validated(str(params, 'image'), RE_IMAGE, 'image');
+    await pullDockerImage(image, onLine);
     return 0;
   }
   const def = OPS[op];

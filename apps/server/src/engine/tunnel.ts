@@ -4,12 +4,14 @@ import path from 'node:path';
 import type { Tunnel } from '@ninedeploy/db';
 import { decrypt } from '../lib/crypto.js';
 import { run } from '../lib/exec.js';
+import { ensureDockerImage } from '../lib/dockerPull.js';
 import { NETWORK } from './proxy.js';
 
 const CLOUDFLARED_IMAGE = 'cloudflare/cloudflared:latest';
 
 /** Run a Cloudflare Tunnel (cloudflared) connected to the shared network. */
 export async function startTunnel(t: Tunnel, log: (line: string) => void): Promise<void> {
+  await ensureDockerImage(CLOUDFLARED_IMAGE, log);
   const token = decrypt(t.tokenEncrypted);
   // Pass the token via a temp env-file (mode 0600) instead of a `--token` argv
   // value, so the Cloudflare token never shows up in `ps` or `docker inspect`

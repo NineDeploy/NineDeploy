@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { Database } from '@ninedeploy/db';
 import { decrypt, encrypt } from '../lib/crypto.js';
-import { pullDockerImage } from '../lib/dockerPull.js';
+import { ensureDockerImage, pullDockerImage } from '../lib/dockerPull.js';
 import { capture, run } from '../lib/exec.js';
 import { NETWORK } from './proxy.js';
 
@@ -177,6 +177,8 @@ export async function startDatabaseStudio(d: Database, port: number, log: (line:
   if (await containerRunning(name)) return;
   await run('docker', ['rm', '-f', name], {}, swallow).catch(() => undefined);
   const studio = studioImageForEngine(d.engine);
+  log(`Preparing Web Studio image ${studio.image} …`);
+  await ensureDockerImage(studio.image, log);
   const args = [
     'run', '-d', '--name', name, '--network', NETWORK, '--restart', 'unless-stopped',
     '-p', `${port}:${studio.containerPort}`,

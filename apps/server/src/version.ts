@@ -1,4 +1,4 @@
-export const VERSION = '0.2.18';
+export const VERSION = '0.2.19';
 
 export interface ChangelogEntry {
   version: string;
@@ -9,7 +9,18 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
-    version: '0.2.18',
+    version: '0.2.19',
+    date: '2026-08-20',
+    title: 'End-to-End Ubuntu Runtime Reliability',
+    changes: [
+      'Every internal helper image is explicitly prepared through the shared Docker and containerd recovery path before docker run',
+      'Traefik startup, updates, remote agents, database studios, tunnels, health probes, and volume tools now share one reliable image lifecycle',
+      'Ubuntu installs use a consistent elevated Docker command path, run the host control-plane with the privileges its Docker trust boundary requires, and verify the real HTTP ingress',
+      'Automatically assigned wildcard domains enable HTTPS whenever an ACME account is configured',
+    ],
+  },
+  {
+    version: '0.2.19',
     date: '2026-08-20',
     title: 'Targeted Containerd Snapshot Repair',
     changes: [

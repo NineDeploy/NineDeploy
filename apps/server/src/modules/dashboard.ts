@@ -5,6 +5,9 @@ import { capture } from '../lib/exec.js';
 import { containerIp } from '../engine/builders/docker.js';
 import { TRAEFIK_CONTAINER } from '../engine/proxy.js';
 import { buildProbeUrl, safeProbePath } from '../lib/probeUrl.js';
+import { ensureDockerImage } from '../lib/dockerPull.js';
+
+const NETNS_PROBE_IMAGE = 'curlimages/curl:latest';
 
 interface HealthStatus {
   serviceId: number;
@@ -59,8 +62,9 @@ async function probeViaMesh(runtimeId: string, port: number, path: string): Prom
  */
 async function probeViaNetns(runtimeId: string, port: number, path: string): Promise<boolean> {
   try {
+    await ensureDockerImage(NETNS_PROBE_IMAGE, () => undefined);
     const out = await capture('docker', [
-      'run', '--rm', '--network', `container:${runtimeId}`, 'curlimages/curl:latest',
+      'run', '--rm', '--network', `container:${runtimeId}`, NETNS_PROBE_IMAGE,
       '-s', '-o', '/dev/null', '-w', '%{http_code}', '-m', '3',
       `http://127.0.0.1:${port}${path}`,
     ]);

@@ -8,6 +8,8 @@ import { buildTestApp } from './helpers.js';
 
 const spawnMock = vi.hoisted(() => vi.fn(async () => 0));
 vi.mock('../src/lib/spawnValidated.js', () => ({ spawnValidated: spawnMock }));
+const dockerPullMock = vi.hoisted(() => vi.fn(async () => undefined));
+vi.mock('../src/lib/dockerPull.js', () => ({ pullDockerImage: dockerPullMock }));
 
 const TOKEN = 'agent-shared-token';
 const TOKEN_HASH = createHash('sha256').update(TOKEN).digest('hex');
@@ -105,7 +107,7 @@ describe('agent /agent/exec route', () => {
   });
 
   it('reports non-Error op failures generically', async () => {
-    spawnMock.mockRejectedValueOnce('plain boom');
+    dockerPullMock.mockRejectedValueOnce('plain boom');
     const app = await appWith();
     const res = await app.inject({
       method: 'POST', url: '/agent/exec',

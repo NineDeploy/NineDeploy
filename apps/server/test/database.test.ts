@@ -28,13 +28,17 @@ const h = vi.hoisted(() => {
   });
   const capture = vi.fn(async () => '[]');
   const pullDockerImage = vi.fn(async () => undefined);
+  const ensureDockerImage = vi.fn(async () => undefined);
   const config: { paths: { dataDir: string } } = { paths: { dataDir: '/tmp/nd-db-test' } };
-  return { decrypt, encrypt, run, capture, pullDockerImage, config };
+  return { decrypt, encrypt, run, capture, pullDockerImage, ensureDockerImage, config };
 });
 
 vi.mock('../src/lib/crypto.js', () => ({ decrypt: h.decrypt, encrypt: h.encrypt }));
 vi.mock('../src/lib/exec.js', () => ({ run: h.run, capture: h.capture, sleep: vi.fn() }));
-vi.mock('../src/lib/dockerPull.js', () => ({ pullDockerImage: h.pullDockerImage }));
+vi.mock('../src/lib/dockerPull.js', () => ({
+  pullDockerImage: h.pullDockerImage,
+  ensureDockerImage: h.ensureDockerImage,
+}));
 vi.mock('../src/config.js', () => ({ config: h.config }));
 
 beforeEach(() => {
@@ -44,6 +48,7 @@ beforeEach(() => {
   });
   h.capture.mockResolvedValue('[]');
   h.pullDockerImage.mockResolvedValue(undefined);
+  h.ensureDockerImage.mockResolvedValue(undefined);
 });
 
 const dbRow = (over: Record<string, unknown> = {}) =>
@@ -718,6 +723,7 @@ describe('restoreDatabase', () => {
     // Starts Redis commander with REDIS_HOSTS
     h.capture.mockResolvedValueOnce('exited');
     await startDatabaseStudio(dbRow({ slug: 'my-redis', engine: 'redis', name: 'my-redis', internalHost: 'my-redis' }), 18001, vi.fn());
+    expect(h.ensureDockerImage).toHaveBeenCalledWith('rediscommander/redis-commander:latest', expect.any(Function));
     expect(h.run).toHaveBeenCalledWith(
       'docker',
       expect.arrayContaining(['run', '-d', '--name', 'nd-studio-my-redis', '-p', '18001:8081', '-e', 'REDIS_HOSTS=local:my-redis:6379']),

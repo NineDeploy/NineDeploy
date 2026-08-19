@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   containerdCliArgs,
+  ensureDockerImage,
   isTransientSnapshotFailure,
   normalizeContainerdImageRef,
   pullDockerImage,
@@ -27,6 +28,25 @@ describe('pullDockerImage', () => {
     expect(normalizeContainerdImageRef('gitea/gitea:latest')).toBe('docker.io/gitea/gitea:latest');
     expect(normalizeContainerdImageRef('postgres:16')).toBe('docker.io/library/postgres:16');
     expect(normalizeContainerdImageRef('registry.example:5000/acme/app:v1')).toBe('registry.example:5000/acme/app:v1');
+  });
+
+  it('does not pull a helper image that already exists locally', async () => {
+    h.capture.mockResolvedValueOnce('sha256:local');
+
+    await ensureDockerImage('busybox:1.36', vi.fn());
+
+    expect(h.capture).toHaveBeenCalledWith('docker', ['image', 'inspect', 'busybox:1.36', '--format', '{{.Id}}']);
+    expect(h.run).not.toHaveBeenCalled();
+  });
+
+  it('routes a missing helper image through the recoverable pull path', async () => {
+    h.capture.mockRejectedValueOnce(new Error('No such image'));
+    h.run.mockResolvedValueOnce(undefined);
+    const log = vi.fn();
+
+    await ensureDockerImage('busybox:1.36', log);
+
+    expect(h.run).toHaveBeenCalledWith('docker', ['pull', 'busybox:1.36'], {}, expect.any(Function));
   });
 
   it('targets Docker managed containerd when its socket is present', () => {

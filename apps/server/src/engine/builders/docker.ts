@@ -4,11 +4,13 @@ import path from 'node:path';
 import type { Builder } from '../types.js';
 import type { BuildConfig } from '@ninedeploy/db';
 import { capture, buildEnv, run, sleep } from '../../lib/exec.js';
-import { pullDockerImage } from '../../lib/dockerPull.js';
+import { ensureDockerImage, pullDockerImage } from '../../lib/dockerPull.js';
 import { NETWORK } from '../proxy.js';
 import { buildProbeUrl, safeProbePath } from '../../lib/probeUrl.js';
 
 const swallow = () => {};
+const NIXPACKS_IMAGE = 'ghcr.io/railwayapp/nixpacks:latest';
+const PROBE_IMAGE = 'busybox:1.36';
 
 /** Valid docker --restart values: the fixed policies plus on-failure:N. */
 const RE_RESTART = /^(no|always|unless-stopped|on-failure(?::\d{1,3})?)$/;
@@ -107,7 +109,8 @@ async function buildWithNixpacks(
     log(`⚡ nixpacks CLI build: ${baseDir} …`);
     await run('nixpacks', args, { cwd: workDir }, log);
   } else {
-    log('🐳 Nixpacks CLI not found on host — using standalone ghcr.io/railwayapp/nixpacks container …');
+    log(`🐳 Nixpacks CLI not found on host — using standalone ${NIXPACKS_IMAGE} container …`);
+    await ensureDockerImage(NIXPACKS_IMAGE, log);
     const dockerArgs = [
       'run',
       '--rm',
@@ -117,7 +120,7 @@ async function buildWithNixpacks(
       `${workDir}:/app`,
       '-w',
       '/app',
-      'ghcr.io/railwayapp/nixpacks:latest',
+      NIXPACKS_IMAGE,
       'build',
       '.',
       '--name',
@@ -281,6 +284,7 @@ export const dockerBuilder: Builder = {
     // name-based DNS works everywhere the app itself will be reached.
     const start = Date.now();
     let usedSiblingProbe = false;
+    let siblingImageReady = false;
     let fallbackPorts: number[] | null = null;
     while (Date.now() < deadline) {
       // Resolve the container's network address fresh on every attempt: null
@@ -322,9 +326,13 @@ export const dockerBuilder: Builder = {
         // "Is the port accepting connections inside the network" is exactly
         // the signal this fallback needs.
         try {
+          if (!siblingImageReady) {
+            await ensureDockerImage(PROBE_IMAGE, log);
+            siblingImageReady = true;
+          }
           await run('docker', [
             'run', '--rm', '--network', NETWORK,
-            'busybox:1.36', 'nc', '-w', '3', ip, String(runtime.port),
+            PROBE_IMAGE, 'nc', '-w', '3', ip, String(runtime.port),
           ], {}, log);
           return true;
         } catch (probeErr) {
@@ -344,7 +352,7 @@ export const dockerBuilder: Builder = {
           try {
             await run('docker', [
               'run', '--rm', '--network', NETWORK,
-              'busybox:1.36', 'nc', '-w', '3', ip, String(candidate),
+              PROBE_IMAGE, 'nc', '-w', '3', ip, String(candidate),
             ], {}, () => undefined);
             log(`detected healthy image port ${candidate}/tcp; replacing incorrect configured port ${runtime.port}`);
             runtime.port = candidate;

@@ -9,7 +9,7 @@ import { dockerBuilder } from './builders/docker.js';
 import { composeBuilder } from './builders/compose.js';
 import { logBus } from './logs.js';
 import { pm2Builder } from './builders/pm2.js';
-import { writeDynamicConfig } from './proxy.js';
+import { getAcmeEmail, writeDynamicConfig } from './proxy.js';
 import { sleep, run } from '../lib/exec.js';
 import { resolveVaultRefs } from '../lib/vault.js';
 import { agentOp } from '../lib/agentClient.js';
@@ -329,8 +329,9 @@ export async function runDeployment(db: DB, deploymentId: number): Promise<void>
       const wildcardHost = `${service.slug}.${config.wildcardDomain}`;
       const existing = await db.query.domains.findFirst({ where: and(eq(domains.serviceId, service.id), eq(domains.hostname, wildcardHost)) });
       if (!existing) {
-        await db.insert(domains).values({ serviceId: service.id, hostname: wildcardHost, path: '/', ssl: false, status: 'active' });
-        log(`🌐 Auto-assigned URL: ${wildcardHost}`);
+        const ssl = !!(await getAcmeEmail(db));
+        await db.insert(domains).values({ serviceId: service.id, hostname: wildcardHost, path: '/', ssl, status: 'active' });
+        log(`🌐 Auto-assigned URL: ${ssl ? 'https' : 'http'}://${wildcardHost}`);
       }
     } catch (err) {
       log(`warning: could not auto-assign wildcard domain: ${msg(err)}`);

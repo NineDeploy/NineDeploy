@@ -10,6 +10,8 @@ describe('bare-metal systemd installation policy', () => {
     expect(unit).toMatch(/^Type=simple$/m);
     expect(unit).toMatch(/^WatchdogSec=0$/m);
     expect(unit).not.toMatch(/^Type=notify$/m);
+    expect(unit).toMatch(/^User=root$/m);
+    expect(unit).toMatch(/^Group=root$/m);
   });
 
   it('migrates stale watchdog installations and verifies effective settings', () => {
@@ -33,18 +35,27 @@ describe('bare-metal systemd installation policy', () => {
 
     expect(installer).toContain('traefik_image_usable');
     expect(installer).toContain('CONTAINERD_SNAPSHOT_DIR="$CONTAINERD_OVERLAY_ROOT/snapshots"');
+    expect(installer).toContain('/var/lib/docker/containerd/daemon/io.containerd.snapshotter.v1.overlayfs');
     expect(installer).toContain('sudo install -d -o root -g root -m 0700 "$CONTAINERD_SNAPSHOT_DIR"');
     expect(installer).toContain('Containerd overlayfs snapshot directory restored');
     expect(installer).toContain('Existing Traefik v3 image verified; skipping registry pull');
-    expect(installer).toContain('PULL_OUTPUT=$(docker pull traefik:3 2>&1)');
+    expect(installer).toContain('PULL_OUTPUT=$(docker_cmd pull traefik:3 2>&1)');
     expect(installer).toContain('switching immediately to the verified layer-free Traefik image');
     expect(installer).toContain('build_traefik_fallback_image');
     expect(installer).toContain('checksums.txt');
     expect(installer).toContain('ACTUAL_SHA=$(sha256sum');
     expect(installer).toContain("--change 'ENTRYPOINT [\"/traefik\"]'");
-    expect(installer).toContain('docker run --rm traefik:3 version');
+    expect(installer).toContain('docker_cmd run --rm traefik:3 version');
     expect(installer).not.toContain('sudo systemctl restart docker');
     expect(installer).not.toContain('docker image prune');
     expect(installer).not.toContain('ctr --namespace moby snapshots');
+  });
+
+  it('uses one elevated Docker command path and probes the real ingress entrypoint', () => {
+    const installer = rootFile('install.sh');
+
+    expect(installer).toContain('docker_cmd() { "$' + '{DOCKER[@]}" "$@"; }');
+    expect(installer).toContain("-H 'Host: ninedeploy-install-check.invalid' http://127.0.0.1/");
+    expect(installer).toContain('Traefik is running but its HTTP entrypoint on :80 is not responding');
   });
 });

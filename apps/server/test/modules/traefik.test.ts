@@ -9,6 +9,13 @@ const fsMocks = vi.hoisted(() => ({
   copyFileSync: vi.fn(() => {}),
 }));
 
+const proxyMocks = vi.hoisted(() => ({
+  ensureNetwork: vi.fn(async () => undefined),
+  ensureTraefik: vi.fn(async () => undefined),
+  getAcmeEmail: vi.fn(async () => 'ops@example.com'),
+  getDnsConfig: vi.fn(async () => null),
+}));
+
 vi.mock('node:fs', async () => {
   const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
   return {
@@ -32,6 +39,7 @@ vi.mock('../../src/engine/proxy.js', async () => {
   const actual = await vi.importActual<typeof import('../../src/engine/proxy.js')>('../../src/engine/proxy.js');
   return {
     ...actual,
+    ...proxyMocks,
     readCertificates: vi.fn(() => [
       { domain: 'app.example.com', expiresAt: new Date(Date.now() + 86400000 * 30), issuer: "Let's Encrypt" },
       { domain: 'noexpire.example.com', expiresAt: null, issuer: "Let's Encrypt" },
@@ -68,7 +76,7 @@ describe('traefik module', () => {
       headers: asUser(),
     });
 
-    expect(res.statusCode).toBe(200);
+    expect(res.statusCode, res.body).toBe(200);
     const body = res.json();
     expect(body.status.running).toBe(true);
     expect(body.status.version).toBe('3.1.0');
@@ -499,10 +507,12 @@ tcp:
       headers: asUser(),
     });
 
-    expect(res.statusCode).toBe(200);
+    expect(res.statusCode, res.body).toBe(200);
     expect(res.json()).toEqual({ ok: true, newVersion: '3.3.0' });
     expect(exec.run).toHaveBeenCalledWith('docker', ['pull', 'traefik:3'], {}, expect.any(Function));
     expect(exec.run).toHaveBeenCalledWith('docker', ['rm', '-f', 'ninedeploy-traefik'], {}, expect.any(Function));
+    expect(proxyMocks.ensureNetwork).toHaveBeenCalled();
+    expect(proxyMocks.ensureTraefik).toHaveBeenCalledWith(expect.any(Function), 'ops@example.com', null);
 
     // Update without existing acme.json
     fsMocks.existsSync.mockReturnValue(false);

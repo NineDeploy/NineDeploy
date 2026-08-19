@@ -11,6 +11,8 @@ import {
 
 const execMocks = vi.hoisted(() => ({ capture: vi.fn(), run: vi.fn() }));
 vi.mock('../../src/lib/exec.js', () => execMocks);
+const dockerPullMocks = vi.hoisted(() => ({ ensureDockerImage: vi.fn(async () => undefined) }));
+vi.mock('../../src/lib/dockerPull.js', () => dockerPullMocks);
 
 describe('volume file helpers (pure)', () => {
   it('isManagedVolume accepts only nd- managed names', () => {
@@ -38,6 +40,7 @@ describe('volume file operations (docker sidecar)', () => {
       'directory|4096|1786886400|./configs\nregular file|128|1786886401|./app.env\n',
     );
     const entries = await listVolumeDir('nd-svc-web-data', 'configs');
+    expect(dockerPullMocks.ensureDockerImage).toHaveBeenCalledWith('alpine:latest', expect.any(Function));
     expect(execMocks.capture).toHaveBeenCalledWith(
       'docker',
       expect.arrayContaining(['run', '--rm', '-v', 'nd-svc-web-data:/v', 'alpine:latest']),

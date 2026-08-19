@@ -7,6 +7,7 @@ const SNAPSHOT_FAILURE = /extraction snapshot|target snapshot .*already exists|p
 const STALE_EXISTING_SNAPSHOT = /target snapshot .*already exists/i;
 const STALE_SNAPSHOT_KEY = /target snapshot\s+"?(sha256:[a-f0-9]{64})"?\s+already exists/i;
 const CONTAINERD_SOCKETS = ['/run/containerd/containerd.sock', '/var/run/docker/containerd/containerd.sock'] as const;
+const imagePreparations = new Map<string, Promise<void>>();
 
 /** Docker/containerd snapshot errors known to be transient on Docker 29+. */
 export function isTransientSnapshotFailure(lines: readonly string[]): boolean {
@@ -242,4 +243,27 @@ export async function pullDockerImage(
     const pullMessage = snapshotError instanceof Error ? snapshotError.message : String(snapshotError);
     throw new Error(`${pullMessage}; native snapshot recovery failed: ${recoveryMessage}`);
   }
+}
+
+/**
+ * Ensure a runtime/helper image exists without ever delegating an implicit pull
+ * to `docker run`. Concurrent callers share one preparation, while failures are
+ * evicted immediately so a later request can retry after the host is repaired.
+ */
+export async function ensureDockerImage(image: string, log: (line: string) => void): Promise<void> {
+  try {
+    await capture('docker', ['image', 'inspect', image, '--format', '{{.Id}}']);
+    return;
+  } catch {
+    // Missing locally: use the same bounded containerd recovery as deployments.
+  }
+
+  const existing = imagePreparations.get(image);
+  if (existing) return existing;
+
+  const preparation = pullDockerImage(image, log).finally(() => {
+    if (imagePreparations.get(image) === preparation) imagePreparations.delete(image);
+  });
+  imagePreparations.set(image, preparation);
+  return preparation;
 }

@@ -1,4 +1,5 @@
 import { capture, run } from '../lib/exec.js';
+import { ensureDockerImage } from '../lib/dockerPull.js';
 
 /**
  * File operations inside a managed Docker volume, executed via a throwaway
@@ -49,6 +50,12 @@ export interface VolumeEntry {
 }
 
 const VOL_ROOT = '/v';
+const VOLUME_HELPER_IMAGE = 'alpine:latest';
+const quiet = () => undefined;
+
+async function prepareVolumeHelper(sink: (line: string) => void = quiet): Promise<void> {
+  await ensureDockerImage(VOLUME_HELPER_IMAGE, sink);
+}
 
 function volPath(rel: string): string {
   return rel ? `${VOL_ROOT}/${rel}` : VOL_ROOT;
@@ -65,8 +72,9 @@ export async function listVolumeDir(
   rel: string,
 ): Promise<VolumeEntry[]> {
   assertManagedVolume(volume);
+  await prepareVolumeHelper();
   const out = await capture('docker', [
-    'run', '--rm', '-v', `${volume}:${VOL_ROOT}`, 'alpine:latest',
+    'run', '--rm', '-v', `${volume}:${VOL_ROOT}`, VOLUME_HELPER_IMAGE,
     'sh', '-c',
     `cd ${shellQuote(volPath(rel))} 2>/dev/null && find . -mindepth 1 -maxdepth 1 -exec stat -c '%F|%s|%Y|%n' {} + | sort`,
   ]);
@@ -95,8 +103,9 @@ export async function readVolumeFile(
   rel: string,
 ): Promise<{ content: string; encoding: 'utf8' | 'base64' }> {
   assertManagedVolume(volume);
+  await prepareVolumeHelper();
   const out = await capture('docker', [
-    'run', '--rm', '-v', `${volume}:${VOL_ROOT}`, 'alpine:latest',
+    'run', '--rm', '-v', `${volume}:${VOL_ROOT}`, VOLUME_HELPER_IMAGE,
     'sh', '-c',
     `test -f ${shellQuote(volPath(rel))} && tail -c 1048576 ${shellQuote(volPath(rel))} | base64`,
   ]);
@@ -112,12 +121,13 @@ export async function writeVolumeFile(
   sink: (line: string) => void,
 ): Promise<void> {
   assertManagedVolume(volume);
+  await prepareVolumeHelper(sink);
   // base64 is validated upstream (schemas); it rides through stdin so the
   // content never touches argv or a shell string.
   await run(
     'docker',
     [
-      'run', '--rm', '-i', '-v', `${volume}:${VOL_ROOT}`, 'alpine:latest',
+      'run', '--rm', '-i', '-v', `${volume}:${VOL_ROOT}`, VOLUME_HELPER_IMAGE,
       'sh', '-c', `mkdir -p ${shellQuote(dirname(volPath(rel)))} && base64 -d > ${shellQuote(volPath(rel))}`,
     ],
     {},
@@ -129,8 +139,9 @@ export async function writeVolumeFile(
 /** Create a directory (mkdir -p semantics). */
 export async function makeVolumeDir(volume: string, rel: string): Promise<void> {
   assertManagedVolume(volume);
+  await prepareVolumeHelper();
   await capture('docker', [
-    'run', '--rm', '-v', `${volume}:${VOL_ROOT}`, 'alpine:latest',
+    'run', '--rm', '-v', `${volume}:${VOL_ROOT}`, VOLUME_HELPER_IMAGE,
     'mkdir', '-p', '--', volPath(rel),
   ]);
 }
@@ -142,9 +153,10 @@ export async function deleteVolumePath(
   sink: (line: string) => void,
 ): Promise<void> {
   assertManagedVolume(volume);
+  await prepareVolumeHelper(sink);
   await run(
     'docker',
-    ['run', '--rm', '-v', `${volume}:${VOL_ROOT}`, 'alpine:latest', 'rm', '-rf', '--', volPath(rel)],
+    ['run', '--rm', '-v', `${volume}:${VOL_ROOT}`, VOLUME_HELPER_IMAGE, 'rm', '-rf', '--', volPath(rel)],
     {},
     sink,
   );

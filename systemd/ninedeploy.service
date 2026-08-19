@@ -1,7 +1,6 @@
 # NineDeploy systemd service template — rendered by install.sh with this
 # install's paths and written to /etc/systemd/system/ninedeploy.service.
 # Placeholders (filled by install.sh): @NODE@ @INSTALL_DIR@ @DATA_DIR@
-# @USER@ @GROUP@
 #
 # Manual use (adjust the placeholders yourself):
 #   sudo cp systemd/ninedeploy.service /etc/systemd/system/
@@ -15,9 +14,12 @@ After=network.target docker.service
 Requires=docker.service
 
 [Service]
-User=@USER@
-Group=@GROUP@
-SupplementaryGroups=docker
+# NineDeploy is a host control-plane: Docker socket access is root-equivalent,
+# and containerd snapshot repair plus firewall/proxy lifecycle require host
+# privileges. Declare that trust boundary honestly instead of running a user
+# that can control Docker but cannot complete recovery operations.
+User=root
+Group=root
 WorkingDirectory=@INSTALL_DIR@
 EnvironmentFile=@INSTALL_DIR@/.env
 ExecStart=@NODE@ @INSTALL_DIR@/apps/server/dist/server.js

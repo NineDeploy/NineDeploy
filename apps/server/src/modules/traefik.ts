@@ -2,7 +2,15 @@ import { copyFileSync, existsSync, readFileSync } from 'node:fs';
 import { config } from '../config.js';
 import { capture, run } from '../lib/exec.js';
 import { pullDockerImage } from '../lib/dockerPull.js';
-import { readCertificates, TRAEFIK_CONTAINER, TRAEFIK_IMAGE } from '../engine/proxy.js';
+import {
+  ensureNetwork,
+  ensureTraefik,
+  getAcmeEmail,
+  getDnsConfig,
+  readCertificates,
+  TRAEFIK_CONTAINER,
+  TRAEFIK_IMAGE,
+} from '../engine/proxy.js';
 import type { FastifyPluginAsync } from 'fastify';
 
 /** Traefik container durumu */
@@ -397,19 +405,12 @@ export const traefikRoutes: FastifyPluginAsync = async (app) => {
     log('Removing old container...');
     await run('docker', ['rm', '-f', TRAEFIK_CONTAINER], {}, (l) => log(l));
     
-    // 4. Yeni container'ı başlat
+    // 4. Recreate through the canonical lifecycle so config fingerprints,
+    // ACME mounts, DNS credentials, host gateway and liveness checks cannot
+    // drift from startup/watchdog behavior.
     log('Starting new container...');
-    
-    const runArgs = [
-      'run', '-d', '--name', TRAEFIK_CONTAINER, '--restart', 'unless-stopped',
-      '--network', 'ninedeploy',
-      '-p', '80:80', '-p', '443:443',
-      '-v', `${dataDir}/traefik:/etc/traefik:ro`,
-      '-v', `${dataDir}/traefik/acme.json:/etc/traefik/acme.json`,
-      TRAEFIK_IMAGE,
-    ];
-    
-    await run('docker', runArgs, {}, (l) => log(l));
+    await ensureNetwork(log);
+    await ensureTraefik(log, await getAcmeEmail(app.db), await getDnsConfig(app.db));
     
     const newVersion = await getLatestTraefikVersion();
     log(`Traefik updated to ${newVersion}`);

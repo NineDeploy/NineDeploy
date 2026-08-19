@@ -3,6 +3,8 @@ import { runOp } from '../src/agent.js';
 
 const spawnMock = vi.hoisted(() => vi.fn(async () => 0));
 vi.mock('../src/lib/spawnValidated.js', () => ({ spawnValidated: spawnMock }));
+const dockerPullMock = vi.hoisted(() => vi.fn(async () => undefined));
+vi.mock('../src/lib/dockerPull.js', () => ({ pullDockerImage: dockerPullMock }));
 
 /** Capture the argv a runOp call spawned with. */
 async function argvOf(op: string, params: Record<string, unknown>): Promise<string[]> {
@@ -18,7 +20,10 @@ describe('agent typed-op argv templates', () => {
   });
 
   it('docker.pull', async () => {
-    expect(await argvOf('docker.pull', { image: 'nginx:1' })).toEqual(['pull', 'nginx:1']);
+    const log = vi.fn();
+    await expect(runOp('docker.pull', { image: 'nginx:1' }, log)).resolves.toBe(0);
+    expect(dockerPullMock).toHaveBeenCalledWith('nginx:1', log);
+    expect(spawnMock).not.toHaveBeenCalled();
   });
 
   it('docker.networkCreate builds a validated argv', async () => {

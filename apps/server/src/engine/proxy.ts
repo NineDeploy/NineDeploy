@@ -6,6 +6,7 @@ import { config } from '../config.js';
 import { capture, run, sleep } from '../lib/exec.js';
 import { getSettingString } from '../lib/settings.js';
 import { decrypt, encrypt } from '../lib/crypto.js';
+import { ensureDockerImage } from '../lib/dockerPull.js';
 
 export const TRAEFIK_CONTAINER = 'ninedeploy-traefik';
 // Stay on Traefik v3 major — minor/patch updates are pulled automatically.
@@ -303,6 +304,10 @@ export async function ensureTraefik(
     if (runningOnNetwork && (!runningCurrentConfig || staticConfigChanged)) {
       log('traefik static configuration changed; recreating container to apply it');
     }
+    // Prepare the replacement before removing a currently serving proxy. A
+    // registry/containerd failure must not turn a config refresh into an
+    // avoidable ingress outage.
+    await ensureDockerImage(TRAEFIK_IMAGE, log);
     // Recreate so it joins the network (the only publicly exposed service).
     await run('docker', ['rm', '-f', TRAEFIK_CONTAINER], {}, () => {}).catch(() => undefined);
 

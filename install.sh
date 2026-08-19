@@ -123,11 +123,18 @@ if [ "$(uname -s)" = "Linux" ] && [ "$(id -u)" -ne 0 ]; then
     sudo usermod -aG docker "$CURRENT_USER" 2>/dev/null || true
   fi
 fi
-if ! docker info &>/dev/null 2>&1 && ! sudo docker info &>/dev/null 2>&1; then
+if docker info &>/dev/null 2>&1; then
+  DOCKER=(docker)
+elif sudo docker info &>/dev/null 2>&1; then
+  # A just-added docker group is not visible in the current shell. Keep this
+  # one installer run reliable; the systemd service starts with its own groups.
+  DOCKER=(sudo docker)
+else
   warn "Docker daemon not running. Start it and re-run."
   fail "Docker daemon must be running."
 fi
-ok "Docker $(docker --version 2>/dev/null | awk '{print $3}' | tr -d ',' || echo 'installed')"
+docker_cmd() { "${DOCKER[@]}" "$@"; }
+ok "Docker $(docker_cmd --version 2>/dev/null | awk '{print $3}' | tr -d ',' || echo 'installed')"
 
 # Swap space (Linux)
 # Low-memory VPS nodes (<= 4GB RAM) without swap risk OOM-kills when pulling
@@ -159,17 +166,21 @@ fi
 
 # Network & Ingress Prerequisites
 info "Preparing Docker network and Traefik proxy…"
-if ! docker network inspect ninedeploy >/dev/null 2>&1; then
-  docker network create ninedeploy >/dev/null || fail "Could not create the required Docker network 'ninedeploy'"
+if ! docker_cmd network inspect ninedeploy >/dev/null 2>&1; then
+  docker_cmd network create ninedeploy >/dev/null || fail "Could not create the required Docker network 'ninedeploy'"
 fi
 
 # A healthy containerd overlayfs store always has this directory alongside
 # metadata.db. Some interrupted Docker 29 cleanups leave the metadata database
 # behind but remove the physical snapshot root, making every pull/import fail.
 # Restore only the missing directory; never remove or rewrite snapshot data.
-CONTAINERD_OVERLAY_ROOT="/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs"
+if [ -S /var/run/docker/containerd/containerd.sock ]; then
+  CONTAINERD_OVERLAY_ROOT="/var/lib/docker/containerd/daemon/io.containerd.snapshotter.v1.overlayfs"
+else
+  CONTAINERD_OVERLAY_ROOT="/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs"
+fi
 CONTAINERD_SNAPSHOT_DIR="$CONTAINERD_OVERLAY_ROOT/snapshots"
-DOCKER_STORAGE_DRIVER=$(docker info --format '{{.Driver}}' 2>/dev/null || true)
+DOCKER_STORAGE_DRIVER=$(docker_cmd info --format '{{.Driver}}' 2>/dev/null || true)
 if [ "$DOCKER_STORAGE_DRIVER" = "overlayfs" ] && [ ! -d "$CONTAINERD_SNAPSHOT_DIR" ]; then
   warn "Docker's containerd overlayfs snapshot directory is missing; restoring the required host directory…"
   sudo install -d -o root -g root -m 0700 "$CONTAINERD_SNAPSHOT_DIR" || fail "Could not restore $CONTAINERD_SNAPSHOT_DIR"
@@ -182,8 +193,8 @@ fi
 # single registry attempt is enough; the verified binary fallback below has no
 # dependency on the conflicting Alpine layer.
 traefik_image_usable() {
-  docker image inspect traefik:3 >/dev/null 2>&1 || return 1
-  IMAGE_VERSION=$(docker run --rm traefik:3 version 2>/dev/null || true)
+  docker_cmd image inspect traefik:3 >/dev/null 2>&1 || return 1
+  IMAGE_VERSION=$(docker_cmd run --rm traefik:3 version 2>/dev/null || true)
   printf '%s\n' "$IMAGE_VERSION" | grep -Eq 'Version:[[:space:]]+3\.'
 }
 
@@ -224,7 +235,7 @@ build_traefik_fallback_image() {
     return 1
   fi
 
-  tar -C "$TRAEFIK_STAGE/rootfs" -cf - . | docker import \
+  tar -C "$TRAEFIK_STAGE/rootfs" -cf - . | docker_cmd import \
     --change 'ENTRYPOINT ["/traefik"]' \
     --change 'EXPOSE 80 443' \
     --change 'LABEL org.opencontainers.image.source="https://github.com/traefik/traefik"' \
@@ -232,7 +243,7 @@ build_traefik_fallback_image() {
     - traefik:3 >/dev/null || { rm -rf "$TRAEFIK_STAGE"; return 1; }
   rm -rf "$TRAEFIK_STAGE"
 
-  LOCAL_TRAEFIK_VERSION=$(docker run --rm traefik:3 version 2>/dev/null || true)
+  LOCAL_TRAEFIK_VERSION=$(docker_cmd run --rm traefik:3 version 2>/dev/null || true)
   printf '%s\n' "$LOCAL_TRAEFIK_VERSION" | grep -Eq "Version:[[:space:]]+${TRAEFIK_RELEASE#v}$" || {
     warn "The locally constructed Traefik image failed its version probe."
     return 1
@@ -243,7 +254,7 @@ build_traefik_fallback_image() {
 if traefik_image_usable; then
   ok "Existing Traefik v3 image verified; skipping registry pull"
 else
-  if PULL_OUTPUT=$(docker pull traefik:3 2>&1) && traefik_image_usable; then
+  if PULL_OUTPUT=$(docker_cmd pull traefik:3 2>&1) && traefik_image_usable; then
     printf '%s\n' "$PULL_OUTPUT"
   else
     printf '%s\n' "$PULL_OUTPUT" >&2
@@ -474,8 +485,8 @@ if [ "$(uname -s)" = "Linux" ] && command -v systemctl &>/dev/null; then
   sed -e "s|@NODE@|$(which node)|g" \
       -e "s|@INSTALL_DIR@|${INSTALL_DIR}|g" \
       -e "s|@DATA_DIR@|${DATA_DIR}|g" \
-      -e "s|@USER@|$(id -un)|g" \
-      -e "s|@GROUP@|$(id -gn)|g" \
+      -e "s|@USER@|root|g" \
+      -e "s|@GROUP@|root|g" \
       "$UNIT_TEMPLATE" > "$UNIT_STAGE_FILE"
 
   # Validate before replacing the live unit. This catches malformed rendered
@@ -547,13 +558,18 @@ if [ "$(uname -s)" = "Linux" ] && command -v systemctl &>/dev/null; then
   # /health is only a valid installation gate when the mandatory ingress
   # container is also live on the shared network. Never print a successful
   # installation while domain routing is unavailable.
-  TRAEFIK_RUNNING=$(docker inspect ninedeploy-traefik --format '{{.State.Running}}' 2>/dev/null || true)
-  TRAEFIK_NETWORKS=$(docker inspect ninedeploy-traefik --format '{{json .NetworkSettings.Networks}}' 2>/dev/null || true)
+  TRAEFIK_RUNNING=$(docker_cmd inspect ninedeploy-traefik --format '{{.State.Running}}' 2>/dev/null || true)
+  TRAEFIK_NETWORKS=$(docker_cmd inspect ninedeploy-traefik --format '{{json .NetworkSettings.Networks}}' 2>/dev/null || true)
   if [ "$TRAEFIK_RUNNING" != "true" ] || ! printf '%s' "$TRAEFIK_NETWORKS" | grep -q '"ninedeploy"'; then
-    docker logs --tail 50 ninedeploy-traefik 2>&1 || true
+    docker_cmd logs --tail 50 ninedeploy-traefik 2>&1 || true
     fail "Traefik failed its post-install runtime check; NineDeploy installation is not healthy"
   fi
-  ok "Traefik ingress verified (running on the ninedeploy network)"
+  TRAEFIK_HTTP_STATUS=$(curl -sS -o /dev/null -m 5 -w '%{http_code}' -H 'Host: ninedeploy-install-check.invalid' http://127.0.0.1/ 2>/dev/null || true)
+  case "$TRAEFIK_HTTP_STATUS" in
+    2??|3??|4??) ;;
+    *) docker_cmd logs --tail 50 ninedeploy-traefik 2>&1 || true; fail "Traefik is running but its HTTP entrypoint on :80 is not responding" ;;
+  esac
+  ok "Traefik ingress verified (network attached, :80 responding)"
 else
   warn "systemd not available — starting in foreground…"
   info "For production, set up a process manager (systemd/pm2/launchd)."

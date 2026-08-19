@@ -15,12 +15,13 @@ const h = vi.hoisted(() => {
   const decrypt = vi.fn((v: string) => `dec:${v}`);
   const connectionString = vi.fn(() => 'postgres://db/app');
   const writeDynamicConfig = vi.fn(async () => undefined);
+  const getAcmeEmail = vi.fn(async () => null as string | null);
   const config: { paths: { reposDir: string; logsDir: string; dataDir: string }; wildcardDomain: string } = {
     paths: { reposDir: '', logsDir: '', dataDir: '' },
     wildcardDomain: '',
   };
   const agentOp = vi.fn(async () => ({ exitCode: 0, lines: [] }));
-  return { builder, checkoutCommit, decrypt, connectionString, writeDynamicConfig, config, agentOp };
+  return { builder, checkoutCommit, decrypt, connectionString, writeDynamicConfig, getAcmeEmail, config, agentOp };
 });
 
 vi.mock('../src/config.js', () => ({ config: h.config }));
@@ -37,7 +38,10 @@ vi.mock('../src/lib/agentClient.js', () => ({ agentOp: h.agentOp }));
 vi.mock('../src/engine/database.js', () => ({ connectionString: h.connectionString }));
 vi.mock('../src/engine/builders/docker.js', () => ({ dockerBuilder: h.builder }));
 vi.mock('../src/engine/builders/pm2.js', () => ({ pm2Builder: h.builder }));
-vi.mock('../src/engine/proxy.js', () => ({ writeDynamicConfig: h.writeDynamicConfig }));
+vi.mock('../src/engine/proxy.js', () => ({
+  writeDynamicConfig: h.writeDynamicConfig,
+  getAcmeEmail: h.getAcmeEmail,
+}));
 
 const base = mkdtempSync(path.join(os.tmpdir(), 'nd-pipeline-'));
 const reposDir = path.join(base, 'repos');
@@ -198,6 +202,7 @@ describe('runDeployment', () => {
     h.builder.stop.mockImplementation(async () => undefined);
     h.checkoutCommit.mockImplementation(async () => 'sha-1234567');
     h.writeDynamicConfig.mockImplementation(async () => undefined);
+    h.getAcmeEmail.mockImplementation(async () => null);
     h.connectionString.mockImplementation(() => 'postgres://db/app');
   });
 
@@ -513,7 +518,21 @@ describe('runDeployment', () => {
       ssl: false,
       status: 'active',
     });
-    expect(lines).toContain('🌐 Auto-assigned URL: web.example.com');
+    expect(lines).toContain('🌐 Auto-assigned URL: http://web.example.com');
+  });
+
+  it('enables HTTPS for auto-provisioned wildcard domains when ACME is configured', async () => {
+    const { db, inserts } = makeDb();
+    h.config.wildcardDomain = 'example.com';
+    h.getAcmeEmail.mockResolvedValueOnce('ops@example.com');
+    baseSetup(db);
+    db.query.domains.findFirst.mockResolvedValue(undefined);
+    const lines = collectLogs(1);
+
+    await runDeployment(db as never, 1);
+
+    expect(inserts[0].values).toMatchObject({ hostname: 'web.example.com', ssl: true });
+    expect(lines).toContain('🌐 Auto-assigned URL: https://web.example.com');
   });
 
   it('does not duplicate an existing wildcard domain', async () => {
@@ -526,7 +545,7 @@ describe('runDeployment', () => {
     await runDeployment(db as never, 1);
 
     expect(inserts).toHaveLength(0);
-    expect(lines).not.toContain('🌐 Auto-assigned URL: web.example.com');
+    expect(lines.some((line) => line.includes('Auto-assigned URL:'))).toBe(false);
   });
 
   it('logs a proxy warning and still succeeds when the dynamic config write fails', async () => {
