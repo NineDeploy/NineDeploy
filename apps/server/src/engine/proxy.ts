@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { domains, services, type DB } from '@ninedeploy/db';
 import { config } from '../config.js';
@@ -258,11 +258,19 @@ export async function ensureTraefik(
   mkdirSync(dir(), { recursive: true });
   writeFileSync(staticPath(), renderStaticConfig(acmeEmail, dns));
   if (!existsSync(dynamicPath())) writeFileSync(dynamicPath(), 'http:\n  routers:\n  services:\n');
-  if (acmeEmail && !existsSync(acmePath())) {
-    // Seed the ACME storage file so the bind mount below is a FILE and not an
-    // auto-created directory (Docker creates a directory when the host path of
-    // a bind mount does not exist, which would break Traefik).
-    writeFileSync(acmePath(), '{}', { mode: 0o600 });
+  if (acmeEmail) {
+    if (!existsSync(acmePath())) {
+      // Seed the ACME storage file so the bind mount below is a FILE and not an
+      // auto-created directory (Docker creates a directory when the host path of
+      // a bind mount does not exist, which would break Traefik).
+      writeFileSync(acmePath(), '{}', { mode: 0o600 });
+    } else {
+      try {
+        chmodSync(acmePath(), 0o600);
+      } catch {
+        /* ignore */
+      }
+    }
   }
 
   try {
