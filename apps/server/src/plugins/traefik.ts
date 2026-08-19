@@ -7,18 +7,35 @@ import { ensureNetwork, ensureTraefik, getAcmeEmail, getDnsConfig, writeDynamicC
  */
 export default fp(
   async (fastify) => {
-    fastify.addHook('onReady', async () => {
-      const log = (line: string) => fastify.log.info({ component: 'infra' }, line);
+    const healTraefik = async (component: string) => {
+      const log = (line: string) => fastify.log.info({ component }, line);
       await ensureNetwork(log);
-      // The DB settings win over the NINEDEPLOY_* env fallbacks.
       await ensureTraefik(
         log,
         await getAcmeEmail(fastify.db).catch(() => null),
         await getDnsConfig(fastify.db).catch(() => null),
       );
+    };
+
+    fastify.addHook('onReady', async () => {
+      await healTraefik('infra');
       await writeDynamicConfig(fastify.db).catch((err) =>
         fastify.log.error({ err }, 'failed to write traefik dynamic config'),
       );
+    });
+
+    // Periodic self-healing watchdog: checks every 5 minutes and revives Traefik if stopped
+    const watchdogTimer = setInterval(async () => {
+      try {
+        await healTraefik('traefik-watchdog');
+      } catch (err) {
+        fastify.log.warn({ err }, 'traefik watchdog check failed');
+      }
+    }, 5 * 60 * 1000);
+    watchdogTimer.unref();
+
+    fastify.addHook('onClose', async () => {
+      clearInterval(watchdogTimer);
     });
   },
   { name: 'ninedeploy-traefik' },

@@ -106,4 +106,31 @@ describe('traefik plugin', () => {
     );
     await app.close();
   });
+
+  it('runs periodic self-healing watchdog and absorbs watchdog errors', async () => {
+    vi.useFakeTimers();
+    try {
+      proxyMock.ensureTraefik.mockClear();
+      const app = await buildApp({ select: vi.fn() });
+      await app.ready();
+
+      expect(proxyMock.ensureTraefik).toHaveBeenCalledTimes(1);
+
+      // Advance 5 minutes for the watchdog timer tick
+      proxyMock.ensureTraefik.mockRejectedValueOnce(new Error('docker dead'));
+      const warnSpy = vi.spyOn(app.log, 'warn');
+      await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+
+      expect(warnSpy).toHaveBeenCalledWith({ err: expect.any(Error) }, 'traefik watchdog check failed');
+
+      // Next tick succeeds
+      proxyMock.ensureTraefik.mockResolvedValueOnce(undefined as never);
+      await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+      expect(proxyMock.ensureTraefik).toHaveBeenCalledTimes(3);
+
+      await app.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
