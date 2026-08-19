@@ -169,6 +169,30 @@ fi
 # class, ask Docker to GC unused dangling images, and restart the daemon only
 # when every running container has a restart policy that lets us verify and
 # recover it afterward. Never mutate /var/lib/containerd directly.
+repair_orphaned_containerd_snapshot() {
+  SNAPSHOT_KEY="$1"
+  printf '%s\n' "$SNAPSHOT_KEY" | grep -Eq '^sha256:[0-9a-f]{64}$' || return 1
+  command -v ctr >/dev/null 2>&1 || return 1
+
+  SNAPSHOTTER=$(docker info --format '{{.Driver}}' 2>/dev/null || true)
+  [ "$SNAPSHOTTER" = "overlayfs" ] || return 1
+
+  SNAPSHOT_INFO=$(sudo ctr --namespace moby snapshots --snapshotter "$SNAPSHOTTER" info "$SNAPSHOT_KEY" 2>/dev/null) || return 1
+  if ! printf '%s\n' "$SNAPSHOT_INFO" | grep -Eqi '"kind"[[:space:]]*:[[:space:]]*"committed"'; then
+    warn "Refusing to repair snapshot $SNAPSHOT_KEY because it is not a committed image-layer snapshot."
+    return 1
+  fi
+
+  SNAPSHOT_LIST=$(sudo ctr --namespace moby snapshots --snapshotter "$SNAPSHOTTER" list 2>/dev/null) || return 1
+  if printf '%s\n' "$SNAPSHOT_LIST" | awk -v parent="$SNAPSHOT_KEY" 'NR > 1 && $2 == parent { found=1 } END { exit !found }'; then
+    warn "Refusing to repair snapshot $SNAPSHOT_KEY because another snapshot depends on it."
+    return 1
+  fi
+
+  warn "Removing verified orphaned containerd snapshot $SNAPSHOT_KEY before one final pull…"
+  sudo ctr --namespace moby snapshots --snapshotter "$SNAPSHOTTER" remove "$SNAPSHOT_KEY" >/dev/null || return 1
+}
+
 pull_required_image() {
   IMAGE="$1"
   SNAPSHOT_FAILURE=false
@@ -222,8 +246,17 @@ pull_required_image() {
         docker start "$CONTAINER_ID" >/dev/null || return 1
       fi
     done
-    docker pull "$IMAGE"
-    return $?
+    FINAL_PULL_OUTPUT=$(docker pull "$IMAGE" 2>&1) && {
+      printf '%s\n' "$FINAL_PULL_OUTPUT"
+      return 0
+    }
+    printf '%s\n' "$FINAL_PULL_OUTPUT" >&2
+    STALE_SNAPSHOT_KEY=$(printf '%s\n' "$FINAL_PULL_OUTPUT" | sed -nE 's/.*target snapshot "(sha256:[0-9a-f]{64})".*[Aa]lready[[:space:]]*[Ee]xists.*/\1/p' | head -n 1)
+    if [ -n "$STALE_SNAPSHOT_KEY" ] && repair_orphaned_containerd_snapshot "$STALE_SNAPSHOT_KEY"; then
+      docker pull "$IMAGE"
+      return $?
+    fi
+    return 1
   fi
   return 1
 }

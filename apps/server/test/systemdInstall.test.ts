@@ -37,5 +37,11 @@ describe('bare-metal systemd installation policy', () => {
     expect(installer).toContain('sudo systemctl restart docker');
     expect(installer).toContain("'{{.State.Running}}'");
     expect(installer).toContain('docker start "$CONTAINER_ID"');
+    expect(installer).toContain('repair_orphaned_containerd_snapshot');
+    expect(installer).toContain('[Aa]lready[[:space:]]*[Ee]xists');
+    expect(installer).toContain('ctr --namespace moby snapshots --snapshotter "$SNAPSHOTTER" info');
+    expect(installer).toContain('"kind"[[:space:]]*:[[:space:]]*"committed"');
+    expect(installer).toContain('$2 == parent');
+    expect(installer).toContain('ctr --namespace moby snapshots --snapshotter "$SNAPSHOTTER" remove');
   });
 });

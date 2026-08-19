@@ -19,7 +19,7 @@ export function buildServer(
   client: ReturnType<typeof createClient>,
   warn: (msg: string) => void = console.error,
 ): McpServer {
-  const server = new McpServer({ name: 'ninedeploy', version: '0.2.5' });
+  const server = new McpServer({ name: 'ninedeploy', version: '0.2.6' });
 
   for (const tool of TOOLS) {
     server.registerTool(
