@@ -80,9 +80,22 @@ ok "pnpm $(pnpm -v)"
 
 # Docker
 if ! command -v docker &>/dev/null; then
-  warn "Docker not found. Install it: https://docs.docker.com/engine/install/"
-  warn "After installing Docker, re-run this script."
-  fail "Docker is required."
+  warn "Docker not found. Installing via official script (get.docker.com)…"
+  if command -v curl &>/dev/null; then
+    curl -fsSL https://get.docker.com | sudo sh
+    if command -v systemctl &>/dev/null; then
+      sudo systemctl enable --now docker || true
+    fi
+  else
+    warn "Install Docker manually: https://docs.docker.com/engine/install/"
+    fail "Docker is required."
+  fi
+fi
+if ! docker info &>/dev/null 2>&1; then
+  if command -v systemctl &>/dev/null; then
+    warn "Starting Docker service…"
+    sudo systemctl start docker || true
+  fi
 fi
 if ! docker info &>/dev/null 2>&1; then
   warn "Docker daemon not running. Start it and re-run."
