@@ -1,4 +1,4 @@
-export const VERSION = '0.2.4';
+export const VERSION = '0.2.5';
 
 export interface ChangelogEntry {
   version: string;
@@ -9,14 +9,16 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
-    version: '0.2.4',
+    version: '0.2.5',
     date: '2026-08-19',
-    title: 'Cross-Platform MCP URL Normalization & Readiness Gate Hardening',
+    title: 'Reliable Ubuntu Systemd Migration & Long Docker Pulls',
     changes: [
-      'Cross-platform file URL resolution for @ninedeploy/mcp via node:url pathToFileURL',
-      'Bash readiness loop variable fix in installer script (install.sh)',
-      'Enhanced database transactional bootstrap and first-admin onboarding resilience',
-      'Full monorepo 100% test coverage and zero-error verification across all 9 packages',
+      'Removed the invalid runtime sd_notify watchdog client that could terminate long Docker pulls with SIGTERM',
+      'Installer now migrates and verifies Type=simple with WatchdogSec=0 on fresh and existing Ubuntu installations',
+      'Relative data-directory settings are rendered as absolute systemd ReadWritePaths values',
+      'Installer-owned runtime safety policy now sorts after conventional systemd override.conf files',
+      'Traefik image, container liveness and shared-network attachment are mandatory installer and runtime readiness gates',
+      'Docker exit diagnostics distinguish SIGTERM exit 143 from OOM/SIGKILL exit 137',
     ],
   },
   {

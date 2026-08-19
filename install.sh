@@ -159,8 +159,10 @@ fi
 
 # Network & Ingress Prerequisites
 info "Preparing Docker network and Traefik proxy…"
-docker network create ninedeploy 2>/dev/null || true
-docker pull traefik:3 >/dev/null 2>&1 || true
+if ! docker network inspect ninedeploy >/dev/null 2>&1; then
+  docker network create ninedeploy >/dev/null || fail "Could not create the required Docker network 'ninedeploy'"
+fi
+docker pull traefik:3 || fail "Could not pull traefik:3; ingress cannot operate without its image"
 
 # Free ports 80/443 if default apache2/nginx are occupying them on Linux
 if [ "$(uname -s)" = "Linux" ] && command -v systemctl &>/dev/null; then
@@ -438,6 +440,17 @@ if [ "$(uname -s)" = "Linux" ] && command -v systemctl &>/dev/null; then
   else
     ok "NineDeploy service started (systemd, hardened unit)"
   fi
+
+  # /health is only a valid installation gate when the mandatory ingress
+  # container is also live on the shared network. Never print a successful
+  # installation while domain routing is unavailable.
+  TRAEFIK_RUNNING=$(docker inspect ninedeploy-traefik --format '{{.State.Running}}' 2>/dev/null || true)
+  TRAEFIK_NETWORKS=$(docker inspect ninedeploy-traefik --format '{{json .NetworkSettings.Networks}}' 2>/dev/null || true)
+  if [ "$TRAEFIK_RUNNING" != "true" ] || ! printf '%s' "$TRAEFIK_NETWORKS" | grep -q '"ninedeploy"'; then
+    docker logs --tail 50 ninedeploy-traefik 2>&1 || true
+    fail "Traefik failed its post-install runtime check; NineDeploy installation is not healthy"
+  fi
+  ok "Traefik ingress verified (running on the ninedeploy network)"
 else
   warn "systemd not available — starting in foreground…"
   info "For production, set up a process manager (systemd/pm2/launchd)."

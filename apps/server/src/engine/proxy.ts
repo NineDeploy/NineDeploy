@@ -43,6 +43,7 @@ export async function ensureNetwork(log: (line: string) => void): Promise<void> 
     log(`network '${NETWORK}' created`);
   } catch (err) {
     log(`network warning: ${err instanceof Error ? err.message : err}`);
+    throw err instanceof Error ? err : new Error(String(err));
   }
 }
 
@@ -317,10 +318,24 @@ export async function ensureTraefik(
       log,
     );
     await sleep(1000);
+
+    // `docker run -d` only confirms that the container process was created.
+    // Invalid config, occupied ports, or mount errors can make it exit
+    // immediately afterwards, so prove both liveness and mesh attachment
+    // before allowing the application readiness hook to succeed.
+    const state = await capture('docker', [
+      'inspect', TRAEFIK_CONTAINER,
+      '--format', '{{.State.Running}}|{{json .NetworkSettings.Networks}}',
+    ]);
+    if (!state.startsWith('true|') || !state.includes(`"${NETWORK}"`)) {
+      const logs = await capture('docker', ['logs', '--tail', '50', TRAEFIK_CONTAINER]).catch(() => 'logs unavailable');
+      throw new Error(`traefik container did not stay running on network '${NETWORK}': ${logs.trim()}`);
+    }
     log('traefik started (http :80 / https :443) on shared network');
   } catch (err) {
     log(`traefik warning: ${err instanceof Error ? err.message : err}`);
     log('domain routing will be unavailable until traefik can bind :80/:443');
+    throw err instanceof Error ? err : new Error(String(err));
   }
 }
 

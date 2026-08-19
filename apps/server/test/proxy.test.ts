@@ -293,20 +293,20 @@ describe('ensureNetwork', () => {
     expect(log).toHaveBeenCalledWith(`network '${NETWORK}' created`);
   });
 
-  it('logs a warning when listing networks fails with an Error', async () => {
+  it('logs and rejects when listing networks fails with an Error', async () => {
     h.capture.mockRejectedValue(new Error('docker down'));
     const log = vi.fn();
 
-    await ensureNetwork(log);
+    await expect(ensureNetwork(log)).rejects.toThrow('docker down');
 
     expect(log).toHaveBeenCalledWith('network warning: docker down');
   });
 
-  it('logs a warning when listing networks fails with a non-Error', async () => {
+  it('normalizes and rejects a non-Error network failure', async () => {
     h.capture.mockRejectedValue('boom');
     const log = vi.fn();
 
-    await ensureNetwork(log);
+    await expect(ensureNetwork(log)).rejects.toThrow('boom');
 
     expect(log).toHaveBeenCalledWith('network warning: boom');
   });
@@ -314,9 +314,13 @@ describe('ensureNetwork', () => {
 
 describe('ensureTraefik', () => {
   const psWith = (ps: string, inspect = '{}') =>
-    h.capture.mockImplementation((_cmd: string, args: string[]) =>
-      args[0] === 'ps' ? Promise.resolve(ps) : Promise.resolve(inspect),
-    );
+    h.capture.mockImplementation((_cmd: string, args: string[]) => {
+      if (args[0] === 'ps') return Promise.resolve(ps);
+      if (args[0] === 'inspect' && args[3]?.includes('.State.Running')) {
+        return Promise.resolve(`true|{"${NETWORK}":{}}`);
+      }
+      return Promise.resolve(inspect);
+    });
 
   beforeEach(() => {
     mkdirSync(traefikDir, { recursive: true });
@@ -376,9 +380,13 @@ describe('ensureTraefik', () => {
   });
 
   it('recreates when inspection fails', async () => {
-    h.capture.mockImplementation((_cmd: string, args: string[]) =>
-      args[0] === 'ps' ? Promise.resolve('abc\n') : Promise.reject(new Error('inspect failed')),
-    );
+    h.capture.mockImplementation((_cmd: string, args: string[]) => {
+      if (args[0] === 'ps') return Promise.resolve('abc\n');
+      if (args[0] === 'inspect' && args[3]?.includes('.State.Running')) {
+        return Promise.resolve(`true|{"${NETWORK}":{}}`);
+      }
+      return Promise.reject(new Error('inspect failed'));
+    });
     const log = vi.fn();
 
     await ensureTraefik(log);
@@ -386,23 +394,36 @@ describe('ensureTraefik', () => {
     expect(log).toHaveBeenCalledWith('starting traefik container …');
   });
 
-  it('logs a warning when the ps command fails', async () => {
+  it('logs and rejects when the ps command fails', async () => {
     h.capture.mockRejectedValue(new Error('docker down'));
     const log = vi.fn();
 
-    await ensureTraefik(log);
+    await expect(ensureTraefik(log)).rejects.toThrow('docker down');
 
     expect(log).toHaveBeenCalledWith('traefik warning: docker down');
     expect(log).toHaveBeenCalledWith('domain routing will be unavailable until traefik can bind :80/:443');
   });
 
-  it('logs a warning when the ps command fails with a non-Error', async () => {
+  it('normalizes and rejects a non-Error traefik failure', async () => {
     h.capture.mockRejectedValue('boom');
     const log = vi.fn();
 
-    await ensureTraefik(log);
+    await expect(ensureTraefik(log)).rejects.toThrow('boom');
 
     expect(log).toHaveBeenCalledWith('traefik warning: boom');
+  });
+
+  it('rejects when docker run returns but the container exits immediately', async () => {
+    h.capture.mockImplementation((_cmd: string, args: string[]) => {
+      if (args[0] === 'ps') return Promise.resolve('');
+      if (args[0] === 'inspect') return Promise.resolve('false|{}');
+      if (args[0] === 'logs') return Promise.resolve('listen tcp :80: bind: address already in use');
+      return Promise.resolve('');
+    });
+    const log = vi.fn();
+
+    await expect(ensureTraefik(log)).rejects.toThrow('address already in use');
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('traefik container did not stay running'));
   });
 
   it('leaves an existing dynamic.yml untouched', async () => {
@@ -425,9 +446,13 @@ describe("ACME / Let's Encrypt", () => {
 
   it('omits the ACME resolver from the static config when no email is configured', async () => {
     const psWith = (ps: string) =>
-      h.capture.mockImplementation((_cmd: string, args: string[]) =>
-        args[0] === 'ps' ? Promise.resolve(ps) : Promise.resolve('{}'),
-      );
+      h.capture.mockImplementation((_cmd: string, args: string[]) => {
+        if (args[0] === 'ps') return Promise.resolve(ps);
+        if (args[0] === 'inspect' && args[3]?.includes('.State.Running')) {
+          return Promise.resolve(`true|{"${NETWORK}":{}}`);
+        }
+        return Promise.resolve('{}');
+      });
     psWith('abc123\n');
     const log = vi.fn();
 
@@ -465,9 +490,13 @@ describe("ACME / Let's Encrypt", () => {
   it('mounts acme.json read-write and keeps the config dir read-only', async () => {
     h.config.acmeEmail = 'ops@example.com';
     try {
-      h.capture.mockImplementation((_cmd: string, args: string[]) =>
-        args[0] === 'ps' ? Promise.resolve('') : Promise.resolve('{}'),
-      );
+      h.capture.mockImplementation((_cmd: string, args: string[]) => {
+        if (args[0] === 'ps') return Promise.resolve('');
+        if (args[0] === 'inspect' && args[3]?.includes('.State.Running')) {
+          return Promise.resolve(`true|{"${NETWORK}":{}}`);
+        }
+        return Promise.resolve('{}');
+      });
       // The stale-container rm is allowed to fail; the main run succeeds.
       h.run.mockRejectedValueOnce(new Error('no such container')).mockResolvedValueOnce(undefined);
       const log = vi.fn();
@@ -523,6 +552,13 @@ describe('DNS-01 challenge (wildcard SSL)', () => {
   beforeEach(() => {
     mkdirSync(traefikDir, { recursive: true });
     rmSync(path.join(traefikDir, 'dns.env'), { force: true });
+    h.capture.mockImplementation((_cmd: string, args: string[]) => {
+      if (args[0] === 'ps') return Promise.resolve('');
+      if (args[0] === 'inspect' && args[3]?.includes('.State.Running')) {
+        return Promise.resolve(`true|{"${NETWORK}":{}}`);
+      }
+      return Promise.resolve('{}');
+    });
   });
 
   it('renders a dnsChallenge resolver when a provider+token are configured', () => {
