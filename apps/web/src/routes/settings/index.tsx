@@ -29,7 +29,7 @@ import { LogDrainsSection } from './LogDrainsSection.js';
 import { StorageSection } from './StorageSection.js';
 import { SsoSection } from './SsoSection.js';
 import { FirewallSection } from './FirewallSection.js';
-import { Input, PageHeader, cn } from '../../components/ui.js';
+import { AutofillRejectingInput, PageHeader, cn } from '../../components/ui.js';
 
 type SectionId =
   | 'account'
@@ -125,10 +125,14 @@ export function Settings() {
             {/* Quick Filter Input */}
             <div className="relative">
               <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-              <Input
+              <AutofillRejectingInput
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
+                onAutofillRejected={() => setSearch('')}
+                name="ninedeploy-settings-filter"
+                type="search"
                 placeholder="Filter settings..."
+                aria-label="Filter settings"
                 className="h-8 pl-8 pr-7 text-xs"
               />
               {search && (

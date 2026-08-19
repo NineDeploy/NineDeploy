@@ -5,11 +5,13 @@ import {
   type SelectHTMLAttributes,
   type TextareaHTMLAttributes,
   forwardRef,
+  useCallback,
   useEffect,
   useRef,
   useState,
 } from 'react';
 import { createPortal } from 'react-dom';
+import { rejectPanelAutofill } from '../lib/autofill.js';
 
 export const cn = (...parts: Array<string | false | null | undefined>) => parts.filter(Boolean).join(' ');
 
@@ -97,12 +99,79 @@ export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputE
   { className, ...props },
   ref,
 ) {
-  return <input ref={ref} className={cn(fieldBase, 'h-10', className)} {...props} />;
+  return (
+    <input
+      ref={ref}
+      autoComplete="off"
+      autoCorrect="off"
+      autoCapitalize="none"
+      spellCheck={false}
+      data-1p-ignore="true"
+      data-lpignore="true"
+      data-bwignore="true"
+      data-form-type="other"
+      className={cn(fieldBase, 'h-10', className)}
+      {...props}
+    />
+  );
 });
+
+type AutofillRejectingInputProps = InputHTMLAttributes<HTMLInputElement> & {
+  onAutofillRejected?: () => void;
+};
+
+/** Blocks browser restoration/autofill until the user deliberately interacts. */
+export const AutofillRejectingInput = forwardRef<HTMLInputElement, AutofillRejectingInputProps>(
+  function AutofillRejectingInput(
+    { onAutofillRejected, onPointerDown, onKeyDown, onAnimationStart, ...props },
+    ref,
+  ) {
+    const [unlocked, setUnlocked] = useState(false);
+    const unlock = useCallback(() => setUnlocked(true), []);
+
+    return (
+      <Input
+        {...props}
+        ref={ref}
+        readOnly={!unlocked}
+        data-nd-reject-autofill="true"
+        onPointerDown={(event) => {
+          unlock();
+          onPointerDown?.(event);
+        }}
+        onKeyDown={(event) => {
+          unlock();
+          onKeyDown?.(event);
+        }}
+        onAnimationStart={(event) => {
+          const animationName = event.animationName || (event.nativeEvent as AnimationEvent).animationName;
+          if (animationName === 'nd-autofill-detected') {
+            rejectPanelAutofill(event.currentTarget, onAutofillRejected);
+          }
+          onAnimationStart?.(event);
+        }}
+      />
+    );
+  },
+);
 
 export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<HTMLTextAreaElement>>(
   function Textarea({ className, ...props }, ref) {
-    return <textarea ref={ref} className={cn(fieldBase, 'py-2', className)} {...props} />;
+    return (
+      <textarea
+        ref={ref}
+        autoComplete="off"
+        autoCorrect="off"
+        autoCapitalize="none"
+        spellCheck={false}
+        data-1p-ignore="true"
+        data-lpignore="true"
+        data-bwignore="true"
+        data-form-type="other"
+        className={cn(fieldBase, 'py-2', className)}
+        {...props}
+      />
+    );
   },
 );
 

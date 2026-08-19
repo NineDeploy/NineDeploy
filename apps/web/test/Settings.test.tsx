@@ -1130,6 +1130,8 @@ describe('Settings', () => {
     mockOf(api.auth.oidc.list).mockResolvedValue([] as never);
     await openSection('SSO & OIDC');
     expect(await screen.findByText('Single Sign-On (SSO & OIDC)')).toBeInTheDocument();
+
+    await openSection('Firewall (UFW)');
+    expect(await screen.findByText('Host Firewall & Port Control (UFW)')).toBeInTheDocument();
   });
 });
-

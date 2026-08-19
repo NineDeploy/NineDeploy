@@ -340,6 +340,17 @@ html[data-theme='light'] * { scrollbar-color: rgba(148, 163, 184, 0.4) transpare
 html[data-theme='light'] *::-webkit-scrollbar-thumb { background: rgba(148, 163, 184, 0.35); }
 
 /* ── Animations ────────────────────────────────────────────────────────── */
+/* Chrome/Safari expose autofill only through this pseudo-class. Critical
+   filter fields use the animation event to reject injected values. */
+@keyframes nd-autofill-detected {
+  from { opacity: 0.999; }
+  to   { opacity: 1; }
+}
+[data-nd-reject-autofill='true']:-webkit-autofill {
+  animation-name: nd-autofill-detected;
+  animation-duration: 1ms;
+}
+
 /* NOTE: never animate `transform` here — a persisted transform (fill-mode both)
    turns the animated element into the containing block for its `fixed`
    descendants, so modals rendered inside the page open off-screen once the

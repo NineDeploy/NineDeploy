@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   Activity, Building2, ChevronLeft, ChevronRight, Clock, Cloud, Container, Database, FolderKanban, Globe, HardDrive,
@@ -16,6 +16,7 @@ import { CommandPalette } from './CommandPalette.js';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher.js';
 import { ModeToggle } from './ModeToggle.js';
 import { useExperienceMode } from '../lib/mode.js';
+import { installPanelAutofillGuard } from '../lib/autofill.js';
 
 interface NavItem { to: string; label: string; icon: LucideIcon; advancedOnly?: boolean }
 
@@ -95,6 +96,8 @@ export function Layout() {
   const { theme, toggleTheme } = useTheme();
   const { isSimple } = useExperienceMode();
   const location = useLocation();
+
+  useLayoutEffect(() => installPanelAutofillGuard(document), []);
 
   const menus = useQuery({
     queryKey: ['menus'],

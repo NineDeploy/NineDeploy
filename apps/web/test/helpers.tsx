@@ -176,6 +176,20 @@ export function createFakeApiModule() {
     },
     demo: { seed: vi.fn() },
     health: vi.fn(),
+    firewall: {
+      status: vi.fn().mockResolvedValue({
+        installed: true,
+        active: true,
+        supported: true,
+        rules: [],
+        defaultIncoming: 'deny',
+        defaultOutgoing: 'allow',
+      }),
+      toggle: vi.fn(),
+      addRule: vi.fn(),
+      deleteRule: vi.fn(),
+      applyRecommended: vi.fn(),
+    },
   };
   const getToken = vi.fn(() => 'test-token');
   return {
