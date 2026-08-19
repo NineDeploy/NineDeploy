@@ -261,7 +261,7 @@ describe('notification routes', () => {
     expect(res.json().error.message).toContain('Discord 502');
   });
 
-  it('succeeds for an unknown channel type without calling fetch', async () => {
+  it('fails for an unknown channel type without calling fetch', async () => {
     const fetchMock = vi.fn() as unknown as typeof fetch;
     vi.stubGlobal('fetch', fetchMock);
     const app = await buildTestApp({
@@ -271,8 +271,8 @@ describe('notification routes', () => {
     });
     await app.register(notificationRoutes);
     const res = await app.inject({ method: 'POST', url: '/channels/5/test', headers: asUser() });
-    expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ ok: true });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.message).toContain('Unknown notification channel type: pigeon');
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

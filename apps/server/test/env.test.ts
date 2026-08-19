@@ -52,7 +52,7 @@ describe('env', () => {
     vi.stubEnv('NINEDEPLOY_JWT_SECRET', 'x'.repeat(32));
     vi.stubEnv('NINEDEPLOY_JWT_ACCESS_TTL', '30m');
     vi.stubEnv('NINEDEPLOY_JWT_REFRESH_TTL', '30d');
-    vi.stubEnv('NINEDEPLOY_MASTER_KEY', 'c'.repeat(64));
+    vi.stubEnv('NINEDEPLOY_MASTER_KEY', 'c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2');
 
     const env = await loadEnv();
     expect(env).toMatchObject({
@@ -65,7 +65,7 @@ describe('env', () => {
       NINEDEPLOY_JWT_SECRET: 'x'.repeat(32),
       NINEDEPLOY_JWT_ACCESS_TTL: '30m',
       NINEDEPLOY_JWT_REFRESH_TTL: '30d',
-      NINEDEPLOY_MASTER_KEY: 'c'.repeat(64),
+      NINEDEPLOY_MASTER_KEY: 'c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2',
     });
   });
 
@@ -121,5 +121,37 @@ describe('env', () => {
     vi.stubEnv('NINEDEPLOY_JWT_SECRET', 'a-strong-unique-production-secret');
     const env = await loadEnv();
     expect(env.NINEDEPLOY_JWT_SECRET).toBe('a-strong-unique-production-secret');
+  });
+
+  it('refuses to boot in production with a weak/short master key', async () => {
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('NINEDEPLOY_JWT_SECRET', 'a-strong-unique-production-secret');
+    vi.stubEnv('NINEDEPLOY_MASTER_KEY', 'deadbeef'); // 4 bytes — far too weak
+    await loadEnv();
+
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(errorSpy.mock.calls[0]?.[0]).toMatch(/NINEDEPLOY_MASTER_KEY/);
+  });
+
+  it('refuses to boot in production with a change-me master key placeholder', async () => {
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('NINEDEPLOY_JWT_SECRET', 'a-strong-unique-production-secret');
+    vi.stubEnv('NINEDEPLOY_MASTER_KEY', 'change-me-to-a-long-random-string');
+    await loadEnv();
+
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it('boots in production with a strong 64-hex master key', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('NINEDEPLOY_JWT_SECRET', 'a-strong-unique-production-secret');
+    vi.stubEnv('NINEDEPLOY_MASTER_KEY', 'c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2');
+    const env = await loadEnv();
+    expect(env.NINEDEPLOY_MASTER_KEY).toBe('c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2');
   });
 });

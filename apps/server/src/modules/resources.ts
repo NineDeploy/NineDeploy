@@ -1,4 +1,4 @@
-import { createReadStream, existsSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync, mkdirSync, rmSync, copyFileSync } from 'node:fs';
+import { createReadStream, existsSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync, mkdirSync, rmSync, copyFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { count } from 'drizzle-orm';
@@ -186,11 +186,13 @@ export const systemRoutes: FastifyPluginAsync = async (app) => {
       child.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`tar extract exited ${code}`))));
     });
 
-    const metaPath = path.join(tmpDir, '_meta.json');
-    if (!existsSync(metaPath)) {
+    const extractedFiles = readdirSync(tmpDir);
+    const metaFilename = extractedFiles.find((f) => f === '_meta.json' || (f.startsWith('_meta') && f.endsWith('.json')));
+    if (!metaFilename) {
       rmSync(tmpDir, { recursive: true, force: true });
       return reply.status(400).send({ error: { code: 'bad_request', message: 'Invalid archive: no _meta.json' } });
     }
+    const metaPath = path.join(tmpDir, metaFilename);
     const meta = JSON.parse(readFileSync(metaPath, 'utf8'));
 
     try { const inst = app as unknown as { worker?: { stop: () => Promise<void> } }; if (inst.worker) await inst.worker.stop(); } catch { /* */ }
@@ -244,8 +246,9 @@ export const systemRoutes: FastifyPluginAsync = async (app) => {
         renameSync(importedTraefik, traefikDir);
       }
 
-      const importedEnv = path.join(tmpDir, '_env');
-      if (existsSync(importedEnv)) {
+      const envFilename = extractedFiles.find((f) => f === '_env' || f.startsWith('_env-'));
+      const importedEnv = envFilename ? path.join(tmpDir, envFilename) : null;
+      if (importedEnv && existsSync(importedEnv)) {
         mkdirSync(backupDir, { recursive: true });
         const envPath = path.join(process.cwd(), '.env');
         if (existsSync(envPath)) renameSync(envPath, path.join(backupDir, '.env'));

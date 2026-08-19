@@ -1,5 +1,5 @@
 import { and, eq } from 'drizzle-orm';
-import { audit } from "../lib/audit.js";
+import { audit } from '../lib/audit.js';
 import { domains, type Domain } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { createDomain, domainPatch } from '@ninedeploy/schemas';

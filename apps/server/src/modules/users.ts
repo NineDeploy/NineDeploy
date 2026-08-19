@@ -1,5 +1,5 @@
 import { and, eq, ne, or, sql } from 'drizzle-orm';
-import { audit } from "../lib/audit.js";
+import { audit } from '../lib/audit.js';
 import { users } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { passwordReset, rolePatch, userCreate } from '@ninedeploy/schemas';

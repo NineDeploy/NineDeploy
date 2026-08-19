@@ -20,13 +20,12 @@ vi.mock('../src/lib/serverRunner.js', () => ({
 describe('server commands', () => {
   let logSpy: ReturnType<typeof vi.spyOn>;
   let errorSpy: ReturnType<typeof vi.spyOn>;
-  let exitSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     vi.clearAllMocks();
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as any);
+    process.exitCode = 0;
   });
 
   afterEach(() => {
@@ -38,7 +37,7 @@ describe('server commands', () => {
       vi.mocked(serverRunner.isDockerAvailable).mockResolvedValue(false);
       await serverStartAction({});
       expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Docker is not installed'));
-      expect(exitSpy).toHaveBeenCalledWith(1);
+      expect(process.exitCode).toBe(1);
     });
 
     it('informs user if server is already running and reachable', async () => {
@@ -69,7 +68,7 @@ describe('server commands', () => {
       await serverStartAction({ port: '3000' });
 
       expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('failed to respond within 30s'));
-      expect(exitSpy).toHaveBeenCalledWith(1);
+      expect(process.exitCode).toBe(1);
     });
   });
 
@@ -78,7 +77,7 @@ describe('server commands', () => {
       vi.mocked(serverRunner.isDockerAvailable).mockResolvedValue(false);
       await serverStopAction();
       expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Docker is not installed'));
-      expect(exitSpy).toHaveBeenCalledWith(1);
+      expect(process.exitCode).toBe(1);
     });
 
     it('informs when container is not running', async () => {
@@ -107,7 +106,7 @@ describe('server commands', () => {
       await serverStopAction();
 
       expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Failed to stop server'));
-      expect(exitSpy).toHaveBeenCalledWith(1);
+      expect(process.exitCode).toBe(1);
     });
   });
 
@@ -141,7 +140,7 @@ describe('server commands', () => {
       vi.mocked(serverRunner.isDockerAvailable).mockResolvedValue(false);
       await serverLogsAction();
       expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Docker is not installed'));
-      expect(exitSpy).toHaveBeenCalledWith(1);
+      expect(process.exitCode).toBe(1);
     });
 
     it('prints server logs when available', async () => {
@@ -169,7 +168,7 @@ describe('server commands', () => {
       await serverLogsAction();
 
       expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Failed to get server logs'));
-      expect(exitSpy).toHaveBeenCalledWith(1);
+      expect(process.exitCode).toBe(1);
     });
 
     it('handles non-Error logs rejection', async () => {
@@ -179,7 +178,7 @@ describe('server commands', () => {
       await serverLogsAction();
 
       expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Failed to get server logs: logs raw err'));
-      expect(exitSpy).toHaveBeenCalledWith(1);
+      expect(process.exitCode).toBe(1);
     });
   });
 

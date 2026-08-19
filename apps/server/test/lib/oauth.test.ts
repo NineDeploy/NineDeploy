@@ -121,25 +121,27 @@ describe('oauth library', () => {
     it('fetches OIDC userinfo with email and name', async () => {
       globalThis.fetch = vi.fn().mockResolvedValue({
         ok: true,
-        json: async () => ({ sub: 'user_1', email: 'Alice@Example.COM', name: 'Alice' }),
+        json: async () => ({ sub: 'user_1', email: 'Alice@Example.COM', email_verified: true, name: 'Alice' }),
       } as never);
 
       const info = await fetchOidcUserInfo('https://auth.example.com/userinfo', 'token_123');
       expect(info).toEqual({
         sub: 'user_1',
         email: 'alice@example.com',
+        emailVerified: true,
         name: 'Alice',
       });
     });
 
-    it('falls back to preferred_username if email is missing', async () => {
+    it('rejects when OIDC email is explicitly unverified', async () => {
       globalThis.fetch = vi.fn().mockResolvedValue({
         ok: true,
-        json: async () => ({ sub: 'user_2', preferred_username: 'bob@example.com' }),
+        json: async () => ({ sub: 'user_2', email: 'unverified@example.com', email_verified: false }),
       } as never);
 
-      const info = await fetchOidcUserInfo('https://auth.example.com/userinfo', 'token_123');
-      expect(info.email).toBe('bob@example.com');
+      await expect(fetchOidcUserInfo('https://auth.example.com/userinfo', 'token_123')).rejects.toThrow(
+        'OIDC email address is not verified',
+      );
     });
 
     it('throws when userinfo fetch fails or lacks email', async () => {
@@ -181,6 +183,7 @@ describe('oauth library', () => {
       expect(profile).toEqual({
         sub: '12345',
         email: 'mona@github.com',
+        emailVerified: true,
         name: 'Mona Lisa',
       });
     });

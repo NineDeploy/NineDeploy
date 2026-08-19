@@ -1,4 +1,5 @@
 import { copyFileSync, existsSync, readFileSync } from 'node:fs';
+import { config } from '../config.js';
 import { capture, run } from '../lib/exec.js';
 import { readCertificates, TRAEFIK_CONTAINER, TRAEFIK_IMAGE } from '../engine/proxy.js';
 import type { FastifyPluginAsync } from 'fastify';
@@ -104,7 +105,7 @@ function isOutdated(current: string | null, latest: string | null): boolean {
 
 /** Traefik container bilgilerini al */
 async function getTraefikContainerInfo(): Promise<TraefikStatus> {
-  const dataDir = process.env.NINEDEPLOY_DATA_DIR ?? './.data';
+  const dataDir = config.paths.dataDir;
   const latestVersion = await getLatestTraefikVersion();
   
   try {
@@ -167,7 +168,7 @@ async function getTraefikLogs(lines: number = 100): Promise<string[]> {
 
 /** Dinamik konfigürasyonu parse et */
 async function getTraefikConfig(): Promise<{ routers: TraefikRouter[]; services: TraefikService[]; middlewares: TraefikMiddleware[] }> {
-  const dataDir = process.env.NINEDEPLOY_DATA_DIR ?? './.data';
+  const dataDir = config.paths.dataDir;
   const dynamicPath = `${dataDir}/traefik/dynamic.yml`;
   
   try {

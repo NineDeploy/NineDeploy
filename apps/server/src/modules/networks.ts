@@ -3,10 +3,10 @@ import type { FastifyPluginAsync } from 'fastify';
 import { run } from '../lib/exec.js';
 import { agentOp } from '../lib/agentClient.js';
 import { listUserNetworks, networkMembers } from '../lib/inventory.js';
+import { audit } from '../lib/audit.js';
 import { badRequest } from '../lib/errors.js';
 
 const noop = (): void => undefined;
-import { audit } from '../lib/audit.js';
 
 const RE_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
 

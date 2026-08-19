@@ -68,6 +68,26 @@ describe('prompt', () => {
     stdin.emit('data', '   \n');
     await expect(result).resolves.toBe('');
   });
+
+  it('resolves the default when stdin ends (EOF in piped/CI input)', async () => {
+    const stdin = makeStdin(false);
+    stubStdin(stdin);
+
+    const result = prompt('Server URL', 'http://default');
+
+    stdin.emit('end');
+    await expect(result).resolves.toBe('http://default');
+  });
+
+  it('resolves an empty string on EOF without a default', async () => {
+    const stdin = makeStdin(false);
+    stubStdin(stdin);
+
+    const result = prompt('Email');
+
+    stdin.emit('end');
+    await expect(result).resolves.toBe('');
+  });
 });
 
 describe('promptHidden', () => {
@@ -117,14 +137,28 @@ describe('promptHidden', () => {
     expect(stdoutWrite).not.toHaveBeenCalledWith('\b \b');
   });
 
-  it('exits the process on Ctrl-C', () => {
+  it('exits with the SIGINT code 130 on Ctrl-C and restores raw mode', () => {
     const exit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
-    const stdin = makeStdin(false);
+    const stdin = makeStdin(true);
     stubStdin(stdin);
 
     promptHidden('Password'); // never resolves — Ctrl-C terminates instead
 
     stdin.emit('data', '\u0003');
-    expect(exit).toHaveBeenCalledWith(0);
+    expect(exit).toHaveBeenCalledWith(130);
+    // Cleanup runs before exit: raw mode is restored and the stream paused.
+    expect(stdin.setRawMode).toHaveBeenCalledWith(false);
+    expect(stdin.pause).toHaveBeenCalled();
+  });
+
+  it('resolves typed input on EOF (piped stdin)', async () => {
+    const stdin = makeStdin(false);
+    stubStdin(stdin);
+
+    const result = promptHidden('Password');
+
+    stdin.emit('data', 'secret');
+    stdin.emit('end');
+    await expect(result).resolves.toBe('secret');
   });
 });

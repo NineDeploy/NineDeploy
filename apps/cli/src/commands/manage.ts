@@ -6,8 +6,8 @@ const num = (v: string, usage: string): number => {
   const n = Number(v);
   if (!n) {
     error(usage);
-    // error() calls process.exit; throw as a backstop so execution never
-    // continues with NaN (and tests can observe the failure).
+    // error() sets the exit code; throw so execution never continues with
+    // NaN (and tests can observe the failure).
     throw new Error(usage);
   }
   return n;
@@ -352,7 +352,7 @@ export async function deploysWatch(serviceIdStr: string, deployIdStr: string, ti
   process.on('SIGINT', () => {
     closed = true;
     ws.close();
-    process.exit(0);
+    process.exitCode = 0;
   });
   // Hard cap so a stuck stream can never hang the CLI forever.
   const deadline = Date.now() + timeoutMs;

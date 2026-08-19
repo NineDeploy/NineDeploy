@@ -18,9 +18,9 @@ export async function dbCreate(client: NineDeployClient): Promise<void> {
   header('Create Database');
   const name = await prompt('Database name');
   if (!name) return error('Name required');
-  console.log('  Engines: 1=PostgreSQL  2=MySQL  3=MariaDB  4=Redis  5=MongoDB');
-  const choice = await prompt('Select engine (1-5)', '1');
-  const engines = ['postgres', 'mysql', 'mariadb', 'redis', 'mongo'] as const;
+  console.log('  Engines: 1=PostgreSQL  2=MySQL  3=MariaDB  4=Redis  5=MongoDB  6=Valkey  7=ClickHouse  8=Meilisearch  9=RabbitMQ');
+  const choice = await prompt('Select engine (1-9)', '1');
+  const engines = ['postgres', 'mysql', 'mariadb', 'redis', 'mongo', 'valkey', 'clickhouse', 'meilisearch', 'rabbitmq'] as const;
   const engine = engines[Number(choice) - 1] ?? 'postgres';
   try {
     const db = await spinner('Creating database', () => client.databases.create({ name, engine }));

@@ -24,7 +24,6 @@ vi.mock('ws', () => ({ WebSocket: sys.WebSocket }));
 
 let logSpy: ReturnType<typeof vi.spyOn>;
 let errorSpy: ReturnType<typeof vi.spyOn>;
-let exitSpy: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -32,7 +31,7 @@ beforeEach(() => {
   sys.fetch.mockReset();
   logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
   errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-  exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+  process.exitCode = 0;
   h.prompt.mockResolvedValue('');
 });
 
@@ -59,7 +58,7 @@ describe('env commands', () => {
 
   it('exits with usage for a non-numeric service id', async () => {
     await expect(envList({ env: { list: vi.fn() } } as never, 'abc')).rejects.toThrow('Usage');
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   it('creates a new env var', async () => {
@@ -315,7 +314,7 @@ describe('alerts commands', () => {
     const client = { alerts: { create: vi.fn() } };
     await alertsCreate(client as never, 'x', 'cpu', '>', 'abc', {});
     expect(client.alerts.create).not.toHaveBeenCalled();
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   it('removes an alert rule', async () => {
@@ -328,12 +327,12 @@ describe('alerts commands', () => {
 describe('usage and error branches', () => {
   it('rejects env rm without a key', async () => {
     await envRemove({ env: { list: vi.fn() } } as never, '1', '');
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   it('rejects env set without a key', async () => {
     await envSet({ env: { list: vi.fn() } } as never, '1', '', 'v', {});
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   it('reports api failures from env set/remove', async () => {
@@ -345,7 +344,7 @@ describe('usage and error branches', () => {
 
   it('rejects domain add without a host', async () => {
     await domainsAdd({ domains: { create: vi.fn() } } as never, '1', '', {});
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   it('reports api failures from domains and volumes', async () => {
@@ -364,7 +363,7 @@ describe('usage and error branches', () => {
     await silence(backupsRestore({ backups: {} } as never, '1', 'x'));
     await silence(alertsCreate({ alerts: { create: vi.fn() } } as never, 'n', 'cpu', '>', ''));
     await silence(alertsRemove({ alerts: {} } as never, 'x'));
-    expect(exitSpy).toHaveBeenCalled();
+    expect(process.exitCode).not.toBe(0);
   });
 
   it('prints empty notices and reports api failures', async () => {
@@ -448,7 +447,7 @@ describe('system export/import', () => {
 
   it('rejects an import without a file', async () => {
     await systemImport('');
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   it('reports import failures', async () => {
@@ -520,7 +519,7 @@ describe('deploys watch', () => {
 
   it('rejects usage without ids', async () => {
     await deploysWatch('a', 'b');
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   it('closes the socket when the deadline elapses', async () => {
@@ -543,7 +542,7 @@ describe('deploys watch', () => {
     await new Promise((r) => setTimeout(r, 10));
     process.emit('SIGINT');
     await pending;
-    expect(exitSpy).toHaveBeenCalledWith(0);
+    expect(process.exitCode).toBe(0);
   });
 });
 

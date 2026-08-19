@@ -251,7 +251,15 @@ export const deploysRoutes: FastifyPluginAsync = async (app) => {
     socket.on('message', (data) => {
       if (child.stdin && !child.stdin.destroyed) {
         try {
-          child.stdin.write(data as Buffer);
+          if (Buffer.isBuffer(data)) {
+            child.stdin.write(data);
+          } else if (data instanceof ArrayBuffer) {
+            child.stdin.write(Buffer.from(data));
+          } else if (Array.isArray(data)) {
+            child.stdin.write(Buffer.concat(data));
+          } else {
+            child.stdin.write(String(data));
+          }
         } catch {
           // ignore
         }

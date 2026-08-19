@@ -38,10 +38,10 @@ function withWindowLocation(location: { protocol: string; host: string }, fn: ()
 }
 
 describe('getToken', () => {
-  beforeEach(() => localStorage.clear());
+  beforeEach(() => sessionStorage.clear());
 
   it('returns the stored token', () => {
-    localStorage.setItem(TOKEN_KEY, 'abc123');
+    sessionStorage.setItem(TOKEN_KEY, 'abc123');
     expect(getToken()).toBe('abc123');
   });
 
@@ -49,7 +49,7 @@ describe('getToken', () => {
     expect(getToken()).toBeNull();
   });
 
-  it('returns null when localStorage access throws', () => {
+  it('returns null when sessionStorage access throws', () => {
     const spy = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
       throw new Error('denied');
     });
@@ -59,23 +59,23 @@ describe('getToken', () => {
 });
 
 describe('setToken', () => {
-  beforeEach(() => localStorage.clear());
+  beforeEach(() => sessionStorage.clear());
 
   it('stores a token', () => {
     setToken('tok');
-    expect(localStorage.getItem(TOKEN_KEY)).toBe('tok');
+    expect(sessionStorage.getItem(TOKEN_KEY)).toBe('tok');
   });
 
   it('removes the token when given null', () => {
-    localStorage.setItem(TOKEN_KEY, 'old');
+    sessionStorage.setItem(TOKEN_KEY, 'old');
     setToken(null);
-    expect(localStorage.getItem(TOKEN_KEY)).toBeNull();
+    expect(sessionStorage.getItem(TOKEN_KEY)).toBeNull();
   });
 
   it('removes the token when given empty string', () => {
-    localStorage.setItem(TOKEN_KEY, 'old');
+    sessionStorage.setItem(TOKEN_KEY, 'old');
     setToken('');
-    expect(localStorage.getItem(TOKEN_KEY)).toBeNull();
+    expect(sessionStorage.getItem(TOKEN_KEY)).toBeNull();
   });
 
   it('ignores failures when storing', () => {
@@ -97,7 +97,7 @@ describe('setToken', () => {
 
 describe('api client', () => {
   beforeEach(() => {
-    localStorage.clear();
+    sessionStorage.clear();
   });
 
   it('creates the SDK client with the configured baseUrl and a token reader', () => {
@@ -109,9 +109,9 @@ describe('api client', () => {
     };
     expect(opts.baseUrl).toBe('');
     expect(opts.fetch).toBeTypeOf('function');
-    localStorage.setItem(TOKEN_KEY, 'tok-1');
+    sessionStorage.setItem(TOKEN_KEY, 'tok-1');
     expect(opts.getToken?.()).toBe('tok-1');
-    localStorage.removeItem(TOKEN_KEY);
+    sessionStorage.removeItem(TOKEN_KEY);
     expect(opts.getToken?.()).toBeUndefined();
   });
 
@@ -121,19 +121,19 @@ describe('api client', () => {
 });
 
 describe('session token storage', () => {
-  beforeEach(() => localStorage.clear());
+  beforeEach(() => sessionStorage.clear());
 
   it('setSessionTokens stores both tokens', () => {
     setSessionTokens('acc', 'ref');
-    expect(localStorage.getItem(TOKEN_KEY)).toBe('acc');
-    expect(localStorage.getItem(REFRESH_KEY)).toBe('ref');
+    expect(sessionStorage.getItem(TOKEN_KEY)).toBe('acc');
+    expect(sessionStorage.getItem(REFRESH_KEY)).toBe('ref');
   });
 
   it('clearTokens removes both tokens', () => {
     setSessionTokens('acc', 'ref');
     clearTokens();
-    expect(localStorage.getItem(TOKEN_KEY)).toBeNull();
-    expect(localStorage.getItem(REFRESH_KEY)).toBeNull();
+    expect(sessionStorage.getItem(TOKEN_KEY)).toBeNull();
+    expect(sessionStorage.getItem(REFRESH_KEY)).toBeNull();
   });
 
   it('ignores storage failures on write and read of the refresh token', async () => {
@@ -146,7 +146,7 @@ describe('session token storage', () => {
       throw new Error('denied');
     });
     // A denied read surfaces as "no refresh token" → refresh declines safely.
-    localStorage.setItem(REFRESH_KEY, 'r');
+    sessionStorage.setItem(REFRESH_KEY, 'r');
     await expect(refreshAccessToken()).resolves.toBe(false);
     getItem.mockRestore();
   });
@@ -160,7 +160,7 @@ describe('fetchWithRefresh (401 → refresh → retry)', () => {
   const status = (code: number) => ({ ok: code < 300, status: code, text: async () => '' }) as Response;
 
   beforeEach(() => {
-    localStorage.clear();
+    sessionStorage.clear();
     vi.restoreAllMocks();
     client.auth.refresh.mockReset();
   });
@@ -193,8 +193,8 @@ describe('fetchWithRefresh (401 → refresh → retry)', () => {
     // The retry carries the refreshed token.
     const retryHeaders = new Headers(fetchMock.mock.calls[1]![1]!.headers);
     expect(retryHeaders.get('Authorization')).toBe('Bearer fresh-acc');
-    expect(localStorage.getItem(TOKEN_KEY)).toBe('fresh-acc');
-    expect(localStorage.getItem(REFRESH_KEY)).toBe('refresh-2');
+    expect(sessionStorage.getItem(TOKEN_KEY)).toBe('fresh-acc');
+    expect(sessionStorage.getItem(REFRESH_KEY)).toBe('refresh-2');
     vi.unstubAllGlobals();
   });
 
@@ -219,8 +219,8 @@ describe('fetchWithRefresh (401 → refresh → retry)', () => {
     const res = await fetchWithRefresh('/v1/services', {});
     expect(res.status).toBe(401);
     expect(fetchMock).toHaveBeenCalledTimes(1); // no retry
-    expect(localStorage.getItem(TOKEN_KEY)).toBeNull();
-    expect(localStorage.getItem(REFRESH_KEY)).toBeNull();
+    expect(sessionStorage.getItem(TOKEN_KEY)).toBeNull();
+    expect(sessionStorage.getItem(REFRESH_KEY)).toBeNull();
     vi.unstubAllGlobals();
   });
 
@@ -295,7 +295,7 @@ describe('fetchWithRefresh (401 → refresh → retry)', () => {
       tokens: { accessToken: 'a2', refreshToken: 'r2', expiresIn: 900 },
     });
     await expect(refreshAccessToken()).resolves.toBe(true);
-    expect(localStorage.getItem(TOKEN_KEY)).toBe('a2');
+    expect(sessionStorage.getItem(TOKEN_KEY)).toBe('a2');
   });
 });
 
@@ -306,7 +306,7 @@ describe('authedFetch', () => {
   const status = (code: number) => ({ ok: code < 300, status: code, text: async () => '' }) as Response;
 
   beforeEach(() => {
-    localStorage.clear();
+    sessionStorage.clear();
     vi.restoreAllMocks();
     client.auth.refresh.mockReset();
   });
@@ -358,10 +358,10 @@ describe('authedFetch', () => {
 });
 
 describe('deployLogsWsUrl', () => {
-  beforeEach(() => localStorage.clear());
+  beforeEach(() => sessionStorage.clear());
 
   it('builds a ws:// URL on an http origin, embedding the token', () => {
-    localStorage.setItem(TOKEN_KEY, 'sec');
+    sessionStorage.setItem(TOKEN_KEY, 'sec');
     expect(deployLogsWsUrl(7, 42)).toBe(
       'ws://localhost/v1/services/7/deploys/42/logs?token=sec',
     );

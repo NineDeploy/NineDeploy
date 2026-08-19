@@ -1,5 +1,5 @@
 import { deployments, envVars, services } from '@ninedeploy/db';
-import { audit } from "../lib/audit.js";
+import { audit } from '../lib/audit.js';
 import type { FastifyPluginAsync } from 'fastify';
 import { getTemplates, type Template } from '../templates/registry.js';
 import { encrypt, randomToken } from '../lib/crypto.js';
@@ -29,6 +29,7 @@ export const templateRoutes: FastifyPluginAsync = async (app) => {
     const [svc] = await app.db
       .insert(services)
       .values({
+        ownerUserId: req.user!.id,
         name: t.name,
         slug,
         type: 'docker',
@@ -48,7 +49,14 @@ export const templateRoutes: FastifyPluginAsync = async (app) => {
     for (const e of t.env ?? []) {
       const value = e.secret ? randomToken(18) : e.value;
       if (e.secret) generatedSecrets.push({ key: e.key, value });
-      await app.db.insert(envVars).values({ serviceId: svc!.id, key: e.key, valueEncrypted: encrypt(value), isSecret: e.secret ?? false });
+      await app.db.insert(envVars).values({
+        serviceId: svc!.id,
+        scope: 'service',
+        scopeKey: svc!.id,
+        key: e.key,
+        valueEncrypted: encrypt(value),
+        isSecret: e.secret ?? false,
+      });
     }
 
     const [dep] = await app.db

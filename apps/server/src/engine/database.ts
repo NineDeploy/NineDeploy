@@ -28,9 +28,15 @@ function encryptFileInPlace(file: string): void {
 
 /** Read a backup file and return its PLAINTEXT bytes (envelope-aware). */
 export function readBackupBytes(file: string): Buffer {
-  const raw = readFileSync(file, 'utf8');
-  const payload = ENVELOPE_RE.test(raw) ? decrypt(raw) : raw; // legacy = plaintext
-  return Buffer.from(payload, 'base64');
+  // Single read: legacy files are returned as their raw bytes; envelope files
+  // are base64-decoded after decryption. (Full-file buffering is inherent to
+  // the single-line envelope format; multi-GB dumps are handled by the
+  // container-side dump + docker cp path, not by growing this buffer.)
+  const raw = readFileSync(file);
+  if (ENVELOPE_RE.test(raw.toString('utf8').slice(0, 32))) {
+    return Buffer.from(decrypt(raw.toString('utf8')), 'base64');
+  }
+  return raw;
 }
 
 /**
@@ -51,6 +57,9 @@ interface EngineConfig {
   port: number;
   volumePath: string;
   env: (password: string) => Record<string, string>;
+  /** Engines that cannot take a password via env vars (redis/valkey) get it
+   *  as a `--requirepass` container-command argument instead. */
+  authViaArg?: boolean;
   username: () => string | undefined;
   dbName: () => string | undefined;
   connectionString: (host: string, port: number, user: string, password: string, dbName: string | undefined) => string;
@@ -94,18 +103,20 @@ export const ENGINES: Record<string, EngineConfig> = {
     port: 6379,
     volumePath: '/data',
     env: () => ({}),
+    authViaArg: true,
     username: () => undefined,
     dbName: () => undefined,
-    connectionString: (h, prt) => `redis://${h}:${prt}`,
+    connectionString: (h, prt, _u, p) => `redis://:${enc(p)}@${h}:${prt}`,
   },
   valkey: {
     image: (v) => `valkey/valkey:${v || '8'}`,
     port: 6379,
     volumePath: '/data',
     env: () => ({}),
+    authViaArg: true,
     username: () => undefined,
     dbName: () => undefined,
-    connectionString: (h, prt) => `valkey://${h}:${prt}`,
+    connectionString: (h, prt, _u, p) => `valkey://:${enc(p)}@${h}:${prt}`,
   },
   mongo: {
     image: (v) => `mongo:${v || '7'}`,
@@ -236,6 +247,11 @@ export async function startDatabase(d: Database, log: (line: string) => void): P
     writeFileSync(envFile, `${Object.entries(vars).map(([k, v]) => `${k}=${v}`).join('\n')}\n`, { mode: 0o600 });
     args.push('--env-file', envFile);
   }
+  // redis/valkey have no password env var — the password is passed as the
+  // container command's `--requirepass` argument (visible via docker inspect,
+  // but the container refuses unauthenticated connections on the shared
+  // network, closing the "any container can FLUSHALL" gap).
+  if (cfg.authViaArg) args.push('--requirepass', password);
   args.push(cfg.image(d.version ?? undefined));
 
   log(`Starting ${d.engine} database ${d.name} (${d.containerName}) …`);
@@ -297,7 +313,8 @@ export async function databaseSize(d: Database): Promise<number> {
       return Number(out.trim()) || 0;
     }
     if (d.engine === 'redis' || d.engine === 'valkey') {
-      const out = await capture('docker', ['exec', d.containerName, 'redis-cli', 'INFO', 'memory']);
+      const pass = decrypt(d.passwordEncrypted);
+      const out = await capture('docker', ['exec', d.containerName, 'redis-cli', '-a', pass, '--no-auth-warning', 'INFO', 'memory']);
       const m = /used_memory:(\d+)/.exec(out);
       return m ? Number(m[1]) : 0;
     }
@@ -345,7 +362,8 @@ export async function backupDatabase(d: Database, file: string, log: (line: stri
     await run('docker', ['cp', `${cn}:${DUMP_TMP}`, file], {}, log);
     await run('docker', ['exec', cn, 'rm', '-f', DUMP_TMP], {}, swallow);
   } else if (d.engine === 'redis' || d.engine === 'valkey') {
-    await run('docker', ['exec', cn, 'redis-cli', 'SAVE'], {}, log);
+    const pass = decrypt(d.passwordEncrypted);
+    await run('docker', ['exec', cn, 'redis-cli', '-a', pass, '--no-auth-warning', 'SAVE'], {}, log);
     await run('docker', ['cp', `${cn}:/data/dump.rdb`, file], {}, log);
   } else if (d.engine === 'mongo') {
     // mongodump can write its binary archive straight to a file via
@@ -431,7 +449,7 @@ export async function restoreDatabase(d: Database, file: string, log: (line: str
     }
   } finally {
     staged.cleanup();
-    if (d.engine !== 'redis') {
+    if (d.engine !== 'redis' && d.engine !== 'valkey') {
       await run('docker', ['exec', cn, 'rm', '-f', RESTORE_TMP], {}, swallow).catch(() => undefined);
     }
   }

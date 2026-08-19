@@ -38,7 +38,6 @@ vi.mock('node:fs', async (importOriginal) => ({
 
 let logSpy: ReturnType<typeof vi.spyOn>;
 let errorSpy: ReturnType<typeof vi.spyOn>;
-let exitSpy: ReturnType<typeof vi.spyOn>;
 let fetchMock: ReturnType<typeof vi.fn>;
 
 function makeClient(overrides: Record<string, unknown> = {}) {
@@ -66,7 +65,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
   errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-  exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+  process.exitCode = 0;
   h.prompt.mockResolvedValue('');
   fetchMock = vi.fn().mockResolvedValue({ ok: true, text: vi.fn().mockResolvedValue('{"data":1}') });
   vi.stubGlobal('fetch', fetchMock);
@@ -110,7 +109,7 @@ describe('servicesCreate', () => {
     await servicesCreate(makeClient(), undefined as never);
 
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Name is required'));
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   it('creates from a git repo and deploys when confirmed', async () => {
@@ -203,7 +202,7 @@ describe('servicesCreate', () => {
     await servicesCreate(makeClient({ services: { create } }), undefined as never);
 
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('conflict'));
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   it('reports a generic Error from the client', async () => {

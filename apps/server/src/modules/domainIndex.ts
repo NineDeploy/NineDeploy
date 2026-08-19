@@ -1,9 +1,11 @@
 import { eq } from 'drizzle-orm';
-import { audit } from "../lib/audit.js";
+import { audit } from '../lib/audit.js';
 import { domains, services } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { readCertificates, writeDynamicConfig } from '../engine/proxy.js';
 import { notFound } from '../lib/errors.js';
+
+import { loadServiceForUser } from '../lib/serviceAccess.js';
 
 /** Centralized domain index: which domain → which service/container, plus SSL. Mounted under /domains. */
 export const domainIndexRoutes: FastifyPluginAsync = async (app) => {
@@ -37,6 +39,9 @@ export const domainIndexRoutes: FastifyPluginAsync = async (app) => {
   app.patch('/:id', async (req) => {
     const id = Number((req.params as { id: string }).id);
     const input = (req.body ?? {}) as { ssl?: boolean };
+    const domain = await app.db.query.domains.findFirst({ where: eq(domains.id, id) });
+    if (!domain) throw notFound('Domain not found');
+    await loadServiceForUser(app.db, domain.serviceId, req.user!);
     const [d] = await app.db.update(domains).set({ ssl: input.ssl ?? false, status: 'active' }).where(eq(domains.id, id)).returning();
     if (!d) throw notFound('Domain not found');
     await writeDynamicConfig(app.db);

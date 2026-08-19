@@ -64,14 +64,14 @@ export function Hub() {
   const filteredTemplates = (list.data ?? []).filter(
     (t) =>
       (category === 'All' || t.category === category) &&
-      (t.name.toLowerCase().includes(query.toLowerCase()) || t.tagline.toLowerCase().includes(query.toLowerCase())),
+      ((t.name ?? '').toLowerCase().includes(query.toLowerCase()) || (t.tagline ?? '').toLowerCase().includes(query.toLowerCase())),
   );
 
   const filteredMarketplace = (marketplace.data?.catalog ?? []).filter(
     (m) =>
-      m.name.toLowerCase().includes(query.toLowerCase()) ||
-      m.description.toLowerCase().includes(query.toLowerCase()) ||
-      m.category.toLowerCase().includes(query.toLowerCase()),
+      (m.name ?? '').toLowerCase().includes(query.toLowerCase()) ||
+      (m.description ?? '').toLowerCase().includes(query.toLowerCase()) ||
+      (m.category ?? '').toLowerCase().includes(query.toLowerCase()),
   );
 
   return (

@@ -111,6 +111,20 @@ describe('notifyEvent', () => {
     expect(lastValues()).toHaveBeenCalledWith(expect.objectContaining({ status: 'sent' }));
   });
 
+  it('correctly parses real telegram bot tokens that contain an internal colon', async () => {
+    fetchMock.mockResolvedValue(okResponse());
+    const channels = [
+      { id: 44, type: 'telegram', targetEncrypted: encrypt('123456789:ABC-def_GHI:987654321'), eventFilter: '', active: true },
+    ];
+    const { db, lastValues } = makeDb(channels);
+    await notifyEvent(db, event);
+
+    const url = fetchMock.mock.calls[0]![0] as string;
+    expect(url).toBe('https://api.telegram.org/bot123456789:ABC-def_GHI/sendMessage');
+    expect(fetchMock.mock.calls[0]![1]!.body).toContain('987654321');
+    expect(lastValues()).toHaveBeenCalledWith(expect.objectContaining({ status: 'sent' }));
+  });
+
   it('logs a failure for an invalid telegram target (missing chat id)', async () => {
     const channels = [
       { id: 5, type: 'telegram', targetEncrypted: encrypt('only-a-token'), eventFilter: '', active: true },
@@ -292,15 +306,19 @@ describe('notifyEvent', () => {
     expect(lastValues()).toHaveBeenCalledWith(expect.objectContaining({ status: 'failed', error: 'network gone' }));
   });
 
-  it('logs a sent entry for a channel with an unknown type without calling fetch', async () => {
+  it('records a failure for a channel with an unknown type (no misleading sent entry)', async () => {
+    vi.useFakeTimers();
     const channels = [
       { id: 11, type: 'smtp', targetEncrypted: encrypt('smtp://x'), eventFilter: '', active: true },
     ];
-    const { db, insert, lastValues } = makeDb(channels);
-    await notifyEvent(db, event);
+    const { db, lastValues } = makeDb(channels);
+    const pending = notifyEvent(db, event);
+    await vi.advanceTimersByTimeAsync(10_000);
+    await pending;
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(insert).toHaveBeenCalledWith(notificationLog);
-    expect(lastValues()).toHaveBeenCalledWith(expect.objectContaining({ status: 'sent' }));
+    expect(lastValues()).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'failed', error: 'Unknown notification channel type: smtp' }),
+    );
   });
 
   it('includes the entity in the message when present', async () => {

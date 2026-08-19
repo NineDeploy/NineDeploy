@@ -27,7 +27,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
   const { data: workspaces = [], isLoading, refetch } = useQuery({
     queryKey: ['workspaces'],
-    queryFn: () => api.workspaces.list(),
+    queryFn: async () => (await api.workspaces.list()) ?? [],
     enabled: Boolean(user),
   });
 

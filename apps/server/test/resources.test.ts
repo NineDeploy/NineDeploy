@@ -426,6 +426,35 @@ describe('system resources routes', () => {
     }
   });
 
+  it('imports an export archive containing timestamp-stamped _meta and _env filenames', async () => {
+    const buildDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nd-build-'));
+    createdDirs.push(buildDir);
+    fs.writeFileSync(path.join(buildDir, '_meta-123-456.json'), JSON.stringify({ version: '1.0.0', stats: {} }));
+    fs.writeFileSync(path.join(buildDir, 'ninedeploy.db'), 'stamped-db');
+    fs.writeFileSync(path.join(buildDir, '_env-123-456'), 'STAMPED_ENV=1');
+    const body = await makeArchive(buildDir);
+
+    const oldCwd = process.cwd();
+    const cwdDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nd-cwd-'));
+    createdDirs.push(cwdDir);
+    try {
+      process.chdir(cwdDir);
+      const app = await appWith();
+      const res = await app.inject({
+        method: 'POST',
+        url: '/import',
+        headers: { 'content-type': 'application/octet-stream', ...asUser() },
+        payload: body,
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toMatchObject({ ok: true, meta: { version: '1.0.0' } });
+      expect(fs.readFileSync(configMock.paths.dbFile, 'utf8')).toBe('stamped-db');
+      expect(fs.readFileSync(path.join(cwdDir, '.env'), 'utf8')).toBe('STAMPED_ENV=1');
+    } finally {
+      process.chdir(oldCwd);
+    }
+  });
+
   it('imports a minimal archive without pre-existing state', async () => {
     const buildDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nd-build-'));
     createdDirs.push(buildDir);

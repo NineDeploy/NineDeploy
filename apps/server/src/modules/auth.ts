@@ -656,7 +656,11 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     // which browsers normalize the same way) passes a naive startsWith('/')
     // check and would carry the tokens in the fragment to the attacker's site.
     const rawReturnTo = stateData.returnTo;
-    const returnToSafe = rawReturnTo.startsWith('/') && !rawReturnTo.startsWith('//') && !rawReturnTo.startsWith('/\\');
+    const returnToSafe =
+      typeof rawReturnTo === 'string' &&
+      rawReturnTo.startsWith('/') &&
+      !rawReturnTo.startsWith('//') &&
+      !rawReturnTo.startsWith('/\\');
     const returnTo = returnToSafe ? rawReturnTo : '/';
     return reply.redirect(`${returnTo}#access_token=${tokens.accessToken}&refresh_token=${tokens.refreshToken}`);
   };

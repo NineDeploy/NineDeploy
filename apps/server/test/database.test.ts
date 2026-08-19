@@ -103,6 +103,9 @@ describe('ENGINES metadata', () => {
     expect(ENGINES.mariadb.env('p')).toEqual({ MARIADB_ROOT_PASSWORD: 'p' });
     expect(ENGINES.redis.env('p')).toEqual({});
     expect(ENGINES.mongo.env('p')).toEqual({ MONGO_INITDB_ROOT_USERNAME: 'nine', MONGO_INITDB_ROOT_PASSWORD: 'p' });
+    expect(ENGINES.redis.authViaArg).toBe(true);
+    expect(ENGINES.valkey.authViaArg).toBe(true);
+    expect(ENGINES.postgres.authViaArg).toBeUndefined();
   });
 
   it('renders mariadb connection strings', () => {
@@ -190,7 +193,7 @@ describe('startDatabase', () => {
     );
   });
 
-  it('starts redis without env flags', async () => {
+  it('starts redis with a --requirepass argument (no env vars)', async () => {
     h.capture.mockResolvedValue('No such volume');
     const log = vi.fn();
 
@@ -198,8 +201,10 @@ describe('startDatabase', () => {
 
     expect(h.run).toHaveBeenCalledWith(
       'docker',
-      // Redis has no env vars → no --env-file at all.
-      ['run', '-d', '--name', 'c', '--network', 'ninedeploy', '--restart', 'unless-stopped', '-v', 'v:/data', 'redis:8'],
+      // Redis has no env vars → no --env-file; the password rides as the
+      // container command's --requirepass argument so the shared network
+      // cannot be reached without authenticating.
+      ['run', '-d', '--name', 'c', '--network', 'ninedeploy', '--restart', 'unless-stopped', '-v', 'v:/data', '--requirepass', 'pw:enc', 'redis:8'],
       {},
       log,
     );
@@ -304,7 +309,7 @@ describe('connectionString', () => {
 
   it('handles missing host/port and an empty user (redis)', () => {
     const d = dbRow({ engine: 'redis', internalHost: null, containerName: null, internalPort: null });
-    expect(connectionString(d)).toBe('redis://:6379');
+    expect(connectionString(d)).toBe('redis://:pw%3Aenc@:6379');
   });
 
   it('builds a mongo connection string', () => {
@@ -339,9 +344,11 @@ describe('databaseSize', () => {
     await expect(databaseSize(dbRow({ engine: 'postgres' }))).resolves.toBe(0);
   });
 
-  it('parses redis used_memory and returns 0 when absent', async () => {
+  it('parses redis used_memory (authed) and returns 0 when absent', async () => {
     h.capture.mockResolvedValueOnce('used_memory:456\n');
     await expect(databaseSize(dbRow({ engine: 'redis' }))).resolves.toBe(456);
+    expect(h.capture).toHaveBeenCalledWith('docker', ['exec', 'c', 'redis-cli', '-a', 'pw:enc', '--no-auth-warning', 'INFO', 'memory']);
+    expect(h.decrypt).toHaveBeenCalledWith('enc');
 
     h.capture.mockResolvedValueOnce('no match here');
     await expect(databaseSize(dbRow({ engine: 'redis' }))).resolves.toBe(0);
@@ -406,13 +413,14 @@ describe('backupDatabase', () => {
     expect(readFileSync(file, 'utf8')).toBe(`v0:${Buffer.from('').toString('base64')}`);
   });
 
-  it('backs up redis via docker exec SAVE + docker cp, then encrypts', async () => {
+  it('backs up redis via authed redis-cli SAVE + docker cp, then encrypts', async () => {
     const file = path.join(tmp, 'redis.rdb');
     writeFileSync(file, 'RDB-BYTES'); // the (mocked) docker cp lands here
     const log = vi.fn();
     await backupDatabase(dbRow({ engine: 'redis' }), file, log);
-    expect(h.run).toHaveBeenCalledWith('docker', ['exec', 'c', 'redis-cli', 'SAVE'], {}, log);
+    expect(h.run).toHaveBeenCalledWith('docker', ['exec', 'c', 'redis-cli', '-a', 'pw:enc', '--no-auth-warning', 'SAVE'], {}, log);
     expect(h.run).toHaveBeenCalledWith('docker', ['cp', 'c:/data/dump.rdb', file], {}, log);
+    expect(h.decrypt).toHaveBeenCalledWith('enc');
     expect(readFileSync(file, 'utf8')).toBe(`v0:${Buffer.from('RDB-BYTES').toString('base64')}`);
   });
 
@@ -453,10 +461,10 @@ describe('readBackupBytes', () => {
     expect(readBackupBytes(f).toString()).toBe('hello');
   });
 
-  it('returns a legacy plaintext backup as-is', () => {
+  it('returns a legacy plaintext backup as-is (raw bytes, not base64)', () => {
     const f = path.join(tmp, 'legacy.dump');
-    const b64 = Buffer.from('legacy').toString('base64');
-    writeFileSync(f, b64);
+    // Legacy backups predate envelope encryption: the raw file bytes ARE the dump.
+    writeFileSync(f, Buffer.from('legacy'));
     expect(readBackupBytes(f).toString()).toBe('legacy');
   });
 });
@@ -636,7 +644,7 @@ describe('restoreDatabase', () => {
     expect(ENGINES.rabbitmq.username()).toBe('nine');
     expect(ENGINES.rabbitmq.dbName()).toBeUndefined();
 
-    expect(connectionString(dbRow({ engine: 'valkey', internalHost: 'valkey-h', internalPort: 6379 }))).toBe('valkey://valkey-h:6379');
+    expect(connectionString(dbRow({ engine: 'valkey', internalHost: 'valkey-h', internalPort: 6379 }))).toBe('valkey://:pw%3Aenc@valkey-h:6379');
     expect(connectionString(dbRow({ engine: 'clickhouse', internalHost: 'ch-h', internalPort: 8123 }))).toBe('clickhouse://nine:pw%3Aenc@ch-h:8123/app');
     expect(ENGINES.clickhouse.connectionString('ch-h', 8123, 'nine', 'pw:enc', undefined)).toBe('clickhouse://nine:pw%3Aenc@ch-h:8123/default');
     expect(connectionString(dbRow({ engine: 'meilisearch', internalHost: 'ms-h', internalPort: 7700 }))).toBe('http://:pw%3Aenc@ms-h:7700');
@@ -702,7 +710,7 @@ describe('restoreDatabase', () => {
     // Backup
     const backupTarget = encFile('valkey-b');
     await backupDatabase(dbRow({ engine: 'valkey', containerName: 'c' }), backupTarget, vi.fn());
-    expect(h.run).toHaveBeenCalledWith('docker', ['exec', 'c', 'redis-cli', 'SAVE'], {}, expect.any(Function));
+    expect(h.run).toHaveBeenCalledWith('docker', ['exec', 'c', 'redis-cli', '-a', 'pw:enc', '--no-auth-warning', 'SAVE'], {}, expect.any(Function));
 
     // Restore
     await restoreDatabase(dbRow({ engine: 'valkey', containerName: 'c' }), backupTarget, vi.fn());

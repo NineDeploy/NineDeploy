@@ -20,6 +20,10 @@ function aliasFor(engine: string | undefined): string {
       return 'MYSQL_URL';
     case 'clickhouse':
       return 'CLICKHOUSE_URL';
+    case 'meilisearch':
+      return 'MEILISEARCH_URL';
+    case 'rabbitmq':
+      return 'RABBITMQ_URL';
     default:
       return 'DATABASE_URL';
   }
@@ -35,6 +39,8 @@ const ENGINE_COLORS: Record<string, string> = {
   mongo: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20',
   mongodb: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20',
   clickhouse: 'text-amber-300 bg-amber-500/10 border-amber-500/20',
+  meilisearch: 'text-cyan-400 bg-cyan-500/10 border-cyan-500/20',
+  rabbitmq: 'text-orange-400 bg-orange-500/10 border-orange-500/20',
 };
 
 export function AttachmentsCard({ serviceId }: { serviceId: number }) {

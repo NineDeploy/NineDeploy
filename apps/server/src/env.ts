@@ -63,6 +63,21 @@ function parseEnv(): Env {
     );
     process.exit(1);
   }
+  // Same class of guard for the master key: a weak/short hex value (or a
+  // placeholder copied from .env.example) would leave every stored secret
+  // decryptable by anyone who knows it. Auto-generated master.key files are
+  // fine — only an explicitly configured weak value is rejected.
+  if (parsed.success && parsed.data.NODE_ENV === 'production' && parsed.data.NINEDEPLOY_MASTER_KEY) {
+    const masterKey = parsed.data.NINEDEPLOY_MASTER_KEY;
+    const weak = masterKey.length < 32 || /^[0a-f]+$/i.test(masterKey) || /change[-_]?me/i.test(masterKey);
+    if (weak) {
+      // eslint-disable-next-line no-console
+      console.error(
+        '❌ NINEDEPLOY_MASTER_KEY must be a strong 32-byte hex secret (64 hex chars) in production. The configured value is too weak.',
+      );
+      process.exit(1);
+    }
+  }
   return parsed.data;
 }
 

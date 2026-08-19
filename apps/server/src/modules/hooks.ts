@@ -5,7 +5,7 @@ import { webhookCreate } from '@ninedeploy/schemas';
 import { config } from '../config.js';
 import { decrypt, encrypt, randomToken } from '../lib/crypto.js';
 import { matchesAny, parseWatchPaths } from '../lib/glob.js';
-import { parseId, unauthorized } from '../lib/errors.js';
+import { parseId, notFound, unauthorized } from '../lib/errors.js';
 import { isPing, isPullRequest, parsePullRequest, parsePush, verifyWebhook } from '../lib/webhooks.js';
 import { loadServiceForUser } from '../lib/serviceAccess.js';
 import { dockerBuilder } from '../engine/builders/docker.js';
@@ -27,12 +27,12 @@ async function stopRuntimeFor(service: { runtimeId: string | null; type: string 
 /** Public webhook receiver — auto-deploys on verified provider push & PR events. */
 export const hookReceiveRoutes: FastifyPluginAsync = async (app) => {
   // Public endpoint (auth bypassed, verified by HMAC) — cap flood attempts.
-  app.post('/:id', { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (req, reply) => {
+  app.post('/:id', { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (req) => {
     // Public receiver: leave non-numeric ids as NaN so they 404 ("Unknown
     // webhook") rather than 400 — don't reveal param validation to probers.
     const id = Number((req.params as { id: string }).id);
     const hook = await app.db.query.webhooks.findFirst({ where: eq(webhooks.id, id) });
-    if (!hook?.active) return reply.code(404).send({ error: { code: 'not_found', message: 'Unknown webhook' } });
+    if (!hook?.active) throw notFound('Unknown webhook');
 
     const rawBody = req.rawBody?.toString('utf8') ?? '';
     const secret = decrypt(hook.secretEncrypted);
@@ -47,7 +47,7 @@ export const hookReceiveRoutes: FastifyPluginAsync = async (app) => {
       if (!pr) return { ok: 'ignored', reason: 'not_a_valid_pr' };
 
       const parent = await app.db.query.services.findFirst({ where: eq(services.id, hook.serviceId) });
-      if (!parent) return reply.code(404).send({ error: { code: 'not_found', message: 'Parent service not found' } });
+      if (!parent) throw notFound('Parent service not found');
       if (!parent.previewDeploymentsEnabled) {
         return { ok: 'skipped', reason: 'preview_deployments_disabled' };
       }

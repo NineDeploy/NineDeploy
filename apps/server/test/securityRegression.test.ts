@@ -21,7 +21,7 @@ vi.mock('../src/plugins/backupScheduler.js', () => ({ default: infra.backups }))
 const tmp = mkdtempSync(path.join(os.tmpdir(), 'nd-secreg-'));
 const dbPath = path.join(tmp, 'ninedeploy.db');
 
-type AppModule = typeof import('../src/app.js');
+
 
 async function bootProd() {
   vi.resetModules();

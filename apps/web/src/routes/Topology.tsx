@@ -493,7 +493,14 @@ export function Topology() {
         const dy = aligned != null ? Math.max(aligned - 20, dbY) : dbY;
 
         const cStat = containerStatsMap.get(`nd-db-${d.name}`) || containerStatsMap.get(d.name);
-        const defaultPort = d.engine === 'postgres' ? 5432 : d.engine === 'redis' ? 6379 : d.engine === 'mysql' || d.engine === 'mariadb' ? 3306 : d.engine === 'mongodb' ? 27017 : null;
+        const defaultPort = d.engine === 'postgres' ? 5432
+          : d.engine === 'redis' || d.engine === 'valkey' ? 6379
+          : d.engine === 'mysql' || d.engine === 'mariadb' ? 3306
+          : d.engine === 'mongo' || d.engine === 'mongodb' ? 27017
+          : d.engine === 'clickhouse' ? 8123
+          : d.engine === 'meilisearch' ? 7700
+          : d.engine === 'rabbitmq' ? 5672
+          : null;
 
         nodes.push({
           id: `database-${d.id}`,

@@ -137,6 +137,10 @@ export const envSearchRoutes: FastifyPluginAsync = async (app) => {
     const q = String((req.query as { q?: string }).q ?? '').trim();
     if (q.length < 1) return { results: [] };
     const needle = `%${q.replace(/[%_]/g, (c) => `\\${c}`)}%`;
+    const conditions = [like(envVars.key, needle)];
+    if (req.user?.role !== 'admin') {
+      conditions.push(eq(services.ownerUserId, req.user!.id));
+    }
     const rows = await app.db
       .select({
         id: envVars.id,
@@ -149,7 +153,7 @@ export const envSearchRoutes: FastifyPluginAsync = async (app) => {
       })
       .from(envVars)
       .leftJoin(services, eq(services.id, envVars.serviceId))
-      .where(like(envVars.key, needle))
+      .where(and(...conditions))
       .limit(100);
     return {
       results: rows.map((r) => ({

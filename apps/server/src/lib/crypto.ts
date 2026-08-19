@@ -103,8 +103,14 @@ export function decrypt(payload: string): string {
   // Versioned → look up the key by version. Legacy (un-prefixed, pre-rotation)
   // ciphertext was sealed under the original key = version 0 (NOT necessarily
   // the current active key after a rotation), so resolve it to key 0.
+  // A version that is not in the ring is a corrupt/mismatched envelope —
+  // fail loudly instead of silently decrypting with the wrong key (which
+  // would either throw a confusing GCM auth error or, worse, succeed with
+  // garbage if the tag happened to validate).
   const key = m
-    ? (ring.keys.get(Number(m[1])) ?? ring.activeKey)
+    ? (ring.keys.get(Number(m[1])) ?? (() => {
+        throw new Error(`Unknown master key version ${m![1]} — is NINEDEPLOY_MASTER_KEYS missing this version?`);
+      })())
     : (ring.keys.get(0) ?? ring.activeKey);
   const [ivB, tagB, encB] = body.split(':') as [string, string, string];
   const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(ivB, 'base64'));

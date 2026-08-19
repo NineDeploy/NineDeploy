@@ -112,10 +112,10 @@ export function header(title: string): void {
   console.log(`  ${c.gray('─'.repeat(Math.max(title.length + 2, 30)))}`);
 }
 
-/** Print an error and exit. */
+/** Print an error and mark the process as failed (exit code 1, no hard exit). */
 export function error(msg: string, code = 1): void {
   console.error(`\n  ${c.red('✗')} ${msg}\n`);
-  process.exit(code);
+  process.exitCode = code;
 }
 
 /** Print a success message. */

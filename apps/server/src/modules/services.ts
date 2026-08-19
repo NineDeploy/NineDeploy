@@ -1,6 +1,6 @@
 import { and, eq } from 'drizzle-orm';
 import type { FastifyPluginAsync } from 'fastify';
-import { buildConfigs, services, type Service } from '@ninedeploy/db';
+import { buildConfigs, envVars, services, type Service } from '@ninedeploy/db';
 import { createService, setLimits, updateService } from '@ninedeploy/schemas';
 import { capture, run } from '../lib/exec.js';
 import { audit } from '../lib/audit.js';
@@ -363,7 +363,6 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
     }
 
     // Clone env vars
-    const { envVars } = await import('@ninedeploy/db');
     const envs = await app.db.query.envVars.findMany({ where: eq(envVars.serviceId, svc.id) });
     for (const env of envs) {
       await app.db.insert(envVars).values({
@@ -371,7 +370,8 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
         key: env.key,
         valueEncrypted: env.valueEncrypted,
         scope: env.scope,
-        scopeKey: env.scopeKey,
+        scopeKey: env.scope === 'service' ? created!.id : env.scopeKey,
+        isSecret: env.isSecret,
       });
     }
 

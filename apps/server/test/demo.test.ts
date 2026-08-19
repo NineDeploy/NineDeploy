@@ -5,6 +5,12 @@ import { asUser, buildTestApp, createFakeDb } from './helpers.js';
 const auditMocks = vi.hoisted(() => ({ audit: vi.fn(async () => undefined) }));
 vi.mock('../src/lib/audit.js', () => auditMocks);
 
+const cryptoMocks = vi.hoisted(() => ({
+  encrypt: vi.fn((v: string) => `enc:${v}`),
+  randomToken: vi.fn(() => 'demo-rand-24-char-secret'),
+}));
+vi.mock('../src/lib/crypto.js', () => cryptoMocks);
+
 const appWith = async (fixtures: Record<string, unknown>) => {
   const app = await buildTestApp({ db: createFakeDb(fixtures as never) });
   await app.register(demoRoutes, { prefix: '/demo' });
@@ -58,6 +64,12 @@ describe('demo routes', () => {
     expect(body.services[0]).toMatchObject({ id: 30, name: 'Next.js Docker App', type: 'docker', port: 80 });
     expect(body.services[1]).toMatchObject({ id: 31, name: 'Next.js PM2 Service', type: 'pm2', port: 3001 });
     expect(auditMocks.audit).toHaveBeenCalled();
+    // The demo DB password is a per-seed random token — never a hardcoded
+    // credential — and the connection string embeds it URL-encoded.
+    expect(cryptoMocks.randomToken).toHaveBeenCalledWith(24);
+    expect(cryptoMocks.encrypt).toHaveBeenCalledWith(
+      'postgres://nine:demo-rand-24-char-secret@nd-db-demo-postgres:5432/app',
+    );
   });
 
   it('reuses existing demo project, database and services on subsequent calls', async () => {

@@ -31,10 +31,10 @@ export function ServicesList() {
       if (!searchQuery.trim()) return true;
       const q = searchQuery.toLowerCase();
       return (
-        s.name.toLowerCase().includes(q) ||
-        s.slug.toLowerCase().includes(q) ||
-        s.branch.toLowerCase().includes(q) ||
-        s.type.toLowerCase().includes(q)
+        (s.name ?? '').toLowerCase().includes(q) ||
+        (s.slug ?? '').toLowerCase().includes(q) ||
+        (s.branch ?? '').toLowerCase().includes(q) ||
+        (s.type ?? '').toLowerCase().includes(q)
       );
     });
   }, [services, searchQuery, statusFilter]);

@@ -4,6 +4,7 @@ import {
   users,
   workspaceMembers,
   workspaces,
+  type DB,
   type User,
   type Workspace,
   type WorkspaceMember,
@@ -55,7 +56,7 @@ function serializeWorkspace(
   };
 }
 
-export async function ensureDefaultWorkspace(db: any, user: { id: number; name?: string | null; email?: string }): Promise<Workspace> {
+export async function ensureDefaultWorkspace(db: DB, user: { id: number; name?: string | null; email?: string }): Promise<Workspace> {
   const existingMembership = await db.query.workspaceMembers.findFirst({
     where: eq(workspaceMembers.userId, user.id),
   });

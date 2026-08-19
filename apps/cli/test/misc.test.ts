@@ -21,13 +21,12 @@ vi.mock('../src/prompts.js', () => ({ prompt: h.prompt }));
 
 let logSpy: ReturnType<typeof vi.spyOn>;
 let errorSpy: ReturnType<typeof vi.spyOn>;
-let exitSpy: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
   vi.clearAllMocks();
   logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
   errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-  exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+  process.exitCode = 0;
   h.prompt.mockResolvedValue('');
 });
 
@@ -70,7 +69,7 @@ describe('dbCreate', () => {
     await dbCreate({ databases: { create: vi.fn() } } as never);
 
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Name required'));
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   it.each([
@@ -79,6 +78,10 @@ describe('dbCreate', () => {
     ['3', 'mariadb'],
     ['4', 'redis'],
     ['5', 'mongo'],
+    ['6', 'valkey'],
+    ['7', 'clickhouse'],
+    ['8', 'meilisearch'],
+    ['9', 'rabbitmq'],
   ])('creates a %s database from engine choice %s', async (choice, engine) => {
     const create = vi.fn().mockResolvedValue({ id: 9, name: 'db1', connectionString: 'postgres://x' });
     h.prompt.mockResolvedValueOnce('db1').mockResolvedValueOnce(choice);
@@ -92,7 +95,7 @@ describe('dbCreate', () => {
 
   it('falls back to postgres for an unknown engine choice', async () => {
     const create = vi.fn().mockResolvedValue({ id: 1, name: 'db1' });
-    h.prompt.mockResolvedValueOnce('db1').mockResolvedValueOnce('9');
+    h.prompt.mockResolvedValueOnce('db1').mockResolvedValueOnce('99');
 
     await dbCreate({ databases: { create } } as never);
 
@@ -115,7 +118,7 @@ describe('dbCreate', () => {
     await dbCreate({ databases: { create } } as never);
 
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('no space'));
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   it('reports a non-Error rejection', async () => {
@@ -161,7 +164,7 @@ describe('tplDeploy', () => {
     await tplDeploy({ templates: { deploy: vi.fn() } } as never, '');
 
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Usage'));
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   it('deploys a template and prints the service id', async () => {
@@ -229,7 +232,7 @@ describe('deploysRollback', () => {
     await deploysRollback({ deploys: { rollback: vi.fn() } } as never, '21', '0');
 
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Usage'));
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   it('queues a rollback', async () => {

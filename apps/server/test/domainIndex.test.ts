@@ -56,7 +56,13 @@ describe('domain index routes', () => {
 
   it('enables ssl on a domain and regenerates the proxy config', async () => {
     const app = await buildTestApp({
-      db: createFakeDb({ update: { domains: [domainRow({ id: 1, ssl: true })] } }),
+      db: createFakeDb({
+        findFirst: {
+          domains: domainRow({ id: 1, serviceId: 1 }),
+          services: svcRow({ id: 1 }),
+        },
+        update: { domains: [domainRow({ id: 1, ssl: true })] },
+      }),
     });
     await app.register(domainIndexRoutes);
     const res = await app.inject({
@@ -72,7 +78,13 @@ describe('domain index routes', () => {
 
   it('defaults ssl to false when omitted', async () => {
     const app = await buildTestApp({
-      db: createFakeDb({ update: { domains: [domainRow({ id: 1, ssl: false })] } }),
+      db: createFakeDb({
+        findFirst: {
+          domains: domainRow({ id: 1, serviceId: 1 }),
+          services: svcRow({ id: 1 }),
+        },
+        update: { domains: [domainRow({ id: 1, ssl: false })] },
+      }),
     });
     await app.register(domainIndexRoutes);
     const res = await app.inject({ method: 'PATCH', url: '/1', headers: asUser(), payload: {} });
@@ -82,7 +94,13 @@ describe('domain index routes', () => {
 
   it('defaults ssl to false when no body is sent', async () => {
     const app = await buildTestApp({
-      db: createFakeDb({ update: { domains: [domainRow({ id: 1, ssl: false })] } }),
+      db: createFakeDb({
+        findFirst: {
+          domains: domainRow({ id: 1, serviceId: 1 }),
+          services: svcRow({ id: 1 }),
+        },
+        update: { domains: [domainRow({ id: 1, ssl: false })] },
+      }),
     });
     await app.register(domainIndexRoutes);
     const res = await app.inject({ method: 'PATCH', url: '/1', headers: asUser() });
@@ -91,7 +109,15 @@ describe('domain index routes', () => {
   });
 
   it('returns 404 when the domain is missing', async () => {
-    const app = await buildTestApp({ db: createFakeDb({ update: { domains: [] } }) });
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: {
+          domains: undefined,
+          services: svcRow({ id: 1 }),
+        },
+        update: { domains: [] },
+      }),
+    });
     await app.register(domainIndexRoutes);
     const res = await app.inject({ method: 'PATCH', url: '/99', headers: asUser(), payload: {} });
     expect(res.statusCode).toBe(404);

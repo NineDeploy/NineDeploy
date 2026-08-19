@@ -16,13 +16,11 @@ import {
 
 let logSpy: ReturnType<typeof vi.spyOn>;
 let errorSpy: ReturnType<typeof vi.spyOn>;
-let exitSpy: ReturnType<typeof vi.spyOn>;
 let stdoutWrite: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
   errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-  exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
   stdoutWrite = vi.fn();
   vi.spyOn(process, 'stdout', 'get').mockReturnValue({
     write: stdoutWrite,
@@ -175,15 +173,17 @@ describe('header / success / info', () => {
 });
 
 describe('error', () => {
-  it('prints the message and exits with code 1 by default', () => {
+  it('prints the message and sets exit code 1 by default', () => {
+    process.exitCode = 0;
     error('Something broke');
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Something broke'));
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
-  it('exits with an explicit code', () => {
+  it('sets an explicit exit code', () => {
+    process.exitCode = 0;
     error('Nope', 3);
-    expect(exitSpy).toHaveBeenCalledWith(3);
+    expect(process.exitCode).toBe(3);
   });
 });
 

@@ -28,7 +28,7 @@ export const config = {
   isProd: env.NODE_ENV === 'production',
   host: env.NINEDEPLOY_HOST,
   port: env.NINEDEPLOY_PORT,
-  publicUrl: env.NINEDEPLOY_PUBLIC_URL,
+  publicUrl: env.NINEDEPLOY_PUBLIC_URL.replace(/\/+$/, ''),
   paths: {
     dataDir,
     dbFile,

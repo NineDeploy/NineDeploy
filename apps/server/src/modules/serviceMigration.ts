@@ -1,6 +1,6 @@
 import { and, eq } from 'drizzle-orm';
 import {
-  buildConfigs, databaseAttachments, databases, domains, envVars, services, webhooks,
+  buildConfigs, databaseAttachments, databases, type dbEngine, domains, envVars, services, webhooks,
 } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { envVarName } from '@ninedeploy/schemas';
@@ -107,7 +107,7 @@ export const serviceMigrationRoutes: FastifyPluginAsync = async (app) => {
     // optional arrays defaulted (a malformed bundle must 400, not crash a
     // handler with a TypeError on .map of undefined).
     if (raw.service.type !== 'docker' && raw.service.type !== 'pm2' && raw.service.type !== 'compose') {
-      throw badRequest('Invalid bundle: service.type must be "docker" or "pm2"');
+      throw badRequest('Invalid bundle: service.type must be "docker", "pm2", or "compose"');
     }
     const bundle: ServiceBundle = {
       ...raw,
@@ -164,6 +164,8 @@ export const serviceMigrationRoutes: FastifyPluginAsync = async (app) => {
       }
       await app.db.insert(envVars).values({
         serviceId: svc.id,
+        scope: 'service',
+        scopeKey: svc.id,
         key: e.key,
         valueEncrypted: encrypt(e.value),
         isSecret: e.isSecret,
@@ -201,7 +203,7 @@ export const serviceMigrationRoutes: FastifyPluginAsync = async (app) => {
       const match = await app.db.query.databases.findFirst({
         where: and(
           eq(databases.name, a.databaseName),
-          eq(databases.engine, a.databaseEngine as 'postgres' | 'mysql' | 'redis' | 'mongo'),
+          eq(databases.engine, a.databaseEngine as (typeof dbEngine)[number]),
         ),
       });
       if (match) {

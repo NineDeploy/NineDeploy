@@ -1,5 +1,5 @@
 import { eq } from 'drizzle-orm';
-import { audit } from "../lib/audit.js";
+import { audit } from '../lib/audit.js';
 import { tunnels, type Tunnel } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { createTunnel } from '@ninedeploy/schemas';

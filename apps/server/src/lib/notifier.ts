@@ -152,7 +152,9 @@ async function sendEmail(target: string, subject: string, message: string): Prom
 /** Dispatch a message to one channel by type. */
 export async function dispatchChannel(type: string, target: string, event: AppEvent, message: string): Promise<void> {
   if (type === 'telegram') {
-    const [botToken, chatId] = target.split(':');
+    const idx = target.lastIndexOf(':');
+    const botToken = idx > 0 ? target.slice(0, idx) : '';
+    const chatId = idx > 0 ? target.slice(idx + 1) : '';
     if (!botToken || !chatId) throw new Error('Invalid Telegram target (expected botToken:chatId)');
     await sendTelegram(botToken, chatId, message);
   } else if (type === 'webhook') {
@@ -165,6 +167,9 @@ export async function dispatchChannel(type: string, target: string, event: AppEv
     await sendNtfy(target, message);
   } else if (type === 'email') {
     await sendEmail(target, `NineDeploy: ${event.action}`, message);
+  } else {
+    // Unknown channel types would otherwise log a misleading "sent" entry.
+    throw new Error(`Unknown notification channel type: ${type}`);
   }
 }
 
@@ -174,6 +179,9 @@ export async function dispatchChannel(type: string, target: string, event: AppEv
  * Webhook/Discord/Slack target format: URL
  * ntfy target format: topic URL
  * Email target format: JSON {host, port, from, to, user?, pass?}
+ *
+ * Channels are dispatched CONCURRENTLY so a slow target (e.g. a dead SMTP with
+ * retries) never stalls the event bus or every other channel behind it.
  */
 export async function notifyEvent(db: DB, event: AppEvent): Promise<void> {
   let channels: NotificationChannel[];
@@ -183,27 +191,29 @@ export async function notifyEvent(db: DB, event: AppEvent): Promise<void> {
     return; // table might not exist yet
   }
 
-  for (const ch of channels) {
-    if (!ch.active) continue;
-    if (!matchesFilter(event.action, ch.eventFilter)) continue;
+  await Promise.all(
+    channels.map(async (ch) => {
+      if (!ch.active) return;
+      if (!matchesFilter(event.action, ch.eventFilter)) return;
 
-    const message = formatMessage(event.action, event.entity);
-    const target = decrypt(ch.targetEncrypted);
+      const message = formatMessage(event.action, event.entity);
+      const target = decrypt(ch.targetEncrypted);
 
-    try {
-      const attempts = await withRetry(() => dispatchChannel(ch.type, target, event, message));
-      await db.insert(notificationLog).values({ channelId: ch.id, event: event.action, entity: event.entity, status: 'sent', attempts });
-    } catch (err) {
-      await db.insert(notificationLog).values({
-        channelId: ch.id,
-        event: event.action,
-        entity: event.entity,
-        status: 'failed',
-        attempts: RETRY_DELAYS_MS.length + 1,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-  }
+      try {
+        const attempts = await withRetry(() => dispatchChannel(ch.type, target, event, message));
+        await db.insert(notificationLog).values({ channelId: ch.id, event: event.action, entity: event.entity, status: 'sent', attempts });
+      } catch (err) {
+        await db.insert(notificationLog).values({
+          channelId: ch.id,
+          event: event.action,
+          entity: event.entity,
+          status: 'failed',
+          attempts: RETRY_DELAYS_MS.length + 1,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }),
+  );
 }
 
 /**

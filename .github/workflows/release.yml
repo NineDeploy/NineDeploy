@@ -29,6 +29,14 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # A tag is a release artifact — never push an image that does not pass
+      # the same verification gates CI enforces on every commit.
+      - name: Release checks (typecheck · lint · build · test)
+        run: pnpm release:check
+
       - name: Derive image tags
         id: meta
         uses: docker/metadata-action@v5

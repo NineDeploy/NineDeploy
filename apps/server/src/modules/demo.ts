@@ -8,7 +8,7 @@ import {
   projects,
   services,
 } from '@ninedeploy/db';
-import { encrypt } from '../lib/crypto.js';
+import { encrypt, randomToken } from '../lib/crypto.js';
 import { audit } from '../lib/audit.js';
 
 export const demoRoutes: FastifyPluginAsync = async (app) => {
@@ -40,8 +40,11 @@ export const demoRoutes: FastifyPluginAsync = async (app) => {
       where: eq(databases.slug, 'demo-postgres'),
     });
 
-    const dbPassword = 'demo_secure_pass_2026';
-    const connectionStr = 'postgres://nine:demo_secure_pass_2026@nd-db-demo-postgres:5432/app';
+    // A per-seed random password: the demo DB must never ship with a
+    // publicly-known credential (anyone who knows the source could otherwise
+    // connect to it over the shared Docker network).
+    const dbPassword = randomToken(24);
+    const connectionStr = `postgres://nine:${encodeURIComponent(dbPassword)}@nd-db-demo-postgres:5432/app`;
 
     if (!db) {
       const [insertedDb] = await app.db
@@ -100,18 +103,24 @@ export const demoRoutes: FastifyPluginAsync = async (app) => {
       await app.db.insert(envVars).values([
         {
           serviceId: dockerSvc.id,
+          scope: 'service',
+          scopeKey: dockerSvc.id,
           key: 'DATABASE_URL',
           valueEncrypted: encrypt(connectionStr),
           isSecret: true,
         },
         {
           serviceId: dockerSvc.id,
+          scope: 'service',
+          scopeKey: dockerSvc.id,
           key: 'NODE_ENV',
           valueEncrypted: encrypt('production'),
           isSecret: false,
         },
         {
           serviceId: dockerSvc.id,
+          scope: 'service',
+          scopeKey: dockerSvc.id,
           key: 'PORT',
           valueEncrypted: encrypt('80'),
           isSecret: false,
@@ -179,18 +188,24 @@ export const demoRoutes: FastifyPluginAsync = async (app) => {
       await app.db.insert(envVars).values([
         {
           serviceId: pm2Svc.id,
+          scope: 'service',
+          scopeKey: pm2Svc.id,
           key: 'DATABASE_URL',
           valueEncrypted: encrypt(connectionStr),
           isSecret: true,
         },
         {
           serviceId: pm2Svc.id,
+          scope: 'service',
+          scopeKey: pm2Svc.id,
           key: 'NODE_ENV',
           valueEncrypted: encrypt('production'),
           isSecret: false,
         },
         {
           serviceId: pm2Svc.id,
+          scope: 'service',
+          scopeKey: pm2Svc.id,
           key: 'PORT',
           valueEncrypted: encrypt('3001'),
           isSecret: false,

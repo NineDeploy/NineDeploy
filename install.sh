@@ -172,7 +172,11 @@ fi
 # ── 3. Install + build ────────────────────────────────────────────────────
 
 info "Installing dependencies…"
-pnpm install --frozen-lockfile || pnpm install
+# Frozen installs keep the committed lockfile authoritative (the same
+# discipline CI enforces). Falling back to a non-frozen install would silently
+# re-derive dependency edges and reintroduce the deprecated packages the CI
+# guard exists to catch — so fail loudly instead.
+pnpm install --frozen-lockfile
 
 info "Building…"
 pnpm build

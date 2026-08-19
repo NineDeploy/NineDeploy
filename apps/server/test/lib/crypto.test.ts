@@ -207,13 +207,13 @@ describe('key rotation (versioned key ring)', () => {
     expect(() => mod.encrypt('x')).toThrow('contained no valid keys');
   });
 
-  it('falls back to the active key when decrypting an unknown version', async () => {
+  it('throws on an unknown key version instead of silently falling back', async () => {
     vi.resetModules();
     vi.stubEnv('NINEDEPLOY_MASTER_KEYS', `0:${KEY_A},1:${KEY_B}`);
     const mod = await import('../../src/lib/crypto.js');
     // Active is v1; relabel an active ciphertext as an unknown v9 version.
     const forged = mod.encrypt('fallback').replace(/^v1:/, 'v9:');
-    expect(mod.decrypt(forged)).toBe('fallback');
+    expect(() => mod.decrypt(forged)).toThrow('Unknown master key version 9');
   });
 
   it('falls back to the active key for a legacy envelope when version 0 is absent from the ring', async () => {

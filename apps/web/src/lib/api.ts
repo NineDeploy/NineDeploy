@@ -3,9 +3,23 @@ import { createClient, type NineDeployClient } from '@ninedeploy/sdk';
 const TOKEN_KEY = 'ninedeploy.token';
 const REFRESH_KEY = 'ninedeploy.refreshToken';
 
+/**
+ * Token storage. sessionStorage (NOT localStorage) so a bearer credential
+ * never survives the tab — closing the browser clears the session, shrinking
+ * the XSS-exfiltration window and avoiding a long-lived refresh token sitting
+ * in storage.
+ */
+function storage(): Storage | null {
+  try {
+    return window.sessionStorage;
+  } catch {
+    return null; // SSR / privacy mode
+  }
+}
+
 export function getToken(): string | null {
   try {
-    return localStorage.getItem(TOKEN_KEY);
+    return storage()?.getItem(TOKEN_KEY) ?? null;
   } catch {
     return null;
   }
@@ -13,8 +27,10 @@ export function getToken(): string | null {
 
 export function setToken(token: string | null): void {
   try {
-    if (token) localStorage.setItem(TOKEN_KEY, token);
-    else localStorage.removeItem(TOKEN_KEY);
+    const s = storage();
+    if (!s) return;
+    if (token) s.setItem(TOKEN_KEY, token);
+    else s.removeItem(TOKEN_KEY);
   } catch {
     /* ignore (SSR / privacy mode) */
   }
@@ -22,7 +38,7 @@ export function setToken(token: string | null): void {
 
 function getRefreshToken(): string | null {
   try {
-    return localStorage.getItem(REFRESH_KEY);
+    return storage()?.getItem(REFRESH_KEY) ?? null;
   } catch {
     return null;
   }
@@ -30,8 +46,10 @@ function getRefreshToken(): string | null {
 
 function setRefreshToken(token: string | null): void {
   try {
-    if (token) localStorage.setItem(REFRESH_KEY, token);
-    else localStorage.removeItem(REFRESH_KEY);
+    const s = storage();
+    if (!s) return;
+    if (token) s.setItem(REFRESH_KEY, token);
+    else s.removeItem(REFRESH_KEY);
   } catch {
     /* ignore */
   }
@@ -119,9 +137,35 @@ export const api: NineDeployClient = createClient({
   fetch: fetchWithRefresh,
 });
 
+function getWsBase(): { proto: string; host: string } {
+  const apiUrl = import.meta.env['VITE_API_URL'];
+  if (apiUrl) {
+    try {
+      const parsed = new URL(apiUrl, window.location.href);
+      return {
+        proto: parsed.protocol === 'https:' ? 'wss' : 'ws',
+        host: parsed.host,
+      };
+    } catch {
+      /* fallback */
+    }
+  }
+  return {
+    proto: window.location.protocol === 'https:' ? 'wss' : 'ws',
+    host: window.location.host,
+  };
+}
+
 /** Build a WebSocket URL for streaming a deployment's logs (token via query). */
 export function deployLogsWsUrl(serviceId: number, deploymentId: number): string {
-  const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+  const { proto, host } = getWsBase();
   const token = getToken() ?? '';
-  return `${proto}://${window.location.host}/v1/services/${serviceId}/deploys/${deploymentId}/logs?token=${token}`;
+  return `${proto}://${host}/v1/services/${serviceId}/deploys/${deploymentId}/logs?token=${token}`;
+}
+
+/** Build a WebSocket URL for container interactive exec terminal (token via query). */
+export function execWsUrl(serviceId: number): string {
+  const { proto, host } = getWsBase();
+  const token = getToken() ?? '';
+  return `${proto}://${host}/v1/services/${serviceId}/exec?token=${token}`;
 }

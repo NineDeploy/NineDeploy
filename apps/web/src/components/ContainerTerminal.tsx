@@ -4,7 +4,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { Maximize2, Minimize2, RefreshCw, Terminal as TerminalIcon, Trash2, X } from 'lucide-react';
-import { getToken } from '../lib/api.js';
+import { execWsUrl } from '../lib/api.js';
 import { Button, cn } from './ui.js';
 
 interface ContainerTerminalProps {
@@ -38,11 +38,7 @@ export function ContainerTerminal({ serviceId, serviceName, onClose }: Container
 
     term.writeln('Connecting to container shell…');
 
-    const token = getToken() ?? '';
-    const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    const ws = new WebSocket(
-      `${proto}://${window.location.host}/v1/services/${serviceId}/exec?token=${token}`,
-    );
+    const ws = new WebSocket(execWsUrl(serviceId));
     ws.binaryType = 'arraybuffer';
 
     ws.onopen = () => {

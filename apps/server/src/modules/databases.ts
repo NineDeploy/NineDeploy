@@ -1,6 +1,6 @@
 import { existsSync, unlinkSync } from 'node:fs';
 import { and, eq } from 'drizzle-orm';
-import { audit } from "../lib/audit.js";
+import { audit } from '../lib/audit.js';
 import { backups, databaseAttachments, databases, type Database } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { createAttachment, createDatabase, setLimits } from '@ninedeploy/schemas';
@@ -172,7 +172,7 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // Stop Web Studio for this database
-  app.delete('/:id/studio', async (req) => {
+  app.delete('/:id/studio', { preHandler: [app.requireAdmin] }, async (req) => {
     const id = num((req.params as { id: string }).id);
     const d = await app.db.query.databases.findFirst({ where: eq(databases.id, id) });
     if (!d) throw notFound('Database not found');
@@ -315,7 +315,25 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
 
 // ── Service ↔ database attachments ────────────────────────────────────────
 function aliasFor(engine: string): string {
-  return engine === 'redis' ? 'REDIS_URL' : 'DATABASE_URL';
+  switch (engine.toLowerCase()) {
+    case 'redis':
+    case 'valkey':
+      return 'REDIS_URL';
+    case 'mongo':
+    case 'mongodb':
+      return 'MONGODB_URI';
+    case 'mysql':
+    case 'mariadb':
+      return 'MYSQL_URL';
+    case 'clickhouse':
+      return 'CLICKHOUSE_URL';
+    case 'meilisearch':
+      return 'MEILISEARCH_URL';
+    case 'rabbitmq':
+      return 'RABBITMQ_URL';
+    default:
+      return 'DATABASE_URL';
+  }
 }
 
 /** Attachment management. Mounted under /services. */

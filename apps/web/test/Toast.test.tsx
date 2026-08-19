@@ -78,6 +78,15 @@ describe('ToastProvider', () => {
     expect(screen.queryByText('Saved!')).not.toBeInTheDocument();
   });
 
+  it('exposes the toaster as an aria-live region for screen readers', () => {
+    renderToast();
+    // The toaster container announces added/removed toasts (role="status" +
+    // aria-live="polite") so failures are not silent to assistive tech.
+    const region = document.querySelector('[role="status"][aria-live="polite"]');
+    expect(region).not.toBeNull();
+    expect(region).toBeInTheDocument();
+  });
+
   it('does not auto-dismiss before the timeout elapses', () => {
     renderToast();
     fireEvent.click(screen.getByText('success'));
@@ -87,11 +96,14 @@ describe('ToastProvider', () => {
 });
 
 describe('useToast', () => {
-  it('throws when used outside a ToastProvider', () => {
+  it('falls back to a no-op context outside a ToastProvider (never throws)', () => {
     const original = console.error;
     console.error = vi.fn();
     try {
-      expect(() => render(<Trigger />)).toThrow('useToast must be used within ToastProvider');
+      // useToast returns a no-op fallback instead of throwing, so rendering
+      // outside the provider must not blow up.
+      render(<Trigger />);
+      expect(screen.getAllByRole('button').length).toBe(4);
     } finally {
       console.error = original;
     }

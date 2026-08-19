@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { databasesRoutes, attachmentRoutes } from '../src/modules/databases.js';
+import { databasesRoutes } from '../src/modules/databases.js';
 import { deploysRoutes } from '../src/modules/deploys.js';
 import { envRoutes } from '../src/modules/env.js';
 import { jobRoutes } from '../src/modules/jobs.js';
