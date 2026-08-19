@@ -36,6 +36,15 @@ echo ""
 
 # ── 1. Prerequisites ───────────────────────────────────────────────────────
 
+# Base system packages on Debian/Ubuntu
+if [ "$(uname -s)" = "Linux" ] && command -v apt-get &>/dev/null; then
+  if ! command -v curl &>/dev/null || ! command -v git &>/dev/null || ! command -v tar &>/dev/null; then
+    info "Installing base system packages (curl, git, ca-certificates, tar)…"
+    sudo apt-get update -y >/dev/null 2>&1 || true
+    sudo apt-get install -y curl git ca-certificates tar gzip >/dev/null 2>&1 || true
+  fi
+fi
+
 # Node.js ≥ 22.13 (pnpm 11 requires node:sqlite)
 if command -v node &>/dev/null; then
   NODE_MAJOR=$(node -v | sed 's/v//' | cut -d. -f1)
@@ -239,10 +248,17 @@ if [ ! -f ".env" ]; then
   info "Creating .env from template…"
   cp .env.example .env
 
-  # Generate a strong JWT secret
+  # Set production mode
+  sed -i.bak "s|^NODE_ENV=.*|NODE_ENV=production|" .env && rm -f .env.bak
+
+  # Generate strong 32-byte hex secrets (64 chars)
   JWT_SECRET=$(openssl rand -hex 32 2>/dev/null || node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")
-  sed -i.bak "s|NINEDEPLOY_JWT_SECRET=.*|NINEDEPLOY_JWT_SECRET=${JWT_SECRET}|" .env && rm -f .env.bak
-  ok ".env created with generated secrets"
+  sed -i.bak "s|^NINEDEPLOY_JWT_SECRET=.*|NINEDEPLOY_JWT_SECRET=${JWT_SECRET}|" .env && rm -f .env.bak
+
+  MASTER_KEY=$(openssl rand -hex 32 2>/dev/null || node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")
+  sed -i.bak "s|^NINEDEPLOY_MASTER_KEY=.*|NINEDEPLOY_MASTER_KEY=${MASTER_KEY}|" .env && rm -f .env.bak
+
+  ok ".env created with generated production secrets"
 else
   ok ".env already exists"
 fi
