@@ -273,7 +273,9 @@ describe('DeployWizard', () => {
     await user.click(screen.getByRole('button', { name: /continue/i }));
     await user.click(screen.getByRole('button', { name: /deploy/i }));
 
-    await waitFor(() => expect(apiMock.api.databases.create).toHaveBeenCalledWith(expect.objectContaining({ engine: 'postgres' })));
+    await waitFor(() =>
+      expect(apiMock.api.databases.create).toHaveBeenCalledWith(expect.objectContaining({ engine: 'postgres', reuseExisting: true })),
+    );
     await waitFor(() => expect(apiMock.api.attachments.create).toHaveBeenCalledWith(42, { databaseId: 7 }));
     // The deploy triggers only AFTER the database is running + attached.
     await waitFor(() => expect(apiMock.api.deploys.trigger).toHaveBeenCalledWith(42));

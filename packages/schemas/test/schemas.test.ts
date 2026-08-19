@@ -496,7 +496,7 @@ describe('service', () => {
       for (const engine of ['postgres', 'mysql', 'redis', 'mongo']) {
         expect(createDatabase.safeParse({ name: 'db', engine }).success).toBe(true);
       }
-      expect(createDatabase.safeParse({ name: 'db', engine: 'postgres', version: '16', projectId: 1 }).success).toBe(true);
+      expect(createDatabase.safeParse({ name: 'db', engine: 'postgres', version: '16', projectId: 1, reuseExisting: true }).success).toBe(true);
       bad(createDatabase, { name: '', engine: 'postgres' });
       bad(createDatabase, { name: 'db', engine: 'oracle' });
     });

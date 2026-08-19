@@ -100,6 +100,50 @@ describe('databases routes', () => {
     expect(res.json()).toMatchObject({ id: 8 });
   });
 
+  it('resumes a matching caller-owned database for retryable Hub provisioning', async () => {
+    const existing = dbRow({
+      id: 9,
+      ownerUserId: 1,
+      name: 'directus-db',
+      slug: 'directus-db',
+      status: 'error',
+      version: null,
+      containerName: 'nd-db-directus-db',
+    });
+    const app = await buildTestApp({ db: createFakeDb({ findFirst: { databases: existing } }) });
+    await app.register(databasesRoutes);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/',
+      headers: asUser(),
+      payload: { name: 'directus-db', engine: 'postgres', reuseExisting: true },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ id: 9, status: 'running', host: 'nd-db-directus-db', port: 5432 });
+    expect(engineMocks.startDatabase).toHaveBeenCalledWith(existing, expect.any(Function));
+  });
+
+  it('does not reuse a same-name database owned by another user', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { databases: dbRow({ ownerUserId: 2, slug: 'directus-db', name: 'directus-db', version: null }) },
+      }),
+    });
+    await app.register(databasesRoutes);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/',
+      headers: asUser(),
+      payload: { name: 'directus-db', engine: 'postgres', reuseExisting: true },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(engineMocks.startDatabase).not.toHaveBeenCalled();
+  });
+
   it('rejects an unknown engine', async () => {
     const app = await buildTestApp({ db: createFakeDb() });
     await app.register(databasesRoutes);

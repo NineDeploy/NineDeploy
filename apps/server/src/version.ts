@@ -1,4 +1,4 @@
-export const VERSION = '0.2.12';
+export const VERSION = '0.2.13';
 
 export interface ChangelogEntry {
   version: string;
@@ -9,12 +9,22 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '0.2.13',
+    date: '2026-08-20',
+    title: 'Reliable Hub Database Provisioning',
+    changes: [
+      'Managed database startup reconciles Docker daemon state after a late docker run code 125 failure',
+      'A database container that is already running is adopted instead of leaving its control-plane row in an error state',
+      'Hub template retries safely resume only a matching caller-owned database and no longer collide with its existing slug or container name',
+    ],
+  },
+  {
     version: '0.2.12',
     date: '2026-08-20',
     title: 'Automatic Docker Image Port Recovery',
     changes: [
-      'Failed Docker healthchecks now probe TCP ports declared by image metadata and recover an incorrect configured internal port automatically',
-      'A recovered image port is persisted on the service so Traefik and future deployments use the corrected value',
+      'Failed Docker healthchecks probe TCP ports declared by image metadata and recover an incorrect configured internal port automatically',
+      'A recovered image port is persisted so Traefik and future deployments use the corrected value',
       'n8n image deployments configured with port 80 automatically recover to the image-declared 5678/tcp port',
     ],
   },

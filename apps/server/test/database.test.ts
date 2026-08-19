@@ -37,6 +37,10 @@ vi.mock('../src/config.js', () => ({ config: h.config }));
 
 beforeEach(() => {
   vi.clearAllMocks();
+  h.run.mockImplementation(async (_cmd: string, _args: unknown[], _opts: unknown, sink?: (line: string) => void) => {
+    sink?.('');
+  });
+  h.capture.mockResolvedValue('[]');
 });
 
 const dbRow = (over: Record<string, unknown> = {}) =>
@@ -167,6 +171,29 @@ describe('startDatabase', () => {
 
     expect(log).toHaveBeenCalledWith('Starting postgres database db (c) …');
     expect(h.run).toHaveBeenCalledWith('docker', expect.arrayContaining(['run', '-d', '--name', 'c']), {}, log);
+  });
+
+  it('adopts a container that is running after docker run reports code 125', async () => {
+    h.capture
+      .mockResolvedValueOnce('exited')
+      .mockResolvedValueOnce('No such volume')
+      .mockResolvedValueOnce('running');
+    h.run.mockImplementation(async (_cmd: string, args: unknown[]) => {
+      if ((args as string[])[0] === 'run') throw new Error('docker run exited with code 125');
+    });
+    const log = vi.fn();
+
+    await expect(startDatabase(dbRow(), log)).resolves.toBeUndefined();
+    expect(log).toHaveBeenCalledWith('c is running despite docker run failure — adopting it');
+  });
+
+  it('preserves a docker run failure when no container is running', async () => {
+    h.capture.mockResolvedValue('exited');
+    h.run.mockImplementation(async (_cmd: string, args: unknown[]) => {
+      if ((args as string[])[0] === 'run') throw new Error('docker run exited with code 125');
+    });
+
+    await expect(startDatabase(dbRow(), vi.fn())).rejects.toThrow('docker run exited with code 125');
   });
 
   it('adds cpu/memory flags and defaults the mysql tag when no version is set', async () => {

@@ -255,14 +255,31 @@ export async function startDatabase(d: Database, log: (line: string) => void): P
   args.push(cfg.image(d.version ?? undefined));
 
   log(`Starting ${d.engine} database ${d.name} (${d.containerName}) …`);
+  let startFailed = false;
+  let startError: unknown;
   try {
     await run('docker', args, {}, log);
+  } catch (err) {
+    startFailed = true;
+    startError = err;
   } finally {
     try {
       if (Object.keys(vars).length > 0) unlinkSync(envFile);
     } catch {
       /* best-effort */
     }
+  }
+
+  if (startFailed) {
+    // Docker can return 125 after the daemon has already created and started
+    // the container (for example when its response path races with containerd).
+    // Reconcile against daemon state before reporting a false failure and
+    // leaving the persisted DB row in `error`.
+    if (await containerRunning(d.containerName)) {
+      log(`${d.containerName} is running despite docker run failure — adopting it`);
+      return;
+    }
+    throw startError;
   }
 }
 

@@ -263,6 +263,9 @@ export const createDatabase = z.object({
   engine: z.enum(['postgres', 'mysql', 'mariadb', 'redis', 'mongo', 'valkey', 'clickhouse', 'meilisearch', 'rabbitmq']),
   version: z.string().optional(),
   projectId: z.number().int().optional(),
+  /** Hub/template provisioning is retryable: resume a matching database owned
+   * by the caller instead of colliding with the globally unique slug. */
+  reuseExisting: z.boolean().optional(),
   existingVolume: z.string().optional(),
   extensions: z.array(z.string()).optional(),
   webGuiEnabled: z.boolean().optional(),

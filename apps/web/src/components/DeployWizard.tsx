@@ -120,7 +120,11 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
       // wait for it (bounded) BEFORE triggering the deploy.
       if (dbEngine && autoDb) {
         setDbStatus(`Creating ${dbEngine} database…`);
-        const db = await api.databases.create({ name: `${template!.name}-db`.toLowerCase().replace(/[^a-z0-9-]+/g, '-'), engine: dbEngine });
+        const db = await api.databases.create({
+          name: `${template!.name}-db`.toLowerCase().replace(/[^a-z0-9-]+/g, '-'),
+          engine: dbEngine,
+          reuseExisting: true,
+        });
         const deadline = Date.now() + 120_000;
         for (;;) {
           const cur = await api.databases.get(db.id);

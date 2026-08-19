@@ -124,6 +124,37 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
     const volumeName = existingVolume || `nd-db-${slug}-data`;
     const version = input.extensions?.includes('pgvector') && input.engine === 'postgres' ? 'vector' : (input.version ?? null);
 
+    if (input.reuseExisting) {
+      const existing = await app.db.query.databases.findFirst({ where: eq(databases.slug, slug) });
+      if (existing) {
+        const sameRequest =
+          existing.ownerUserId === req.user!.id &&
+          existing.engine === input.engine &&
+          existing.projectId === (input.projectId ?? null) &&
+          existing.version === version;
+        if (!sameRequest) throw badRequest('A different database already uses this name');
+
+        try {
+          await startDatabase(existing, (line) => app.log.info({ component: 'database' }, line));
+          const resumed = {
+            ...existing,
+            status: 'running' as const,
+            internalHost: existing.containerName,
+            internalPort: defaultPort(existing.engine),
+          };
+          await app.db
+            .update(databases)
+            .set({ status: resumed.status, internalHost: resumed.internalHost, internalPort: resumed.internalPort })
+            .where(eq(databases.id, existing.id));
+          void audit(app.db, req.user!.id, 'database.reuse', existing.name);
+          return serialize(resumed, { isAdmin: req.user?.role === 'admin' });
+        } catch (err) {
+          await app.db.update(databases).set({ status: 'error' }).where(eq(databases.id, existing.id));
+          throw badRequest(`Failed to start database: ${err instanceof Error ? err.message : err}`);
+        }
+      }
+    }
+
     const [created] = await app.db
       .insert(databases)
       .values({
