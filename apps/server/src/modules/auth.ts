@@ -82,6 +82,17 @@ export async function registerAccount(db: DB, input: Register) {
   });
 }
 
+/**
+ * Default for the `allow_registration` setting when an admin has never set it.
+ *
+ * Closed by default: this is a deployment control plane, and an instance that
+ * hands out member accounts to anonymous visitors turns any authorization gap
+ * into an unauthenticated one. First-run bootstrap is unaffected — the first
+ * registration on an empty instance still becomes the admin.
+ * Admins can re-open registration from Settings.
+ */
+export const ALLOW_REGISTRATION_DEFAULT = false;
+
 /** Tighter rate limit for credential-bearing endpoints (brute-force / credential-stuffing defense). */
 const AUTH_LIMIT = { max: 20, timeWindow: '1 minute' };
 /** Reset requests are cheap to spam (each mints a token + maybe an email). */
@@ -92,7 +103,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
   // and whether open registration is currently allowed (drives the register form).
   app.get('/status', async () => ({
     initialized: (await userCount(app.db)) > 0,
-    allowRegistration: await getSetting(app.db, 'allow_registration', true),
+    allowRegistration: await getSetting(app.db, 'allow_registration', ALLOW_REGISTRATION_DEFAULT),
   }));
 
   app.post('/register', { config: { rateLimit: AUTH_LIMIT } }, async (req) => {
@@ -101,7 +112,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     // stays possible: when no user exists yet the first registration becomes
     // the admin regardless of the flag (same rule as /setup).
     const noUsers = (await userCount(app.db)) === 0;
-    if (!noUsers && !(await getSetting(app.db, 'allow_registration', true))) {
+    if (!noUsers && !(await getSetting(app.db, 'allow_registration', ALLOW_REGISTRATION_DEFAULT))) {
       throw forbidden('Registration is disabled on this instance');
     }
     return registerAccount(app.db, register.parse(req.body));

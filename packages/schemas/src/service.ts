@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { envVarName, slug } from './common.js';
+import { envVarName, gitBranch, gitRepoUrl, httpPath, slug } from './common.js';
 
 export const serviceType = z.enum(['pm2', 'docker', 'compose']);
 export const buildPack = z.enum(['auto', 'nixpacks', 'dockerfile']);
@@ -9,8 +9,8 @@ export const createService = z.object({
   name: z.string().min(1).max(100),
   slug: slug.optional(), // derived from name if omitted
   type: serviceType.default('docker'),
-  repoUrl: z.url().optional(),
-  branch: z.string().min(1).max(200).default('main'),
+  repoUrl: gitRepoUrl.optional(),
+  branch: gitBranch.default('main'),
   sourceId: z.number().int().positive().optional(),
   serverId: z.number().int().positive().nullable().optional(),
   image: z.string().optional(),
@@ -20,7 +20,7 @@ export const createService = z.object({
   composeService: z.string().min(1).max(200).optional(),
   cpuShares: z.number().int().min(0).max(262144).optional(),
   memLimitMb: z.number().int().min(0).optional(),
-  healthPath: z.string().optional(),
+  healthPath: httpPath.optional(),
   port: z.number().int().min(1).max(65535).optional(),
   publishedPort: z.number().int().min(1).max(65535).nullable().optional(),
   previewDeploymentsEnabled: z.boolean().optional(),
@@ -56,8 +56,8 @@ export const updateService = z.object({
   name: z.string().min(1).max(100).optional(),
   slug: slug.optional(),
   type: serviceType.optional(),
-  repoUrl: z.url().optional(),
-  branch: z.string().min(1).max(200).optional(),
+  repoUrl: gitRepoUrl.optional(),
+  branch: gitBranch.optional(),
   sourceId: z.number().int().positive().optional(),
   serverId: z.number().int().positive().nullable().optional(),
   image: z.string().optional(),
@@ -65,7 +65,7 @@ export const updateService = z.object({
   composeService: z.string().min(1).max(200).optional(),
   cpuShares: z.number().int().min(0).max(262144).optional(),
   memLimitMb: z.number().int().min(0).optional(),
-  healthPath: z.string().optional(),
+  healthPath: httpPath.optional(),
   port: z.number().int().min(1).max(65535).optional(),
   publishedPort: z.number().int().min(1).max(65535).nullable().optional(),
   previewDeploymentsEnabled: z.boolean().optional(),
@@ -237,7 +237,7 @@ export type Domain = z.infer<typeof domain>;
 
 // ── Webhooks (auto-deploy) ────────────────────────────────────────────────
 export const createWebhook = z.object({
-  branch: z.string().min(1).optional(),
+  branch: gitBranch.optional(),
   /** Newline/comma-separated globs — deploy only when a changed file matches. */
   watchPaths: z.string().max(4000).optional(),
 });

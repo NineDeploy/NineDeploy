@@ -60,8 +60,8 @@ describe('checkoutCommit — fresh clone', () => {
     const sink = vi.fn();
     const resolved = await checkoutCommit('https://github.com/ada/repo.git', 'main', undefined, dir, sink);
 
-    expect(gitState.simpleGit.mock.calls[0]).toEqual([]); // bare factory call for clone
-    expect(gitState.simpleGit.mock.calls[1]).toEqual([dir]); // checkout instance
+    expect(gitState.simpleGit.mock.calls[0]).toEqual([{}]); // bare factory call for clone
+    expect(gitState.simpleGit.mock.calls[1]).toEqual([dir, {}]); // checkout instance
     const bare = gitState.simpleGit.mock.results[0]!.value;
     expect(bare.clone).toHaveBeenCalledWith('https://github.com/ada/repo.git', dir, []);
     expect(sink).toHaveBeenCalledWith('Cloning https://github.com/ada/repo.git …');
@@ -198,7 +198,7 @@ describe('checkoutCommit — existing checkout', () => {
     const sink = vi.fn();
     const resolved = await checkoutCommit('https://github.com/ada/repo.git', 'main', undefined, dir, sink);
 
-    expect(gitState.simpleGit).toHaveBeenCalledWith(dir);
+    expect(gitState.simpleGit).toHaveBeenCalledWith(dir, {});
     expect(git.fetch).toHaveBeenCalledWith(['--all']);
     expect(git.checkout).toHaveBeenCalledWith('main');
     expect(git.pull).toHaveBeenCalledWith('origin', 'main');
@@ -234,7 +234,7 @@ describe('checkoutCommit — existing checkout', () => {
     expect(existsSync(path.join(path.dirname(dir), `${path.basename(dir)}.sshkey`))).toBe(false);
   });
 
-  it('tolerates addConfig failure', async () => {
+  it('fails fast on addConfig failure', async () => {
     const dir = existingCheckout('existing-addconfig-fail');
     const git = makeGit();
     git.addConfig = vi.fn(async () => {
@@ -244,7 +244,7 @@ describe('checkoutCommit — existing checkout', () => {
 
     await expect(
       checkoutCommit('git@github.com:org/repo.git', 'main', undefined, dir, vi.fn(), { deployKey: 'k' }),
-    ).resolves.toBe('0123456789abcdef');
+    ).rejects.toThrow('config failed');
   });
 
   it('tolerates remote set-url failure', async () => {

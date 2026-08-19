@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { pathToFileURL } from 'node:url';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { createClient } from '@ninedeploy/sdk';
@@ -18,7 +19,7 @@ export function buildServer(
   client: ReturnType<typeof createClient>,
   warn: (msg: string) => void = console.error,
 ): McpServer {
-  const server = new McpServer({ name: 'ninedeploy', version: '0.2.1' });
+  const server = new McpServer({ name: 'ninedeploy', version: '0.2.2' });
 
   for (const tool of TOOLS) {
     server.registerTool(
@@ -85,7 +86,7 @@ export const DEFAULT_IO = {
 export function isDirectRun(argv1: string | undefined, selfUrl: string): boolean {
   if (argv1 == null) return false;
   try {
-    return new URL(`file://${argv1}`).href === selfUrl;
+    return pathToFileURL(argv1).href === selfUrl;
   } catch {
     return false;
   }

@@ -102,27 +102,28 @@ describe('auth routes', () => {
     await app.register(authRoutes);
     const res = await app.inject({ method: 'GET', url: '/status' });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ initialized: false, allowRegistration: true });
+    expect(res.json()).toEqual({ initialized: false, allowRegistration: false });
   });
 
   it('reports initialized when users exist', async () => {
     const app = await buildTestApp({ db: createFakeDb({ counts: { users: [{ n: 3 }] } }) });
     await app.register(authRoutes);
     const res = await app.inject({ method: 'GET', url: '/status' });
-    expect(res.json()).toEqual({ initialized: true, allowRegistration: true });
+    expect(res.json()).toEqual({ initialized: true, allowRegistration: false });
   });
 
   it('treats a missing count row as zero users', async () => {
     const app = await buildTestApp({ db: createFakeDb({ counts: {} }) });
     await app.register(authRoutes);
     const res = await app.inject({ method: 'GET', url: '/status' });
-    expect(res.json()).toEqual({ initialized: false, allowRegistration: true });
+    expect(res.json()).toEqual({ initialized: false, allowRegistration: false });
   });
 
   it('registers a user', async () => {
     const app = await buildTestApp({
       db: createFakeDb({
         counts: { users: [{ n: 1 }] },
+        findFirst: { settings: { key: 'allow_registration', value: true } },
         insert: { users: [userRow({ id: 2, email: 'new@example.com', role: 'member' })] },
       }),
     });

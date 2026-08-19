@@ -179,9 +179,41 @@ export const systemRoutes: FastifyPluginAsync = async (app) => {
       }
     }
 
+    // Member-TYPE guard. The name check above cannot see a symlink: an archive
+    // holding `data -> /etc` followed by `data/passwd` has two innocent-looking
+    // names but writes outside the extraction dir. Verbose listing puts the type
+    // in column 0 (`-` regular, `d` directory, `l` symlink, `h` hardlink, and
+    // c/b/p/s for devices/fifos/sockets); only the first two are accepted.
+    const verbose = await new Promise<string>((resolve, reject) => {
+      let out = '';
+      const child = spawn('tar', ['-tvzf', path.basename(archivePath)], { cwd: tmpDir });
+      child.stdout.on('data', (d) => (out += d.toString()));
+      child.on('error', reject);
+      child.on('close', (code) => (code === 0 ? resolve(out) : reject(new Error(`tar list exited ${code}`))));
+    });
+    for (const entry of verbose.split('\n').map((l) => l.trim()).filter(Boolean)) {
+      const type = entry[0]!;
+      if (type !== '-' && type !== 'd') {
+        rmSync(tmpDir, { recursive: true, force: true });
+        return reply.status(400).send({
+          error: {
+            code: 'bad_request',
+            message: `Invalid archive: only regular files and directories are allowed (found ${JSON.stringify(entry)})`,
+          },
+        });
+      }
+    }
+
     await new Promise<void>((resolve, reject) => {
       // Relative -f + cwd: see the export route note about drive-letter colons.
-      const child = spawn('tar', ['-xzf', path.basename(archivePath), '-C', '.'], { cwd: tmpDir });
+      // --no-same-owner / --no-same-permissions: never let an archive restore
+      // setuid bits or hand extracted files to another uid. --no-overwrite-dir
+      // keeps an existing directory's mode instead of adopting the archive's.
+      const child = spawn(
+        'tar',
+        ['-xzf', path.basename(archivePath), '--no-same-owner', '--no-same-permissions', '-C', '.'],
+        { cwd: tmpDir },
+      );
       child.on('error', reject);
       child.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`tar extract exited ${code}`))));
     });

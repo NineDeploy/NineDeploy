@@ -3,7 +3,7 @@ import { and, desc, eq, inArray, isNotNull, lt } from 'drizzle-orm';
 import { deployments, services } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { diffLines, renderDiff } from '../lib/diff.js';
-import { capture } from '../lib/exec.js';
+import { buildEnv, capture } from '../lib/exec.js';
 import { audit } from '../lib/audit.js';
 import { logBus } from '../engine/logs.js';
 import { resolveUser } from '../lib/auth.js';
@@ -226,12 +226,13 @@ export const deploysRoutes: FastifyPluginAsync = async (app) => {
           'python3',
           ['-c', 'import os,pty; pty.spawn(["docker","exec","-i","-t","-e","TERM=xterm","--",os.environ["ND_EXEC_CONTAINER"],"sh"])'],
           {
-            env: { ...process.env, ND_EXEC_CONTAINER: targetContainer },
+            env: buildEnv({ ND_EXEC_CONTAINER: targetContainer }),
             windowsHide: true,
             stdio: ['pipe', 'pipe', 'pipe'],
           },
         )
       : spawn('docker', ['exec', '-i', '-e', 'TERM=xterm', '--', targetContainer, 'sh', '-i'], {
+          env: buildEnv(),
           windowsHide: true,
           stdio: ['pipe', 'pipe', 'pipe'],
         });

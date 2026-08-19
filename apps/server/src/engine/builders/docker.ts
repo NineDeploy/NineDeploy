@@ -5,6 +5,7 @@ import type { Builder } from '../types.js';
 import type { BuildConfig } from '@ninedeploy/db';
 import { capture, buildEnv, run, sleep } from '../../lib/exec.js';
 import { NETWORK } from '../proxy.js';
+import { buildProbeUrl, safeProbePath } from '../../lib/probeUrl.js';
 
 const swallow = () => {};
 
@@ -247,7 +248,9 @@ export const dockerBuilder: Builder = {
 
   // 5-minute deadline: first boots (model downloads, DB migrations) are slow.
   async isHealthy(runtime, timeoutMs = 300_000, directGraceMs = 10_000, log: (line: string) => void = () => undefined) {
-    const healthPath = runtime.healthPath || '/';
+    // Sanitised, then assembled structurally — a stored healthPath must not
+    // be able to redirect the probe at another host (see lib/probeUrl.ts).
+    const healthPath = safeProbePath(runtime.healthPath);
     const deadline = Date.now() + timeoutMs;
     // Direct host→container-IP probing works on Linux bridges but NOT on
     // Docker Desktop (macOS/Windows), where container IPs are unreachable
@@ -271,7 +274,7 @@ export const dockerBuilder: Builder = {
           // Probe the HTTP endpoint with a short per-attempt timeout so a server
           // that accepts TCP but never responds can't stall the whole deadline.
           try {
-            const res = await fetch(`http://${ip}:${runtime.port}${healthPath}`, {
+            const res = await fetch(buildProbeUrl(ip, runtime.port, healthPath), {
               signal: AbortSignal.timeout(3000),
             });
             // Always drain/cancel the body so the undici connection is released

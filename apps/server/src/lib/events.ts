@@ -5,6 +5,26 @@ export interface AppEvent {
   action: string;
   entity: string | null;
   ts: string;
+  /**
+   * The user who performed the action, or null for system-initiated events
+   * (webhook deploys, schedulers, failed logins). Drives delivery scoping in
+   * the /v1/events socket: `entity` routinely carries emails and other
+   * tenants' resource names, so it must not fan out to every session.
+   */
+  actorUserId: number | null;
+}
+
+/**
+ * Delivery rule for the real-time stream.
+ *
+ * Operators see the whole instance; everyone else sees only what they did
+ * themselves. System events (actorUserId === null) are operator-only — a
+ * member has no way to prove they are the subject of one, so the safe default
+ * is to withhold it.
+ */
+export function canReceiveEvent(event: AppEvent, user: { id: number; role: 'admin' | 'member' }): boolean {
+  if (user.role === 'admin') return true;
+  return event.actorUserId !== null && event.actorUserId === user.id;
 }
 
 /**
@@ -26,8 +46,14 @@ class EventBus extends EventEmitter {
     this.setMaxListeners(0); // 0 = unlimited
   }
 
-  publish(action: string, entity?: string | null): void {
-    const event: AppEvent = { id: ++this.seq, action, entity: entity ?? null, ts: new Date().toISOString() };
+  publish(action: string, entity?: string | null, actorUserId: number | null = null): void {
+    const event: AppEvent = {
+      id: ++this.seq,
+      action,
+      entity: entity ?? null,
+      ts: new Date().toISOString(),
+      actorUserId,
+    };
     this.recent.push(event);
     if (this.recent.length > this.MAX_RECENT) this.recent = this.recent.slice(-this.MAX_RECENT);
     this.emit('event', event);

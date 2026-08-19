@@ -24,6 +24,51 @@ export const envVarName = z
 
 export const id = z.number().int().positive();
 
+/**
+ * An absolute HTTP path (health checks, probe targets).
+ *
+ * Health paths are concatenated onto `http://host:port` before the result is
+ * parsed as a URL, so an unconstrained string can rewrite the authority: the
+ * value `@evil.example.com/` turns `http://127.0.0.1:3000@evil.example.com/`
+ * into a request to evil.example.com with `127.0.0.1:3000` as userinfo. The
+ * leading slash plus the character allowlist (no `@`, no `\`) removes that.
+ */
+export const httpPath = z
+  .string()
+  .max(200)
+  .regex(
+    /^\/[A-Za-z0-9\-._~!$&'()*+,;=:%/?[\]]*$/,
+    'must be an absolute path beginning with "/" (no host, no "@")',
+  );
+
+/**
+ * A git remote URL restricted to transports we actually support.
+ *
+ * `z.url()` alone accepts any parseable URL, including `file://` (local
+ * repository disclosure) and `ext::sh -c …`, git's arbitrary-command
+ * transport. Modern git refuses `ext::` on its own and simple-git blocks
+ * several related options, but neither is this application's control — so the
+ * scheme is pinned here rather than relying on the toolchain to stay strict.
+ */
+export const gitRepoUrl = z
+  .url()
+  .refine((value) => /^(?:https?|ssh):\/\//i.test(value), {
+    message: 'repoUrl must be an http(s) or ssh URL',
+  });
+
+/**
+ * A git branch/ref name. Reaches `git checkout` / `git pull` as an argv
+ * element, so a value starting with `-` would be read as an option rather
+ * than a ref; the allowlist also rules out the `..` and whitespace forms git
+ * itself rejects in `check-ref-format`.
+ */
+export const gitBranch = z
+  .string()
+  .min(1)
+  .max(200)
+  .regex(/^[A-Za-z0-9._][A-Za-z0-9._/-]*$/, 'invalid branch name')
+  .refine((v) => !v.includes('..') && !v.endsWith('.lock'), { message: 'invalid branch name' });
+
 /** Cursor-style pagination params. */
 export const pagination = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(25),

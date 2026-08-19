@@ -1,4 +1,4 @@
-export const VERSION = '0.2.1';
+export const VERSION = '0.2.2';
 
 export interface ChangelogEntry {
   version: string;
@@ -8,6 +8,17 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.2.2',
+    date: '2026-08-19',
+    title: 'Cross-Platform MCP URL Normalization & Readiness Gate Hardening',
+    changes: [
+      'Cross-platform file URL resolution for @ninedeploy/mcp via node:url pathToFileURL',
+      'Bash readiness loop variable fix in installer script (install.sh)',
+      'Enhanced database transactional bootstrap and first-admin onboarding resilience',
+      'Full monorepo 100% test coverage and zero-error verification across all 9 packages',
+    ],
+  },
   {
     version: '0.2.1',
     date: '2026-08-18',

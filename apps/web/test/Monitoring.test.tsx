@@ -130,13 +130,13 @@ describe('Monitoring', () => {
 
   it('submits zero limits when the fields are emptied', async () => {
     apiMock.api.stats.snapshot.mockResolvedValue(snapshot as never);
-    apiMock.api.limits.setService.mockResolvedValue({ cpuShares: 0, memLimitMb: 0 } as never);
+    apiMock.api.limits.setService.mockResolvedValue({ cpuShares: null, memLimitMb: null } as never);
     renderWithProviders(<Monitoring />);
     expect((await screen.findAllByText('api')).length).toBeGreaterThan(0);
     const cpuInput = screen.getAllByPlaceholderText('cpu shares')[0]!;
     await userEvent.clear(screen.getAllByPlaceholderText('mem MB')[0]!);
     fireEvent.submit(cpuInput.closest('form')!);
-    await waitFor(() => expect(apiMock.api.limits.setService).toHaveBeenCalledWith(1, { cpuShares: 0, memLimitMb: 0 }));
+    await waitFor(() => expect(apiMock.api.limits.setService).toHaveBeenCalledWith(1, { cpuShares: null, memLimitMb: null }));
   });
 
   it('shows the pending state while limits are being saved', async () => {
@@ -147,7 +147,7 @@ describe('Monitoring', () => {
     const cpuInput = screen.getAllByPlaceholderText('cpu shares')[0]!;
     await userEvent.type(cpuInput, '256');
     fireEvent.submit(cpuInput.closest('form')!);
-    expect(await screen.findByText('…')).toBeInTheDocument();
+    expect(await screen.findByText('Saving…')).toBeInTheDocument();
   });
 
   it('toasts on alert rule create/delete and limit-save failures', async () => {
@@ -185,13 +185,13 @@ describe('Monitoring', () => {
       diskUsedBytes: 140 * 1024 ** 3, // 70% -> amber
     };
     apiMock.api.stats.snapshot.mockResolvedValue({ host: highHost, containers: [snapshot.containers[1]] } as never);
-    apiMock.api.limits.setDatabase.mockResolvedValue({ cpuShares: 128, memLimitMb: 128 } as never);
+    apiMock.api.limits.setDatabase.mockResolvedValue({ cpuShares: null, memLimitMb: 128 } as never);
     renderWithProviders(<Monitoring />);
     expect((await screen.findAllByText('db')).length).toBeGreaterThan(0);
     const memInput = screen.getAllByPlaceholderText('mem MB')[0]!;
     await userEvent.type(memInput, '128');
     fireEvent.submit(memInput.closest('form')!);
-    await waitFor(() => expect(apiMock.api.limits.setDatabase).toHaveBeenCalledWith(2, { cpuShares: 0, memLimitMb: 128 }));
+    await waitFor(() => expect(apiMock.api.limits.setDatabase).toHaveBeenCalledWith(2, { cpuShares: null, memLimitMb: 128 }));
   });
 
   it('shows an empty state when no alert rules exist', async () => {

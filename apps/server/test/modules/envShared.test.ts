@@ -30,7 +30,7 @@ describe('project env routes', () => {
 
   it('lists project-scope env vars', async () => {
     const findMany = vi.fn(() => [baseRow()]);
-    const app = await buildTestApp({ db: createFakeDb({ findMany: { envVars: findMany } }) });
+    const app = await buildTestApp({ db: createFakeDb({ findFirst: { projects: { id: 5 } }, findMany: { envVars: findMany } }) });
     await app.register(projectEnvRoutes);
     const res = await app.inject({ method: 'GET', url: '/5/env', headers: asUser() });
     expect(res.statusCode).toBe(200);
@@ -80,7 +80,7 @@ describe('project env routes', () => {
   });
 
   it('updates only rows in the same project scope', async () => {
-    const db = createFakeDb({ update: { env_vars: [] } });
+    const db = createFakeDb({ findFirst: { projects: { id: 5 } }, update: { env_vars: [] } });
     const app = await buildTestApp({ db });
     await app.register(projectEnvRoutes);
     const res = await app.inject({
@@ -93,7 +93,7 @@ describe('project env routes', () => {
   });
 
   it('updates an existing row', async () => {
-    const db = createFakeDb({ update: { env_vars: [baseRow({ valueEncrypted: 'enc:next' })] } });
+    const db = createFakeDb({ findFirst: { projects: { id: 5 } }, update: { env_vars: [baseRow({ valueEncrypted: 'enc:next' })] } });
     const app = await buildTestApp({ db });
     await app.register(projectEnvRoutes);
     const res = await app.inject({
@@ -107,7 +107,7 @@ describe('project env routes', () => {
   });
 
   it('deletes a shared row', async () => {
-    const db = createFakeDb();
+    const db = createFakeDb({ findFirst: { projects: { id: 5 } } });
     const app = await buildTestApp({ db });
     await app.register(projectEnvRoutes);
     const res = await app.inject({ method: 'DELETE', url: '/5/env/1', headers: asUser() });

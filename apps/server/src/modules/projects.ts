@@ -1,9 +1,10 @@
-import { asc, eq } from 'drizzle-orm';
+import { and, asc, eq } from 'drizzle-orm';
 import { databases, projects, services, type Project } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { createProject, projectPatch } from '@ninedeploy/schemas';
 import { audit } from '../lib/audit.js';
-import { badRequest, conflict, notFound, parseId } from '../lib/errors.js';
+import { assertWorkspaceMember, loadProjectForUser, projectScopeFilter } from '../lib/resourceAccess.js';
+import { badRequest, conflict, parseId } from '../lib/errors.js';
 import { iso } from '../lib/serialize.js';
 import { slugify } from '../lib/slug.js';
 
@@ -32,7 +33,16 @@ export const projectRoutes: FastifyPluginAsync = async (app) => {
     const query = req.query as { workspaceId?: string };
     const workspaceId = query?.workspaceId;
     const numWorkspaceId = workspaceId ? parseInt(workspaceId, 10) : undefined;
-    const where = numWorkspaceId ? eq(projects.workspaceId, numWorkspaceId) : undefined;
+    // The caller-supplied ?workspaceId= narrows the view; it must never widen
+    // it, so the membership filter is ANDed on top rather than replaced.
+    // `null` means the member belongs to no workspace and can see nothing.
+    const scope = await projectScopeFilter(app.db, req.user!);
+    if (scope === null) return [];
+    const filters = [
+      ...(numWorkspaceId ? [eq(projects.workspaceId, numWorkspaceId)] : []),
+      ...(scope ? [scope] : []),
+    ];
+    const where = filters.length === 0 ? undefined : filters.length === 1 ? filters[0] : and(...filters);
     const rows = await app.db.query.projects.findMany({ where, orderBy: [asc(projects.name)] });
     // Count resource membership in JS: projects are few, and a GROUP BY here
     // would still scan the same rows on SQLite at self-hosted scale.
@@ -52,6 +62,10 @@ export const projectRoutes: FastifyPluginAsync = async (app) => {
 
   app.post('/', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (req) => {
     const input = createProject.parse(req.body);
+    // A project may only be created inside a workspace the caller belongs to —
+    // otherwise a member could plant a project (and its shared env) in someone
+    // else's workspace.
+    if (input.workspaceId != null) await assertWorkspaceMember(app.db, input.workspaceId, req.user!);
     const slug = input.slug ?? slugify(input.name);
     const exists = await app.db.query.projects.findFirst({ where: eq(projects.slug, slug) });
     if (exists) throw conflict(`Project slug "${slug}" is already taken`);
@@ -67,8 +81,16 @@ export const projectRoutes: FastifyPluginAsync = async (app) => {
   app.patch('/:id', async (req) => {
     const id = parseId((req.params as { id: string }).id);
     const input = projectPatch.parse(req.body);
-    const row = await app.db.query.projects.findFirst({ where: eq(projects.id, id) });
-    if (!row) throw notFound('Project not found');
+    await loadProjectForUser(app.db, id, req.user!);
+    // Re-homing a project is a membership change on both ends: the caller must
+    // belong to the destination too, or they could move a project they can see
+    // into a workspace only they control.
+    if (input.workspaceId != null) await assertWorkspaceMember(app.db, input.workspaceId, req.user!);
+    // Detaching a project (workspaceId: null) makes it admin-only under the
+    // access rules, so only an admin may do it.
+    if (input.workspaceId === null && req.user!.role !== 'admin') {
+      throw badRequest('Only an admin can detach a project from its workspace');
+    }
     const [updated] = await app.db
       .update(projects)
       .set({
@@ -85,8 +107,7 @@ export const projectRoutes: FastifyPluginAsync = async (app) => {
 
   app.delete('/:id', async (req) => {
     const id = parseId((req.params as { id: string }).id);
-    const row = await app.db.query.projects.findFirst({ where: eq(projects.id, id) });
-    if (!row) throw notFound('Project not found');
+    const row = await loadProjectForUser(app.db, id, req.user!);
     await app.db.delete(projects).where(eq(projects.id, id));
     void audit(app.db, req.user!.id, 'project.delete', row.name);
     return { ok: true };

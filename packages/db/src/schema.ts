@@ -475,6 +475,10 @@ export const databases = sqliteTable(
   {
     id: id(),
     projectId: integer('project_id').references(() => projects.id, { onDelete: 'set null' }),
+    // Stamped at creation so a member keeps access to a database they made even
+    // when it belongs to no project. NULL on rows predating this column: those
+    // fall back to the owning project's workspace, or admin-only.
+    ownerUserId: integer('owner_user_id').references(() => users.id, { onDelete: 'set null' }),
     name: text('name').notNull(),
     slug: text('slug').notNull(),
     engine: text('engine', { enum: dbEngine }).notNull(),

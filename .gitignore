@@ -52,3 +52,4 @@ coverage
 .dfmt/
 apps/server/Python/*
 .commandcode/
+security-report/

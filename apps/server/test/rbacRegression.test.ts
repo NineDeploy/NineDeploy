@@ -222,8 +222,8 @@ describe('K6: database credentials are admin-only', () => {
   async function dbApp() {
     const app = await buildTestApp({
       db: createFakeDb({
-        findMany: { databases: [dbRow({ id: 1, status: 'running', passwordEncrypted: encrypt('pw') })] },
-        findFirst: { databases: dbRow({ id: 1, status: 'running', passwordEncrypted: encrypt('pw') }) },
+        findMany: { databases: [dbRow({ id: 1, ownerUserId: MEMBER, status: 'running', passwordEncrypted: encrypt('pw') })] },
+        findFirst: { databases: dbRow({ id: 1, ownerUserId: MEMBER, status: 'running', passwordEncrypted: encrypt('pw') }) },
       }),
     });
     await app.register(databasesRoutes, { prefix: '/databases' });

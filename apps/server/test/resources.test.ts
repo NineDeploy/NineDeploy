@@ -521,8 +521,8 @@ describe('system resources routes', () => {
     fs.writeFileSync(path.join(buildDir, '_meta.json'), JSON.stringify({ version: '1.0.0', stats: {} }));
     const body = await makeArchive(buildDir);
 
-    // Spawn #1 (member listing) runs the REAL tar; spawn #2 (extraction) fails.
-    spawnMock.forceNth = 2;
+    // Spawn #1 (listing), spawn #2 (verbose listing) succeed; spawn #3 (extraction) fails.
+    spawnMock.forceNth = 3;
     spawnMock.force.code = 2;
 
     const app = await appWith();

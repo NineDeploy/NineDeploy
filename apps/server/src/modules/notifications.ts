@@ -77,7 +77,7 @@ export const notificationRoutes: FastifyPluginAsync = async (app) => {
     const message = '🧪 NineDeploy test notification — your channel is working!';
 
     try {
-      await dispatchChannel(ch.type, target, { id: 0, action: 'notification.test', entity: ch.name, ts: new Date().toISOString() }, message);
+      await dispatchChannel(ch.type, target, { id: 0, action: 'notification.test', entity: ch.name, ts: new Date().toISOString(), actorUserId: req.user!.id }, message);
       return { ok: true };
     } catch (err) {
       throw badRequest(`Test failed: ${err instanceof Error ? err.message : err}`);

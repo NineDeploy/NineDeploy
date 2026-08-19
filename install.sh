@@ -236,13 +236,13 @@ if [ "$(uname -s)" = "Linux" ] && command -v systemctl &>/dev/null; then
   HEALTH_PORT="${NINEDEPLOY_PORT:-3000}"
   info "Waiting for the API to come up (up to 60s)…"
   if command -v curl &>/dev/null; then
-    for _ in $(seq 1 60); do
+    for i in $(seq 1 60); do
       if curl -fsS -m 2 "http://127.0.0.1:${HEALTH_PORT}/health" >/dev/null 2>&1; then
         ok "NineDeploy service is healthy (systemd, hardened unit)"
         break
       fi
       sleep 1
-      if [ "$_" = "60" ]; then
+      if [ "$i" = "60" ]; then
         fail "Service did not become healthy in 60s. Inspect: journalctl -u ninedeploy -n 50 (a pre-update backup is in ${DATA_DIR}/upgrade-backups)"
       fi
     done

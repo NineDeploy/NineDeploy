@@ -1,7 +1,7 @@
 import { existsSync, unlinkSync } from 'node:fs';
 import { and, eq } from 'drizzle-orm';
 import { audit } from '../lib/audit.js';
-import { backups, databaseAttachments, databases, type Database } from '@ninedeploy/db';
+import { backups, databaseAttachments, databases, projects, type Database } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { createAttachment, createDatabase, setLimits } from '@ninedeploy/schemas';
 import {
@@ -16,7 +16,12 @@ import {
   stopDatabaseStudio,
 } from '../engine/database.js';
 import { decrypt, encrypt, randomToken } from '../lib/crypto.js';
-import { loadServiceForUser } from '../lib/serviceAccess.js';
+import {
+  assertWorkspaceMember,
+  loadDatabaseForUser,
+  loadServiceForUser,
+  visibleDatabaseIds,
+} from '../lib/resourceAccess.js';
 import { badRequest, notFound, parseId as num } from '../lib/errors.js';
 import { slugify } from '../lib/slug.js';
 
@@ -75,6 +80,10 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
     const projectId = Number((req.query as { projectId?: string }).projectId);
     const scoped = Number.isInteger(projectId) && projectId > 0 ? projectId : null;
     const isAdmin = req.user?.role === 'admin';
+    // Members see only databases they own or that live in one of their
+    // workspaces' projects; `null` means unrestricted (admin).
+    const visible = await visibleDatabaseIds(app.db, req.user!);
+    if (visible !== null && visible.length === 0) return [];
     const rows = await app.db.query.databases.findMany({
       orderBy: (d, { desc }) => [desc(d.id)],
       with: {
@@ -86,11 +95,20 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
       },
       ...(scoped != null && { where: (d, { eq }) => eq(d.projectId, scoped) }),
     });
-    return rows.map((d) => serialize(d, { isAdmin }));
+    const scopedRows = visible === null ? rows : rows.filter((d) => visible.includes(d.id));
+    return scopedRows.map((d) => serialize(d, { isAdmin }));
   });
 
   app.post('/', async (req) => {
     const input = createDatabase.parse(req.body);
+    // Placing a database in someone else's project would hand them a resource
+    // they cannot see and the creator cannot be held to.
+    if (input.projectId != null) {
+      const project = await app.db.query.projects.findFirst({ where: eq(projects.id, input.projectId) });
+      if (!project) throw badRequest('Project not found');
+      if (project.workspaceId != null) await assertWorkspaceMember(app.db, project.workspaceId, req.user!);
+      else if (req.user!.role !== 'admin') throw badRequest('Project not found');
+    }
     const slug = slugify(input.name);
     const cfg = ENGINES[input.engine];
     if (!cfg) throw badRequest(`Unknown engine: ${input.engine}`);
@@ -110,6 +128,8 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
       .insert(databases)
       .values({
         projectId: input.projectId ?? null,
+        // Stamped so the creator keeps access even for a project-less database.
+        ownerUserId: req.user!.id,
         name: input.name,
         slug,
         engine: input.engine,
@@ -146,8 +166,10 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.get('/:id', async (req) => {
+    const id = num((req.params as { id: string }).id);
+    await loadDatabaseForUser(app.db, id, req.user!);
     const d = await app.db.query.databases.findFirst({
-      where: eq(databases.id, num((req.params as { id: string }).id)),
+      where: eq(databases.id, id),
       with: { attachments: { with: { service: true } } },
     });
     if (!d) throw notFound('Database not found');
@@ -158,8 +180,7 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
   // Admin-only: it binds a host port serving a database GUI.
   app.post('/:id/studio', { preHandler: [app.requireAdmin] }, async (req) => {
     const id = num((req.params as { id: string }).id);
-    const d = await app.db.query.databases.findFirst({ where: eq(databases.id, id) });
-    if (!d) throw notFound('Database not found');
+    const d = await loadDatabaseForUser(app.db, id, req.user!);
     const bodyPort = (req.body as { port?: number } | undefined)?.port;
     if (bodyPort !== undefined && (!Number.isInteger(bodyPort) || bodyPort < 1024 || bodyPort > 65535)) {
       throw badRequest('port must be an integer between 1024 and 65535');
@@ -174,8 +195,7 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
   // Stop Web Studio for this database
   app.delete('/:id/studio', { preHandler: [app.requireAdmin] }, async (req) => {
     const id = num((req.params as { id: string }).id);
-    const d = await app.db.query.databases.findFirst({ where: eq(databases.id, id) });
-    if (!d) throw notFound('Database not found');
+    const d = await loadDatabaseForUser(app.db, id, req.user!);
     await stopDatabaseStudio(d, (line) => app.log.info({ component: 'database-studio' }, line));
     await app.db.update(databases).set({ webGuiEnabled: false }).where(eq(databases.id, d.id));
     void audit(app.db, req.user!.id, 'database.studio.stop', d.name);
@@ -184,6 +204,8 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
 
   app.delete('/:id', async (req) => {
     const id = num((req.params as { id: string }).id);
+    // Destroying a database is irreversible — resolve access before reading it.
+    await loadDatabaseForUser(app.db, id, req.user!);
     const d = await app.db.query.databases.findFirst({
       where: eq(databases.id, id),
       with: {
@@ -235,8 +257,7 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
 
   // Resource limits — recreates the container if running so they take effect.
   app.patch('/:id/limits', async (req) => {
-    const d = await app.db.query.databases.findFirst({ where: eq(databases.id, num((req.params as { id: string }).id)) });
-    if (!d) throw notFound('Database not found');
+    const d = await loadDatabaseForUser(app.db, num((req.params as { id: string }).id), req.user!);
     const input = setLimits.parse(req.body);
     const updateData: { cpuShares?: number; memLimitMb?: number } = {};
     if (input.cpuShares !== undefined) {
@@ -255,8 +276,7 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
 
   app.post('/:id/restart', async (req) => {
     const id = num((req.params as { id: string }).id);
-    const d = await app.db.query.databases.findFirst({ where: eq(databases.id, id) });
-    if (!d) throw notFound('Database not found');
+    const d = await loadDatabaseForUser(app.db, id, req.user!);
     await restartDatabase(d, (line) => app.log.info({ component: 'database' }, line));
     await app.db.update(databases).set({ status: 'running' }).where(eq(databases.id, d.id));
     void audit(app.db, req.user!.id, 'database.restart', d.name);
@@ -265,8 +285,7 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
 
   app.post('/:id/stop', async (req) => {
     const id = num((req.params as { id: string }).id);
-    const d = await app.db.query.databases.findFirst({ where: eq(databases.id, id) });
-    if (!d) throw notFound('Database not found');
+    const d = await loadDatabaseForUser(app.db, id, req.user!);
     await stopDatabase(d, (line) => app.log.info({ component: 'database' }, line));
     await app.db.update(databases).set({ status: 'stopped' }).where(eq(databases.id, d.id));
     void audit(app.db, req.user!.id, 'database.stop', d.name);
@@ -275,8 +294,7 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
 
   app.post('/:id/start', async (req) => {
     const id = num((req.params as { id: string }).id);
-    const d = await app.db.query.databases.findFirst({ where: eq(databases.id, id) });
-    if (!d) throw notFound('Database not found');
+    const d = await loadDatabaseForUser(app.db, id, req.user!);
     await startDatabase(d, (line) => app.log.info({ component: 'database' }, line));
     await app.db.update(databases).set({ status: 'running' }).where(eq(databases.id, d.id));
     void audit(app.db, req.user!.id, 'database.start', d.name);
@@ -285,8 +303,7 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
 
   app.get('/:id/logs', async (req) => {
     const id = num((req.params as { id: string }).id);
-    const d = await app.db.query.databases.findFirst({ where: eq(databases.id, id) });
-    if (!d) throw notFound('Database not found');
+    const d = await loadDatabaseForUser(app.db, id, req.user!);
     const lines = Number((req.query as { lines?: string }).lines) || 100;
     const logs = await databaseLogs(d, lines);
     return { logs };
@@ -295,8 +312,7 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
   // Credential reveal (password + full URI) — admin-only, audited surface.
   app.get('/:id/credentials', { preHandler: [app.requireAdmin] }, async (req) => {
     const id = num((req.params as { id: string }).id);
-    const d = await app.db.query.databases.findFirst({ where: eq(databases.id, id) });
-    if (!d) throw notFound('Database not found');
+    const d = await loadDatabaseForUser(app.db, id, req.user!);
     const cfg = ENGINES[d.engine];
     const password = d.passwordEncrypted ? decrypt(d.passwordEncrypted) : '';
     const connStr = connectionString(d);

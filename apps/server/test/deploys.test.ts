@@ -51,8 +51,11 @@ const childProc = vi.hoisted(() => {
 });
 vi.mock('node:child_process', () => ({ spawn: (...a: unknown[]) => childProc.spawn(...a) }));
 
-const execMocks = vi.hoisted(() => ({ capture: vi.fn() }));
-vi.mock('../src/lib/exec.js', () => ({ capture: (...a: unknown[]) => execMocks.capture(...a) }));
+const execMocks = vi.hoisted(() => ({ capture: vi.fn(), buildEnv: vi.fn((extra?: Record<string, string>) => ({ ...(extra ?? {}) })) }));
+vi.mock('../src/lib/exec.js', () => ({
+  capture: (...a: unknown[]) => execMocks.capture(...a),
+  buildEnv: (extra?: Record<string, string>) => execMocks.buildEnv(extra),
+}));
 
 const sockets: WebSocket[] = [];
 
@@ -344,7 +347,7 @@ describe('deploys routes', () => {
     expect(childProc.spawn).toHaveBeenCalledWith(
       'docker',
       ['exec', '-i', '-e', 'TERM=xterm', '--', 'c1', 'sh', '-i'],
-      { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] },
+      { env: expect.any(Object), windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] },
     );
 
     child.stdout.emit('data', 'hello from container');

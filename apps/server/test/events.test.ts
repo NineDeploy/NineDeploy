@@ -4,7 +4,7 @@ import { eventRoutes } from '../src/modules/events.js';
 import { buildTestApp, collectMessages, listen, openWs, waitFor, wsUrl } from './helpers.js';
 
 const authMocks = vi.hoisted(() => ({
-  resolveUser: vi.fn(async (_db: unknown, token: string) => (token === 'valid' ? { id: 1 } : null)),
+  resolveUser: vi.fn(async (_db: unknown, token: string) => (token === 'valid' ? { id: 1, role: 'admin' as const } : null)),
 }));
 vi.mock('../src/lib/auth.js', () => authMocks);
 

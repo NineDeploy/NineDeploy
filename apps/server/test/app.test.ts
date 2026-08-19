@@ -73,7 +73,7 @@ describe('buildApp', () => {
     await createUsersTable(app);
     const res = await app.inject({ method: 'GET', url: '/v1/auth/status' });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ initialized: false, allowRegistration: true });
+    expect(res.json()).toEqual({ initialized: false, allowRegistration: false });
     await app.close();
   });
 

@@ -7,6 +7,7 @@ import { DNS_PROVIDERS, encryptDnsToken } from '../engine/proxy.js';
 import { getVaultConfig, setVaultConfig, testVault } from '../lib/vault.js';
 import { getDnsRecordsConfig, setDnsRecordsConfig, testCloudflareToken } from '../lib/cloudflare.js';
 import { config } from '../config.js';
+import { ALLOW_REGISTRATION_DEFAULT } from './auth.js';
 
 const togglePatch = z.object({ enabled: z.boolean() });
 const emailPatch = z.object({ email: z.union([z.string().email().max(254), z.literal('')]) });
@@ -46,7 +47,7 @@ export const settingsRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', app.requireAdmin);
 
   app.get('/', async () => ({
-    allowRegistration: await getSetting(app.db, 'allow_registration', true),
+    allowRegistration: await getSetting(app.db, 'allow_registration', ALLOW_REGISTRATION_DEFAULT),
     // Effective email: DB setting wins, env var is the fallback.
     acmeEmail: (await getSettingString(app.db, 'acme_email', null)) ?? config.acmeEmail ?? null,
     templatesSource: (await getSettingString(app.db, 'templates_source', null)) ?? config.templatesSource ?? null,

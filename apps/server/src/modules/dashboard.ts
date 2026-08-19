@@ -4,6 +4,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { capture } from '../lib/exec.js';
 import { containerIp } from '../engine/builders/docker.js';
 import { TRAEFIK_CONTAINER } from '../engine/proxy.js';
+import { buildProbeUrl, safeProbePath } from '../lib/probeUrl.js';
 
 interface HealthStatus {
   serviceId: number;
@@ -84,8 +85,9 @@ async function probeService(svc: {
   port: number;
   healthPath: string;
 }): Promise<{ healthy: boolean; responseMs: number | null }> {
-  const path = svc.healthPath || '/';
-  if (svc.type === 'pm2') return probeUrl(`http://127.0.0.1:${svc.port}${path}`);
+  // Never concatenate a stored healthPath onto an origin — see lib/probeUrl.ts.
+  const path = safeProbePath(svc.healthPath);
+  if (svc.type === 'pm2') return probeUrl(buildProbeUrl('127.0.0.1', svc.port, path));
   const runtimeId = svc.runtimeId;
   if (!runtimeId) return { healthy: false, responseMs: null };
   const ip = await containerIp(runtimeId);
@@ -102,7 +104,7 @@ async function probeService(svc: {
         resolve(v);
       }
     };
-    void probeUrl(`http://${ip}:${svc.port}${path}`, 1200).then((direct) => {
+    void probeUrl(buildProbeUrl(ip, svc.port, path), 1200).then((direct) => {
       if (direct.healthy) {
         settle(direct);
       } else {

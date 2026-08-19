@@ -32,6 +32,9 @@ async function ensureEssentialColumns(db: DB) {
     'ALTER TABLE `build_configs` ADD COLUMN `pre_deploy_cmd` text;',
     'ALTER TABLE `build_configs` ADD COLUMN `post_deploy_cmd` text;',
     'ALTER TABLE `build_configs` ADD COLUMN `pre_stop_cmd` text;',
+    // Ownership for managed databases — mirrors services.owner_user_id so the
+    // access rules in lib/resourceAccess.ts can scope database routes per user.
+    'ALTER TABLE `databases` ADD COLUMN `owner_user_id` integer REFERENCES `users`(`id`) ON DELETE SET NULL;',
   ];
 
   for (const stmt of statements) {

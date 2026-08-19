@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { simpleGit, type SimpleGit } from 'simple-git';
+import { simpleGit, type SimpleGit, type SimpleGitOptions } from 'simple-git';
 
 export interface CloneCreds {
   type?: string; // github | gitlab | gitea | custom
@@ -44,6 +44,17 @@ export async function checkoutCommit(
   creds?: CloneCreds,
 ): Promise<string> {
   const useKey = !!creds?.deployKey && (isSshUrl(repoUrl) || !creds?.token);
+  // simple-git refuses `core.sshCommand` unless the caller opts in, because the
+  // value is normally attacker-reachable. Here it is not: `keyFile` is derived
+  // from the numeric service id under the server's own repos dir, and the rest
+  // of the string is a literal. Scoping the opt-in to deploy-key checkouts
+  // keeps every other git invocation under the default protections.
+  //
+  // Without this the feature is dead code — the config call throws, and the
+  // checkout silently proceeds with no credentials.
+  const unsafe: Partial<SimpleGitOptions> = useKey
+    ? { unsafe: { allowUnsafeSshCommand: true } }
+    : {};
   const keyFile = path.join(path.dirname(dir), `${path.basename(dir)}.sshkey`);
 
   const writeKey = () => {
@@ -55,11 +66,14 @@ export async function checkoutCommit(
   let git: SimpleGit | undefined;
   try {
     if (existsSync(path.join(dir, '.git'))) {
-      git = simpleGit(dir);
+      git = simpleGit(dir, unsafe);
       // Refresh auth so rotated credentials take effect.
       if (useKey) {
         writeKey();
-        await git.addConfig('core.sshCommand', sshCommand).catch(() => undefined);
+        // NOT swallowed: a failure here means the deploy key never took effect
+        // and the fetch below would run unauthenticated, which surfaces later
+        // as a confusing "repository not found".
+        await git.addConfig('core.sshCommand', sshCommand);
       } else if (creds?.token) {
         await git.remote(['set-url', 'origin', injectToken(repoUrl, creds.token, creds.type)]).catch(() => undefined);
       }
@@ -82,8 +96,8 @@ export async function checkoutCommit(
       } else {
         sink(`Cloning ${maskUrl(repoUrl)} …`);
       }
-      await simpleGit().clone(cloneUrl, dir, opts);
-      git = simpleGit(dir);
+      await simpleGit(unsafe).clone(cloneUrl, dir, opts);
+      git = simpleGit(dir, unsafe);
     }
 
     await git.checkout(branch);

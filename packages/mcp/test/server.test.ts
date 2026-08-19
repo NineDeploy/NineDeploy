@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { buildServer, DEFAULT_IO, isDirectRun, main, staticToken } from '../src/index.js';
@@ -126,9 +126,9 @@ describe('production defaults', () => {
   it('isDirectRun only matches when argv[1] resolves to this module', () => {
     // The self URL comparison must accept both the compiled entrypoint and
     // the TS source path forms of this very module…
-    const self = new URL(`file:///ninedeploy/dist/index.js`).href;
+    const self = pathToFileURL('/ninedeploy/dist/index.js').href;
     expect(isDirectRun('/ninedeploy/dist/index.js', self)).toBe(true);
-    const selfTs = new URL(`file:///ninedeploy/src/index.ts`).href;
+    const selfTs = pathToFileURL('/ninedeploy/src/index.ts').href;
     expect(isDirectRun('/ninedeploy/src/index.ts', selfTs)).toBe(true);
     // …and reject any other package's identically-named entrypoint.
     expect(isDirectRun('/other/dist/index.js', self)).toBe(false);

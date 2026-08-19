@@ -1,9 +1,9 @@
 import { and, eq, like } from 'drizzle-orm';
-import { envVars, projects, services } from '@ninedeploy/db';
+import { envVars, services } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { upsertEnvVar } from '@ninedeploy/schemas';
 import { decrypt, encrypt } from '../lib/crypto.js';
-import { loadServiceForUser } from '../lib/serviceAccess.js';
+import { loadProjectForUser, loadServiceForUser } from '../lib/resourceAccess.js';
 import { badRequest, notFound, parseId as num } from '../lib/errors.js';
 
 function serialize(e: typeof envVars.$inferSelect) {
@@ -78,6 +78,10 @@ export const projectEnvRoutes: FastifyPluginAsync = async (app) => {
 
   app.get('/:id/env', async (req) => {
     const id = num((req.params as { id: string }).id);
+    // Project-scope env is injected into the runtime environment of every
+    // service in the project (engine/pipeline.ts), so reading or writing it
+    // across tenants is config injection — gate every handler on membership.
+    await loadProjectForUser(app.db, id, req.user!);
     const rows = await app.db.query.envVars.findMany({
       where: and(eq(envVars.scope, 'project'), eq(envVars.scopeKey, id)),
       orderBy: (e, { asc }) => [asc(e.key)],
@@ -87,8 +91,7 @@ export const projectEnvRoutes: FastifyPluginAsync = async (app) => {
 
   app.post('/:id/env', async (req) => {
     const id = num((req.params as { id: string }).id);
-    const project = await app.db.query.projects.findFirst({ where: eq(projects.id, id) });
-    if (!project) throw notFound('Project not found');
+    await loadProjectForUser(app.db, id, req.user!);
     const input = upsertEnvVar.parse(req.body);
     const [created] = await app.db
       .insert(envVars)
@@ -109,6 +112,7 @@ export const projectEnvRoutes: FastifyPluginAsync = async (app) => {
   app.patch('/:id/env/:varId', async (req) => {
     const id = num((req.params as { id: string }).id);
     const varId = num((req.params as { varId: string }).varId);
+    await loadProjectForUser(app.db, id, req.user!);
     const input = upsertEnvVar.parse(req.body);
     const [updated] = await app.db
       .update(envVars)
@@ -122,6 +126,7 @@ export const projectEnvRoutes: FastifyPluginAsync = async (app) => {
   app.delete('/:id/env/:varId', async (req) => {
     const id = num((req.params as { id: string }).id);
     const varId = num((req.params as { varId: string }).varId);
+    await loadProjectForUser(app.db, id, req.user!);
     await app.db
       .delete(envVars)
       .where(and(eq(envVars.id, varId), eq(envVars.scope, 'project'), eq(envVars.scopeKey, id)));

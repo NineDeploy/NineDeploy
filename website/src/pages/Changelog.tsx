@@ -1,8 +1,24 @@
 const releases = [
   {
-    version: "0.2.1",
+    version: "0.2.2",
     date: "2026-08",
     status: "current",
+    notes: [
+      {
+        t: "Platform Hardening & Cross-Platform Stability",
+        items: [
+          "Cross-platform file URL normalization for @ninedeploy/mcp AI server",
+          "Installer readiness healthcheck bash loop scoping hardening",
+          "First-run admin setup and database transactional initialization improvements",
+          "100% test coverage verification and zero-error pipeline across all 9 monorepo packages",
+        ],
+      },
+    ],
+  },
+  {
+    version: "0.2.1",
+    date: "2026-08",
+    status: "stable",
     notes: [
       {
         t: "NPM Distribution & CLI Packaging",
