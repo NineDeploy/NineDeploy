@@ -716,7 +716,7 @@ describe('webhook receiver', () => {
 describe('webhook management routes', () => {
   it('lists webhooks for a service', async () => {
     const app = await buildTestApp({
-      db: createFakeDb({ findMany: { webhooks: [hook({ id: 3 })] } }),
+      db: createFakeDb({ findFirst: { services: svcRow({ id: 1 }) }, findMany: { webhooks: [hook({ id: 3 })] } }),
     });
     await app.register(webhookMgmtRoutes);
     const res = await app.inject({ method: 'GET', url: '/1/webhooks', headers: asUser() });
@@ -783,7 +783,7 @@ describe('webhook management routes', () => {
   });
 
   it('deletes a webhook', async () => {
-    const app = await buildTestApp({ db: createFakeDb() });
+    const app = await buildTestApp({ db: createFakeDb({ findFirst: { services: svcRow({ id: 1 }) } }) });
     await app.register(webhookMgmtRoutes);
     const res = await app.inject({ method: 'DELETE', url: '/1/webhooks/4', headers: asUser() });
     expect(res.statusCode).toBe(200);

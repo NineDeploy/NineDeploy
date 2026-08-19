@@ -49,7 +49,7 @@ export function ServiceDetail() {
   // Deep links like /services/1?tab=deploys select the starting tab.
   const [tab, setTab] = useState<TabId>(() => {
     const q = searchParams.get('tab');
-    return (TABS.some((t) => t.id === q) ? q : 'overview') as TabId;
+    return (SERVICE_TABS.some((t) => t.id === q) ? q : 'overview') as TabId;
   });
   const navigate = useNavigate();
 

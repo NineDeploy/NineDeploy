@@ -125,7 +125,12 @@ export const systemRoutes: FastifyPluginAsync = async (app) => {
       files.push(metaTmp);
 
       await new Promise<void>((resolve, reject) => {
-        const child = spawn('tar', ['-czf', archive, '-C', config.paths.dataDir, ...files]);
+        // Run tar with cwd + RELATIVE names: GNU tar on Windows mistakes
+        // `D:\path` (drive-letter colon) for a remote-host spec, so absolute
+        // Windows paths break every tar flag that takes a file (-f/-C).
+        const child = spawn('tar', ['-czf', path.basename(archive), ...files.map((f) => f.split(path.sep).join('/'))], {
+          cwd: config.paths.dataDir,
+        });
         child.on('error', reject);
         child.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`tar exited ${code}`))));
       });
@@ -159,7 +164,8 @@ export const systemRoutes: FastifyPluginAsync = async (app) => {
     // strips leading '/' but happily extracts '../..' entries.
     const listing = await new Promise<string>((resolve, reject) => {
       let out = '';
-      const child = spawn('tar', ['-tzf', archivePath]);
+      // Relative -f + cwd: see the export route note about drive-letter colons.
+      const child = spawn('tar', ['-tzf', path.basename(archivePath)], { cwd: tmpDir });
       child.stdout.on('data', (d) => (out += d.toString()));
       child.on('error', reject);
       child.on('close', (code) => (code === 0 ? resolve(out) : reject(new Error(`tar list exited ${code}`))));
@@ -174,7 +180,8 @@ export const systemRoutes: FastifyPluginAsync = async (app) => {
     }
 
     await new Promise<void>((resolve, reject) => {
-      const child = spawn('tar', ['-xzf', archivePath, '-C', tmpDir]);
+      // Relative -f + cwd: see the export route note about drive-letter colons.
+      const child = spawn('tar', ['-xzf', path.basename(archivePath), '-C', '.'], { cwd: tmpDir });
       child.on('error', reject);
       child.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`tar extract exited ${code}`))));
     });

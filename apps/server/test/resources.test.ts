@@ -125,7 +125,11 @@ function newDataDir(): string {
 
 function tar(dir: string, out: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    const child = spawnMock.spawn('tar', ['-czf', out, '-C', dir, '.']);
+    // cwd = os.tmpdir() keeps BOTH paths relative (GNU tar on Windows mistakes
+    // `D:\…` for a remote-host spec) and the archive stays outside the
+    // archived directory.
+    const rel = (p: string) => path.relative(os.tmpdir(), p).split(path.sep).join('/');
+    const child = spawnMock.spawn('tar', ['-czf', rel(out), '-C', rel(dir), '.'], { cwd: os.tmpdir() });
     child.on('close', (code: number) => (code === 0 ? resolve() : reject(new Error(`tar ${code}`))));
     child.on('error', reject);
   });

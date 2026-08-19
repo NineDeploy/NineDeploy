@@ -21,6 +21,11 @@ const apiMock = vi.hoisted(() => ({
 
 vi.mock('../src/lib/api.js', () => apiMock);
 
+// The inspector section is admin-gated; tests render as an admin.
+vi.mock('../src/lib/auth.js', () => ({
+  useAuth: () => ({ user: { id: 1, role: 'admin' as const, email: 'admin@test', name: 'Admin' } }),
+}));
+
 const resources = {
   containers: 7,
   volumes: 3,
