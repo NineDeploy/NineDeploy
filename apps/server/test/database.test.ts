@@ -27,12 +27,14 @@ const h = vi.hoisted(() => {
     sink?.('');
   });
   const capture = vi.fn(async () => '[]');
+  const pullDockerImage = vi.fn(async () => undefined);
   const config: { paths: { dataDir: string } } = { paths: { dataDir: '/tmp/nd-db-test' } };
-  return { decrypt, encrypt, run, capture, config };
+  return { decrypt, encrypt, run, capture, pullDockerImage, config };
 });
 
 vi.mock('../src/lib/crypto.js', () => ({ decrypt: h.decrypt, encrypt: h.encrypt }));
 vi.mock('../src/lib/exec.js', () => ({ run: h.run, capture: h.capture, sleep: vi.fn() }));
+vi.mock('../src/lib/dockerPull.js', () => ({ pullDockerImage: h.pullDockerImage }));
 vi.mock('../src/config.js', () => ({ config: h.config }));
 
 beforeEach(() => {
@@ -41,6 +43,7 @@ beforeEach(() => {
     sink?.('');
   });
   h.capture.mockResolvedValue('[]');
+  h.pullDockerImage.mockResolvedValue(undefined);
 });
 
 const dbRow = (over: Record<string, unknown> = {}) =>
@@ -125,6 +128,7 @@ describe('startDatabase', () => {
     await startDatabase(dbRow({ engine: 'postgres', version: '16' }), log);
 
     expect(log).toHaveBeenCalledWith('Reusing retained volume v (previous data restored)');
+    expect(h.pullDockerImage).toHaveBeenCalledWith('postgres:16', log);
     expect(log).toHaveBeenCalledWith('Starting postgres database db (c) …');
     expect(h.run).toHaveBeenCalledWith(
       'docker',
@@ -148,6 +152,17 @@ describe('startDatabase', () => {
     await startDatabase(dbRow({ engine: 'postgres' }), log);
 
     expect(log).toHaveBeenCalledWith('c already running — reusing');
+    expect(h.pullDockerImage).not.toHaveBeenCalled();
+    expect(h.run).not.toHaveBeenCalled();
+  });
+
+  it('stops before mutating container state when database image preparation fails', async () => {
+    h.capture.mockResolvedValueOnce('exited');
+    h.pullDockerImage.mockRejectedValueOnce(new Error('snapshot recovery failed'));
+
+    await expect(startDatabase(dbRow({ engine: 'mysql' }), vi.fn())).rejects.toThrow('snapshot recovery failed');
+
+    expect(h.pullDockerImage).toHaveBeenCalledWith('mysql:8.4', expect.any(Function));
     expect(h.run).not.toHaveBeenCalled();
   });
 
@@ -206,6 +221,7 @@ describe('startDatabase', () => {
     );
 
     expect(log).not.toHaveBeenCalledWith(expect.stringContaining('Reusing retained volume'));
+    expect(h.pullDockerImage).toHaveBeenCalledWith('mysql:8.4', log);
     expect(h.run).toHaveBeenCalledWith(
       'docker',
       [

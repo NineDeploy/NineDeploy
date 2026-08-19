@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { Database } from '@ninedeploy/db';
 import { decrypt, encrypt } from '../lib/crypto.js';
+import { pullDockerImage } from '../lib/dockerPull.js';
 import { capture, run } from '../lib/exec.js';
 import { NETWORK } from './proxy.js';
 
@@ -219,6 +220,13 @@ export async function startDatabase(d: Database, log: (line: string) => void): P
     return;
   }
 
+  // Never let `docker run` perform an implicit pull. Docker 29/containerd can
+  // fail that hidden pull with code 125 when overlayfs snapshot metadata is
+  // stale; the shared pull helper detects and safely recovers that condition.
+  const image = cfg.image(d.version ?? undefined);
+  log(`Pulling database image ${image} …`);
+  await pullDockerImage(image, log);
+
   // Detect a retained volume from a previous deployment of the same name → its
   // data will be reused automatically by Docker (the volume bind is idempotent).
   if (await volumeExists(d.volumeName)) {
@@ -252,7 +260,7 @@ export async function startDatabase(d: Database, log: (line: string) => void): P
   // but the container refuses unauthenticated connections on the shared
   // network, closing the "any container can FLUSHALL" gap).
   if (cfg.authViaArg) args.push('--requirepass', password);
-  args.push(cfg.image(d.version ?? undefined));
+  args.push(image);
 
   log(`Starting ${d.engine} database ${d.name} (${d.containerName}) …`);
   let startFailed = false;

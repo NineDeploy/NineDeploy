@@ -1,4 +1,4 @@
-export const VERSION = '0.2.16';
+export const VERSION = '0.2.17';
 
 export interface ChangelogEntry {
   version: string;
@@ -8,6 +8,16 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.2.17',
+    date: '2026-08-20',
+    title: 'Managed Database Snapshot Recovery',
+    changes: [
+      'Managed database images are explicitly pulled through the Docker 29 and containerd snapshot recovery path before startup',
+      'MySQL and other database deployments no longer rely on docker run implicit image pulls that fail opaquely with code 125',
+      'Image preparation failures stop before existing container state or temporary secret environment files are mutated',
+    ],
+  },
   {
     version: '0.2.16',
     date: '2026-08-20',
