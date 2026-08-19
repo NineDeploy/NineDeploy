@@ -1,4 +1,4 @@
-export const VERSION = '0.2.3';
+export const VERSION = '0.2.4';
 
 export interface ChangelogEntry {
   version: string;
@@ -9,7 +9,7 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
-    version: '0.2.3',
+    version: '0.2.4',
     date: '2026-08-19',
     title: 'Cross-Platform MCP URL Normalization & Readiness Gate Hardening',
     changes: [
