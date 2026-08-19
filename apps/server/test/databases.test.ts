@@ -679,6 +679,21 @@ describe('attachment routes', () => {
     expect(res.json().error.message).toBe('Already attached');
   });
 
+  it('reuses an existing attachment for a retryable Hub deploy', async () => {
+    const existing = attachmentRow({ id: 12, serviceId: 1, databaseId: 2, envAlias: 'DATABASE_URL' });
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { services: svcRow(), databases: dbRow({ id: 2 }), databaseAttachments: existing },
+      }),
+    });
+    await app.register(attachmentRoutes);
+    const res = await app.inject({
+      method: 'POST', url: '/1/attachments', headers: asUser(), payload: { databaseId: 2, reuseExisting: true },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ id: 12, databaseId: 2, envAlias: 'DATABASE_URL' });
+  });
+
   it('detaches a database', async () => {
     const app = await buildTestApp({ db: createFakeDb({ findFirst: { services: svcRow() } }) });
     await app.register(attachmentRoutes);

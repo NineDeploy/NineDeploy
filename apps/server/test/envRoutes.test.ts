@@ -54,6 +54,23 @@ describe('env routes (src/modules/env.ts)', () => {
     expect(res.statusCode).toBe(400);
   });
 
+  it('overwrites an existing env var during a retryable Hub deploy', async () => {
+    const existing = envVarRow({ id: 3, serviceId: 1, key: 'TOKEN', valueEncrypted: encrypt('old'), isSecret: true });
+    const updated = envVarRow({ id: 3, serviceId: 1, key: 'TOKEN', valueEncrypted: encrypt('new'), isSecret: true });
+    const app = await buildTestApp({
+      db: createFakeDb({ findFirst: { services: { id: 1 }, envVars: existing }, update: { env_vars: [updated] } }),
+    });
+    await app.register(envRoutes);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/1/env',
+      headers: asUser(),
+      payload: { key: 'TOKEN', value: 'new', isSecret: true, overwriteExisting: true },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ id: 3, key: 'TOKEN', isSecret: true });
+  });
+
   it('updates an env var', async () => {
     const app = await buildTestApp({
       db: createFakeDb({ findFirst: { services: { id: 1 } }, update: { env_vars: [envVarRow({ id: 3, key: 'PORT', isSecret: true, valueEncrypted: encrypt('9999') })] } }),

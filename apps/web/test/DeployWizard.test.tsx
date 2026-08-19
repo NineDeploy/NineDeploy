@@ -252,7 +252,7 @@ describe('DeployWizard', () => {
       // Row 0 was toggled to non-secret (generated value preserved); the
       // untoggled secret-prefilled rows deploy as freshly generated secrets.
       const rows = Object.fromEntries(apiMock.api.env.create.mock.calls.map((c) => [c[1].key, c[1]]));
-      expect(rows['N8N_EXTRA']!).toEqual({ key: 'N8N_EXTRA', value: 'y', isSecret: false });
+      expect(rows['N8N_EXTRA']!).toEqual(expect.objectContaining({ key: 'N8N_EXTRA', value: 'y', isSecret: false }));
       expect(rows['N8N_BASIC_AUTH_ACTIVE']!.isSecret).toBe(false);
       expect(rows['N8N_BASIC_AUTH_ACTIVE']!.value).not.toBe('true');
       expect(rows['N8N_BASIC_AUTH_ACTIVE']!.value.length).toBeGreaterThanOrEqual(16);
@@ -276,7 +276,7 @@ describe('DeployWizard', () => {
     await waitFor(() =>
       expect(apiMock.api.databases.create).toHaveBeenCalledWith(expect.objectContaining({ engine: 'postgres', reuseExisting: true })),
     );
-    await waitFor(() => expect(apiMock.api.attachments.create).toHaveBeenCalledWith(42, { databaseId: 7 }));
+    await waitFor(() => expect(apiMock.api.attachments.create).toHaveBeenCalledWith(42, { databaseId: 7, reuseExisting: true }));
     // The deploy triggers only AFTER the database is running + attached.
     await waitFor(() => expect(apiMock.api.deploys.trigger).toHaveBeenCalledWith(42));
     await waitFor(() => expect(onClose).toHaveBeenCalled());
@@ -310,7 +310,7 @@ describe('DeployWizard', () => {
     await user.click(screen.getByRole('button', { name: /continue/i }));
     await user.click(screen.getByRole('button', { name: /deploy/i }));
     await waitFor(() => expect(apiMock.api.databases.get).toHaveBeenCalledTimes(3), { timeout: 15_000 });
-    await waitFor(() => expect(apiMock.api.attachments.create).toHaveBeenCalledWith(42, { databaseId: 7 }));
+    await waitFor(() => expect(apiMock.api.attachments.create).toHaveBeenCalledWith(42, { databaseId: 7, reuseExisting: true }));
     await waitFor(() => expect(apiMock.api.deploys.trigger).toHaveBeenCalled());
   });
 

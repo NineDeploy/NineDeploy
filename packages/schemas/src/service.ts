@@ -8,6 +8,8 @@ export const createService = z.object({
   projectId: z.number().int().positive().optional(),
   name: z.string().min(1).max(100),
   slug: slug.optional(), // derived from name if omitted
+  /** Resume an idle, caller-owned service left by an interrupted Hub deploy. */
+  reuseExisting: z.boolean().optional(),
   type: serviceType.default('docker'),
   repoUrl: gitRepoUrl.optional(),
   branch: gitBranch.default('main'),
@@ -307,6 +309,7 @@ export type ManagedDatabase = z.infer<typeof managedDatabase>;
 export const createAttachment = z.object({
   databaseId: z.number().int().positive(),
   envAlias: envVarName.optional(),
+  reuseExisting: z.boolean().optional(),
 });
 export type CreateAttachmentInput = z.input<typeof createAttachment>;
 
@@ -323,6 +326,7 @@ export const upsertEnvVar = z.object({
   key: envVarName.max(100),
   value: z.string(),
   isSecret: z.boolean().optional(),
+  overwriteExisting: z.boolean().optional(),
 });
 export type UpsertEnvVarInput = z.input<typeof upsertEnvVar>;
 

@@ -96,7 +96,28 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
     // unique-index error (500). Covers the NULL-project case too, where
     // SQLite's unique index treats NULLs as distinct.
     const dup = await app.db.query.services.findFirst({ where: eq(services.slug, slug) });
-    if (dup) throw badRequest(`A service with slug '${slug}' already exists`, 'slug_taken');
+    if (dup) {
+      const reusable =
+        input.reuseExisting === true &&
+        dup.ownerUserId === req.user!.id &&
+        dup.status === 'idle' &&
+        dup.projectId === (input.projectId ?? null) &&
+        dup.type === input.type &&
+        dup.repoUrl === (input.repoUrl ?? null) &&
+        dup.branch === input.branch &&
+        dup.sourceId === (input.sourceId ?? null) &&
+        dup.serverId === (input.serverId ?? null) &&
+        dup.image === (input.image ?? null) &&
+        dup.volumeMount === (input.volumeMount ?? null) &&
+        dup.composeService === (input.composeService ?? null) &&
+        dup.port === (input.port ?? null) &&
+        dup.publishedPort === (input.publishedPort ?? null);
+      if (reusable) {
+        void audit(app.db, req.user!.id, 'service.reuse', input.name);
+        return serialize(dup);
+      }
+      throw badRequest(`A service with slug '${slug}' already exists`, 'slug_taken');
+    }
     const [svc] = await app.db
       .insert(services)
       .values({

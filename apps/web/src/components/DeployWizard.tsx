@@ -97,6 +97,7 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
       const svc = await api.services.create({
         name,
         type,
+        ...(template ? { reuseExisting: true } : {}),
         projectId: projectId ?? undefined,
         ...(serverId ? { serverId: toInt(serverId) } : {}),
         repoUrl: mode === 'repo' ? repoUrl : undefined,
@@ -111,7 +112,14 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
         memLimitMb: toInt(memLimitMb),
       });
       for (const e of envRows) {
-        if (e.key.trim()) await api.env.create(svc.id, { key: e.key, value: e.value, isSecret: e.secret });
+        if (e.key.trim()) {
+          await api.env.create(svc.id, {
+            key: e.key,
+            value: e.value,
+            isSecret: e.secret,
+            ...(template ? { overwriteExisting: true } : {}),
+          });
+        }
       }
 
       // Auto-provision + attach the database this template needs. The deploy
@@ -135,7 +143,7 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
           setDbStatus(`Waiting for ${dbEngine} (${cur.status})…`);
           await new Promise((r) => setTimeout(r, 2000));
         }
-        await api.attachments.create(svc.id, { databaseId: db.id });
+        await api.attachments.create(svc.id, { databaseId: db.id, reuseExisting: true });
         setDbStatus(null);
       }
 

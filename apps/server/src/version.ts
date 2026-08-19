@@ -1,4 +1,4 @@
-export const VERSION = '0.2.13';
+export const VERSION = '0.2.14';
 
 export interface ChangelogEntry {
   version: string;
@@ -8,6 +8,16 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.2.14',
+    date: '2026-08-20',
+    title: 'End-to-End Hub Retry Recovery',
+    changes: [
+      'Interrupted Hub deployments resume only a matching caller-owned idle service',
+      'Template environment variables, managed databases, and database attachments are safely reconciled on retry',
+      'Retries no longer fail on partial-install service, environment, database, container, or attachment collisions',
+    ],
+  },
   {
     version: '0.2.13',
     date: '2026-08-20',

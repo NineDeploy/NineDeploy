@@ -381,7 +381,7 @@ export interface NineDeployClient {
   };
   attachments: {
     list: (serviceId: number) => Promise<Attachment[]>;
-    create: (serviceId: number, input: { databaseId: number; envAlias?: string }) => Promise<Attachment>;
+    create: (serviceId: number, input: { databaseId: number; envAlias?: string; reuseExisting?: boolean }) => Promise<Attachment>;
     remove: (serviceId: number, attachmentId: number) => Promise<void>;
   };
   env: {

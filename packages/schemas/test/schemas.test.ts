@@ -520,7 +520,7 @@ describe('service', () => {
 
     it('createAttachment validates the env alias charset', () => {
       ok(createAttachment, { databaseId: 1 });
-      ok(createAttachment, { databaseId: 1, envAlias: 'CACHE_URL' });
+      ok(createAttachment, { databaseId: 1, envAlias: 'CACHE_URL', reuseExisting: true });
       ok(createAttachment, { databaseId: 1, envAlias: '  CACHE_URL  ' });
       bad(createAttachment, { databaseId: 0 });
       bad(createAttachment, { databaseId: 1, envAlias: 'MY ALIAS' });
@@ -531,7 +531,7 @@ describe('service', () => {
   describe('env vars', () => {
     it('upsertEnvVar accepts input', () => {
       expect(upsertEnvVar.safeParse({ key: 'PORT', value: '3000' }).success).toBe(true);
-      expect(upsertEnvVar.safeParse({ key: 'TOKEN', value: 'x', isSecret: true }).success).toBe(true);
+      expect(upsertEnvVar.safeParse({ key: 'TOKEN', value: 'x', isSecret: true, overwriteExisting: true }).success).toBe(true);
       bad(upsertEnvVar, { key: '', value: 'x' });
       bad(upsertEnvVar, { key: 'K', value: 'x', isSecret: 'yes' });
       // Charset: keys that would break `docker run --env-file` are rejected;

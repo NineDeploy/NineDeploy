@@ -33,6 +33,20 @@ export const envRoutes: FastifyPluginAsync = async (app) => {
     // misleading "key already exists" (the FK violation is swallowed below).
     // Doubles as the ownership check for members.
     await loadServiceForUser(app.db, id, req.user!);
+    if (input.overwriteExisting) {
+      const existing = await app.db.query.envVars.findFirst({
+        where: and(eq(envVars.serviceId, id), eq(envVars.key, input.key)),
+      });
+      if (existing) {
+        const [updated] = await app.db
+          .update(envVars)
+          .set({ valueEncrypted: encrypt(input.value), isSecret: input.isSecret ?? false })
+          .where(and(eq(envVars.id, existing.id), eq(envVars.serviceId, id)))
+          .returning();
+        if (!updated) throw badRequest('Could not update existing env var');
+        return serialize(updated);
+      }
+    }
     const [created] = await app.db
       .insert(envVars)
       .values({

@@ -98,6 +98,48 @@ describe('services routes', () => {
     expect(res.json().error.code).toBe('slug_taken');
   });
 
+  it('reuses a matching caller-owned idle service for a Hub retry', async () => {
+    const existing = svcRow({
+      id: 9,
+      ownerUserId: 1,
+      name: 'My App',
+      slug: 'my-app',
+      status: 'idle',
+      repoUrl: 'https://github.com/acme/app.git',
+      port: 8080,
+      serverId: null,
+    });
+    const app = await buildTestApp({ db: createFakeDb({ findFirst: { services: existing } }) });
+    await app.register(servicesRoutes);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/',
+      headers: asUser(),
+      payload: { ...validCreate, reuseExisting: true },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ id: 9, slug: 'my-app', status: 'idle' });
+  });
+
+  it('does not reuse another user service or an already deployed service', async () => {
+    for (const existing of [
+      svcRow({ ownerUserId: 2, slug: 'my-app', repoUrl: 'https://github.com/acme/app.git', port: 8080, serverId: null }),
+      svcRow({ ownerUserId: 1, slug: 'my-app', repoUrl: 'https://github.com/acme/app.git', port: 8080, serverId: null, status: 'running' }),
+    ]) {
+      const app = await buildTestApp({ db: createFakeDb({ findFirst: { services: existing } }) });
+      await app.register(servicesRoutes);
+      const res = await app.inject({
+        method: 'POST',
+        url: '/',
+        headers: asUser(),
+        payload: { ...validCreate, reuseExisting: true },
+      });
+      expect(res.statusCode).toBe(400);
+      await app.close();
+    }
+  });
+
   it('creates a service without a port', async () => {
     const app = await buildTestApp({
       db: createFakeDb({ insert: { services: [svcRow({ id: 4, port: null })] } }),

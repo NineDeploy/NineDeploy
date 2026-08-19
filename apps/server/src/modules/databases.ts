@@ -409,6 +409,12 @@ export const attachmentRoutes: FastifyPluginAsync = async (app) => {
     const d = await app.db.query.databases.findFirst({ where: eq(databases.id, input.databaseId) });
     if (!d) throw notFound('Database not found');
     const envAlias = input.envAlias ?? aliasFor(d.engine);
+    if (input.reuseExisting) {
+      const existing = await app.db.query.databaseAttachments.findFirst({
+        where: and(eq(databaseAttachments.serviceId, id), eq(databaseAttachments.databaseId, input.databaseId)),
+      });
+      if (existing) return { id: existing.id, databaseId: existing.databaseId, envAlias: existing.envAlias };
+    }
     const [a] = await app.db
       .insert(databaseAttachments)
       .values({ serviceId: id, databaseId: input.databaseId, envAlias })
