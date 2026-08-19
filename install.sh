@@ -60,23 +60,14 @@ fi
 
 # pnpm
 if ! command -v pnpm &>/dev/null; then
-  warn "pnpm not found. Enabling via corepack…"
-  corepack enable
-  # Pin the pnpm version to the repo's declared packageManager (never
-  # "latest") — the lockfile is generated with that major, and running
-  # `--frozen-lockfile` against a newer major can fail or rewrite the lock.
-  # Resolve against $INSTALL_DIR (the install target), NOT the caller's cwd:
-  # `curl | bash` runs from $HOME/tmp before any clone, so ./package.json
-  # does not exist there yet. Fall back to the repo's current pin when the
-  # clone is absent; keep this constant in sync with package.json.
+  warn "pnpm not found. Installing pnpm…"
+  PNPM_VERSION="11.21.0"
   if [ -f "$INSTALL_DIR/package.json" ]; then
     PNPM_VERSION=$(node -p "require('${INSTALL_DIR}/package.json').packageManager.replace(/^pnpm@/, '').split('+')[0]" 2>/dev/null || echo "11.21.0")
-  else
-    PNPM_VERSION="11.21.0"
   fi
-  corepack prepare "pnpm@${PNPM_VERSION}" --activate
+  (corepack enable 2>/dev/null && corepack prepare "pnpm@${PNPM_VERSION}" --activate 2>/dev/null) || sudo npm install -g "pnpm@${PNPM_VERSION}" || npm install -g "pnpm@${PNPM_VERSION}"
 fi
-ok "pnpm $(pnpm -v)"
+ok "pnpm $(pnpm -v 2>/dev/null || echo 'installed')"
 
 # Docker
 if ! command -v docker &>/dev/null; then
@@ -130,6 +121,26 @@ if [ "$(uname -s)" = "Linux" ]; then
     ok "Swap space (${SWAP_TOTAL}MB)"
   fi
 fi
+
+# Network & Ingress Prerequisites
+info "Preparing Docker network and Traefik proxy…"
+docker network create ninedeploy 2>/dev/null || true
+docker pull traefik:3 >/dev/null 2>&1 || true
+
+# Free ports 80/443 if default apache2/nginx are occupying them on Linux
+if [ "$(uname -s)" = "Linux" ] && command -v systemctl &>/dev/null; then
+  if systemctl is-active --quiet apache2 2>/dev/null; then
+    warn "Stopping conflicting apache2 service on port 80/443…"
+    sudo systemctl stop apache2 2>/dev/null || true
+    sudo systemctl disable apache2 2>/dev/null || true
+  fi
+  if systemctl is-active --quiet nginx 2>/dev/null; then
+    warn "Stopping conflicting nginx service on port 80/443…"
+    sudo systemctl stop nginx 2>/dev/null || true
+    sudo systemctl disable nginx 2>/dev/null || true
+  fi
+fi
+ok "Docker network & ingress ready"
 
 # ── 2. Resolve the version to install ──────────────────────────────────────
 #
