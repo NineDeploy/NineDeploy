@@ -64,22 +64,22 @@ if command -v node &>/dev/null; then
   if [ "$NODE_MAJOR" -gt 22 ] || { [ "$NODE_MAJOR" -eq 22 ] && [ "$NODE_MINOR" -ge 13 ]; }; then
     ok "Node.js $(node -v)"
   else
-    warn "Node.js $(node -v) is older than recommended (≥ 22.13). Upgrading via NodeSource 22.x…"
+    warn "Node.js $(node -v) is older than recommended (≥ 22.13). Upgrading to LTS via NodeSource…"
     if command -v apt-get &>/dev/null; then
-      curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-      sudo apt-get install -y nodejs
+      (curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash - && sudo apt-get install -y nodejs) || \
+      (curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt-get install -y nodejs)
       ok "Upgraded Node.js to $(node -v)"
     else
       fail "Node.js $(node -v) — need ≥ 22.13. Upgrade: https://nodejs.org/"
     fi
   fi
 else
-  warn "Node.js not found. Installing via NodeSource 22.x…"
+  warn "Node.js not found. Installing Active LTS via NodeSource…"
   if command -v apt-get &>/dev/null; then
-    curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-    sudo apt-get install -y nodejs
+    (curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash - && sudo apt-get install -y nodejs) || \
+    (curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt-get install -y nodejs)
   elif command -v brew &>/dev/null; then
-    brew install node@22
+    brew install node@24 2>/dev/null || brew install node@22
   else
     fail "Node.js not found and no supported package manager. Install manually: https://nodejs.org/"
   fi
