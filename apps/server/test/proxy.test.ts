@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { domains, services } from '@ninedeploy/db';
-import { encryptDnsToken, ensureNetwork, ensureTraefik, getAcmeEmail, getDnsConfig, NETWORK, parseBasicAuth, parseCertExpiry, parseIpAllowlist, readCertificates, renderStaticConfig, writeDynamicConfig } from '../src/engine/proxy.js';
+import { encryptDnsToken, ensureNetwork, ensureTraefik, getAcmeEmail, getDnsConfig, NETWORK, parseBasicAuth, parseCertExpiry, parseIpAllowlist, readCertificates, renderStaticConfig, traefikConfigFingerprint, writeDynamicConfig } from '../src/engine/proxy.js';
 
 const h = vi.hoisted(() => {
   const capture = vi.fn(async () => '');
@@ -319,6 +319,9 @@ describe('ensureTraefik', () => {
       if (args[0] === 'inspect' && args[3]?.includes('.State.Running')) {
         return Promise.resolve(`true|{"${NETWORK}":{}}`);
       }
+      if (args[0] === 'inspect' && args[3]?.includes('.Config.Labels')) {
+        return Promise.resolve(traefikConfigFingerprint(null, null));
+      }
       return Promise.resolve(inspect);
     });
 
@@ -330,6 +333,7 @@ describe('ensureTraefik', () => {
   });
 
   it('writes static + dynamic config and returns early when traefik is on the network', async () => {
+    writeFileSync(path.join(traefikDir, 'traefik.yml'), renderStaticConfig(null, null));
     psWith('abc123\n', '{"ninedeploy":{}}');
     const log = vi.fn();
 
@@ -354,7 +358,7 @@ describe('ensureTraefik', () => {
     expect(h.run).toHaveBeenCalledWith('docker', ['rm', '-f', 'ninedeploy-traefik'], {}, expect.any(Function));
     expect(h.run).toHaveBeenCalledWith(
       'docker',
-      [
+      expect.arrayContaining([
         'run', '-d', '--name', 'ninedeploy-traefik', '--restart', 'unless-stopped',
         '--network', NETWORK,
         '--add-host', 'host.docker.internal:host-gateway',
@@ -363,7 +367,7 @@ describe('ensureTraefik', () => {
         // would never see atomic rename-based updates).
         '-v', `${traefikDir}:/etc/traefik:ro`,
         'traefik:3',
-      ],
+      ]),
       {},
       log,
     );
@@ -411,6 +415,18 @@ describe('ensureTraefik', () => {
     await expect(ensureTraefik(log)).rejects.toThrow('boom');
 
     expect(log).toHaveBeenCalledWith('traefik warning: boom');
+  });
+
+  it('recreates a running container when its static configuration changes', async () => {
+    writeFileSync(path.join(traefikDir, 'traefik.yml'), renderStaticConfig(null, null));
+    psWith('abc123\n', '{"ninedeploy":{}}');
+    const log = vi.fn();
+
+    await ensureTraefik(log, 'ops@example.com');
+
+    expect(log).toHaveBeenCalledWith('traefik static configuration changed; recreating container to apply it');
+    expect(h.run).toHaveBeenCalledWith('docker', ['rm', '-f', 'ninedeploy-traefik'], {}, expect.any(Function));
+    expect(readFileSync(path.join(traefikDir, 'traefik.yml'), 'utf8')).toContain('email: ops@example.com');
   });
 
   it('rejects when docker run returns but the container exits immediately', async () => {
@@ -466,9 +482,13 @@ describe("ACME / Let's Encrypt", () => {
   it('writes a letsencrypt certificatesResolver when an email is configured', async () => {
     h.config.acmeEmail = 'ops@example.com';
     try {
-      h.capture.mockImplementation((_cmd: string, args: string[]) =>
-        args[0] === 'ps' ? Promise.resolve('abc123\n') : Promise.resolve('{"ninedeploy":{}}'),
-      );
+      h.capture.mockImplementation((_cmd: string, args: string[]) => {
+        if (args[0] === 'ps') return Promise.resolve('abc123\n');
+        if (args[0] === 'inspect' && args[3]?.includes('.State.Running')) {
+          return Promise.resolve(`true|{"${NETWORK}":{}}`);
+        }
+        return Promise.resolve('{"ninedeploy":{}}');
+      });
       const log = vi.fn();
 
       await ensureTraefik(log);

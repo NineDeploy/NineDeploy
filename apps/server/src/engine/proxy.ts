@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { domains, services, type DB } from '@ninedeploy/db';
@@ -159,6 +160,7 @@ const acmePath = () => path.join(dir(), 'acme.json');
 // --env-file (0600) so the token never appears in `ps` argv or the config dir
 // mounts; docker injects the vars into the Traefik container at start.
 const dnsEnvPath = () => path.join(dir(), 'dns.env');
+const TRAEFIK_CONFIG_LABEL = 'ninedeploy.traefik.config-sha';
 
 /** Render the docker --env-file content for the DNS-01 provider token. */
 function renderDnsEnvFile(dns: DnsConfig): string | null {
@@ -250,6 +252,18 @@ async function onNetwork(container: string, network: string): Promise<boolean> {
   }
 }
 
+/** Whether the running container actually booted with the desired static inputs. */
+async function hasConfigFingerprint(container: string, fingerprint: string): Promise<boolean> {
+  try {
+    const out = await capture('docker', [
+      'inspect', container, '--format', `{{ index .Config.Labels "${TRAEFIK_CONFIG_LABEL}" }}`,
+    ]);
+    return out.trim() === fingerprint;
+  } catch {
+    return false;
+  }
+}
+
 /** Ensure the Traefik reverse-proxy container is running on the shared network (idempotent). */
 export async function ensureTraefik(
   log: (line: string) => void,
@@ -257,7 +271,11 @@ export async function ensureTraefik(
   dns: DnsConfig | null = null,
 ): Promise<void> {
   mkdirSync(dir(), { recursive: true });
-  writeFileSync(staticPath(), renderStaticConfig(acmeEmail, dns));
+  const renderedStaticConfig = renderStaticConfig(acmeEmail, dns);
+  const configFingerprint = traefikConfigFingerprint(acmeEmail, dns);
+  const staticConfigChanged =
+    !existsSync(staticPath()) || readFileSync(staticPath(), 'utf8') !== renderedStaticConfig;
+  if (staticConfigChanged) writeAtomic(staticPath(), renderedStaticConfig);
   if (!existsSync(dynamicPath())) writeFileSync(dynamicPath(), 'http:\n  routers:\n  services:\n');
   if (acmeEmail) {
     if (!existsSync(acmePath())) {
@@ -276,9 +294,14 @@ export async function ensureTraefik(
 
   try {
     const running = (await capture('docker', ['ps', '-q', '-f', `name=^${TRAEFIK_CONTAINER}$`])).trim();
-    if (running && (await onNetwork(TRAEFIK_CONTAINER, NETWORK))) {
+    const runningOnNetwork = !!running && await onNetwork(TRAEFIK_CONTAINER, NETWORK);
+    const runningCurrentConfig = runningOnNetwork && await hasConfigFingerprint(TRAEFIK_CONTAINER, configFingerprint);
+    if (runningCurrentConfig && !staticConfigChanged) {
       log('traefik already running on shared network');
       return;
+    }
+    if (runningOnNetwork && (!runningCurrentConfig || staticConfigChanged)) {
+      log('traefik static configuration changed; recreating container to apply it');
     }
     // Recreate so it joins the network (the only publicly exposed service).
     await run('docker', ['rm', '-f', TRAEFIK_CONTAINER], {}, () => {}).catch(() => undefined);
@@ -292,6 +315,7 @@ export async function ensureTraefik(
     const runArgs = [
       'run', '-d', '--name', TRAEFIK_CONTAINER, '--restart', 'unless-stopped',
       '--network', NETWORK,
+      '--label', `${TRAEFIK_CONFIG_LABEL}=${configFingerprint}`,
       '--add-host', 'host.docker.internal:host-gateway',
       '-p', '80:80', '-p', '443:443',
       '-v', `${dir()}:/etc/traefik:ro`,
@@ -337,6 +361,16 @@ export async function ensureTraefik(
     log('domain routing will be unavailable until traefik can bind :80/:443');
     throw err instanceof Error ? err : new Error(String(err));
   }
+}
+
+/** Fingerprint every static input that requires a Traefik container recreate. */
+export function traefikConfigFingerprint(acmeEmail: string | null, dns: DnsConfig | null): string {
+  const dnsEnv = dns ? renderDnsEnvFile(dns) : null;
+  return createHash('sha256')
+    .update(renderStaticConfig(acmeEmail, dns))
+    .update('\0')
+    .update(dnsEnv ?? '')
+    .digest('hex');
 }
 
 /**

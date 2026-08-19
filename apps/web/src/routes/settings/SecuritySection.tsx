@@ -47,7 +47,7 @@ export function SecuritySection() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['instance-settings'] });
       setAcmeInput(null);
-      toast('ACME email saved — applies on next restart', 'success');
+      toast('ACME email saved — Traefik and certificate routing updated', 'success');
     },
     onError: () => toast('Could not save the ACME email', 'error'),
   });
@@ -67,7 +67,7 @@ export function SecuritySection() {
       setDnsProviderInput(null);
       setDnsApexInput(null);
       setDnsTokenInput('');
-      toast('DNS challenge saved — applies on next restart', 'success');
+      toast('DNS challenge saved — Traefik updated', 'success');
     },
     onError: () => toast('Could not save the DNS challenge settings', 'error'),
   });
@@ -125,7 +125,7 @@ export function SecuritySection() {
               {setAcmeEmail.isPending ? 'Saving…' : 'Save'}
             </Button>
           </div>
-          <p className="mt-1.5 text-xs text-slate-500">Applies when the server next restarts (Traefik is recreated then).</p>
+          <p className="mt-1.5 text-xs text-slate-500">Saving applies the resolver immediately by safely recreating Traefik when its static configuration changes.</p>
 
           <p className="mb-2 mt-6 text-sm text-slate-300">
             NineDeploy Panel Custom Domain & SSL
@@ -241,7 +241,7 @@ export function SecuritySection() {
           </div>
           <p className="mt-1.5 text-xs text-slate-500">
             DNS-01 enables wildcard certificates (<code>*.example.com</code>) via your DNS provider; the token is stored
-            encrypted and reaches Traefik through a docker --env-file. Applies on next restart.
+            encrypted and reaches Traefik through a docker --env-file. Changes apply immediately.
           </p>
         </CardBody>
       </Card>

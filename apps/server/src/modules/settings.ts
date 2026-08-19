@@ -3,7 +3,15 @@ import { z } from 'zod';
 import { audit } from '../lib/audit.js';
 import { getSetting, getSettingString, setSetting, setSettingString } from '../lib/settings.js';
 import { invalidateTemplateCache } from '../templates/registry.js';
-import { DNS_PROVIDERS, encryptDnsToken, writeDynamicConfig } from '../engine/proxy.js';
+import {
+  DNS_PROVIDERS,
+  encryptDnsToken,
+  ensureNetwork,
+  ensureTraefik,
+  getAcmeEmail,
+  getDnsConfig,
+  writeDynamicConfig,
+} from '../engine/proxy.js';
 import { getVaultConfig, setVaultConfig, testVault } from '../lib/vault.js';
 import { getDnsRecordsConfig, setDnsRecordsConfig, testCloudflareToken } from '../lib/cloudflare.js';
 import { config } from '../config.js';
@@ -48,6 +56,35 @@ const dnsRecordsPatch = z.object({
 export const settingsRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('onRequest', app.authenticate);
   app.addHook('preHandler', app.requireAdmin);
+
+  const applyTraefikSettings = async () => {
+    const log = (line: string) => app.log.info({ component: 'settings' }, line);
+    await ensureNetwork(log);
+    await ensureTraefik(log, await getAcmeEmail(app.db), await getDnsConfig(app.db));
+    await writeDynamicConfig(app.db);
+  };
+  const traefikApplyTimers = new Set<ReturnType<typeof setTimeout>>();
+
+  // The settings request itself may be travelling through Traefik. Recreating
+  // the proxy before its small JSON response reaches the browser would make a
+  // successful save look like a network failure, so apply just after the
+  // response has had time to flush. The watchdog provides a later retry if
+  // Docker is temporarily unavailable.
+  const scheduleTraefikSettingsApply = () => {
+    const timer = setTimeout(() => {
+      traefikApplyTimers.delete(timer);
+      void applyTraefikSettings().catch((err) =>
+        app.log.error({ err, component: 'settings' }, 'failed to apply Traefik settings'),
+      );
+    }, 1000);
+    traefikApplyTimers.add(timer);
+    timer.unref();
+  };
+
+  app.addHook('onClose', async () => {
+    for (const timer of traefikApplyTimers) clearTimeout(timer);
+    traefikApplyTimers.clear();
+  });
 
   app.get('/', async () => ({
     allowRegistration: await getSetting(app.db, 'allow_registration', ALLOW_REGISTRATION_DEFAULT),
@@ -94,16 +131,16 @@ export const settingsRoutes: FastifyPluginAsync = async (app) => {
     }
     await setSettingString(app.db, 'wildcard_domain', input.wildcardApex);
     void audit(app.db, req.user!.id, 'settings.dns', `${input.provider || 'none'}${input.wildcardApex ? ` (*.${input.wildcardApex})` : ''}`);
-    // Applied on next server start (the Traefik container is recreated then).
-    return { ok: true, dnsProvider: input.provider || null, wildcardApex: input.wildcardApex || null, applied: 'restart' };
+    scheduleTraefikSettingsApply();
+    return { ok: true, dnsProvider: input.provider || null, wildcardApex: input.wildcardApex || null, applied: 'live' };
   });
 
   app.put('/acme-email', async (req) => {
     const { email } = emailPatch.parse(req.body);
     await setSettingString(app.db, 'acme_email', email);
     void audit(app.db, req.user!.id, 'settings.acme', email || 'cleared');
-    // Applied on next server start (the Traefik container is recreated then).
-    return { ok: true, acmeEmail: email || null, applied: 'restart' };
+    scheduleTraefikSettingsApply();
+    return { ok: true, acmeEmail: email || null, applied: 'live' };
   });
 
   // ── Vault provider (deploy-time secret resolution) ───────────────────────

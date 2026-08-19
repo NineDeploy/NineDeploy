@@ -1,4 +1,4 @@
-export const VERSION = '0.2.10';
+export const VERSION = '0.2.11';
 
 export interface ChangelogEntry {
   version: string;
@@ -9,17 +9,14 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
-    version: '0.2.10',
-    date: '2026-08-19',
-    title: 'Reliable Ubuntu Systemd Migration & Long Docker Pulls',
+    version: '0.2.11',
+    date: '2026-08-20',
+    title: 'Live Let’s Encrypt Configuration',
     changes: [
-      'Removed the invalid runtime sd_notify watchdog client that could terminate long Docker pulls with SIGTERM',
-      'Installer now migrates and verifies Type=simple with WatchdogSec=0 on fresh and existing Ubuntu installations',
-      'Relative data-directory settings are rendered as absolute systemd ReadWritePaths values',
-      'Installer-owned runtime safety policy now sorts after conventional systemd override.conf files',
-      'Traefik image, container liveness and shared-network attachment are mandatory installer and runtime readiness gates',
-      'Docker 29 containerd snapshot extraction races recover through bounded image-pull retries',
-      'Docker exit diagnostics distinguish SIGTERM exit 143 from OOM/SIGKILL exit 137',
+      'Saving an ACME account email now recreates Traefik immediately and enables real Let’s Encrypt certificates without a server restart',
+      'DNS-01 provider and token changes now apply immediately for wildcard certificate issuance',
+      'Traefik containers carry a configuration fingerprint so stale static ACME settings and interrupted updates self-heal safely',
+      'Interactive installs collect the required ACME account email and unattended installs explicitly report when automatic HTTPS is disabled',
     ],
   },
   {

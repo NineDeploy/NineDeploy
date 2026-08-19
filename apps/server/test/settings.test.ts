@@ -13,6 +13,10 @@ vi.mock('../src/lib/settings.js', () => settingsMock);
 const dnsMock = vi.hoisted(() => ({
   DNS_PROVIDERS: { cloudflare: 'CF_DNS_API_TOKEN', hetzner: 'HETZNER_API_TOKEN' },
   encryptDnsToken: vi.fn((t: string) => `enc:${t}`),
+  ensureNetwork: vi.fn(async () => undefined),
+  ensureTraefik: vi.fn(async () => undefined),
+  getAcmeEmail: vi.fn(async () => 'acme@example.com'),
+  getDnsConfig: vi.fn(async () => null),
   writeDynamicConfig: vi.fn(async () => undefined),
 }));
 vi.mock('../src/engine/proxy.js', () => dnsMock);
@@ -121,7 +125,7 @@ describe('settings routes (admin-only)', () => {
       payload: { email: 'acme@example.com' },
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ ok: true, acmeEmail: 'acme@example.com', applied: 'restart' });
+    expect(res.json()).toEqual({ ok: true, acmeEmail: 'acme@example.com', applied: 'live' });
     expect(settingsMock.setSettingString).toHaveBeenCalledWith(db, 'acme_email', 'acme@example.com');
     await app.close();
   });
@@ -136,7 +140,7 @@ describe('settings routes (admin-only)', () => {
       payload: { email: '' },
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ ok: true, acmeEmail: null, applied: 'restart' });
+    expect(res.json()).toEqual({ ok: true, acmeEmail: null, applied: 'live' });
     await app.close();
   });
 
@@ -223,7 +227,7 @@ describe('settings routes (admin-only)', () => {
       payload: { provider: 'cloudflare', token: 'sekrit', wildcardApex: 'example.com' },
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ ok: true, dnsProvider: 'cloudflare', wildcardApex: 'example.com', applied: 'restart' });
+    expect(res.json()).toEqual({ ok: true, dnsProvider: 'cloudflare', wildcardApex: 'example.com', applied: 'live' });
     expect(settingsMock.setSettingString).toHaveBeenCalledWith(db, 'dns_provider', 'cloudflare');
     expect(settingsMock.setSettingString).toHaveBeenCalledWith(db, 'dns_token_encrypted', 'enc:sekrit');
     expect(settingsMock.setSettingString).toHaveBeenCalledWith(db, 'wildcard_domain', 'example.com');
@@ -248,7 +252,7 @@ describe('settings routes (admin-only)', () => {
       payload: { provider: '', wildcardApex: '' },
     });
     expect(cleared.statusCode).toBe(200);
-    expect(cleared.json()).toEqual({ ok: true, dnsProvider: null, wildcardApex: null, applied: 'restart' });
+    expect(cleared.json()).toEqual({ ok: true, dnsProvider: null, wildcardApex: null, applied: 'live' });
     await app.close();
   });
 

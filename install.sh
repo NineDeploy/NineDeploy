@@ -433,6 +433,21 @@ set -a
 # shellcheck disable=SC1091
 . ./.env
 set +a
+if [ -z "${NINEDEPLOY_ACME_EMAIL:-}" ]; then
+  ACME_INPUT=""
+  if [ -r /dev/tty ] && [ -w /dev/tty ]; then
+    printf "Let's Encrypt account email (required for automatic HTTPS; Enter to configure later): " > /dev/tty
+    IFS= read -r ACME_INPUT < /dev/tty || ACME_INPUT=""
+  fi
+  if [ -n "$ACME_INPUT" ] && printf '%s' "$ACME_INPUT" | grep -Eq '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'; then
+    sed -i.bak "s|^NINEDEPLOY_ACME_EMAIL=.*|NINEDEPLOY_ACME_EMAIL=${ACME_INPUT}|" .env && rm -f .env.bak
+    export NINEDEPLOY_ACME_EMAIL="$ACME_INPUT"
+    ok "Automatic HTTPS configured for $ACME_INPUT"
+  else
+    [ -z "$ACME_INPUT" ] || warn "The supplied ACME email is invalid and was not saved."
+    warn "Automatic HTTPS is not active yet: set the Let's Encrypt account email in Settings -> Security after signing in. NineDeploy will apply it to Traefik immediately."
+  fi
+fi
 pnpm db:migrate
 
 # ── 5. Systemd (Linux) ────────────────────────────────────────────────────

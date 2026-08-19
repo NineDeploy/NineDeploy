@@ -460,7 +460,7 @@ describe('Settings', () => {
     await user.type(input, 'new@example.com');
     await user.click(saveButtonNextTo('ACME account email'));
     await waitFor(() => expect(api.settings.setAcmeEmail).toHaveBeenCalledWith('new@example.com'));
-    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('ACME email saved — applies on next restart', 'success'));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('ACME email saved — Traefik and certificate routing updated', 'success'));
   });
 
   it('shows, saves and reports errors for panel domain', async () => {
@@ -528,7 +528,7 @@ describe('Settings', () => {
     await waitFor(() =>
       expect(api.settings.setDns).toHaveBeenCalledWith({ provider: 'hetzner', token: 'fresh-token', wildcardApex: 'example.org' }),
     );
-    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('DNS challenge saved — applies on next restart', 'success'));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('DNS challenge saved — Traefik updated', 'success'));
   });
 
   it('keeps the stored token when the field is left empty and reports failures', async () => {
