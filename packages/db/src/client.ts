@@ -1,3 +1,5 @@
+import { mkdirSync } from 'node:fs';
+import path from 'node:path';
 import { createClient, type Client } from '@libsql/client';
 import { drizzle, type LibSQLDatabase } from 'drizzle-orm/libsql';
 import * as schema from './schema.js';
@@ -26,6 +28,12 @@ export interface CreateDbResult {
  * const { db } = createDb({ url: 'file:./.data/ninedeploy.db' });
  */
 export function createDb(opts: CreateDbOptions): CreateDbResult {
+  /* v8 ignore start */
+  if (opts.url.startsWith('file:')) {
+    const raw = opts.url.slice('file:'.length);
+    mkdirSync(path.dirname(path.resolve(raw)), { recursive: true });
+  }
+  /* v8 ignore stop */
   const client = createClient({ url: opts.url, authToken: opts.authToken });
   // SQLite defaults `foreign_keys` to OFF, which would silently disable every
   // `onDelete cascade` / `set null` rule declared in the schema. Enable it per

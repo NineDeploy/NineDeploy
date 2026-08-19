@@ -1,3 +1,4 @@
+import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'drizzle-kit';
@@ -9,6 +10,12 @@ const repoRoot = path.resolve(here, '../..');
 const defaultDb = path.join(repoRoot, '.data', 'ninedeploy.db');
 
 const dbPath = process.env['NINEDEPLOY_DB_PATH'] ?? defaultDb;
+const cleanPath = dbPath.replace(/^file:/, '');
+try {
+  mkdirSync(path.dirname(path.resolve(cleanPath)), { recursive: true });
+} catch {
+  // safe ignore
+}
 
 export default defineConfig({
   schema: './src/schema.ts',
