@@ -22,18 +22,16 @@ EnvironmentFile=@INSTALL_DIR@/.env
 ExecStart=@NODE@ @INSTALL_DIR@/apps/server/dist/server.js
 Restart=always
 RestartSec=5
+KillMode=mixed
+TimeoutStopSec=30
 
 # Hardening
 NoNewPrivileges=true
-ProtectSystem=strict
-ReadWritePaths=@DATA_DIR@
+ProtectSystem=full
+ReadWritePaths=@INSTALL_DIR@ /tmp
 PrivateTmp=true
 
-# Watchdog: the server pings systemd every 30s (sd_notify); a hung process is
-# restarted automatically. Requires Type=notify support via NOTIFY_SOCKET,
-# which systemd sets for Type=notify services.
-Type=notify
-WatchdogSec=90
+Type=simple
 
 # Logs
 StandardOutput=journal
