@@ -261,7 +261,62 @@ pull_required_image() {
   return 1
 }
 
-pull_required_image traefik:3 || fail "Could not pull traefik:3 after safe snapshot recovery; ingress cannot operate without its image"
+build_traefik_fallback_image() {
+  TRAEFIK_RELEASE="v3.7.11"
+  case "$(uname -m)" in
+    x86_64|amd64) TRAEFIK_ARCH="amd64" ;;
+    aarch64|arm64) TRAEFIK_ARCH="arm64" ;;
+    armv7l) TRAEFIK_ARCH="armv7" ;;
+    armv6l) TRAEFIK_ARCH="armv6" ;;
+    *) warn "No verified Traefik binary fallback is available for architecture $(uname -m)."; return 1 ;;
+  esac
+
+  TRAEFIK_ASSET="traefik_${TRAEFIK_RELEASE}_linux_${TRAEFIK_ARCH}.tar.gz"
+  TRAEFIK_RELEASE_URL="https://github.com/traefik/traefik/releases/download/${TRAEFIK_RELEASE}"
+  TRAEFIK_STAGE=$(mktemp -d) || return 1
+  mkdir -p "$TRAEFIK_STAGE/rootfs/etc/ssl/certs" "$TRAEFIK_STAGE/rootfs/tmp" || { rm -rf "$TRAEFIK_STAGE"; return 1; }
+  chmod 1777 "$TRAEFIK_STAGE/rootfs/tmp" || { rm -rf "$TRAEFIK_STAGE"; return 1; }
+
+  info "Docker's Alpine snapshot is unusable; building a minimal Traefik ${TRAEFIK_RELEASE} image from the official release assets…"
+  curl -fsSL "$TRAEFIK_RELEASE_URL/$TRAEFIK_ASSET" -o "$TRAEFIK_STAGE/$TRAEFIK_ASSET" || { rm -rf "$TRAEFIK_STAGE"; return 1; }
+  curl -fsSL "$TRAEFIK_RELEASE_URL/traefik_${TRAEFIK_RELEASE}_checksums.txt" -o "$TRAEFIK_STAGE/checksums.txt" || { rm -rf "$TRAEFIK_STAGE"; return 1; }
+  EXPECTED_SHA=$(awk -v asset="$TRAEFIK_ASSET" '$2 == asset { print $1; exit }' "$TRAEFIK_STAGE/checksums.txt")
+  ACTUAL_SHA=$(sha256sum "$TRAEFIK_STAGE/$TRAEFIK_ASSET" | awk '{print $1}')
+  if [ -z "$EXPECTED_SHA" ] || [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
+    warn "Traefik release checksum verification failed; refusing to create a local image."
+    rm -rf "$TRAEFIK_STAGE"
+    return 1
+  fi
+
+  tar -xzf "$TRAEFIK_STAGE/$TRAEFIK_ASSET" -C "$TRAEFIK_STAGE" traefik || { rm -rf "$TRAEFIK_STAGE"; return 1; }
+  install -m 0755 "$TRAEFIK_STAGE/traefik" "$TRAEFIK_STAGE/rootfs/traefik" || { rm -rf "$TRAEFIK_STAGE"; return 1; }
+  if [ -f /etc/ssl/certs/ca-certificates.crt ]; then
+    install -m 0644 /etc/ssl/certs/ca-certificates.crt "$TRAEFIK_STAGE/rootfs/etc/ssl/certs/ca-certificates.crt" || { rm -rf "$TRAEFIK_STAGE"; return 1; }
+  else
+    warn "Host CA certificate bundle is unavailable; refusing to create a TLS proxy image."
+    rm -rf "$TRAEFIK_STAGE"
+    return 1
+  fi
+
+  tar -C "$TRAEFIK_STAGE/rootfs" -cf - . | docker import \
+    --change 'ENTRYPOINT ["/traefik"]' \
+    --change 'EXPOSE 80 443' \
+    --change 'LABEL org.opencontainers.image.source="https://github.com/traefik/traefik"' \
+    --change "LABEL org.opencontainers.image.version=\"$TRAEFIK_RELEASE\"" \
+    - traefik:3 >/dev/null || { rm -rf "$TRAEFIK_STAGE"; return 1; }
+  rm -rf "$TRAEFIK_STAGE"
+
+  LOCAL_TRAEFIK_VERSION=$(docker run --rm traefik:3 version 2>/dev/null || true)
+  printf '%s\n' "$LOCAL_TRAEFIK_VERSION" | grep -Eq "Version:[[:space:]]+${TRAEFIK_RELEASE#v}$" || {
+    warn "The locally constructed Traefik image failed its version probe."
+    return 1
+  }
+  ok "Verified minimal Traefik ${TRAEFIK_RELEASE} image created without the corrupt Alpine snapshot"
+}
+
+if ! pull_required_image traefik:3; then
+  build_traefik_fallback_image || fail "Could not provision Traefik from Docker Hub or verified upstream release assets; ingress cannot operate"
+fi
 
 # Free ports 80/443 if default apache2/nginx are occupying them on Linux
 if [ "$(uname -s)" = "Linux" ] && command -v systemctl &>/dev/null; then

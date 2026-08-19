@@ -11,7 +11,7 @@ describe('health routes', () => {
     const body = res.json();
     expect(body.status).toBe('ok');
     expect(body.db).toBe('ok');
-    expect(body.version).toBe('0.2.6');
+    expect(body.version).toBe('0.2.7');
     expect(typeof body.time).toBe('string');
   });
 

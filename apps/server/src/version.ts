@@ -1,4 +1,4 @@
-export const VERSION = '0.2.6';
+export const VERSION = '0.2.7';
 
 export interface ChangelogEntry {
   version: string;
@@ -9,7 +9,7 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
-    version: '0.2.6',
+    version: '0.2.7',
     date: '2026-08-19',
     title: 'Reliable Ubuntu Systemd Migration & Long Docker Pulls',
     changes: [

@@ -43,5 +43,10 @@ describe('bare-metal systemd installation policy', () => {
     expect(installer).toContain('"kind"[[:space:]]*:[[:space:]]*"committed"');
     expect(installer).toContain('$2 == parent');
     expect(installer).toContain('ctr --namespace moby snapshots --snapshotter "$SNAPSHOTTER" remove');
+    expect(installer).toContain('build_traefik_fallback_image');
+    expect(installer).toContain('checksums.txt');
+    expect(installer).toContain('ACTUAL_SHA=$(sha256sum');
+    expect(installer).toContain("--change 'ENTRYPOINT [\"/traefik\"]'");
+    expect(installer).toContain('docker run --rm traefik:3 version');
   });
 });
