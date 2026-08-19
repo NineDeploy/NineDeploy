@@ -127,7 +127,7 @@ export function Home() {
               <span className="tag tag-accent">
                 self-hosted PaaS
               </span>
-              <span className="tag font-bold">v0.2.9</span>
+              <span className="tag font-bold">v0.2.10</span>
               <span className="tag">100% test coverage</span>
             </div>
             <h1 className="text-5xl md:text-7xl font-bold leading-[0.95] tracking-tight">

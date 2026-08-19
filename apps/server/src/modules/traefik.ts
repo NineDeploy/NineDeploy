@@ -108,15 +108,32 @@ function isOutdated(current: string | null, latest: string | null): boolean {
 async function getTraefikContainerInfo(): Promise<TraefikStatus> {
   const dataDir = config.paths.dataDir;
   const latestVersion = await getLatestTraefikVersion();
-  
+
   try {
     const inspect = await capture('docker', ['inspect', TRAEFIK_CONTAINER, '--format', '{{json .State}}']);
     const state = JSON.parse(inspect) as { Running: boolean; StartedAt: string };
-    
-    const versionOut = await capture('docker', ['exec', TRAEFIK_CONTAINER, 'traefik', 'version', '--version']);
-    const versionMatch = versionOut.match(/version\s+v?([\d.]+)/);
-    const currentVersion = versionMatch?.[1] ?? null;
-    
+
+    // Container liveness must never depend on version probing. The official
+    // image exposes `traefik` through PATH, while NineDeploy's layer-free
+    // recovery image intentionally contains only `/traefik` and CA roots.
+    // Probe both locations, but preserve the inspected running state if neither
+    // command is available or its output format changes.
+    let currentVersion: string | null = null;
+    if (state.Running) {
+      for (const binary of ['/traefik', 'traefik']) {
+        try {
+          const versionOut = await capture('docker', ['exec', TRAEFIK_CONTAINER, binary, 'version']);
+          const versionMatch = versionOut.match(/version(?::|\s)+\s*v?([\d.]+)/i);
+          if (versionMatch?.[1]) {
+            currentVersion = versionMatch[1];
+            break;
+          }
+        } catch {
+          // Try the alternate binary location; version is optional metadata.
+        }
+      }
+    }
+
     return {
       running: state.Running,
       version: currentVersion,

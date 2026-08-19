@@ -58,7 +58,7 @@ describe('traefik module', () => {
     vi.mocked(exec.capture).mockImplementation(async (_cmd, args) => {
       if (args[0] === 'search') return '3.2.0\n3.1.0\n2.11.0\n';
       if (args[0] === 'inspect') return JSON.stringify({ Running: true, StartedAt: new Date(Date.now() - 3600000).toISOString() });
-      if (args[0] === 'exec') return 'version v3.1.0 (built 2026)';
+      if (args[0] === 'exec') return 'Version:      3.1.0\nCodename:     test';
       return '';
     });
 
@@ -109,6 +109,16 @@ describe('traefik module', () => {
     });
     const resDays = await app.inject({ method: 'GET', url: '/traefik/status', headers: asUser() });
     expect(resDays.json().uptime).toMatch(/^\d+d \d+h$/);
+
+    // A failed version probe is metadata-only and must not turn a running
+    // container into a false "stopped" status.
+    vi.mocked(exec.capture).mockImplementation(async (_cmd, args) => {
+      if (args[0] === 'inspect') return JSON.stringify({ Running: true, StartedAt: new Date(Date.now() - 5000).toISOString() });
+      if (args[0] === 'exec') throw new Error('binary not found');
+      return '3.2.0\n';
+    });
+    const resNoVersion = await app.inject({ method: 'GET', url: '/traefik/status', headers: asUser() });
+    expect(resNoVersion.json()).toMatchObject({ running: true, version: null });
 
     // Stopped container
     vi.mocked(exec.capture).mockRejectedValue(new Error('no such container'));
