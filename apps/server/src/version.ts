@@ -1,4 +1,4 @@
-export const VERSION = '0.2.17';
+export const VERSION = '0.2.18';
 
 export interface ChangelogEntry {
   version: string;
@@ -8,6 +8,16 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.2.18',
+    date: '2026-08-20',
+    title: 'Targeted Containerd Snapshot Repair',
+    changes: [
+      'Unused committed overlayfs snapshots that block image extraction are safely removed through containerd dependency checks',
+      'Recovery commands explicitly connect to Docker external or daemon-managed containerd sockets',
+      'Deployment errors expose the native recovery failure when every snapshot recovery strategy fails',
+    ],
+  },
   {
     version: '0.2.17',
     date: '2026-08-20',

@@ -1,10 +1,12 @@
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { capture, run, sleep } from './exec.js';
 
 const SNAPSHOT_FAILURE = /extraction snapshot|target snapshot .*already exists|parent snapshot .*does not exist/i;
 const STALE_EXISTING_SNAPSHOT = /target snapshot .*already exists/i;
+const STALE_SNAPSHOT_KEY = /target snapshot\s+"?(sha256:[a-f0-9]{64})"?\s+already exists/i;
+const CONTAINERD_SOCKETS = ['/run/containerd/containerd.sock', '/var/run/docker/containerd/containerd.sock'] as const;
 
 /** Docker/containerd snapshot errors known to be transient on Docker 29+. */
 export function isTransientSnapshotFailure(lines: readonly string[]): boolean {
@@ -54,6 +56,12 @@ export function normalizeContainerdImageRef(image: string): string {
   return `docker.io/${image}`;
 }
 
+/** Point ctr at the same containerd daemon used by Docker when its socket is discoverable. */
+export function containerdCliArgs(args: string[], pathExists: (path: string) => boolean = existsSync): string[] {
+  const socket = CONTAINERD_SOCKETS.find(pathExists);
+  return socket ? ['--address', socket, '--namespace', 'moby', ...args] : ['--namespace', 'moby', ...args];
+}
+
 function hostArchitecture(): string {
   if (process.arch === 'x64') return 'amd64';
   if (process.arch === 'arm64') return 'arm64';
@@ -61,14 +69,14 @@ function hostArchitecture(): string {
 }
 
 async function readContainerdImageConfig(ref: string): Promise<ImageConfig> {
-  const info = JSON.parse(await capture('ctr', ['--namespace', 'moby', 'images', 'info', ref])) as {
+  const info = JSON.parse(await capture('ctr', containerdCliArgs(['images', 'info', ref]))) as {
     target?: Descriptor;
     Target?: Descriptor;
   };
   let digest = descriptorDigest(info.target ?? info.Target);
   if (!digest) throw new Error('containerd image has no target digest');
 
-  let manifest = JSON.parse(await capture('ctr', ['--namespace', 'moby', 'content', 'get', digest])) as {
+  let manifest = JSON.parse(await capture('ctr', containerdCliArgs(['content', 'get', digest]))) as {
     manifests?: Descriptor[];
     config?: Descriptor;
   };
@@ -80,7 +88,7 @@ async function readContainerdImageConfig(ref: string): Promise<ImageConfig> {
     });
     digest = descriptorDigest(selected);
     if (!digest) throw new Error(`containerd image has no linux/${arch} manifest`);
-    manifest = JSON.parse(await capture('ctr', ['--namespace', 'moby', 'content', 'get', digest])) as {
+    manifest = JSON.parse(await capture('ctr', containerdCliArgs(['content', 'get', digest]))) as {
       manifests?: Descriptor[];
       config?: Descriptor;
     };
@@ -88,7 +96,31 @@ async function readContainerdImageConfig(ref: string): Promise<ImageConfig> {
 
   const configDigest = descriptorDigest(manifest.config);
   if (!configDigest) throw new Error('containerd image manifest has no config digest');
-  return JSON.parse(await capture('ctr', ['--namespace', 'moby', 'content', 'get', configDigest])) as ImageConfig;
+  return JSON.parse(await capture('ctr', containerdCliArgs(['content', 'get', configDigest]))) as ImageConfig;
+}
+
+async function repairUnusedStaleSnapshot(image: string, lines: readonly string[], log: (line: string) => void): Promise<boolean> {
+  const key = STALE_SNAPSHOT_KEY.exec(lines.join('\n'))?.[1];
+  if (!key) return false;
+
+  try {
+    const rawInfo = await capture('ctr', containerdCliArgs(['snapshots', '--snapshotter', 'overlayfs', 'info', key]));
+    const info = JSON.parse(rawInfo) as { kind?: string | number; Kind?: string | number };
+    const kind = info.kind ?? info.Kind;
+    if (!(kind === 3 || String(kind).toLowerCase() === 'committed')) {
+      log(`Refusing to remove stale snapshot ${key}: containerd reports non-committed kind ${String(kind)}`);
+      return false;
+    }
+
+    log(`Removing unused stale overlayfs snapshot ${key}; containerd will refuse if it has active dependants …`);
+    await run('ctr', containerdCliArgs(['snapshots', '--snapshotter', 'overlayfs', 'remove', key]), {}, log);
+    log(`Retrying ${image} after targeted snapshot metadata repair …`);
+    await run('docker', ['pull', image], {}, log);
+    return true;
+  } catch (error) {
+    log(`Targeted stale snapshot repair was not applicable: ${error instanceof Error ? error.message : String(error)}`);
+    return false;
+  }
 }
 
 function importChanges(imageConfig: ImageConfig): string[] {
@@ -141,9 +173,9 @@ export async function recoverImageWithNativeSnapshotter(image: string, log: (lin
   try {
     mkdirSync(rootfs);
     log(`Docker overlayfs snapshot is stale; recovering ${image} through containerd's isolated native snapshotter …`);
-    await run('ctr', ['--namespace', 'moby', 'images', 'pull', '--snapshotter', 'native', ref], { timeoutMs: 30 * 60 * 1000 }, log);
+    await run('ctr', containerdCliArgs(['images', 'pull', '--snapshotter', 'native', ref]), { timeoutMs: 30 * 60 * 1000 }, log);
     const config = await readContainerdImageConfig(ref);
-    await run('ctr', ['--namespace', 'moby', 'images', 'mount', '--snapshotter', 'native', ref, rootfs], {}, log);
+    await run('ctr', containerdCliArgs(['images', 'mount', '--snapshotter', 'native', ref, rootfs]), {}, log);
     mounted = true;
     await run('tar', ['--acls', '--xattrs', '--numeric-owner', '-C', rootfs, '-cf', archive, '.'], { timeoutMs: 30 * 60 * 1000 }, log);
     await run(
@@ -157,7 +189,7 @@ export async function recoverImageWithNativeSnapshotter(image: string, log: (lin
   } finally {
     if (mounted) {
       try {
-        await run('ctr', ['--namespace', 'moby', 'images', 'unmount', rootfs], {}, () => {});
+        await run('ctr', containerdCliArgs(['images', 'unmount', rootfs]), {}, () => {});
         mounted = false;
       } catch (error) {
         // Never recurse into a path that might still be a mounted image rootfs.
@@ -179,6 +211,7 @@ export async function pullDockerImage(
   maxAttempts = 3,
 ): Promise<void> {
   let snapshotError: unknown;
+  let snapshotLines: string[] = [];
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const lines: string[] = [];
     const sink = (line: string) => {
@@ -191,6 +224,7 @@ export async function pullDockerImage(
     } catch (err) {
       if (!isTransientSnapshotFailure(lines)) throw err;
       snapshotError = err;
+      snapshotLines = lines;
       // An existing target with the same immutable chain ID is persistent
       // metadata corruption, not a timing race. Repeating the identical pull
       // cannot repair it, so switch to the isolated snapshotter immediately.
@@ -199,10 +233,13 @@ export async function pullDockerImage(
       await sleep(attempt * 2000);
     }
   }
+  if (await repairUnusedStaleSnapshot(image, snapshotLines, log)) return;
   try {
     await recoverImageWithNativeSnapshotter(image, log);
   } catch (recoveryError) {
-    log(`Native snapshot recovery failed: ${recoveryError instanceof Error ? recoveryError.message : String(recoveryError)}`);
-    throw snapshotError;
+    const recoveryMessage = recoveryError instanceof Error ? recoveryError.message : String(recoveryError);
+    log(`Native snapshot recovery failed: ${recoveryMessage}`);
+    const pullMessage = snapshotError instanceof Error ? snapshotError.message : String(snapshotError);
+    throw new Error(`${pullMessage}; native snapshot recovery failed: ${recoveryMessage}`);
   }
 }

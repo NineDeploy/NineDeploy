@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { isTransientSnapshotFailure, normalizeContainerdImageRef, pullDockerImage } from '../../src/lib/dockerPull.js';
+import {
+  containerdCliArgs,
+  isTransientSnapshotFailure,
+  normalizeContainerdImageRef,
+  pullDockerImage,
+} from '../../src/lib/dockerPull.js';
 
 const h = vi.hoisted(() => ({
   run: vi.fn(),
@@ -22,6 +27,13 @@ describe('pullDockerImage', () => {
     expect(normalizeContainerdImageRef('gitea/gitea:latest')).toBe('docker.io/gitea/gitea:latest');
     expect(normalizeContainerdImageRef('postgres:16')).toBe('docker.io/library/postgres:16');
     expect(normalizeContainerdImageRef('registry.example:5000/acme/app:v1')).toBe('registry.example:5000/acme/app:v1');
+  });
+
+  it('targets Docker managed containerd when its socket is present', () => {
+    expect(containerdCliArgs(['images', 'list'], (candidate) => candidate.includes('/docker/containerd/'))).toEqual([
+      '--address', '/var/run/docker/containerd/containerd.sock', '--namespace', 'moby', 'images', 'list',
+    ]);
+    expect(containerdCliArgs(['images', 'list'], () => false)).toEqual(['--namespace', 'moby', 'images', 'list']);
   });
 
   it('retries a transient snapshot failure and preserves streamed logs', async () => {
@@ -63,6 +75,31 @@ describe('pullDockerImage', () => {
     await expect(pullDockerImage('n8nio/n8n', vi.fn())).rejects.toThrow('still broken');
     expect(h.run).toHaveBeenCalledTimes(4);
     expect(h.sleep).toHaveBeenCalledTimes(2);
+  });
+
+  it('repairs an unused committed overlayfs snapshot before falling back to flattening', async () => {
+    const key = `sha256:${'a'.repeat(64)}`;
+    let pulls = 0;
+    h.run.mockImplementation(async (cmd, args, _opts, sink) => {
+      if (cmd === 'docker' && args[0] === 'pull' && pulls++ === 0) {
+        sink(`unable to prepare extraction snapshot: target snapshot "${key}" already exists`);
+        throw new Error('docker pull exited 1');
+      }
+    });
+    h.capture.mockResolvedValueOnce(JSON.stringify({ Kind: 'Committed', Name: key }));
+    const log = vi.fn();
+
+    await pullDockerImage('mysql:8.4', log, 1);
+
+    expect(h.run).toHaveBeenCalledWith(
+      'ctr',
+      ['--namespace', 'moby', 'snapshots', '--snapshotter', 'overlayfs', 'remove', key],
+      {},
+      log,
+    );
+    expect(h.run).toHaveBeenLastCalledWith('docker', ['pull', 'mysql:8.4'], {}, log);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('targeted snapshot metadata repair'));
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining('isolated native snapshotter'));
   });
 
   it('recovers a persistently broken overlayfs pull through a flattened native snapshot', async () => {
