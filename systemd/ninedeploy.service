@@ -32,7 +32,12 @@ ProtectSystem=full
 ReadWritePaths=@INSTALL_DIR@ @DATA_DIR@ /tmp -/var/run/docker.sock -/run/docker.sock
 PrivateTmp=true
 
+# Deployments routinely run longer than watchdog windows while Docker unpacks
+# large images. Keep readiness under the installer's HTTP health gate and
+# explicitly disable watchdog supervision so upgrades also neutralize stale
+# Type=notify/WatchdogSec installations.
 Type=simple
+WatchdogSec=0
 
 # Logs
 StandardOutput=journal

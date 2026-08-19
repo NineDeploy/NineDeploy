@@ -100,7 +100,7 @@ const steps = [
     icon: Server,
     n: "01",
     title: "Install on your server",
-    body: "One curl against install.sh. Node ≥ 22.13 + Docker is all it takes — the core runs under a hardened systemd unit with a watchdog.",
+    body: "One curl against install.sh. Node ≥ 22.13 + Docker is all it takes — the core runs under a hardened systemd unit with verified HTTP readiness.",
   },
   {
     icon: GitBranch,

@@ -79,7 +79,7 @@ ninedeploy/                       pnpm 11 workspace + Turborepo
 │   │   │   │                      housekeeping, rateLimit, rawBody, kernel)
 │   │   │   ├── lib/               crypto (key ring), jwt, totp, loginLockout,
 │   │   │   │                      oauth (OIDC/SSO), passwordReset, keyRotation,
-│   │   │   │                      agentClient, spawnValidated, sdNotify,
+│   │   │   │                      agentClient, spawnValidated,
 │   │   │   │                      exec, git, settings, audit, events, notifier,
 │   │   │   │                      alerting, s3, backupRemote, webhooks, errors
 │   │   │   ├── templates/         100+ entry template registry (schema-validated
@@ -134,8 +134,8 @@ ninedeploy/                       pnpm 11 workspace + Turborepo
 ├── turbo.json                     Turborepo pipeline (build/test/lint caches)
 ├── Dockerfile                     multi-stage; docker CLI + git + tini; /data volume
 ├── docker-compose.yml             development environment
-├── systemd/                       ninedeploy.service unit (Type=notify,
-│                                  WatchdogSec=90, ProtectSystem=strict)
+├── systemd/                       ninedeploy.service unit (Type=simple,
+│                                  watchdog disabled, ProtectSystem=full)
 ├── install.sh                     One-click installer (Node ≥ 22.13, release
 │                                  channels, pre-update snapshot)
 └── ARCHITECTURE.md                This file
@@ -247,9 +247,8 @@ domain headers, registry username) → 0018 index cleanup.
 
 ### Request lifecycle
 
-`server.ts` → `buildApp()` (`app.ts`): listen, systemd sd_notify
-(`notifyReady()` + watchdog ping every 30 s, no-op without `NOTIFY_SOCKET`),
-graceful SIGINT/SIGTERM. Plugin registration order in `app.ts`: `rateLimit` →
+`server.ts` → `buildApp()` (`app.ts`): listen and handle graceful
+SIGINT/SIGTERM shutdown. Plugin registration order in `app.ts`: `rateLimit` →
 `rawBody` → `db` → `auth` → route modules → background plugins (`worker`,
 `traefik`, `collector`, `backupScheduler`, `housekeeping`, `jobScheduler`) →
 `staticFiles` (SPA, last). Body limit 256 MB (system import tarballs). CORS
@@ -497,16 +496,18 @@ ok → breaching (first breach, breach_since = now)
   clones the repo, resolves the target version via **release channels** —
   `--channel=release` (latest `vX.Y.Z` tag via `git ls-remote`, default),
   `--channel=main` (edge), `--version vX.Y.Z` (pin); renders
-  `systemd/ninedeploy.service` from placeholders, enables the service,
-  snapshots `.data` before upgrading, rebuilds + migrates + restarts and gates
-  on `/health`
+  `systemd/ninedeploy.service` from placeholders, installs a migration safety
+  override, verifies the effective service type/watchdog policy, enables the
+  service, snapshots `.data` before upgrading, rebuilds + migrates + restarts
+  and gates on `/health`
 - **Update check** (`lib/updateCheck.ts`): GitHub-Releases-format feed, semver
   compare, 6 h cache; offline → `updateAvailable: null` (never breaks the
   dashboard); surfaced to admins via `GET /v1/system/update-check`
-- **systemd watchdog**: `Type=notify`, `WatchdogSec=90`, `Restart=always`,
-  hardening (`ProtectSystem=strict`, `ReadWritePaths=@DATA_DIR@`,
-  `NoNewPrivileges`, `PrivateTmp`); the server pings every 30 s over the
-  sd_notify datagram socket so a hung event loop is restarted automatically
+- **systemd supervision**: `Type=simple`, `WatchdogSec=0`, `Restart=always`,
+  hardening (`ProtectSystem=full`, explicit `ReadWritePaths`,
+  `NoNewPrivileges`, `PrivateTmp`); startup readiness is verified through the
+  HTTP `/health` gate so long-running Docker children are not killed by a
+  service watchdog
 
 ## Security model
 

@@ -87,7 +87,7 @@ export const CHANGELOG: ChangelogEntry[] = [
       'Release-channel installer: defaults to the latest release tag (--version pin, --channel main edge), snapshots .data before upgrades and health-checks the restart',
       'Update check: GET /v1/system/update-check (admin), About-page badge, `ninedeploy system update-check`',
       'About endpoint no longer leaks instance counts to unauthenticated callers',
-      'systemd watchdog (Type=notify, WatchdogSec=90) with a dependency-free sd_notify client — hung processes restart automatically',
+      'Hardened installer-rendered systemd service with HTTP readiness verification',
       'First-admin bootstrap is transactional (no dual-admin race)',
     ],
   },

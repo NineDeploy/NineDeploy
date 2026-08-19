@@ -7,10 +7,6 @@ const state = vi.hoisted(() => ({
 }));
 
 vi.mock('../src/agentApp.js', () => ({ buildAgentApp: state.buildApp }));
-vi.mock('../src/lib/sdNotify.js', () => ({
-  notifyReady: vi.fn(),
-  startWatchdog: vi.fn(() => () => undefined),
-}));
 
 interface FakeApp {
   listen: ReturnType<typeof vi.fn>;

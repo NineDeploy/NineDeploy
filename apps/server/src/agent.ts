@@ -1,7 +1,6 @@
 import { buildAgentApp } from './agentApp.js';
 import { tokenMatches } from './lib/agentClient.js';
 import { spawnValidated } from './lib/spawnValidated.js';
-import { notifyReady, startWatchdog } from './lib/sdNotify.js';
 
 /**
  * Agent mode (NINEDEPLOY_AGENT=1): a minimal HTTP surface for the core to run
@@ -274,10 +273,7 @@ async function main(): Promise<void> {
     });
   }
 
-  notifyReady();
-  const stopWatchdog = startWatchdog(30_000);
   const shutdown = async () => {
-    stopWatchdog();
     // Hard-exit backstop: a close() that never settles (open sockets) must
     // not keep a SIGTERM'd agent alive indefinitely.
     const force = setTimeout(process.exit, 10_000);

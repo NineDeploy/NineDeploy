@@ -32,7 +32,7 @@ const faqs = [
   },
   {
     q: "What happens to my data on upgrade?",
-    a: "The installer automatically snapshots the SQLite database and encryption master keys to `.data/upgrade-backups/` before applying any changes. Migrations are strictly forward-only and self-applying, and the systemd watchdog gates success on the `/health` endpoint before completing the upgrade.",
+    a: "The installer automatically snapshots the SQLite database and encryption master keys to `.data/upgrade-backups/` before applying any changes. Migrations are strictly forward-only and self-applying, and the installer gates success on the `/health` endpoint before completing the upgrade.",
   },
   {
     q: "Can I deploy heavy templates (like n8n, Supabase, Postgres) on a 1GB/2GB RAM VPS?",

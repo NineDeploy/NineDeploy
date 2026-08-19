@@ -199,15 +199,44 @@ ok "Docker network & ingress ready"
 CHANNEL="${NINEDEPLOY_CHANNEL:-release}"
 PINNED_VERSION="${NINEDEPLOY_VERSION:-}"
 
-for arg in "$@"; do
-  case "$arg" in
-    --version=*) PINNED_VERSION="${arg#--version=}" ;;
-    --version)   : ;; # value comes as the next arg when passed separately
-    --channel=*) CHANNEL="${arg#--channel=}" ;;
-    --channel)   : ;;
-    v[0-9]*)     [ -z "$PINNED_VERSION" ] && PINNED_VERSION="$arg" ;;
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --version=*)
+      PINNED_VERSION="${1#--version=}"
+      shift
+      ;;
+    --version)
+      [ "$#" -ge 2 ] || fail "--version requires a vX.Y.Z value"
+      PINNED_VERSION="$2"
+      shift 2
+      ;;
+    --channel=*)
+      CHANNEL="${1#--channel=}"
+      shift
+      ;;
+    --channel)
+      [ "$#" -ge 2 ] || fail "--channel requires release or main"
+      CHANNEL="$2"
+      shift 2
+      ;;
+    v[0-9]*)
+      [ -z "$PINNED_VERSION" ] && PINNED_VERSION="$1"
+      shift
+      ;;
+    *)
+      fail "Unknown installer argument: $1"
+      ;;
   esac
 done
+
+case "$CHANNEL" in
+  release|main) ;;
+  *) fail "Unsupported channel '$CHANNEL' (expected release or main)" ;;
+esac
+
+if [ -n "$PINNED_VERSION" ] && ! printf '%s' "$PINNED_VERSION" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+  fail "Invalid version '$PINNED_VERSION' (expected vX.Y.Z)"
+fi
 
 # Highest vX.Y.Z tag from the remote (no clone needed).
 latest_tag() {
@@ -330,13 +359,55 @@ if [ "$(uname -s)" = "Linux" ] && command -v systemctl &>/dev/null; then
   DATA_DIR="${NINEDEPLOY_DATA_DIR:-$INSTALL_DIR/.data}"
   mkdir -p "$DATA_DIR"
   SERVICE_FILE="/etc/systemd/system/ninedeploy.service"
+  UNIT_STAGE_DIR=$(mktemp -d)
+  UNIT_STAGE_FILE="$UNIT_STAGE_DIR/ninedeploy.service"
   sed -e "s|@NODE@|$(which node)|g" \
       -e "s|@INSTALL_DIR@|${INSTALL_DIR}|g" \
       -e "s|@DATA_DIR@|${DATA_DIR}|g" \
       -e "s|@USER@|$(id -un)|g" \
       -e "s|@GROUP@|$(id -gn)|g" \
-      "$UNIT_TEMPLATE" | sudo tee "$SERVICE_FILE" > /dev/null
+      "$UNIT_TEMPLATE" > "$UNIT_STAGE_FILE"
+
+  # Validate before replacing the live unit. This catches malformed rendered
+  # paths without leaving an existing installation unbootable.
+  if command -v systemd-analyze &>/dev/null; then
+    systemd-analyze verify "$UNIT_STAGE_FILE" >/dev/null || {
+      rm -f "$UNIT_STAGE_FILE"
+      rmdir "$UNIT_STAGE_DIR"
+      fail "Rendered systemd unit is invalid"
+    }
+  fi
+  sudo install -m 0644 "$UNIT_STAGE_FILE" "$SERVICE_FILE"
+  rm -f "$UNIT_STAGE_FILE"
+  rmdir "$UNIT_STAGE_DIR"
+
+  # Older NineDeploy releases installed Type=notify + WatchdogSec=90. A
+  # lingering drop-in can override the new main unit and SIGTERM the server
+  # (and its docker pull child) during a long image extraction. Keep this
+  # installer-owned, last-applied safety override for both fresh installs and
+  # in-place upgrades. User overrides that sort later are detected below.
+  RUNTIME_DROPIN_DIR="/etc/systemd/system/ninedeploy.service.d"
+  RUNTIME_DROPIN="$RUNTIME_DROPIN_DIR/99-ninedeploy-runtime-safety.conf"
+  sudo mkdir -p "$RUNTIME_DROPIN_DIR"
+  printf '%s\n' \
+    '# Managed by NineDeploy install.sh — do not enable a service watchdog.' \
+    '[Service]' \
+    'Type=simple' \
+    'WatchdogSec=0' | sudo tee "$RUNTIME_DROPIN" >/dev/null
+
   sudo systemctl daemon-reload
+
+  EFFECTIVE_TYPE=$(systemctl show ninedeploy --property=Type --value)
+  EFFECTIVE_WATCHDOG=$(systemctl show ninedeploy --property=WatchdogUSec --value)
+  if [ "$EFFECTIVE_TYPE" != "simple" ]; then
+    fail "Unsafe effective systemd Type=$EFFECTIVE_TYPE (expected simple); inspect: systemctl cat ninedeploy"
+  fi
+  case "$EFFECTIVE_WATCHDOG" in
+    0|0us|0ms|0s) ;;
+    *) fail "Unsafe effective systemd watchdog $EFFECTIVE_WATCHDOG (expected disabled); inspect: systemctl cat ninedeploy" ;;
+  esac
+  ok "systemd runtime policy verified (Type=simple, watchdog disabled)"
+
   sudo systemctl enable ninedeploy
   sudo systemctl restart ninedeploy
 

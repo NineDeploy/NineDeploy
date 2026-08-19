@@ -9,9 +9,6 @@ import { buildTestApp } from './helpers.js';
 const spawnMock = vi.hoisted(() => vi.fn(async () => 0));
 vi.mock('../src/lib/spawnValidated.js', () => ({ spawnValidated: spawnMock }));
 
-const sdMocks = vi.hoisted(() => ({ notifyReady: vi.fn(), startWatchdog: vi.fn(() => () => undefined) }));
-vi.mock('../src/lib/sdNotify.js', () => sdMocks);
-
 const TOKEN = 'agent-shared-token';
 const TOKEN_HASH = createHash('sha256').update(TOKEN).digest('hex');
 

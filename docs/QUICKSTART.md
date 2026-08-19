@@ -22,10 +22,11 @@ curl -fsSL https://raw.githubusercontent.com/NineDeploy/NineDeploy/main/install.
 7. Installs and starts the hardened `ninedeploy.service` under systemd.
 
 ### Hardened Systemd Service Features:
-- `Type=notify` with dependency-free `sd_notify` watchdog pings (`WatchdogSec=90`). If the event loop hangs, systemd restarts the daemon.
-- `ProtectSystem=strict` with write access restricted strictly to `.data/`.
+- `Type=simple` with `WatchdogSec=0`; long Docker pulls and builds are never terminated by a service watchdog.
+- Installer-managed migration override and effective-policy verification repair older `Type=notify` installations during an in-place upgrade.
+- `ProtectSystem=full` with explicit write access for the install/data directories, temporary files and Docker socket.
 - `NoNewPrivileges=true` and `PrivateTmp=true`.
-- `Restart=always` with exponential backoff.
+- `Restart=always` with a five-second restart delay; `/health` is the authoritative installer readiness gate.
 
 ---
 
@@ -132,4 +133,3 @@ ninedeploy whoami
 ninedeploy services list
 ninedeploy system dashboard
 ```
-

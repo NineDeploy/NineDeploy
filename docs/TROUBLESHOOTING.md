@@ -122,34 +122,28 @@ This inspects:
 
 ---
 
-## 🧠 8. Docker Pull Exits with Code 143 (Out-of-Memory / OOM Killer)
+## 🛑 8. Docker Pull Exits with Code 143 (SIGTERM)
 
 **Symptoms**:
 - Pulling or deploying large Docker images/templates (e.g. `n8nio/n8n`, `supabase`, `postgres`) fails with:
   ```
   ✗ Deployment failed: `docker pull n8nio/n8n` exited with code 143
   ```
-- `dmesg -T` logs `Out of memory: Killed process` or kernel OOM killer activity.
 
 **Cause**:
-- Unpacking large multi-layer Docker images consumes significant memory and I/O. On low-memory VPS instances (1 GB – 2 GB RAM) without swap space, the Linux kernel terminates the pull process with `SIGTERM` (code 143: 128 + 15).
+- Exit code 143 is `128 + SIGTERM (15)`: an external supervisor terminated the Docker CLI. Older NineDeploy units used `Type=notify` with `WatchdogSec=90`; unreliable watchdog notification could terminate the server cgroup during a long pull.
+- Linux OOM termination normally uses `SIGKILL` and surfaces as exit code 137, not 143.
 
 **Resolution**:
-1. **Enable Swap Memory (Recommended)**:
+1. **Run the current installer over the existing installation**. It replaces the unit, installs a migration safety override and refuses to start unless effective systemd policy is `Type=simple` with the watchdog disabled:
    ```bash
-   # Allocate and activate 2 GB - 4 GB swapfile
-   sudo fallocate -l 2G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=2048
-   sudo chmod 600 /swapfile
-   sudo mkswap /swapfile
-   sudo swapon /swapfile
-   
-   # Make permanent across reboots
-   echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+   curl -fsSL https://raw.githubusercontent.com/NineDeploy/NineDeploy/main/install.sh | bash
    ```
-2. **Pre-pull the image on host terminal**:
+2. **Verify the installed policy**:
    ```bash
-   docker pull <image-name>
+   systemctl show ninedeploy -p Type -p WatchdogUSec
    ```
-   Once cached locally in Docker Engine, redeploying from the NineDeploy Dashboard will start immediately without pulling.
+   Expected values are `Type=simple` and `WatchdogUSec=0`.
 
+For exit code 137 or kernel OOM records, add swap or memory separately; the installer provisions swap automatically on low-memory supported Linux hosts.
 
