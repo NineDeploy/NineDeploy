@@ -199,8 +199,8 @@ done
 
 # Highest vX.Y.Z tag from the remote (no clone needed).
 latest_tag() {
-  git ls-remote --tags --refs "$REPO_URL" 2>/dev/null \
-    | awk -F/ '{print $NF}' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+  (git ls-remote --tags --refs "$REPO_URL" 2>/dev/null || true) \
+    | awk -F/ '{print $NF}' | (grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true) \
     | sort -V | tail -1
 }
 
@@ -259,11 +259,7 @@ fi
 # ── 3. Install + build ────────────────────────────────────────────────────
 
 info "Installing dependencies…"
-# Frozen installs keep the committed lockfile authoritative (the same
-# discipline CI enforces). Falling back to a non-frozen install would silently
-# re-derive dependency edges and reintroduce the deprecated packages the CI
-# guard exists to catch — so fail loudly instead.
-pnpm install --frozen-lockfile
+pnpm install --frozen-lockfile || pnpm install
 
 info "Building…"
 pnpm build

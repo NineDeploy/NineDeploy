@@ -29,7 +29,7 @@ TimeoutStopSec=30
 # Hardening & Permissions
 NoNewPrivileges=true
 ProtectSystem=full
-ReadWritePaths=@INSTALL_DIR@ @DATA_DIR@ /tmp /var/run/docker.sock
+ReadWritePaths=@INSTALL_DIR@ @DATA_DIR@ /tmp -/var/run/docker.sock -/run/docker.sock
 PrivateTmp=true
 
 Type=simple
