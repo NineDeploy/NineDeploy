@@ -162,7 +162,45 @@ info "Preparing Docker network and Traefik proxy…"
 if ! docker network inspect ninedeploy >/dev/null 2>&1; then
   docker network create ninedeploy >/dev/null || fail "Could not create the required Docker network 'ninedeploy'"
 fi
-docker pull traefik:3 || fail "Could not pull traefik:3; ingress cannot operate without its image"
+
+# Docker 29+ uses containerd's snapshotter by default. Interrupted or racing
+# unpack operations can leave transient extraction metadata which reports
+# AlreadyExists / missing-parent errors on the next pull. Retry only this known
+# class, ask Docker to GC unused dangling images, and restart the daemon only
+# when no containers are running. Never mutate /var/lib/containerd directly.
+pull_required_image() {
+  IMAGE="$1"
+  SNAPSHOT_FAILURE=false
+  for ATTEMPT in 1 2 3; do
+    PULL_OUTPUT=$(docker pull "$IMAGE" 2>&1) && {
+      printf '%s\n' "$PULL_OUTPUT"
+      return 0
+    }
+    printf '%s\n' "$PULL_OUTPUT" >&2
+    if ! printf '%s' "$PULL_OUTPUT" | grep -Eqi 'extraction snapshot|target snapshot .*already exists|parent snapshot .*does not exist'; then
+      return 1
+    fi
+    SNAPSHOT_FAILURE=true
+    warn "Docker snapshot extraction race while pulling $IMAGE (attempt $ATTEMPT/3); running safe image GC before retry…"
+    docker image prune -f >/dev/null 2>&1 || true
+    sleep $((ATTEMPT * 2))
+  done
+
+  if [ "$SNAPSHOT_FAILURE" = true ] && [ -z "$(docker ps -q 2>/dev/null)" ] && command -v systemctl &>/dev/null; then
+    warn "Snapshot metadata is still stale and no containers are running; restarting Docker once…"
+    sudo systemctl restart docker || return 1
+    for WAIT_STEP in $(seq 1 30); do
+      docker info >/dev/null 2>&1 && break
+      sleep 1
+      [ "$WAIT_STEP" = "30" ] && return 1
+    done
+    docker pull "$IMAGE"
+    return $?
+  fi
+  return 1
+}
+
+pull_required_image traefik:3 || fail "Could not pull traefik:3 after safe snapshot recovery; ingress cannot operate without its image"
 
 # Free ports 80/443 if default apache2/nginx are occupying them on Linux
 if [ "$(uname -s)" = "Linux" ] && command -v systemctl &>/dev/null; then

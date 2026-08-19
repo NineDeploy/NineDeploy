@@ -1,11 +1,12 @@
-import { capture, run } from '../../lib/exec.js';
+import { capture } from '../../lib/exec.js';
+import { pullDockerImage } from '../../lib/dockerPull.js';
 import type { IComputeDriver } from '../types.js';
 
 export class LocalDockerDriver implements IComputeDriver {
   readonly name = 'docker-local';
 
   async pullImage(image: string, onLog: (l: string) => void): Promise<void> {
-    await run('docker', ['pull', image], {}, onLog);
+    await pullDockerImage(image, onLog);
   }
 
   async runContainer(opts: {

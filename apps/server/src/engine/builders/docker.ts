@@ -4,6 +4,7 @@ import path from 'node:path';
 import type { Builder } from '../types.js';
 import type { BuildConfig } from '@ninedeploy/db';
 import { capture, buildEnv, run, sleep } from '../../lib/exec.js';
+import { pullDockerImage } from '../../lib/dockerPull.js';
 import { NETWORK } from '../proxy.js';
 import { buildProbeUrl, safeProbePath } from '../../lib/probeUrl.js';
 
@@ -144,7 +145,7 @@ export const dockerBuilder: Builder = {
       target = imageDigest ?? service.image;
       log(`Pulling image ${target} …`);
       try {
-        await run('docker', ['pull', target], {}, log);
+        await pullDockerImage(target, log);
       } catch (pullErr) {
         // A failed pull is only tolerable when the image exists locally
         // (local-only images). Otherwise a stale tag must NOT silently deploy

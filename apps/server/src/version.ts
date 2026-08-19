@@ -18,6 +18,7 @@ export const CHANGELOG: ChangelogEntry[] = [
       'Relative data-directory settings are rendered as absolute systemd ReadWritePaths values',
       'Installer-owned runtime safety policy now sorts after conventional systemd override.conf files',
       'Traefik image, container liveness and shared-network attachment are mandatory installer and runtime readiness gates',
+      'Docker 29 containerd snapshot extraction races recover through bounded image-pull retries',
       'Docker exit diagnostics distinguish SIGTERM exit 143 from OOM/SIGKILL exit 137',
     ],
   },

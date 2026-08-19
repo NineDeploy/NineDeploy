@@ -1,6 +1,7 @@
 import { copyFileSync, existsSync, readFileSync } from 'node:fs';
 import { config } from '../config.js';
 import { capture, run } from '../lib/exec.js';
+import { pullDockerImage } from '../lib/dockerPull.js';
 import { readCertificates, TRAEFIK_CONTAINER, TRAEFIK_IMAGE } from '../engine/proxy.js';
 import type { FastifyPluginAsync } from 'fastify';
 
@@ -373,7 +374,7 @@ export const traefikRoutes: FastifyPluginAsync = async (app) => {
     
     // 2. Yeni image'ı çek
     log(`Pulling ${TRAEFIK_IMAGE}...`);
-    await run('docker', ['pull', TRAEFIK_IMAGE], {}, (l) => log(l));
+    await pullDockerImage(TRAEFIK_IMAGE, (l) => log(l));
     
     // 3. Eski container'ı sil
     log('Removing old container...');

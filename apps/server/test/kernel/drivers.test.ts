@@ -30,7 +30,7 @@ describe('Kernel Drivers', () => {
       // 1. pullImage
       const logCb = vi.fn();
       await driver.pullImage('redis:alpine', logCb);
-      expect(runSpy).toHaveBeenCalledWith('docker', ['pull', 'redis:alpine'], {}, logCb);
+      expect(runSpy).toHaveBeenCalledWith('docker', ['pull', 'redis:alpine'], {}, expect.any(Function));
 
       // 2. runContainer with all options
       await driver.runContainer({
