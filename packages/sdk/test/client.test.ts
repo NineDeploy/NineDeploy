@@ -1436,4 +1436,26 @@ describe('createClient', () => {
       expect(last(calls)).toMatchObject({ url: '/v1/containers/ninedeploy-app-1/files?path=%2Fapp%2Ftmp', init: { method: 'DELETE' } });
     });
   });
+
+  describe('firewall', () => {
+    it('exercises status, toggle, addRule, deleteRule, and applyRecommended', async () => {
+      const { fetchMock, calls } = makeFetch(() => ok({}));
+      const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
+
+      await client.firewall.status();
+      expect(last(calls)).toMatchObject({ url: '/v1/firewall', init: { method: 'GET' } });
+
+      await client.firewall.toggle(true);
+      expect(last(calls)).toMatchObject({ url: '/v1/firewall/toggle', init: { method: 'POST' } });
+
+      await client.firewall.addRule({ port: 5432, proto: 'tcp', action: 'allow' });
+      expect(last(calls)).toMatchObject({ url: '/v1/firewall/rules', init: { method: 'POST' } });
+
+      await client.firewall.deleteRule(2);
+      expect(last(calls)).toMatchObject({ url: '/v1/firewall/rules/2', init: { method: 'DELETE' } });
+
+      await client.firewall.applyRecommended();
+      expect(last(calls)).toMatchObject({ url: '/v1/firewall/recommended', init: { method: 'POST' } });
+    });
+  });
 });

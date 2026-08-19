@@ -131,6 +131,11 @@ const h = vi.hoisted(() => {
   serverStatusAction: vi.fn(),
   serverLogsAction: vi.fn(),
   doctorAction: vi.fn(),
+  firewallStatus: vi.fn(),
+  firewallToggle: vi.fn(),
+  firewallAddRule: vi.fn(),
+  firewallDeleteRule: vi.fn(),
+  firewallApplyRecommended: vi.fn(),
   };
 });
 
@@ -140,6 +145,13 @@ vi.mock('../src/config.js', () => ({ loadConfig: h.loadConfig, saveConfig: h.sav
 vi.mock('../src/commands/login.js', () => ({ loginAction: h.loginAction }));
 vi.mock('../src/commands/setup.js', () => ({ setupAction: h.setupAction }));
 vi.mock('../src/commands/doctor.js', () => ({ doctorAction: h.doctorAction }));
+vi.mock('../src/commands/firewall.js', () => ({
+  firewallStatus: h.firewallStatus,
+  firewallToggle: h.firewallToggle,
+  firewallAddRule: h.firewallAddRule,
+  firewallDeleteRule: h.firewallDeleteRule,
+  firewallApplyRecommended: h.firewallApplyRecommended,
+}));
 vi.mock('../src/commands/demo.js', () => ({ demoSeed: h.demoSeed }));
 vi.mock('../src/commands/server.js', () => ({
   serverStartAction: h.serverStartAction,
@@ -279,7 +291,7 @@ describe('program registration', () => {
       'init', 'setup', 'login', 'logout', 'whoami', 'config',
       'services', 'databases', 'templates', 'deploys', 'token', 'system',
       'env', 'domains', 'volumes', 'networks', 'sessions', 'backups', 'alerts', 'users',
-      'reset-link <idOrEmail>', 'activity', 'plugins', 'config-center', 'workspaces', 'demo', 'server', 'doctor',
+      'reset-link <idOrEmail>', 'activity', 'plugins', 'config-center', 'workspaces', 'demo', 'server', 'doctor', 'firewall',
     ]);
     expect(findCommand('server').children).toHaveLength(4);
     expect(findCommand('services').children).toHaveLength(12);
@@ -297,7 +309,8 @@ describe('program registration', () => {
     expect(findCommand('plugins').children).toHaveLength(8);
     expect(findCommand('config-center').children).toHaveLength(4);
     expect(findCommand('demo').children).toHaveLength(1);
-    expect(h.FakeCommand.instances).toHaveLength(96);
+    expect(findCommand('firewall').children).toHaveLength(7);
+    expect(h.FakeCommand.instances).toHaveLength(104);
     // argv length > 2 → no banner, no exit
     expect(h.banner).not.toHaveBeenCalled();
     expect(h.exit).not.toHaveBeenCalled();
@@ -733,5 +746,21 @@ describe('delegating actions', () => {
 
     await findCommand('doctor').actionFn!();
     expect(h.doctorAction).toHaveBeenCalledWith(client, undefined);
+
+    const firewall = findCommand('firewall');
+    await firewall.children.find((c) => c.cmdName === 'status')!.actionFn!();
+    expect(h.firewallStatus).toHaveBeenCalledWith(client);
+    await firewall.children.find((c) => c.cmdName === 'enable')!.actionFn!();
+    expect(h.firewallToggle).toHaveBeenCalledWith(client, true);
+    await firewall.children.find((c) => c.cmdName === 'disable')!.actionFn!();
+    expect(h.firewallToggle).toHaveBeenCalledWith(client, false);
+    await firewall.children.find((c) => c.cmdName === 'recommended')!.actionFn!();
+    expect(h.firewallApplyRecommended).toHaveBeenCalledWith(client);
+    await firewall.children.find((c) => c.cmdName === 'allow <port>')!.actionFn!('5432', { proto: 'tcp' });
+    expect(h.firewallAddRule).toHaveBeenCalledWith(client, '5432', { proto: 'tcp', action: 'allow' });
+    await firewall.children.find((c) => c.cmdName === 'deny <port>')!.actionFn!('8080', { proto: 'tcp' });
+    expect(h.firewallAddRule).toHaveBeenCalledWith(client, '8080', { proto: 'tcp', action: 'deny' });
+    await firewall.children.find((c) => c.cmdName === 'rm <id>')!.actionFn!('3');
+    expect(h.firewallDeleteRule).toHaveBeenCalledWith(client, '3');
   });
 });
