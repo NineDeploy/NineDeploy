@@ -13,6 +13,7 @@ vi.mock('../src/lib/settings.js', () => settingsMock);
 const dnsMock = vi.hoisted(() => ({
   DNS_PROVIDERS: { cloudflare: 'CF_DNS_API_TOKEN', hetzner: 'HETZNER_API_TOKEN' },
   encryptDnsToken: vi.fn((t: string) => `enc:${t}`),
+  writeDynamicConfig: vi.fn(async () => undefined),
 }));
 vi.mock('../src/engine/proxy.js', () => dnsMock);
 
@@ -22,7 +23,34 @@ describe('settings routes (admin-only)', () => {
     await app.register(settingsRoutes);
     const res = await app.inject({ method: 'GET', url: '/', headers: asUser() });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ allowRegistration: false, acmeEmail: null, templatesSource: null, dnsProvider: null, hasDnsToken: true, wildcardApex: null });
+    expect(res.json()).toEqual({ allowRegistration: false, acmeEmail: null, templatesSource: null, dnsProvider: null, hasDnsToken: true, wildcardApex: null, panelDomain: null });
+    await app.close();
+  });
+
+  it('saves and clears the panel domain and triggers writeDynamicConfig', async () => {
+    const db = createFakeDb();
+    const app = await buildTestApp({ db });
+    await app.register(settingsRoutes);
+    const res = await app.inject({
+      method: 'PUT',
+      url: '/panel-domain',
+      headers: asUser(),
+      payload: { domain: 'panel.example.com' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: true, panelDomain: 'panel.example.com' });
+    expect(settingsMock.setSettingString).toHaveBeenCalledWith(db, 'panel_domain', 'panel.example.com');
+    expect(dnsMock.writeDynamicConfig).toHaveBeenCalledWith(db);
+
+    // Clear domain
+    const resClear = await app.inject({
+      method: 'PUT',
+      url: '/panel-domain',
+      headers: asUser(),
+      payload: { domain: '' },
+    });
+    expect(resClear.statusCode).toBe(200);
+    expect(resClear.json()).toEqual({ ok: true, panelDomain: null });
     await app.close();
   });
 

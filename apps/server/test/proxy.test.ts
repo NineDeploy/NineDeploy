@@ -353,6 +353,7 @@ describe('ensureTraefik', () => {
       [
         'run', '-d', '--name', 'ninedeploy-traefik', '--restart', 'unless-stopped',
         '--network', NETWORK,
+        '--add-host', 'host.docker.internal:host-gateway',
         '-p', '80:80', '-p', '443:443',
         // The whole config dir is mounted (single-file mounts pin the inode and
         // would never see atomic rename-based updates).
@@ -845,6 +846,22 @@ describe('DNS-01 challenge (wildcard SSL)', () => {
     expect(yaml).toContain('mw_web_2_ratelimit:');
     expect(yaml).toContain('average: 20');
     expect(yaml).toContain('burst: 20');
+  });
+
+  it('generates a panel router and service when panel_domain is set', async () => {
+    process.env['NINEDEPLOY_DOMAIN'] = 'panel.example.com';
+    try {
+      const db = makeDb([], []);
+      await writeDynamicConfig(db as never);
+
+      const yaml = readFileSync(path.join(traefikDir, 'dynamic.yml'), 'utf8');
+      expect(yaml).toContain('ninedeploy_panel:');
+      expect(yaml).toContain('Host(`panel.example.com`)');
+      expect(yaml).toContain('svc_ninedeploy_panel:');
+      expect(yaml).toContain('http://host.docker.internal:');
+    } finally {
+      delete process.env['NINEDEPLOY_DOMAIN'];
+    }
   });
 });
 

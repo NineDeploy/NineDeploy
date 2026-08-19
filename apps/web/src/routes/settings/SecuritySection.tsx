@@ -20,6 +20,18 @@ export function SecuritySection() {
   // ── ACME (Let's Encrypt) email ───────────────────────────────────────────
   const acmeEmail = instanceSettings.data?.acmeEmail ?? null;
   const [acmeInput, setAcmeInput] = useState<string | null>(null);
+  // ── Panel Domain & Dashboard SSL ─────────────────────────────────────────
+  const panelDomain = instanceSettings.data?.panelDomain ?? null;
+  const [panelDomainInput, setPanelDomainInput] = useState<string | null>(null);
+  const setPanelDomain = useMutation({
+    mutationFn: (domain: string) => api.settings.setPanelDomain(domain),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['instance-settings'] });
+      setPanelDomainInput(null);
+      toast('Panel domain saved — Traefik routing updated', 'success');
+    },
+    onError: () => toast('Could not save the panel domain', 'error'),
+  });
   // ── Template hub registry source ────────────────────────────────────────
   const templatesSource = instanceSettings.data?.templatesSource ?? null;
   const [tplInput, setTplInput] = useState<string | null>(null);
@@ -114,6 +126,45 @@ export function SecuritySection() {
             </Button>
           </div>
           <p className="mt-1.5 text-xs text-slate-500">Applies when the server next restarts (Traefik is recreated then).</p>
+
+          <p className="mb-2 mt-6 text-sm text-slate-300">
+            NineDeploy Panel Custom Domain & SSL
+            {panelDomain ? (
+              <>
+                {' — active at '}
+                <a
+                  href={`https://${panelDomain}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-indigo-400 hover:underline font-mono"
+                >
+                  https://{panelDomain}
+                </a>
+              </>
+            ) : (
+              ' — not configured (accessing via server IP or raw port).'
+            )}
+          </p>
+          <div className="flex max-w-md items-center gap-2">
+            <input
+              type="text"
+              value={panelDomainInput ?? panelDomain ?? ''}
+              onChange={(e) => setPanelDomainInput(e.target.value)}
+              placeholder="panel.yourdomain.com"
+              className="h-9 w-full rounded-lg border border-slate-800 bg-slate-900/40 px-3 font-mono text-xs text-slate-200 outline-none focus:border-indigo-500/60"
+              aria-label="NineDeploy Panel domain"
+            />
+            <Button
+              size="sm"
+              onClick={() => setPanelDomain.mutate((panelDomainInput ?? panelDomain ?? '').trim())}
+              disabled={setPanelDomain.isPending}
+            >
+              {setPanelDomain.isPending ? 'Saving…' : 'Save'}
+            </Button>
+          </div>
+          <p className="mt-1.5 text-xs text-slate-500">
+            Routes port 80/443 directly to this dashboard with automatic Let's Encrypt SSL. Point your domain's DNS A/CNAME record to this server first.
+          </p>
 
           <p className="mb-2 mt-6 text-sm text-slate-300">
             Template hub registry source

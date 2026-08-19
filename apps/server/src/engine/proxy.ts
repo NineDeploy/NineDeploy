@@ -291,6 +291,7 @@ export async function ensureTraefik(
     const runArgs = [
       'run', '-d', '--name', TRAEFIK_CONTAINER, '--restart', 'unless-stopped',
       '--network', NETWORK,
+      '--add-host', 'host.docker.internal:host-gateway',
       '-p', '80:80', '-p', '443:443',
       '-v', `${dir()}:/etc/traefik:ro`,
     ];
@@ -426,6 +427,38 @@ export async function writeDynamicConfig(db: DB): Promise<void> {
           `      loadBalancer:\n` +
           `        servers:\n` +
           `          - url: "http://${svc.runtimeId}:${svc.port}"`,
+      );
+    }
+  }
+
+  // NineDeploy Panel Dashboard domain (Settings -> Security or NINEDEPLOY_DOMAIN)
+  let panelDomain: string | null = null;
+  try {
+    panelDomain = (await getSettingString(db, 'panel_domain', null)) ?? process.env['NINEDEPLOY_DOMAIN'] ?? null;
+  } catch {
+    panelDomain = process.env['NINEDEPLOY_DOMAIN'] ?? null;
+  }
+  if (panelDomain) {
+    const host = String(panelDomain).replace(HOST_RE, '');
+    if (host) {
+      const hostMatcher = `Host(\`${host}\`)`;
+      const tlsBlock = acmeEmail
+        ? '\n      tls:\n        certResolver: letsencrypt'
+        : '\n      tls: {}';
+
+      routers.push(
+        '    ninedeploy_panel:\n' +
+          `      rule: "${yamlDoubleQuoted(hostMatcher)}"\n` +
+          '      service: svc_ninedeploy_panel\n' +
+          '      entryPoints:\n        - websecure' +
+          tlsBlock,
+      );
+
+      svcBlocks.push(
+        '    svc_ninedeploy_panel:\n' +
+          '      loadBalancer:\n' +
+          '        servers:\n' +
+          `          - url: "http://host.docker.internal:${config.port}"`,
       );
     }
   }

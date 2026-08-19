@@ -283,7 +283,8 @@ export interface NineDeployClient {
     remove: (id: number) => Promise<void>;
   };
   settings: {
-    get: () => Promise<{ allowRegistration: boolean; acmeEmail: string | null; templatesSource: string | null; dnsProvider: string | null; hasDnsToken: boolean; wildcardApex: string | null }>;
+    get: () => Promise<{ allowRegistration: boolean; acmeEmail: string | null; templatesSource: string | null; dnsProvider: string | null; hasDnsToken: boolean; wildcardApex: string | null; panelDomain: string | null }>;
+    setPanelDomain: (domain: string) => Promise<{ ok: boolean; panelDomain: string | null }>;
     setAllowRegistration: (enabled: boolean) => Promise<{ ok: boolean; allowRegistration: boolean }>;
     setAcmeEmail: (email: string) => Promise<{ ok: boolean; acmeEmail: string | null; applied: string }>;
     setTemplatesSource: (source: string) => Promise<{ ok: boolean; templatesSource: string | null }>;
@@ -764,7 +765,9 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
     },
   },
     settings: {
-      get: () => get<{ allowRegistration: boolean; acmeEmail: string | null; templatesSource: string | null; dnsProvider: string | null; hasDnsToken: boolean; wildcardApex: string | null }>('/v1/settings'),
+      get: () => get<{ allowRegistration: boolean; acmeEmail: string | null; templatesSource: string | null; dnsProvider: string | null; hasDnsToken: boolean; wildcardApex: string | null; panelDomain: string | null }>('/v1/settings'),
+      setPanelDomain: (domain) =>
+        send<{ ok: boolean; panelDomain: string | null }>('PUT', '/v1/settings/panel-domain', { domain }),
       setAllowRegistration: (enabled) =>
         send<{ ok: boolean; allowRegistration: boolean }>('PUT', '/v1/settings/allow-registration', { enabled }),
       setAcmeEmail: (email) =>

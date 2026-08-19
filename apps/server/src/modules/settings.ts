@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { audit } from '../lib/audit.js';
 import { getSetting, getSettingString, setSetting, setSettingString } from '../lib/settings.js';
 import { invalidateTemplateCache } from '../templates/registry.js';
-import { DNS_PROVIDERS, encryptDnsToken } from '../engine/proxy.js';
+import { DNS_PROVIDERS, encryptDnsToken, writeDynamicConfig } from '../engine/proxy.js';
 import { getVaultConfig, setVaultConfig, testVault } from '../lib/vault.js';
 import { getDnsRecordsConfig, setDnsRecordsConfig, testCloudflareToken } from '../lib/cloudflare.js';
 import { config } from '../config.js';
@@ -11,6 +11,9 @@ import { ALLOW_REGISTRATION_DEFAULT } from './auth.js';
 
 const togglePatch = z.object({ enabled: z.boolean() });
 const emailPatch = z.object({ email: z.union([z.string().email().max(254), z.literal('')]) });
+const domainPatch = z.object({
+  domain: z.union([z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9.-]*[a-zA-Z0-9]$/).max(255), z.literal('')]),
+});
 // A registry source is either an https URL, an absolute filesystem path, or
 // empty (= use the bundled registry).
 const sourcePatch = z.object({ source: z.union([z.url().startsWith('https://'), z.string().regex(/^\//), z.literal('')]) });
@@ -57,7 +60,16 @@ export const settingsRoutes: FastifyPluginAsync = async (app) => {
     hasDnsToken: (await getSettingString(app.db, 'dns_token_encrypted', null)) !== null || !!process.env['NINEDEPLOY_DNS_TOKEN'],
     // Read at request time (not import time) so env-only setups report it.
     wildcardApex: (await getSettingString(app.db, 'wildcard_domain', null)) ?? (process.env['NINEDEPLOY_WILDCARD_DOMAIN'] || null),
+    panelDomain: (await getSettingString(app.db, 'panel_domain', null)) ?? process.env['NINEDEPLOY_DOMAIN'] ?? null,
   }));
+
+  app.put('/panel-domain', async (req) => {
+    const { domain } = domainPatch.parse(req.body);
+    await setSettingString(app.db, 'panel_domain', domain);
+    await writeDynamicConfig(app.db).catch(() => undefined);
+    void audit(app.db, req.user!.id, 'settings.panel_domain', domain || 'cleared');
+    return { ok: true, panelDomain: domain || null };
+  });
 
   app.put('/allow-registration', async (req) => {
     const { enabled } = togglePatch.parse(req.body);

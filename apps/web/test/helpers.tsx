@@ -96,6 +96,7 @@ export function createFakeApiModule() {
       get: vi.fn(),
       setAllowRegistration: vi.fn(),
       setAcmeEmail: vi.fn(),
+      setPanelDomain: vi.fn(),
       setTemplatesSource: vi.fn(),
       setDns: vi.fn(),
       dnsRecords: { get: vi.fn(), set: vi.fn(), test: vi.fn() },

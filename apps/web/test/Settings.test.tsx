@@ -463,6 +463,34 @@ describe('Settings', () => {
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('ACME email saved — applies on next restart', 'success'));
   });
 
+  it('shows, saves and reports errors for panel domain', async () => {
+    const user = userEvent.setup();
+    mockOf(api.settings.get).mockResolvedValue({ allowRegistration: true, panelDomain: 'panel.example.com' } as never);
+    mockOf(api.settings.setPanelDomain).mockResolvedValue({ ok: true, panelDomain: 'dash.example.com' } as never);
+    const first = renderWithProviders(<Settings />);
+    await openSection('Security');
+
+    const input = (await screen.findByLabelText('NineDeploy Panel domain')) as HTMLInputElement;
+    await waitFor(() => expect(input.value).toBe('panel.example.com'));
+    expect(screen.getByText('https://panel.example.com')).toBeInTheDocument();
+
+    await user.clear(input);
+    await user.type(input, 'dash.example.com');
+    await user.click(saveButtonNextTo('NineDeploy Panel domain'));
+    await waitFor(() => expect(api.settings.setPanelDomain).toHaveBeenCalledWith('dash.example.com'));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Panel domain saved — Traefik routing updated', 'success'));
+    first.unmount();
+
+    mockOf(api.settings.setPanelDomain).mockRejectedValue(new Error('fail') as never);
+    renderWithProviders(<Settings />);
+    await openSection('Security');
+    const input2 = (await screen.findByLabelText('NineDeploy Panel domain')) as HTMLInputElement;
+    await user.clear(input2);
+    await user.type(input2, 'fail.com');
+    await user.click(saveButtonNextTo('NineDeploy Panel domain'));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Could not save the panel domain', 'error'));
+  });
+
   it('shows and saves the template registry source', async () => {
     const user = userEvent.setup();
     mockOf(api.settings.get).mockResolvedValue({ allowRegistration: true, acmeEmail: null, templatesSource: null } as never);

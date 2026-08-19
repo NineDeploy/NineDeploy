@@ -754,6 +754,11 @@ describe('createClient', () => {
       expect(last(calls).url).toBe('/v1/settings/allow-registration');
       expect(last(calls).init.method).toBe('PUT');
       expect(JSON.parse(last(calls).init.body ?? '{}')).toEqual({ enabled: false });
+
+      await client.settings.setPanelDomain('panel.example.com');
+      expect(last(calls).url).toBe('/v1/settings/panel-domain');
+      expect(last(calls).init.method).toBe('PUT');
+      expect(JSON.parse(last(calls).init.body ?? '{}')).toEqual({ domain: 'panel.example.com' });
     });
   });
 
