@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **Fail-Closed Traefik Bootstrap**: Docker network creation, Traefik image pulls, container startup and network attachment are now mandatory verified installation gates; NineDeploy no longer reports a healthy install while domain routing is unavailable.
-- **Docker 29 Snapshot Recovery**: Installer and runtime image pulls recognize containerd extraction snapshot races, retry with bounded backoff, and use only safe Docker-managed garbage collection; the installer may restart Docker once only when no containers are running.
+- **Docker 29 Snapshot Recovery**: Installer and runtime image pulls recognize containerd extraction snapshot races, retry with bounded backoff, and use only safe Docker-managed garbage collection; the installer may restart Docker once when every running container has a verified `always`/`unless-stopped` recovery policy, then confirms they returned.
 - **Permanent systemd Watchdog Migration**: The installer now installs and verifies an explicit `Type=simple` / `WatchdogSec=0` runtime policy, repairing stale `Type=notify` installations that could SIGTERM long Docker pulls with exit code 143.
 - **Absolute Data Directory Rendering**: Relative `.env` values such as `NINEDEPLOY_DATA_DIR=./.data` are resolved against the installation directory before being written to systemd `ReadWritePaths`.
 - **Drop-in Ordering Safety**: The installer-owned watchdog safety policy sorts after conventional `override.conf` files and replaces the short-lived numeric-prefix migration file without deleting administrator configuration.

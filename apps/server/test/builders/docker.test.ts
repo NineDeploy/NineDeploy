@@ -125,7 +125,7 @@ describe('dockerBuilder.buildAndRun', () => {
     const runtime = await dockerBuilder.buildAndRun(ctx as never);
 
     const log = ctx.log;
-    expect(h.run).toHaveBeenCalledWith('docker', ['pull', 'nginx:1.25'], {}, log);
+    expect(h.run).toHaveBeenCalledWith('docker', ['pull', 'nginx:1.25'], {}, expect.any(Function));
     // Pull failed but a local image exists → tolerated with a clear warning.
     expect(log).toHaveBeenCalledWith(expect.stringContaining('pull failed, using local image'));
     const runArgs = h.run.mock.calls.at(-1)![1] as unknown[];

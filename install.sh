@@ -167,7 +167,8 @@ fi
 # unpack operations can leave transient extraction metadata which reports
 # AlreadyExists / missing-parent errors on the next pull. Retry only this known
 # class, ask Docker to GC unused dangling images, and restart the daemon only
-# when no containers are running. Never mutate /var/lib/containerd directly.
+# when every running container has a restart policy that lets us verify and
+# recover it afterward. Never mutate /var/lib/containerd directly.
 pull_required_image() {
   IMAGE="$1"
   SNAPSHOT_FAILURE=false
@@ -186,13 +187,40 @@ pull_required_image() {
     sleep $((ATTEMPT * 2))
   done
 
-  if [ "$SNAPSHOT_FAILURE" = true ] && [ -z "$(docker ps -q 2>/dev/null)" ] && command -v systemctl &>/dev/null; then
-    warn "Snapshot metadata is still stale and no containers are running; restarting Docker once…"
+  if [ "$SNAPSHOT_FAILURE" = true ] && command -v systemctl &>/dev/null; then
+    RUNNING_IDS=$(docker ps -q 2>/dev/null || true)
+    RESTART_SAFE=true
+    BLOCKING_CONTAINERS=""
+    for CONTAINER_ID in $RUNNING_IDS; do
+      RESTART_POLICY=$(docker inspect "$CONTAINER_ID" --format '{{.HostConfig.RestartPolicy.Name}}' 2>/dev/null || echo unknown)
+      case "$RESTART_POLICY" in
+        always|unless-stopped) ;;
+        *)
+          RESTART_SAFE=false
+          CONTAINER_NAME=$(docker inspect "$CONTAINER_ID" --format '{{.Name}}' 2>/dev/null | sed 's|^/||' || echo "$CONTAINER_ID")
+          BLOCKING_CONTAINERS="${BLOCKING_CONTAINERS} ${CONTAINER_NAME}(${RESTART_POLICY})"
+          ;;
+      esac
+    done
+
+    if [ "$RESTART_SAFE" != true ]; then
+      warn "Docker daemon restart was not attempted because these running containers lack a safe restart policy:${BLOCKING_CONTAINERS}"
+      return 1
+    fi
+
+    RUNNING_COUNT=$(printf '%s\n' "$RUNNING_IDS" | awk 'NF {n++} END {print n+0}')
+    warn "Snapshot metadata is still stale; restarting Docker once (${RUNNING_COUNT} restart-managed containers will be verified)…"
     sudo systemctl restart docker || return 1
     for WAIT_STEP in $(seq 1 30); do
       docker info >/dev/null 2>&1 && break
       sleep 1
       [ "$WAIT_STEP" = "30" ] && return 1
+    done
+    for CONTAINER_ID in $RUNNING_IDS; do
+      if [ "$(docker inspect "$CONTAINER_ID" --format '{{.State.Running}}' 2>/dev/null || true)" != "true" ]; then
+        warn "Restart-managed container $CONTAINER_ID did not return automatically; starting it explicitly…"
+        docker start "$CONTAINER_ID" >/dev/null || return 1
+      fi
     done
     docker pull "$IMAGE"
     return $?

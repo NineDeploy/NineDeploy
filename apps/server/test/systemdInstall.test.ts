@@ -27,4 +27,15 @@ describe('bare-metal systemd installation policy', () => {
     expect(rootFile('apps/server/src/server.ts')).not.toContain('sdNotify');
     expect(rootFile('apps/server/src/agent.ts')).not.toContain('sdNotify');
   });
+
+  it('only restarts Docker for persistent snapshot failures when running containers are restart-managed', () => {
+    const installer = rootFile('install.sh');
+
+    expect(installer).toContain("grep -Eqi 'extraction snapshot|target snapshot .*already exists|parent snapshot .*does not exist'");
+    expect(installer).toContain('always|unless-stopped)');
+    expect(installer).toContain('Docker daemon restart was not attempted because these running containers lack a safe restart policy');
+    expect(installer).toContain('sudo systemctl restart docker');
+    expect(installer).toContain("'{{.State.Running}}'");
+    expect(installer).toContain('docker start "$CONTAINER_ID"');
+  });
 });
