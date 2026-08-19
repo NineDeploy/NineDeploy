@@ -1,12 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { isTransientSnapshotFailure, pullDockerImage } from '../../src/lib/dockerPull.js';
+import { isTransientSnapshotFailure, normalizeContainerdImageRef, pullDockerImage } from '../../src/lib/dockerPull.js';
 
 const h = vi.hoisted(() => ({
   run: vi.fn(),
+  capture: vi.fn(),
   sleep: vi.fn(async () => undefined),
 }));
 
-vi.mock('../../src/lib/exec.js', () => ({ run: h.run, sleep: h.sleep }));
+vi.mock('../../src/lib/exec.js', () => ({ capture: h.capture, run: h.run, sleep: h.sleep }));
 
 describe('pullDockerImage', () => {
   beforeEach(() => vi.clearAllMocks());
@@ -17,10 +18,16 @@ describe('pullDockerImage', () => {
     expect(isTransientSnapshotFailure(['unauthorized: authentication required'])).toBe(false);
   });
 
+  it('normalizes Docker Hub references without corrupting private registry ports', () => {
+    expect(normalizeContainerdImageRef('gitea/gitea:latest')).toBe('docker.io/gitea/gitea:latest');
+    expect(normalizeContainerdImageRef('postgres:16')).toBe('docker.io/library/postgres:16');
+    expect(normalizeContainerdImageRef('registry.example:5000/acme/app:v1')).toBe('registry.example:5000/acme/app:v1');
+  });
+
   it('retries a transient snapshot failure and preserves streamed logs', async () => {
     h.run
       .mockImplementationOnce(async (_cmd, _args, _opts, sink) => {
-        sink('unable to prepare extraction snapshot: target snapshot already exists');
+        sink('unable to prepare extraction snapshot: parent snapshot sha256:abc does not exist');
         throw new Error('docker pull exited 1');
       })
       .mockResolvedValueOnce(undefined);
@@ -45,13 +52,69 @@ describe('pullDockerImage', () => {
   });
 
   it('stops after the bounded attempt count', async () => {
-    h.run.mockImplementation(async (_cmd, _args, _opts, sink) => {
-      sink('failed to prepare extraction snapshot: parent snapshot sha256:x does not exist');
-      throw new Error('still broken');
+    h.run.mockImplementation(async (cmd, args, _opts, sink) => {
+      if (cmd === 'docker' && args[0] === 'pull') {
+        sink('failed to prepare extraction snapshot: parent snapshot sha256:x does not exist');
+        throw new Error('still broken');
+      }
+      throw new Error('native recovery unavailable');
     });
 
     await expect(pullDockerImage('n8nio/n8n', vi.fn())).rejects.toThrow('still broken');
-    expect(h.run).toHaveBeenCalledTimes(3);
+    expect(h.run).toHaveBeenCalledTimes(4);
     expect(h.sleep).toHaveBeenCalledTimes(2);
+  });
+
+  it('recovers a persistently broken overlayfs pull through a flattened native snapshot', async () => {
+    h.run.mockImplementation(async (cmd, args, _opts, sink) => {
+      if (cmd === 'docker' && args[0] === 'pull') {
+        sink('unable to prepare extraction snapshot: target snapshot "sha256:abc" already exists');
+        throw new Error('docker pull exited 1');
+      }
+    });
+    h.capture
+      .mockResolvedValueOnce(JSON.stringify({ Target: { Digest: 'sha256:manifest' } }))
+      .mockResolvedValueOnce(JSON.stringify({ config: { digest: 'sha256:config' } }))
+      .mockResolvedValueOnce(JSON.stringify({
+        config: {
+          Env: ['USER=git'],
+          Entrypoint: ['/usr/bin/entrypoint'],
+          Cmd: ['/bin/s6-svscan', '/etc/s6'],
+          WorkingDir: '/data',
+          User: '1000',
+          ExposedPorts: { '3000/tcp': {} },
+          Volumes: { '/data': {} },
+          Labels: { 'org.opencontainers.image.title': 'Gitea' },
+          Healthcheck: { Test: ['CMD', 'wget', '-qO-', 'http://localhost:3000/'], Interval: 30_000_000_000 },
+        },
+      }))
+      .mockResolvedValueOnce('sha256:recovered');
+    const log = vi.fn();
+
+    await pullDockerImage('gitea/gitea:latest', log, 1);
+
+    expect(h.run).toHaveBeenCalledWith(
+      'ctr',
+      ['--namespace', 'moby', 'images', 'pull', '--snapshotter', 'native', 'docker.io/gitea/gitea:latest'],
+      expect.any(Object),
+      log,
+    );
+    expect(h.run).toHaveBeenCalledWith(
+      'docker',
+      expect.arrayContaining([
+        'image', 'import',
+        '--platform=linux/amd64',
+        '--change', 'ENV USER="git"',
+        '--change', 'ENTRYPOINT ["/usr/bin/entrypoint"]',
+        '--change', 'EXPOSE 3000/tcp',
+        '--change', 'VOLUME ["/data"]',
+        '--change', 'HEALTHCHECK --interval=30000000000ns CMD ["wget","-qO-","http://localhost:3000/"]',
+        'gitea/gitea:latest',
+      ]),
+      expect.any(Object),
+      log,
+    );
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('existing Docker state was preserved'));
+    expect(h.sleep).not.toHaveBeenCalled();
   });
 });

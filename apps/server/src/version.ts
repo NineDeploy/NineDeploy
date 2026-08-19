@@ -1,4 +1,4 @@
-export const VERSION = '0.2.14';
+export const VERSION = '0.2.15';
 
 export interface ChangelogEntry {
   version: string;
@@ -8,6 +8,16 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.2.15',
+    date: '2026-08-20',
+    title: 'Persistent Docker Snapshot Recovery',
+    changes: [
+      'Persistent Docker 29 and containerd overlayfs snapshot collisions recover through the isolated native snapshotter',
+      'Recovered images retain their runtime metadata, filesystem ownership, capabilities, ACLs, and extended attributes',
+      'Snapshot recovery never deletes or hides existing Docker images, containers, or volumes',
+    ],
+  },
   {
     version: '0.2.14',
     date: '2026-08-20',
