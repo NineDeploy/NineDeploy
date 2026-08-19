@@ -48,24 +48,28 @@ export async function doctorAction(client: NineDeployClient, opts: DoctorOptions
   /* v8 ignore stop */
   console.log();
 
-  // 2. Docker & Storage Engine Diagnostics
-  console.log(`  ${c.bold('2. Docker Daemon:')}`);
+  // 2. Docker & Process Engine Diagnostics
+  console.log(`  ${c.bold('2. Docker & Process Daemon:')}`);
   const dockerOk = await isDockerAvailable();
   if (dockerOk) {
     kv('Docker CLI', c.green('available'));
     const container = await getContainerState('ninedeploy');
-    kv('Server Container', container.exists ? (container.running ? c.green('running') : c.yellow('stopped')) : c.gray('not created'));
-    if (container.exists && !container.running) {
-      if (opts.fix) {
-        try {
-          await startServerContainer({});
-          fixes.push('Started stopped ninedeploy Docker container.');
-        } catch (err) {
-          prescriptions.push(`Start server container: ninedeploy server start (${String(err)})`);
+    if (container.exists) {
+      kv('Docker Container', container.running ? c.green('running') : c.yellow('stopped'));
+      if (!container.running) {
+        if (opts.fix) {
+          try {
+            await startServerContainer({});
+            fixes.push('Started stopped ninedeploy Docker container.');
+          } catch (err) {
+            prescriptions.push(`Start server container: ninedeploy server start (${String(err)})`);
+          }
+        } else {
+          prescriptions.push('Start server container: ninedeploy server start');
         }
-      } else {
-        prescriptions.push('Start server container: ninedeploy server start');
       }
+    } else {
+      kv('Docker Container', c.gray('not in use (baremetal / systemd mode)'));
     }
   } else {
     kv('Docker CLI', c.yellow('not found or daemon not running'));
@@ -76,11 +80,14 @@ export async function doctorAction(client: NineDeployClient, opts: DoctorOptions
 
   // 3. Local Storage & Database Integrity
   console.log(`  ${c.bold('3. Local Storage & Database:')}`);
-  const defaultDataDir = path.resolve(process.cwd(), '.data');
-  const dbFile = path.join(defaultDataDir, 'ninedeploy.db');
   /* v8 ignore start */
+  const optDataDir = '/opt/ninedeploy/.data';
+  const defaultDataDir = existsSync(path.resolve(process.cwd(), '.data'))
+    ? path.resolve(process.cwd(), '.data')
+    : (existsSync(optDataDir) ? optDataDir : path.resolve(process.cwd(), '.data'));
+  const dbFile = path.join(defaultDataDir, 'ninedeploy.db');
   if (existsSync(defaultDataDir)) {
-    kv('.data Directory', c.green('exists'));
+    kv('.data Directory', c.green(`exists (${defaultDataDir})`));
     if (existsSync(dbFile)) {
       try {
         const stats = statSync(dbFile);
@@ -92,7 +99,7 @@ export async function doctorAction(client: NineDeployClient, opts: DoctorOptions
       kv('SQLite Database', c.gray('fresh (will be created on first start)'));
     }
   } else {
-    kv('.data Directory', c.gray('not present in cwd'));
+    kv('.data Directory', c.gray('not present in cwd or /opt/ninedeploy'));
     if (opts.fix) {
       try {
         mkdirSync(defaultDataDir, { recursive: true });

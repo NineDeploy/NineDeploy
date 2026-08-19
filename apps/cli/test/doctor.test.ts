@@ -43,7 +43,7 @@ describe('doctorAction', () => {
     await doctorAction(mockClient);
 
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('1. Local Environment'));
-    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('2. Docker Daemon'));
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('2. Docker'));
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('running'));
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('connected'));
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('admin@nine.io (admin)'));
@@ -75,7 +75,7 @@ describe('doctorAction', () => {
     // Test not created container state
     vi.mocked(serverRunner.getContainerState).mockResolvedValueOnce({ exists: false, running: false, status: 'not found' });
     await doctorAction(mockClient);
-    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('not created'));
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('not in use (baremetal / systemd mode)'));
   });
 
   it('handles unreachable server and invalid token with issues summary and prescriptions', async () => {
