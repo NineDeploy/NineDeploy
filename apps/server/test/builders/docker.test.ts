@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { dockerBuilder } from '../../src/engine/builders/docker.js';
+import { containerExposedTcpPorts, dockerBuilder } from '../../src/engine/builders/docker.js';
 
 const h = vi.hoisted(() => {
   const run = vi.fn(async (_cmd: string, _args: unknown[], _opts: unknown, sink?: (line: string) => void) => {
@@ -445,6 +445,25 @@ describe('dockerBuilder.isHealthy', () => {
     expect(siblingCall![1].join(' ')).toContain('nc -w 3 172.17.0.2 3000');
   });
 
+  it('repairs an incorrect configured port from image exposed-port metadata', async () => {
+    fetchMock.mockRejectedValue(new Error('unreachable'));
+    h.capture.mockImplementation(async (_cmd: string, args: string[]) =>
+      args[3]?.includes('.Config.ExposedPorts')
+        ? '{"5678/tcp":{}}'
+        : 'running|172.18.0.4');
+    h.run.mockImplementation(async (_cmd: string, args: string[]) => {
+      if (args.at(-1) === '80') throw new Error('connection refused');
+    });
+    const runtime = { runtimeId: 'n8n-1', port: 80, healthPath: '/' };
+    const log = vi.fn();
+
+    await expect(dockerBuilder.isHealthy(runtime, 1_500, 0, log)).resolves.toBe(true);
+
+    expect(runtime.port).toBe(5678);
+    expect(log).toHaveBeenCalledWith('detected healthy image port 5678/tcp; replacing incorrect configured port 80');
+    expect(h.run.mock.calls.some((call) => call[1].at(-1) === '5678')).toBe(true);
+  });
+
   it('logs the sibling probe failure reason and formats non-Error rejections', async () => {
     fetchMock.mockRejectedValue(new Error('unreachable'));
     const log = vi.fn();
@@ -515,6 +534,19 @@ describe('dockerBuilder.isHealthy', () => {
     await expect(
       dockerBuilder.isHealthy({ runtimeId: 'r', port: 3000, healthPath: '/' }, 20),
     ).resolves.toBe(false);
+  });
+});
+
+describe('containerExposedTcpPorts', () => {
+  it('parses, deduplicates and sorts valid TCP ports', async () => {
+    h.capture.mockResolvedValue('{"8080/tcp":{},"53/udp":{},"443/tcp":{}}');
+    await expect(containerExposedTcpPorts('app')).resolves.toEqual([443, 8080]);
+  });
+
+  it('returns an empty list for absent or malformed metadata', async () => {
+    h.capture.mockResolvedValueOnce('null').mockResolvedValueOnce('not-json');
+    await expect(containerExposedTcpPorts('app')).resolves.toEqual([]);
+    await expect(containerExposedTcpPorts('app')).resolves.toEqual([]);
   });
 });
 

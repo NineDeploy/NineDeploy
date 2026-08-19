@@ -272,6 +272,21 @@ describe('runDeployment', () => {
     expect(db.query.domains.findFirst).not.toHaveBeenCalled();
   });
 
+  it('persists a runtime port repaired during the healthcheck', async () => {
+    const { db, updates } = makeDb();
+    baseSetup(db, { image: 'n8nio/n8n', port: 80 });
+    h.builder.buildAndRun.mockResolvedValue({ runtimeId: 'n8n-1', port: 80, healthPath: '/' });
+    h.builder.isHealthy.mockImplementation(async (runtime: { port: number | null }) => {
+      runtime.port = 5678;
+      return true;
+    });
+
+    await runDeployment(db as never, 1);
+
+    const svcUpdate = updates.find((u) => u.table === services && u.values.status === 'running');
+    expect(svcUpdate?.values).toMatchObject({ runtimeId: 'n8n-1', port: 5678 });
+  });
+
   it('resolves creds from the source row and persists the checked-out sha', async () => {
     const { db, updates } = makeDb();
     baseSetup(db, { sourceId: 7 });

@@ -54,6 +54,27 @@ export async function containerIp(name: string): Promise<string | null> {
   }
 }
 
+/** TCP ports declared by the image/container metadata (for safe port recovery). */
+export async function containerExposedTcpPorts(name: string): Promise<number[]> {
+  try {
+    const raw = await capture('docker', [
+      'inspect', name,
+      '--format', '{{json .Config.ExposedPorts}}',
+    ]);
+    const exposed = JSON.parse(raw.trim()) as Record<string, unknown> | null;
+    if (!exposed) return [];
+    return [...new Set(
+      Object.keys(exposed)
+        .map((key) => /^(\d+)\/tcp$/.exec(key)?.[1])
+        .filter((port): port is string => !!port)
+        .map(Number)
+        .filter((port) => port >= 1 && port <= 65535),
+    )].sort((a, b) => a - b);
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Build a source dir into a Docker image with Nixpacks — the buildpack path
  * for repos that ship no Dockerfile (e.g. a plain Next.js app). install/build/
@@ -260,6 +281,7 @@ export const dockerBuilder: Builder = {
     // name-based DNS works everywhere the app itself will be reached.
     const start = Date.now();
     let usedSiblingProbe = false;
+    let fallbackPorts: number[] | null = null;
     while (Date.now() < deadline) {
       // Resolve the container's network address fresh on every attempt: null
       // when it is not running (a process that exits right after `docker run -d`
@@ -310,6 +332,26 @@ export const dockerBuilder: Builder = {
           // Surface WHY the sibling probe failed — healthcheck debugging
           // otherwise degrades to a bare "did not become ready".
           log(`sibling probe failed: ${probeErr instanceof Error ? probeErr.message : String(probeErr)}`);
+        }
+        // Image deploys commonly advertise their real internal port (for
+        // example n8n exposes 5678/tcp). If the stored port is wrong, probe
+        // those declared alternatives from the same Docker network. A
+        // successful alternative becomes the runtime port and is persisted by
+        // the pipeline, so Traefik and future deploys use the repaired value.
+        fallbackPorts ??= (await containerExposedTcpPorts(runtime.runtimeId))
+          .filter((port) => port !== runtime.port);
+        for (const candidate of fallbackPorts) {
+          try {
+            await run('docker', [
+              'run', '--rm', '--network', NETWORK,
+              'busybox:1.36', 'nc', '-w', '3', ip, String(candidate),
+            ], {}, () => undefined);
+            log(`detected healthy image port ${candidate}/tcp; replacing incorrect configured port ${runtime.port}`);
+            runtime.port = candidate;
+            return true;
+          } catch {
+            /* candidate is not accepting connections yet — retry next loop */
+          }
         }
         await sleep(3000);
       } else {

@@ -1,4 +1,4 @@
-export const VERSION = '0.2.11';
+export const VERSION = '0.2.12';
 
 export interface ChangelogEntry {
   version: string;
@@ -9,14 +9,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
-    version: '0.2.11',
+    version: '0.2.12',
     date: '2026-08-20',
-    title: 'Live Let’s Encrypt Configuration',
+    title: 'Automatic Docker Image Port Recovery',
     changes: [
-      'Saving an ACME account email now recreates Traefik immediately and enables real Let’s Encrypt certificates without a server restart',
-      'DNS-01 provider and token changes now apply immediately for wildcard certificate issuance',
-      'Traefik containers carry a configuration fingerprint so stale static ACME settings and interrupted updates self-heal safely',
-      'Interactive installs collect the required ACME account email and unattended installs explicitly report when automatic HTTPS is disabled',
+      'Failed Docker healthchecks now probe TCP ports declared by image metadata and recover an incorrect configured internal port automatically',
+      'A recovered image port is persisted on the service so Traefik and future deployments use the corrected value',
+      'n8n image deployments configured with port 80 automatically recover to the image-declared 5678/tcp port',
     ],
   },
   {
