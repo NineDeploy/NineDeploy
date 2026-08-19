@@ -64,10 +64,17 @@ if command -v node &>/dev/null; then
   if [ "$NODE_MAJOR" -gt 22 ] || { [ "$NODE_MAJOR" -eq 22 ] && [ "$NODE_MINOR" -ge 13 ]; }; then
     ok "Node.js $(node -v)"
   else
-    fail "Node.js $(node -v) — need ≥ 22.13 (pnpm 11 requires node:sqlite). Upgrade: https://nodejs.org/"
+    warn "Node.js $(node -v) is older than recommended (≥ 22.13). Upgrading via NodeSource 22.x…"
+    if command -v apt-get &>/dev/null; then
+      curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+      sudo apt-get install -y nodejs
+      ok "Upgraded Node.js to $(node -v)"
+    else
+      fail "Node.js $(node -v) — need ≥ 22.13. Upgrade: https://nodejs.org/"
+    fi
   fi
 else
-  warn "Node.js not found. Installing via NodeSource…"
+  warn "Node.js not found. Installing via NodeSource 22.x…"
   if command -v apt-get &>/dev/null; then
     curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
     sudo apt-get install -y nodejs
@@ -109,11 +116,18 @@ if ! docker info &>/dev/null 2>&1; then
     sudo systemctl start docker || true
   fi
 fi
-if ! docker info &>/dev/null 2>&1; then
+if [ "$(uname -s)" = "Linux" ] && [ "$(id -u)" -ne 0 ]; then
+  CURRENT_USER="$(id -un)"
+  if ! groups "$CURRENT_USER" 2>/dev/null | grep -q '\bdocker\b'; then
+    info "Adding user $CURRENT_USER to docker group…"
+    sudo usermod -aG docker "$CURRENT_USER" 2>/dev/null || true
+  fi
+fi
+if ! docker info &>/dev/null 2>&1 && ! sudo docker info &>/dev/null 2>&1; then
   warn "Docker daemon not running. Start it and re-run."
   fail "Docker daemon must be running."
 fi
-ok "Docker $(docker --version | awk '{print $3}' | tr -d ',')"
+ok "Docker $(docker --version 2>/dev/null | awk '{print $3}' | tr -d ',' || echo 'installed')"
 
 # Swap space (Linux)
 # Low-memory VPS nodes (<= 4GB RAM) without swap risk OOM-kills when pulling

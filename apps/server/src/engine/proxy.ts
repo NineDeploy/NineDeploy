@@ -450,7 +450,9 @@ export async function writeDynamicConfig(db: DB): Promise<void> {
         '    ninedeploy_panel:\n' +
           `      rule: "${yamlDoubleQuoted(hostMatcher)}"\n` +
           '      service: svc_ninedeploy_panel\n' +
-          '      entryPoints:\n        - websecure' +
+          '      entryPoints:\n' +
+          '        - websecure\n' +
+          '        - web' +
           tlsBlock,
       );
 

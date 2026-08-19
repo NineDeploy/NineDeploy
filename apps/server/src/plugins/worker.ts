@@ -130,7 +130,11 @@ export default fp(
       } catch (err) {
         fastify.log.error({ err }, 'worker tick failed');
       } finally {
-        if (running) timers.push(setTimeout(() => void tick(), POLL_MS));
+        if (running) {
+          const t = setTimeout(() => void tick(), POLL_MS);
+          t.unref?.();
+          timers.push(t);
+        }
       }
     };
 
@@ -156,7 +160,9 @@ export default fp(
 
     // One loop per concurrency slot; all loops share the same claim guard.
     for (let slot = 0; slot < config.deployConcurrency; slot++) {
-      timers.push(setTimeout(() => void tick(), POLL_MS + slot * 100));
+      const t = setTimeout(() => void tick(), POLL_MS + slot * 100);
+      t.unref?.();
+      timers.push(t);
     }
     fastify.log.info({ concurrency: config.deployConcurrency }, 'deploy worker started');
   },

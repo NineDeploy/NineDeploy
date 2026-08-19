@@ -11,7 +11,7 @@ import { runJob } from '../lib/jobRunner.js';
 /** Validate a 5-field cron expression up front (croner is the runtime parser). */
 function assertCron(expr: string): void {
   try {
-    new Cron(expr, { paused: true });
+    new Cron(expr, { paused: true, unref: true });
   } catch {
     throw badRequest('Invalid cron expression (expected 5 fields: minute hour day month weekday)');
   }

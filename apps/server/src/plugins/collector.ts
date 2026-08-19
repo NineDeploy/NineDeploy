@@ -93,7 +93,10 @@ export default fp(
       } catch (err) {
         fastify.log.error({ err }, 'metrics collection failed');
       } finally {
-        if (running) timer = setTimeout(() => void tick(), INTERVAL_MS);
+        if (running) {
+          timer = setTimeout(() => void tick(), INTERVAL_MS);
+          timer.unref?.();
+        }
       }
     };
 
@@ -104,6 +107,7 @@ export default fp(
     });
 
     timer = setTimeout(() => void tick(), 5000);
+    timer.unref?.();
     fastify.log.info('metrics collector started');
   },
   { name: 'ninedeploy-collector' },

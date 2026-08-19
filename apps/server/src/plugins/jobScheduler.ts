@@ -26,7 +26,7 @@ export default fp(
       }
       for (const job of jobs) {
         try {
-          const cron = new Cron(job.cron, { name: `job-${job.id}` }, () => {
+          const cron = new Cron(job.cron, { name: `job-${job.id}`, unref: true }, () => {
             void runJob(db, job.id).catch((err) =>
               fastify.log.error({ err, jobId: job.id }, 'scheduled job failed'),
             );

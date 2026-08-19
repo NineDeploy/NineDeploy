@@ -17,6 +17,7 @@ Requires=docker.service
 [Service]
 User=@USER@
 Group=@GROUP@
+SupplementaryGroups=docker
 WorkingDirectory=@INSTALL_DIR@
 EnvironmentFile=@INSTALL_DIR@/.env
 ExecStart=@NODE@ @INSTALL_DIR@/apps/server/dist/server.js
@@ -25,10 +26,10 @@ RestartSec=5
 KillMode=mixed
 TimeoutStopSec=30
 
-# Hardening
+# Hardening & Permissions
 NoNewPrivileges=true
 ProtectSystem=full
-ReadWritePaths=@INSTALL_DIR@ /tmp
+ReadWritePaths=@INSTALL_DIR@ @DATA_DIR@ /tmp /var/run/docker.sock
 PrivateTmp=true
 
 Type=simple
