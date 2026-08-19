@@ -32,6 +32,9 @@ describe('bare-metal systemd installation policy', () => {
     const installer = rootFile('install.sh');
 
     expect(installer).toContain('traefik_image_usable');
+    expect(installer).toContain('CONTAINERD_SNAPSHOT_DIR="$CONTAINERD_OVERLAY_ROOT/snapshots"');
+    expect(installer).toContain('sudo install -d -o root -g root -m 0700 "$CONTAINERD_SNAPSHOT_DIR"');
+    expect(installer).toContain('Containerd overlayfs snapshot directory restored');
     expect(installer).toContain('Existing Traefik v3 image verified; skipping registry pull');
     expect(installer).toContain('PULL_OUTPUT=$(docker pull traefik:3 2>&1)');
     expect(installer).toContain('switching immediately to the verified layer-free Traefik image');

@@ -163,6 +163,20 @@ if ! docker network inspect ninedeploy >/dev/null 2>&1; then
   docker network create ninedeploy >/dev/null || fail "Could not create the required Docker network 'ninedeploy'"
 fi
 
+# A healthy containerd overlayfs store always has this directory alongside
+# metadata.db. Some interrupted Docker 29 cleanups leave the metadata database
+# behind but remove the physical snapshot root, making every pull/import fail.
+# Restore only the missing directory; never remove or rewrite snapshot data.
+CONTAINERD_OVERLAY_ROOT="/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs"
+CONTAINERD_SNAPSHOT_DIR="$CONTAINERD_OVERLAY_ROOT/snapshots"
+DOCKER_STORAGE_DRIVER=$(docker info --format '{{.Driver}}' 2>/dev/null || true)
+if [ "$DOCKER_STORAGE_DRIVER" = "overlayfs" ] && [ ! -d "$CONTAINERD_SNAPSHOT_DIR" ]; then
+  warn "Docker's containerd overlayfs snapshot directory is missing; restoring the required host directory…"
+  sudo install -d -o root -g root -m 0700 "$CONTAINERD_SNAPSHOT_DIR" || fail "Could not restore $CONTAINERD_SNAPSHOT_DIR"
+  [ -d "$CONTAINERD_SNAPSHOT_DIR" ] || fail "Containerd snapshot directory is still unavailable after repair"
+  ok "Containerd overlayfs snapshot directory restored"
+fi
+
 # Docker 29's containerd store can retain a broken Alpine snapshot forever.
 # Do not loop, prune, restart Docker, or mutate containerd metadata here. A
 # single registry attempt is enough; the verified binary fallback below has no
