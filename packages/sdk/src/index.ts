@@ -303,6 +303,20 @@ export interface NineDeployClient {
       test: () => Promise<{ ok: boolean; status?: string; error?: string }>;
     };
   };
+  firewall: {
+    status: () => Promise<{
+      installed: boolean;
+      active: boolean;
+      supported: boolean;
+      rules: Array<{ id: number; to: string; action: string; from: string; comment?: string }>;
+      defaultIncoming: string;
+      defaultOutgoing: string;
+    }>;
+    toggle: (enabled: boolean) => Promise<{ ok: boolean; status: any }>;
+    addRule: (input: { port: number | string; proto?: 'tcp' | 'udp' | 'any'; action?: 'allow' | 'deny' | 'limit'; from?: string; comment?: string }) => Promise<{ ok: boolean; status: any }>;
+    deleteRule: (id: number | string) => Promise<{ ok: boolean; status: any }>;
+    applyRecommended: () => Promise<{ ok: boolean; status: any }>;
+  };
   users: {
     list: () => Promise<PublicUser[]>;
     /** Admin-only: create a user directly (no registration flow needed). */
@@ -787,6 +801,13 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
         set: (input) => send<{ ok: boolean; enabled: boolean }>('PUT', '/v1/settings/dns-records', input),
         test: () => send<{ ok: boolean; status?: string; error?: string }>('POST', '/v1/settings/dns-records/test'),
       },
+    },
+    firewall: {
+      status: () => get<any>('/v1/firewall'),
+      toggle: (enabled) => send<any>('POST', '/v1/firewall/toggle', { enabled }),
+      addRule: (input) => send<any>('POST', '/v1/firewall/rules', input),
+      deleteRule: (id) => request(`/v1/firewall/rules/${id}`, { method: 'DELETE' }),
+      applyRecommended: () => send<any>('POST', '/v1/firewall/recommended'),
     },
     users: {
       list: () => get<PublicUser[]>('/v1/users'),

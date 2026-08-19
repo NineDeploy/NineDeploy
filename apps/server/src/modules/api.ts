@@ -39,6 +39,7 @@ import { containerRoutes } from './containers.js';
 import { logDrainRoutes } from './logDrains.js';
 import { housekeepingRoutes } from './housekeeping.js';
 import { workspaceRoutes } from './workspaces.js';
+import { firewallRoutes } from './firewall.js';
 
 /** All versioned API routes, mounted under /v1. */
 export const apiRoutes: FastifyPluginAsync = async (app) => {
@@ -74,6 +75,7 @@ export const apiRoutes: FastifyPluginAsync = async (app) => {
   await app.register(systemRoutes, { prefix: '/system' });
   await app.register(sourcesRoutes, { prefix: '/sources' });
   await app.register(settingsRoutes, { prefix: '/settings' });
+  await app.register(firewallRoutes, { prefix: '/firewall' });
   await app.register(configCenterRoutes, { prefix: '/config' });
   await app.register(pluginRoutes, { prefix: '/plugins' });
   await app.register(menuRoutes, { prefix: '/menus' });

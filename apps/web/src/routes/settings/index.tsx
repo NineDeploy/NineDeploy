@@ -28,6 +28,7 @@ import { PluginsSection } from './PluginsSection.js';
 import { LogDrainsSection } from './LogDrainsSection.js';
 import { StorageSection } from './StorageSection.js';
 import { SsoSection } from './SsoSection.js';
+import { FirewallSection } from './FirewallSection.js';
 import { Input, PageHeader, cn } from '../../components/ui.js';
 
 type SectionId =
@@ -38,6 +39,7 @@ type SectionId =
   | 'integrations'
   | 'log-drains'
   | 'storage'
+  | 'firewall'
   | 'config'
   | 'plugins'
   | 'system'
@@ -77,6 +79,7 @@ const SETTING_GROUPS: SectionCategory[] = [
   {
     category: 'DevOps & Engine',
     items: [
+      { id: 'firewall', label: 'Firewall (UFW)', desc: 'Host ports & inbound packet filter', icon: <Shield size={16} /> },
       { id: 'storage', label: 'Storage & Prune', desc: 'Disks, Docker prune & logs', icon: <HardDrive size={16} /> },
       { id: 'config', label: 'Config Center', desc: 'Global key-value configuration', icon: <Sliders size={16} /> },
       { id: 'plugins', label: 'Plugins', desc: 'Community plugins & extensions', icon: <Puzzle size={16} /> },
@@ -204,6 +207,7 @@ export function Settings() {
             {section === 'integrations' && <IntegrationsSection />}
             {section === 'notifications' && <NotificationsSection />}
             {section === 'log-drains' && <LogDrainsSection />}
+            {section === 'firewall' && <FirewallSection />}
             {section === 'storage' && <StorageSection />}
             {section === 'config' && <ConfigCenterSection />}
             {section === 'plugins' && <PluginsSection />}

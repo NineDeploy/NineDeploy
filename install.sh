@@ -175,6 +175,18 @@ if [ "$(uname -s)" = "Linux" ] && command -v systemctl &>/dev/null; then
     sudo systemctl disable nginx 2>/dev/null || true
   fi
 fi
+
+# Host Firewall (UFW on Linux)
+if [ "$(uname -s)" = "Linux" ] && command -v ufw &>/dev/null; then
+  info "Configuring host firewall (UFW) with safe defaults…"
+  sudo ufw allow 22/tcp comment 'SSH' >/dev/null 2>&1 || true
+  sudo ufw allow 80/tcp comment 'HTTP (Traefik)' >/dev/null 2>&1 || true
+  sudo ufw allow 443/tcp comment 'HTTPS (Traefik)' >/dev/null 2>&1 || true
+  if [ -n "${NINEDEPLOY_PORT:-}" ] && [ "${NINEDEPLOY_PORT:-3000}" != "80" ] && [ "${NINEDEPLOY_PORT:-3000}" != "443" ]; then
+    sudo ufw allow "${NINEDEPLOY_PORT}/tcp" comment 'NineDeploy Direct Panel' >/dev/null 2>&1 || true
+  fi
+  ok "Firewall rules updated (UFW: 22, 80, 443 permitted)"
+fi
 ok "Docker network & ingress ready"
 
 # ── 2. Resolve the version to install ──────────────────────────────────────

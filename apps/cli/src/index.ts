@@ -39,6 +39,9 @@ import {
   serverStartAction, serverStopAction, serverStatusAction, serverLogsAction,
 } from './commands/server.js';
 import { doctorAction } from './commands/doctor.js';
+import {
+  firewallStatus, firewallToggle, firewallAddRule, firewallDeleteRule, firewallApplyRecommended,
+} from './commands/firewall.js';
 
 const program = new Command();
 
@@ -337,6 +340,26 @@ program
   .description('Run system, Docker, server connectivity, and auth diagnostics')
   .option('--fix', 'Automatically attempt to heal and repair detected issues')
   .action((opts: { fix?: boolean }) => doctorAction(getClient(), opts));
+
+// ── Firewall & Security ───────────────────────────────────────────────────
+const fw = program.command('firewall').description('Manage host firewall (UFW) and open ports');
+fw.command('status').description('Show host firewall status, default policies, and active rules').action(() => firewallStatus(getClient()));
+fw.command('enable').description('Enable host firewall (ensures SSH port 22 is permitted)').action(() => firewallToggle(getClient(), true));
+fw.command('disable').description('Disable host firewall').action(() => firewallToggle(getClient(), false));
+fw.command('recommended').description('Apply standard VPS profile (allows 22 SSH, 80 HTTP, 443 HTTPS and enables firewall)').action(() => firewallApplyRecommended(getClient()));
+fw.command('allow <port>')
+  .description('Open a host port (e.g. 5432 or 8080)')
+  .option('-p, --proto <proto>', 'Protocol (tcp|udp|any)', 'tcp')
+  .option('-f, --from <ip>', 'Source IP/CIDR to restrict access to')
+  .option('-c, --comment <text>', 'Rule description/comment')
+  .action((port: string, opts: any) => firewallAddRule(getClient(), port, { ...opts, action: 'allow' }));
+fw.command('deny <port>')
+  .description('Block a host port')
+  .option('-p, --proto <proto>', 'Protocol (tcp|udp|any)', 'tcp')
+  .option('-f, --from <ip>', 'Source IP/CIDR')
+  .option('-c, --comment <text>', 'Rule description/comment')
+  .action((port: string, opts: any) => firewallAddRule(getClient(), port, { ...opts, action: 'deny' }));
+fw.command('rm <id>').description('Delete a firewall rule by ID').action((id: string) => firewallDeleteRule(getClient(), id));
 
 // ── Banner on bare `ninedeploy` ───────────────────────────────────────────
 if (process.argv.length <= 2) {
