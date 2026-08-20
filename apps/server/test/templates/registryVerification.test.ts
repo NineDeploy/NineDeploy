@@ -58,4 +58,15 @@ describe('bundled Hub template contract', () => {
     expect(byId.get('kavita')?.image).toBe('jvmilazz0/kavita:latest');
     expect(byId.get('minio')?.cmd).toEqual(['server', '/data', '--console-address', ':9001']);
   });
+
+  it('advertises only templates that passed an isolated runtime smoke test', () => {
+    expect(templates.filter((template) => template.runtimeVerified).map((template) => template.id).sort()).toEqual([
+      'actual-budget', 'directus', 'excalidraw', 'forgejo', 'gitea', 'grafana',
+      'kavita', 'memos', 'minio', 'n8n', 'pocketbase', 'qdrant', 'uptime-kuma',
+      'vaultwarden', 'wordpress',
+    ]);
+    for (const template of templates.filter((candidate) => candidate.runtimeVerified)) {
+      expect(template.verifiedAt, template.id).toBe('2026-08-20');
+    }
+  });
 });

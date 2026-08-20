@@ -150,3 +150,10 @@ export async function getTemplates(db: DB | null): Promise<Template[]> {
   memo.set(source, templates);
   return templates;
 }
+
+/** Templates exposed by the one-click Hub. Registry-valid but not yet runtime
+ * certified entries stay available for verification work without being
+ * advertised as deployable to users. */
+export async function getRuntimeVerifiedTemplates(db: DB | null): Promise<Template[]> {
+  return (await getTemplates(db)).filter((template) => template.runtimeVerified === true);
+}

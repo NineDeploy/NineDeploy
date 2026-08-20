@@ -1,4 +1,4 @@
-export const VERSION = '0.2.20';
+export const VERSION = '0.2.21';
 
 export interface ChangelogEntry {
   version: string;
@@ -8,6 +8,17 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.2.21',
+    date: '2026-08-20',
+    title: 'Runtime-Certified Template Hub',
+    changes: [
+      'The Hub fails closed and exposes only templates that passed isolated container startup and declared-port probes',
+      'Fifteen application templates are runtime-certified; the rest stay hidden until tested individually',
+      'A reusable smoke runner verifies real image, environment, command, volume, process and Docker-network port behavior',
+      'Website and product copy no longer confuse registry manifest checks with runtime verification',
+    ],
+  },
   {
     version: '0.2.20',
     date: '2026-08-20',

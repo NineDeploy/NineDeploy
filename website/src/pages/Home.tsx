@@ -106,7 +106,7 @@ const steps = [
     icon: GitBranch,
     n: "02",
     title: "Connect a repo or image",
-    body: "Git (PAT or SSH deploy key), a container image, a Compose stack, or one of 88 registry-checked hub templates. Watch-path globs keep monorepos quiet.",
+    body: "Git (PAT or SSH deploy key), a container image, a Compose stack, or one of 15 runtime-certified hub templates. Watch-path globs keep monorepos quiet.",
   },
   {
     icon: Rocket,
@@ -127,7 +127,7 @@ export function Home() {
               <span className="tag tag-accent">
                 self-hosted PaaS
               </span>
-              <span className="tag font-bold">v0.2.20</span>
+              <span className="tag font-bold">v0.2.21</span>
               <span className="tag">100% test coverage</span>
             </div>
             <h1 className="text-5xl md:text-7xl font-bold leading-[0.95] tracking-tight">
@@ -287,7 +287,7 @@ export function Home() {
       {/* ---------------- stats ---------------- */}
       <section className="mx-auto max-w-7xl px-4 py-16 grid grid-cols-2 md:grid-cols-4 gap-5">
         {[
-          { icon: LayoutGrid, k: 88, suffix: "", v: "registry-checked templates" },
+          { icon: LayoutGrid, k: 15, suffix: "", v: "runtime-certified templates" },
           { icon: Boxes, k: 26, suffix: "", v: "tables, one SQLite file" },
           { icon: RotateCcw, k: 2100, suffix: "+", v: "tests in CI" },
           { icon: KeyRound, k: 100, suffix: "%", v: "coverage, no ratchets" },

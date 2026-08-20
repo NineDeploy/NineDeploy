@@ -19,7 +19,7 @@ describe('template routes', () => {
     const res = await app.inject({ method: 'GET', url: '/', headers: asUser() });
     expect(res.statusCode).toBe(200);
     const rows = res.json();
-    expect(rows.length).toBeGreaterThan(10);
+    expect(rows).toHaveLength(15);
     expect(rows[0]).toMatchObject({ id: 'n8n', name: 'n8n', category: 'Automation' });
     expect(rows[0]).not.toHaveProperty('description');
   });
@@ -36,6 +36,13 @@ describe('template routes', () => {
     const app = await buildTestApp({ db: createFakeDb() });
     await app.register(templateRoutes);
     const res = await app.inject({ method: 'GET', url: '/nope', headers: asUser() });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('does not expose registry-only templates before runtime certification', async () => {
+    const app = await buildTestApp({ db: createFakeDb() });
+    await app.register(templateRoutes);
+    const res = await app.inject({ method: 'GET', url: '/ollama', headers: asUser() });
     expect(res.statusCode).toBe(404);
   });
 

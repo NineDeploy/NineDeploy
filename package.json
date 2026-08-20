@@ -1,6 +1,6 @@
 {
   "name": "ninedeploy-monorepo",
-  "version": "0.2.20",
+  "version": "0.2.21",
   "private": true,
   "description": "Self-hosted, one-click deployment platform with PM2 + Docker, Traefik, webhooks, secrets, backups and monitoring.",
   "license": "MIT",
@@ -19,6 +19,7 @@
     "db:generate": "pnpm --filter @ninedeploy/db db:generate",
     "db:migrate": "pnpm --filter @ninedeploy/db db:migrate",
     "templates:verify-images": "node scripts/verify-template-images.mjs",
+    "templates:smoke-runtime": "node scripts/smoke-template-runtime.mjs",
     "db:studio": "pnpm --filter @ninedeploy/db db:studio",
     "clean": "turbo run clean && rm -rf node_modules",
     "release:check": "turbo run typecheck lint build test",

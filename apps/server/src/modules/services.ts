@@ -2,7 +2,7 @@ import { and, eq } from 'drizzle-orm';
 import type { FastifyPluginAsync } from 'fastify';
 import { buildConfigs, envVars, services, type Service } from '@ninedeploy/db';
 import { createService, setLimits, updateService } from '@ninedeploy/schemas';
-import { getTemplates } from '../templates/registry.js';
+import { getRuntimeVerifiedTemplates } from '../templates/registry.js';
 import { capture, run } from '../lib/exec.js';
 import { audit } from '../lib/audit.js';
 import { config } from '../config.js';
@@ -93,7 +93,7 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
   app.post('/', async (req) => {
     const input = createService.parse(req.body);
     const template = input.templateId
-      ? (await getTemplates(app.db)).find((candidate) => candidate.id === input.templateId)
+      ? (await getRuntimeVerifiedTemplates(app.db)).find((candidate) => candidate.id === input.templateId)
       : undefined;
     if (input.templateId && !template) throw badRequest('Template not found');
     if (template && (

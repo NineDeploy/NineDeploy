@@ -13,7 +13,9 @@
       "port": 5678,
       "volumeMount": "/home/node/.n8n",
       "website": "https://n8n.io",
-      "featured": true
+      "featured": true,
+      "runtimeVerified": true,
+      "verifiedAt": "2026-08-20"
     },
     {
       "id": "activepieces",
@@ -80,7 +82,9 @@
         "DB_DATABASE": "database",
         "DB_USER": "username",
         "DB_PASSWORD": "password"
-      }
+      },
+      "runtimeVerified": true,
+      "verifiedAt": "2026-08-20"
     },
     {
       "id": "pocketbase",
@@ -93,7 +97,9 @@
       "port": 8090,
       "volumeMount": "/pb_data",
       "website": "https://pocketbase.io",
-      "featured": true
+      "featured": true,
+      "runtimeVerified": true,
+      "verifiedAt": "2026-08-20"
     },
     {
       "id": "nocodb",
@@ -215,7 +221,9 @@
       "port": 6333,
       "volumeMount": "/qdrant/storage",
       "website": "https://qdrant.tech",
-      "featured": true
+      "featured": true,
+      "runtimeVerified": true,
+      "verifiedAt": "2026-08-20"
     },
     {
       "id": "chromadb",
@@ -371,7 +379,9 @@
       "port": 3001,
       "volumeMount": "/app/data",
       "website": "https://github.com/louislam/uptime-kuma",
-      "featured": true
+      "featured": true,
+      "runtimeVerified": true,
+      "verifiedAt": "2026-08-20"
     },
     {
       "id": "grafana",
@@ -391,7 +401,9 @@
         }
       ],
       "website": "https://grafana.com",
-      "featured": true
+      "featured": true,
+      "runtimeVerified": true,
+      "verifiedAt": "2026-08-20"
     },
     {
       "id": "prometheus",
@@ -478,7 +490,9 @@
       "port": 5230,
       "volumeMount": "/var/opt/memos",
       "website": "https://usememos.com",
-      "featured": true
+      "featured": true,
+      "runtimeVerified": true,
+      "verifiedAt": "2026-08-20"
     },
     {
       "id": "trilium",
@@ -574,7 +588,9 @@
       "image": "excalidraw/excalidraw:latest",
       "port": 80,
       "website": "https://excalidraw.com",
-      "featured": true
+      "featured": true,
+      "runtimeVerified": true,
+      "verifiedAt": "2026-08-20"
     },
     {
       "id": "it-tools",
@@ -599,7 +615,9 @@
       "port": 5006,
       "volumeMount": "/data",
       "website": "https://actualbudget.org",
-      "featured": true
+      "featured": true,
+      "runtimeVerified": true,
+      "verifiedAt": "2026-08-20"
     },
     {
       "id": "mealie",
@@ -662,7 +680,9 @@
       "port": 3000,
       "volumeMount": "/data",
       "website": "https://about.gitea.com",
-      "featured": true
+      "featured": true,
+      "runtimeVerified": true,
+      "verifiedAt": "2026-08-20"
     },
     {
       "id": "forgejo",
@@ -674,7 +694,9 @@
       "image": "codeberg.org/forgejo/forgejo:16",
       "port": 3000,
       "volumeMount": "/data",
-      "website": "https://forgejo.org"
+      "website": "https://forgejo.org",
+      "runtimeVerified": true,
+      "verifiedAt": "2026-08-20"
     },
     {
       "id": "gitlab-ce",
@@ -794,7 +816,9 @@
         }
       ],
       "website": "https://github.com/dani-garcia/vaultwarden",
-      "featured": true
+      "featured": true,
+      "runtimeVerified": true,
+      "verifiedAt": "2026-08-20"
     },
     {
       "id": "keycloak",
@@ -986,7 +1010,9 @@
         }
       ],
       "website": "https://min.io",
-      "featured": true
+      "featured": true,
+      "runtimeVerified": true,
+      "verifiedAt": "2026-08-20"
     },
     {
       "id": "cloudcmd",
@@ -1131,7 +1157,9 @@
       "image": "jvmilazz0/kavita:latest",
       "port": 5000,
       "volumeMount": "/kavita/config",
-      "website": "https://www.kavitareader.com"
+      "website": "https://www.kavitareader.com",
+      "runtimeVerified": true,
+      "verifiedAt": "2026-08-20"
     },
     {
       "id": "qbittorrent",
@@ -1355,7 +1383,9 @@
         "WORDPRESS_DB_USER": "username",
         "WORDPRESS_DB_PASSWORD": "password",
         "WORDPRESS_DB_NAME": "database"
-      }
+      },
+      "runtimeVerified": true,
+      "verifiedAt": "2026-08-20"
     }
   ]
 }

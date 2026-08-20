@@ -42,7 +42,7 @@ const groups: {
       {
         icon: GitBranch,
         title: "Git, registry, or hub",
-        body: "Clone with PAT or SSH deploy keys (scrubbed after checkout), pull from private registries with per-source credentials, or start from 88 registry-checked templates.",
+        body: "Clone with PAT or SSH deploy keys (scrubbed after checkout), pull from private registries with per-source credentials, or start from 15 runtime-certified templates.",
       },
       {
         icon: RotateCcw,

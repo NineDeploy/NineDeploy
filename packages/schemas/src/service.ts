@@ -454,6 +454,10 @@ export const template = z.object({
   website: z.string().optional(),
   docs: z.string().optional(),
   featured: z.boolean().optional(),
+  /** Set only after the complete template contract has passed an isolated
+   * container startup and declared-port smoke test. */
+  runtimeVerified: z.boolean().optional(),
+  verifiedAt: z.iso.date().optional(),
   /** Human hint about extra setup this template needs (shown in the Hub). */
   requires: z.string().optional(),
   /** When set, the wizard can auto-provision + attach a managed database of
