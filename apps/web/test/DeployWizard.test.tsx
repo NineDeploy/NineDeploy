@@ -255,12 +255,12 @@ describe('DeployWizard', () => {
     expect(screen.getByText('n8n')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /deploy/i }));
     await waitFor(() => expect(apiMock.api.templates.prepare).toHaveBeenCalledWith('n8n', expect.objectContaining({ name: 'n8n', reuseExisting: true })));
-    await waitFor(() => expect(apiMock.api.templates.deploy).toHaveBeenCalledWith('n8n', expect.objectContaining({ name: 'n8n', reuseExisting: true })));
+    expect(apiMock.api.templates.deploy).not.toHaveBeenCalled();
     expect(apiMock.api.services.create).not.toHaveBeenCalled();
     // An untouched registry secret is omitted so the server can generate it
     // once and preserve it across interrupted-install retries.
     await waitFor(() => {
-      const input = apiMock.api.templates.deploy.mock.calls[0]?.[1];
+      const input = apiMock.api.templates.prepare.mock.calls[0]?.[1];
       const rows = Object.fromEntries(input.env.map((row: { key: string }) => [row.key, row]));
       expect(rows['N8N_EXTRA']!).toEqual(expect.objectContaining({ key: 'N8N_EXTRA', value: 'y', isSecret: false }));
       expect(rows['N8N_BASIC_AUTH_ACTIVE']).toBeUndefined();
@@ -268,7 +268,7 @@ describe('DeployWizard', () => {
     await waitFor(() => expect(onClose).toHaveBeenCalled());
   });
 
-  it('delegates the complete required-database pipeline to the canonical server route', async () => {
+  it('delegates the complete required-database pipeline to the durable prepare route', async () => {
     const tpl = { ...TEMPLATE, dbEngine: 'postgres' as const, requires: 'Umami needs a PostgreSQL database — one is provisioned automatically' };
     const { onClose } = renderWizard({ template: tpl });
     const user = userEvent.setup();
@@ -282,7 +282,8 @@ describe('DeployWizard', () => {
     await user.click(screen.getByRole('button', { name: /continue/i }));
     await user.click(screen.getByRole('button', { name: /deploy/i }));
 
-    await waitFor(() => expect(apiMock.api.templates.deploy).toHaveBeenCalledWith('n8n', expect.objectContaining({ reuseExisting: true })));
+    await waitFor(() => expect(apiMock.api.templates.prepare).toHaveBeenCalledWith('n8n', expect.objectContaining({ reuseExisting: true })));
+    expect(apiMock.api.templates.deploy).not.toHaveBeenCalled();
     expect(apiMock.api.databases.create).not.toHaveBeenCalled();
     expect(apiMock.api.databases.get).not.toHaveBeenCalled();
     expect(apiMock.api.attachments.create).not.toHaveBeenCalled();
@@ -290,10 +291,8 @@ describe('DeployWizard', () => {
     await waitFor(() => expect(onClose).toHaveBeenCalled());
   });
 
-  it('closes and navigates to Deployments while server provisioning continues', async () => {
+  it('closes and navigates after the durable worker job is queued', async () => {
     const tpl = { ...TEMPLATE, dbEngine: 'postgres' as const };
-    const pending = deferred<Awaited<ReturnType<typeof apiMock.api.templates.deploy>>>();
-    apiMock.api.templates.deploy.mockReturnValue(pending.promise);
     const { onClose } = renderWizard({ template: tpl });
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: /continue/i }));
@@ -303,14 +302,15 @@ describe('DeployWizard', () => {
     await user.click(screen.getByRole('button', { name: /deploy/i }));
     await waitFor(() => expect(onClose).toHaveBeenCalled());
     await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/services/42?tab=deploys'));
-    expect(apiMock.api.templates.deploy).toHaveBeenCalledOnce();
+    expect(apiMock.api.templates.prepare).toHaveBeenCalledOnce();
+    expect(apiMock.api.templates.deploy).not.toHaveBeenCalled();
   });
 
-  it('reports a background canonical provisioning failure on the service page', async () => {
+  it('keeps the wizard open when durable queue creation fails', async () => {
     const toastMod = await vi.importActual<typeof import('../src/components/Toast.js')>('../src/components/Toast.js');
     void toastMod;
     const tpl = { ...TEMPLATE, dbEngine: 'postgres' as const };
-    apiMock.api.templates.deploy.mockRejectedValue(new Error('Failed to start template database'));
+    apiMock.api.templates.prepare.mockRejectedValue(new Error('Could not queue template deployment'));
     const { onClose } = renderWizard({ template: tpl });
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: /continue/i }));
@@ -318,9 +318,9 @@ describe('DeployWizard', () => {
     await user.click(screen.getByRole('button', { name: /continue/i }));
     await user.click(screen.getByRole('button', { name: /continue/i }));
     await user.click(screen.getByRole('button', { name: /deploy/i }));
-    await waitFor(() => expect(onClose).toHaveBeenCalled());
-    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/services/42?tab=deploys'));
-    await waitFor(() => expect(screen.getByText('Failed to start template database')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('Could not queue template deployment')).toBeInTheDocument());
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByTestId('location')).not.toHaveTextContent('/services/42?tab=deploys');
     expect(apiMock.api.deploys.trigger).not.toHaveBeenCalled();
   });
 

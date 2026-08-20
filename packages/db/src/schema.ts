@@ -225,6 +225,9 @@ export const services = sqliteTable(
     cmd: text('cmd', { mode: 'json' }).$type<string[]>(),
     // Bind-mount the host Docker socket (template flag only — docker control).
     dockerSocket: integer('docker_socket', { mode: 'boolean' }).notNull().default(false),
+    // Durable Hub identity. The worker uses this to resume idempotent template
+    // dependency provisioning after a process/host restart.
+    templateId: text('template_id'),
     // Trusted Hub template mapping from application env names to managed DB
     // connection fields. Generic service requests cannot set this directly.
     templateDatabaseEnv: text('template_database_env', { mode: 'json' }).$type<Record<string, 'url' | 'host' | 'hostPort' | 'port' | 'username' | 'password' | 'database'>>(),

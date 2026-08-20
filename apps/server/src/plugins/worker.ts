@@ -33,7 +33,7 @@ export default fp(
     const timers: NodeJS.Timeout[] = [];
 
     // Crash recovery: a deploy interrupted by a restart is left stranded in
-    // `building`. Only sweep rows that can no longer be genuinely running —
+    // `building`. Requeue rows that can no longer be genuinely running —
     // a second process sharing this DB may have live in-flight deploys, and
     // failing those out from under it would break the multi-process story.
     // 45 min comfortably covers the 30-min exec timeout + 5-min healthcheck.
@@ -54,7 +54,7 @@ export default fp(
       if (stale.length) {
         await fastify.db
           .update(deployments)
-          .set({ status: 'failed', finishedAt: new Date() })
+          .set({ status: 'queued', startedAt: null, finishedAt: null, message: 'Automatically resumed after interrupted worker' })
           .where(inArray(deployments.id, stale));
       }
     } catch (err) {

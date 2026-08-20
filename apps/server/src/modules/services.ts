@@ -126,6 +126,7 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
         dup.status === 'idle' &&
         sameDefinition &&
         (!template || (
+          dup.templateId === template.id &&
           JSON.stringify(dup.templateDatabaseEnv) === JSON.stringify(template.databaseEnv ?? null) &&
           JSON.stringify(dup.cmd) === JSON.stringify(template.cmd ?? null) &&
           dup.dockerSocket === (template.dockerSocket ?? false)
@@ -147,6 +148,7 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
         ['idle', 'error', 'stopped'].includes(dup.status);
       if (repairableTemplate) {
         const trusted = {
+          templateId: template.id,
           templateDatabaseEnv: template.databaseEnv ?? null,
           cmd: template.cmd ?? null,
           dockerSocket: template.dockerSocket ?? false,
@@ -178,6 +180,7 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
         publishedPort: input.publishedPort ?? null,
         cmd: template?.cmd ?? null,
         dockerSocket: template?.dockerSocket ?? false,
+        templateId: template?.id ?? null,
         templateDatabaseEnv: template?.databaseEnv ?? null,
         previewDeploymentsEnabled: input.previewDeploymentsEnabled ?? false,
         previewAutoDestroyOnClose: input.previewAutoDestroyOnClose ?? true,

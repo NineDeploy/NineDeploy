@@ -131,6 +131,34 @@ describe('template routes', () => {
     expect(res.json()).toMatchObject({ serviceId: 7, deploymentId: 8 });
   });
 
+  it('updates an existing template variable from an explicit override', async () => {
+    let envUpdate: Record<string, unknown> | undefined;
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findMany: {
+          env_vars: [{ id: 4, serviceId: 7, key: 'GF_SECURITY_ADMIN_PASSWORD', valueEncrypted: 'old', isSecret: true }],
+        },
+        insert: {
+          services: [svcRow({ id: 7, name: 'Grafana', slug: 'grafana' })],
+          deployments: [depRow({ id: 8, serviceId: 7, status: 'queued' })],
+        },
+        update: {
+          env_vars: (value) => { envUpdate = value as Record<string, unknown>; return [value as Record<string, unknown>]; },
+        },
+      }),
+    });
+    await app.register(templateRoutes);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/grafana/deploy',
+      headers: asUser(),
+      payload: { env: [{ key: 'GF_SECURITY_ADMIN_PASSWORD', value: 'chosen', isSecret: true }] },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(envUpdate).toMatchObject({ isSecret: true });
+    expect(res.json().generatedSecrets).toEqual([]);
+  });
+
   it('allows an explicitly labelled community template to enter the normal deployment pipeline', async () => {
     const app = await buildTestApp({
       db: createFakeDb({
@@ -148,7 +176,7 @@ describe('template routes', () => {
     expect(res.json()).toMatchObject({ serviceId: 17, deploymentId: 18 });
   });
 
-  it('provisions and attaches the managed database before a CLI template deploy', async () => {
+  it('durably queues database provisioning for the worker before a CLI template deploy', async () => {
     let serviceInsert: Record<string, unknown> | undefined;
     let attachmentInsert: Record<string, unknown> | undefined;
     const app = await buildTestApp({
@@ -172,15 +200,16 @@ describe('template routes', () => {
     const res = await app.inject({ method: 'POST', url: '/wordpress/deploy', headers: asUser() });
 
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toMatchObject({ serviceId: 7, deploymentId: 8, databaseId: 9 });
+    expect(res.json()).toMatchObject({ serviceId: 7, deploymentId: 8, databaseId: null });
     expect(serviceInsert?.templateDatabaseEnv).toEqual({
       WORDPRESS_DB_HOST: 'hostPort',
       WORDPRESS_DB_USER: 'username',
       WORDPRESS_DB_PASSWORD: 'password',
       WORDPRESS_DB_NAME: 'database',
     });
-    expect(databaseMocks.startDatabase).toHaveBeenCalledOnce();
-    expect(attachmentInsert).toMatchObject({ serviceId: 7, databaseId: 9, envAlias: 'DATABASE_URL' });
+    expect(serviceInsert?.templateId).toBe('wordpress');
+    expect(databaseMocks.startDatabase).not.toHaveBeenCalled();
+    expect(attachmentInsert).toBeUndefined();
   });
 
   it('prepares a database-backed service identity without waiting for dependency provisioning', async () => {
@@ -190,7 +219,7 @@ describe('template routes', () => {
           services: (value) => [svcRow({ ...(value as Record<string, unknown>), id: 15 })],
           databases: () => { throw new Error('prepare must not create database'); },
           database_attachments: () => { throw new Error('prepare must not attach database'); },
-          deployments: [depRow({ id: 16, serviceId: 15, status: 'building', message: 'Provisioning template dependencies: Ghost' })],
+          deployments: [depRow({ id: 16, serviceId: 15, status: 'queued', message: 'Deploy from template: Ghost' })],
         },
       }),
     });
@@ -208,7 +237,7 @@ describe('template routes', () => {
     expect(databaseMocks.startDatabase).not.toHaveBeenCalled();
   });
 
-  it('promotes the prepared provisioning row into the normal deployment queue', async () => {
+  it('reuses an in-flight durable deployment without provisioning in the request', async () => {
     let deploymentUpdate: Record<string, unknown> | undefined;
     const existingService = svcRow({
       id: 25,
@@ -248,12 +277,8 @@ describe('template routes', () => {
     const res = await app.inject({ method: 'POST', url: '/ghost/deploy', headers: asUser(), payload: { name: 'Ghost' } });
 
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toMatchObject({ serviceId: 25, deploymentId: 26, databaseId: 27, alreadyInProgress: false });
-    expect(deploymentUpdate).toMatchObject({
-      status: 'queued',
-      startedAt: null,
-      message: 'Deploy from template: Ghost',
-    });
+    expect(res.json()).toMatchObject({ serviceId: 25, deploymentId: 26, databaseId: null, alreadyInProgress: true });
+    expect(deploymentUpdate).toBeUndefined();
   });
 
   it('keeps registry-controlled runtime fields authoritative for panel deploys', async () => {
@@ -351,11 +376,37 @@ describe('template routes', () => {
     });
     await app.register(templateRoutes);
 
-    const res = await app.inject({ method: 'POST', url: '/grafana/deploy', headers: asUser(), payload: { name: 'Grafana' } });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/grafana/deploy',
+      headers: asUser(),
+      payload: { name: 'Grafana', serverId: 10, publishedPort: 8082 },
+    });
 
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ serviceId: 31, deploymentId: 32, alreadyInProgress: true, generatedSecrets: [] });
-    expect(serviceUpdate).toMatchObject({ serverId: 9, publishedPort: 8081, healthPath: '/api/health', cpuShares: 256, memLimitMb: 512 });
+    expect(serviceUpdate).toMatchObject({ serverId: 10, publishedPort: 8082, healthPath: '/api/health', cpuShares: 256, memLimitMb: 512 });
+  });
+
+  it('fails atomically when the service or deployment row cannot be created', async () => {
+    const noService = await buildTestApp({ db: createFakeDb({ insert: { services: [] } }) });
+    await noService.register(templateRoutes);
+    const serviceRes = await noService.inject({ method: 'POST', url: '/n8n/deploy', headers: asUser() });
+    expect(serviceRes.statusCode).toBe(400);
+    expect(serviceRes.json().error.message).toContain('Could not create template service');
+
+    const noDeployment = await buildTestApp({
+      db: createFakeDb({
+        insert: {
+          services: [svcRow({ id: 71, name: 'n8n', slug: 'n8n-0001' })],
+          deployments: [],
+        },
+      }),
+    });
+    await noDeployment.register(templateRoutes);
+    const deploymentRes = await noDeployment.inject({ method: 'POST', url: '/n8n/deploy', headers: asUser() });
+    expect(deploymentRes.statusCode).toBe(400);
+    expect(deploymentRes.json().error.message).toContain('Could not queue template deployment');
   });
 
   it('reuses and restarts an attached managed database on retry', async () => {
@@ -402,18 +453,18 @@ describe('template routes', () => {
     const res = await app.inject({ method: 'POST', url: '/wordpress/deploy', headers: asUser(), payload: { name: 'WordPress' } });
 
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toMatchObject({ serviceId: 41, databaseId: 42, deploymentId: 43, alreadyInProgress: true });
-    expect(databaseMocks.startDatabase).toHaveBeenCalledOnce();
+    expect(res.json()).toMatchObject({ serviceId: 41, databaseId: null, deploymentId: 43, alreadyInProgress: true });
+    expect(databaseMocks.startDatabase).not.toHaveBeenCalled();
   });
 
-  it('never queues the application when its required database cannot start', async () => {
+  it('queues safely even when the request process cannot start Docker', async () => {
     databaseMocks.startDatabase.mockRejectedValueOnce(new Error('container exited'));
     const app = await buildTestApp({
       db: createFakeDb({
         insert: {
           services: [svcRow({ id: 51, name: 'WordPress', slug: 'wordpress-0001' })],
           databases: [dbRow({ id: 52, ownerUserId: 1, slug: 'wordpress-0001-db', engine: 'mysql' })],
-          deployments: () => { throw new Error('deployment must not be queued'); },
+          deployments: [depRow({ id: 53, serviceId: 51, status: 'queued' })],
         },
       }),
     });
@@ -421,8 +472,8 @@ describe('template routes', () => {
 
     const res = await app.inject({ method: 'POST', url: '/wordpress/deploy', headers: asUser() });
 
-    expect(res.statusCode).toBe(400);
-    expect(res.json().error.message).toContain('Failed to start template database');
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ deploymentId: 53, databaseId: null });
   });
 
   it('provisions every bundled managed-database template through the same contract', async () => {
@@ -444,10 +495,10 @@ describe('template routes', () => {
       const res = await app.inject({ method: 'POST', url: `/${id}/deploy`, headers: asUser() });
 
       expect(res.statusCode, id).toBe(200);
-      expect(res.json(), id).toMatchObject({ serviceId, databaseId });
+      expect(res.json(), id).toMatchObject({ serviceId, databaseId: null });
       await app.close();
     }
-    expect(databaseMocks.startDatabase).toHaveBeenCalledTimes(ids.length);
+    expect(databaseMocks.startDatabase).not.toHaveBeenCalled();
   });
 
   it('rejects reuse when the stable service slug belongs to another owner', async () => {

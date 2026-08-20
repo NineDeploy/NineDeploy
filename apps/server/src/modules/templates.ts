@@ -1,22 +1,18 @@
 import {
   buildConfigs,
-  databaseAttachments,
-  databases,
   deployments,
   envVars,
   services,
-  type Database,
   type Service,
 } from '@ninedeploy/db';
 import { deployTemplate, type DeployTemplate } from '@ninedeploy/schemas';
 import { and, desc, eq, inArray } from 'drizzle-orm';
 import { audit } from '../lib/audit.js';
-import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
+import type { FastifyInstance, FastifyPluginAsync, FastifyRequest } from 'fastify';
 import { getTemplates, type Template } from '../templates/registry.js';
 import { encrypt, randomToken } from '../lib/crypto.js';
 import { badRequest, notFound } from '../lib/errors.js';
 import { slugify } from '../lib/slug.js';
-import { defaultPort, ENGINES, startDatabase } from '../engine/database.js';
 
 const summary = (t: Template) => ({
   id: t.id,
@@ -34,8 +30,6 @@ type ProvisionStage = {
   status: 'success' | 'skipped';
   message: string;
 };
-
-const provisioningMessage = (template: Template) => `Provisioning template dependencies: ${template.name}`;
 
 function sameTemplateService(service: Service, template: Template, ownerUserId: number, projectId: number | null): boolean {
   return service.ownerUserId === ownerUserId
@@ -87,91 +81,6 @@ async function reconcileEnvironment(
   return generatedSecrets;
 }
 
-/** Create/reuse/start the template's dedicated managed database and attachment. */
-async function reconcileDatabase(
-  app: FastifyInstance,
-  service: Service,
-  template: Template,
-  ownerUserId: number,
-  projectId: number | null,
-): Promise<{ database: Database; alreadyAttached: boolean } | null> {
-  if (!template.dbEngine) return null;
-  const cfg = ENGINES[template.dbEngine];
-  if (!cfg || !template.databaseEnv) throw badRequest(`Template '${template.id}' has an invalid database contract`);
-
-  const attachments = await app.db.query.databaseAttachments.findMany({ where: eq(databaseAttachments.serviceId, service.id) });
-  let database: Database | undefined;
-  let alreadyAttached = false;
-  for (const attachment of attachments) {
-    const candidate = await app.db.query.databases.findFirst({ where: eq(databases.id, attachment.databaseId) });
-    if (candidate?.engine === template.dbEngine) {
-      if (candidate.ownerUserId !== ownerUserId || candidate.projectId !== projectId) {
-        throw badRequest('Attached template database belongs to another resource');
-      }
-      database = candidate;
-      alreadyAttached = true;
-      break;
-    }
-  }
-
-  const dbSlug = `${service.slug}-db`;
-  if (!database) {
-    const retained = await app.db.query.databases.findFirst({ where: eq(databases.slug, dbSlug) });
-    if (retained) {
-      if (retained.ownerUserId !== ownerUserId || retained.projectId !== projectId || retained.engine !== template.dbEngine) {
-        throw badRequest(`Database slug '${dbSlug}' belongs to another resource`);
-      }
-      database = retained;
-    }
-  }
-
-  if (!database) {
-    const password = randomToken(18);
-    const [created] = await app.db.insert(databases).values({
-      projectId,
-      ownerUserId,
-      name: `${service.name} DB`,
-      slug: dbSlug,
-      engine: template.dbEngine,
-      status: 'creating',
-      containerName: `nd-db-${dbSlug}`,
-      volumeName: `nd-db-${dbSlug}-data`,
-      username: cfg.username() ?? null,
-      passwordEncrypted: encrypt(password),
-      dbName: cfg.dbName() ?? null,
-      extensions: [],
-      webGuiEnabled: false,
-    }).returning();
-    if (!created) throw badRequest('Could not create template database');
-    database = created;
-  }
-
-  try {
-    await startDatabase(database, (line) => app.log.info({ component: 'template-database', serviceId: service.id }, line));
-    await app.db.update(databases).set({
-      status: 'running',
-      internalHost: database.containerName,
-      internalPort: defaultPort(database.engine),
-    }).where(eq(databases.id, database.id));
-  } catch (error) {
-    await app.db.update(databases).set({ status: 'error' }).where(eq(databases.id, database.id));
-    await app.db.update(services).set({ status: 'error' }).where(eq(services.id, service.id));
-    throw badRequest(`Failed to start template database: ${error instanceof Error ? error.message : String(error)}`);
-  }
-
-  if (!alreadyAttached) {
-    await app.db.insert(databaseAttachments).values({
-      serviceId: service.id,
-      databaseId: database.id,
-      envAlias: template.dbEngine === 'redis' || template.dbEngine === 'valkey' ? 'REDIS_URL' : 'DATABASE_URL',
-    });
-  }
-  return {
-    database: { ...database, status: 'running', internalHost: database.containerName, internalPort: defaultPort(database.engine) },
-    alreadyAttached,
-  };
-}
-
 async function prepareTemplateService(
   app: FastifyInstance,
   template: Template,
@@ -197,6 +106,7 @@ async function prepareTemplateService(
       memLimitMb: input.memLimitMb ?? service.memLimitMb,
       cmd: template.cmd ?? null,
       dockerSocket: template.dockerSocket ?? false,
+      templateId: template.id,
       templateDatabaseEnv: template.databaseEnv ?? null,
     };
     await app.db.update(services).set(trusted).where(eq(services.id, service.id));
@@ -220,6 +130,7 @@ async function prepareTemplateService(
       memLimitMb: input.memLimitMb ?? 0,
       cmd: template.cmd ?? null,
       dockerSocket: template.dockerSocket ?? false,
+      templateId: template.id,
       templateDatabaseEnv: template.databaseEnv ?? null,
     }).returning();
     if (!created) throw badRequest('Could not create template service');
@@ -245,10 +156,7 @@ export const templateRoutes: FastifyPluginAsync = async (app) => {
     return { ...t, runtimeVerified: t.runtimeVerified === true };
   });
 
-  // Fast UI hand-off: materialize the service identity first so the panel can
-  // close immediately and navigate to its Deployments tab while the normal
-  // deploy endpoint performs dependency provisioning in a separate request.
-  app.post('/:id/prepare', async (req) => {
+  const queue = async (req: FastifyRequest) => {
     const t = (await getTemplates(app.db)).find((x) => x.id === (req.params as { id: string }).id);
     if (!t) throw notFound('Template not found');
     const input = deployTemplate.parse(req.body ?? {});
@@ -263,99 +171,38 @@ export const templateRoutes: FastifyPluginAsync = async (app) => {
     if (!deployment) {
       [deployment] = await app.db.insert(deployments).values({
         serviceId: prepared.service.id,
-        status: 'building',
+        status: 'queued',
         trigger: 'user',
-        message: provisioningMessage(t),
-        startedAt: new Date(),
+        message: `Deploy from template: ${t.name}`,
       }).returning();
     }
-    if (!deployment) throw badRequest('Could not create template provisioning deployment');
-    void audit(app.db, req.user!.id, 'template.prepare', `${t.name} → ${prepared.service.name}`);
+    if (!deployment) throw badRequest('Could not queue template deployment');
+    prepared.stages.push({
+      id: 'database',
+      status: t.dbEngine ? 'success' : 'skipped',
+      message: t.dbEngine ? `${t.dbEngine} dependency queued for worker reconciliation` : 'Template has no managed database dependency',
+    });
+    prepared.stages.push({
+      id: 'attachment',
+      status: t.dbEngine ? 'success' : 'skipped',
+      message: t.dbEngine ? 'Database attachment queued for worker reconciliation' : 'No database attachment required',
+    });
+    prepared.stages.push({ id: 'deployment', status: 'success', message: 'Durable application deployment queued' });
+    void audit(app.db, req.user!.id, 'template.deploy', `${t.name} → ${prepared.service.name}`);
     return {
       serviceId: prepared.service.id,
       serviceName: prepared.service.name,
       serviceSlug: prepared.service.slug,
       deploymentId: deployment.id,
+      databaseId: null,
       generatedSecrets: prepared.generatedSecrets,
       stages: prepared.stages,
+      alreadyInProgress: deployment.status !== 'queued',
     };
-  });
+  };
 
-  app.post('/:id/deploy', async (req) => {
-    const t = (await getTemplates(app.db)).find((x) => x.id === (req.params as { id: string }).id);
-    if (!t) throw notFound('Template not found');
-    const input = deployTemplate.parse(req.body ?? {});
-    const ownerUserId = req.user!.id;
-    const projectId = input.projectId ?? null;
-    const prepared = await prepareTemplateService(app, t, input, ownerUserId);
-    const { service, generatedSecrets, stages } = prepared;
-
-    const existingProgress = await app.db.query.deployments.findFirst({
-      where: and(eq(deployments.serviceId, service.id), inArray(deployments.status, ['queued', 'building', 'deploying'])),
-      orderBy: desc(deployments.id),
-    });
-    const preparedDeployment = existingProgress?.status === 'building'
-      && existingProgress.message === provisioningMessage(t)
-      ? existingProgress
-      : undefined;
-
-    let databaseResult: Awaited<ReturnType<typeof reconcileDatabase>>;
-    try {
-      databaseResult = await reconcileDatabase(app, service, t, ownerUserId, projectId);
-    } catch (error) {
-      if (preparedDeployment) {
-        await app.db.update(deployments).set({ status: 'failed', finishedAt: new Date() }).where(eq(deployments.id, preparedDeployment.id));
-      }
-      throw error;
-    }
-    if (databaseResult) {
-      stages.push({ id: 'database', status: 'success', message: `${t.dbEngine} database is running` });
-      stages.push({
-        id: 'attachment',
-        status: 'success',
-        message: databaseResult.alreadyAttached ? 'Existing database attachment verified' : 'Database attached to service',
-      });
-    } else {
-      stages.push({ id: 'database', status: 'skipped', message: 'Template has no managed database dependency' });
-      stages.push({ id: 'attachment', status: 'skipped', message: 'No database attachment required' });
-    }
-
-    let deploymentId: number;
-    let alreadyInProgress = false;
-    if (preparedDeployment) {
-      deploymentId = preparedDeployment.id;
-      await app.db.update(deployments).set({
-        status: 'queued',
-        startedAt: null,
-        message: `Deploy from template: ${t.name}`,
-      }).where(eq(deployments.id, preparedDeployment.id));
-      stages.push({ id: 'deployment', status: 'success', message: 'Application deployment queued' });
-    } else if (existingProgress) {
-      deploymentId = existingProgress.id;
-      alreadyInProgress = true;
-      stages.push({ id: 'deployment', status: 'success', message: 'Existing deployment remains in progress' });
-    } else {
-      const [deployment] = await app.db.insert(deployments).values({
-        serviceId: service.id,
-        status: 'queued',
-        trigger: 'user',
-        message: `Deploy from template: ${t.name}`,
-      }).returning();
-      if (!deployment) throw badRequest('Could not queue template deployment');
-      deploymentId = deployment.id;
-      stages.push({ id: 'deployment', status: 'success', message: 'Application deployment queued' });
-    }
-
-    void audit(app.db, ownerUserId, 'template.deploy', `${t.name} → ${service.name}`);
-    return {
-      serviceId: service.id,
-      serviceName: service.name,
-      serviceSlug: service.slug,
-      deploymentId,
-      databaseId: databaseResult?.database.id ?? null,
-      generatedSecrets,
-      stages,
-      alreadyInProgress,
-    };
-  });
+  // Both endpoints are aliases of the same durable operation. There is no
+  // browser-owned second phase: once this returns, the worker owns the job.
+  app.post('/:id/prepare', queue);
+  app.post('/:id/deploy', queue);
 };

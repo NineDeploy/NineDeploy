@@ -25,7 +25,8 @@ const h = vi.hoisted(() => {
     wildcardDomain: '',
   };
   const agentOp = vi.fn(async () => ({ exitCode: 0, lines: [] }));
-  return { builder, checkoutCommit, decrypt, connectionString, ENGINES, writeDynamicConfig, getAcmeEmail, config, agentOp };
+  const reconcileTemplateDependencies = vi.fn(async () => null as null | { database: { slug: string }; alreadyAttached: boolean });
+  return { builder, checkoutCommit, decrypt, connectionString, ENGINES, writeDynamicConfig, getAcmeEmail, config, agentOp, reconcileTemplateDependencies };
 });
 
 vi.mock('../src/config.js', () => ({ config: h.config }));
@@ -45,6 +46,9 @@ vi.mock('../src/engine/builders/pm2.js', () => ({ pm2Builder: h.builder }));
 vi.mock('../src/engine/proxy.js', () => ({
   writeDynamicConfig: h.writeDynamicConfig,
   getAcmeEmail: h.getAcmeEmail,
+}));
+vi.mock('../src/engine/templateDependencies.js', () => ({
+  reconcileTemplateDependencies: h.reconcileTemplateDependencies,
 }));
 
 const base = mkdtempSync(path.join(os.tmpdir(), 'nd-pipeline-'));
@@ -662,6 +666,27 @@ describe('runDeployment', () => {
     expect(h.connectionString).toHaveBeenCalledTimes(1);
     expect(h.connectionString).toHaveBeenCalledWith(expect.objectContaining({ id: 10 }));
     expect(h.decrypt).toHaveBeenCalledWith('e1');
+  });
+
+  it('reconciles durable Hub dependencies before loading runtime environment', async () => {
+    const { db } = makeDb();
+    baseSetup(db, { image: 'wordpress:latest', templateId: 'wordpress' });
+    db.query.deployments.findFirst.mockResolvedValue(dep);
+    h.reconcileTemplateDependencies.mockResolvedValueOnce({
+      database: { slug: 'wordpress-db' },
+      alreadyAttached: false,
+    });
+    const lines = collectLogs(1);
+
+    await runDeployment(db as never, 1);
+
+    expect(h.reconcileTemplateDependencies).toHaveBeenCalledWith(db, expect.objectContaining({ templateId: 'wordpress' }), expect.any(Function));
+    expect(lines).toContain('##[stage:DEPENDENCIES:running] Reconciling managed template dependencies');
+    expect(lines).toContain('Managed database wordpress-db is running and attached');
+    expect(lines).toContain('##[stage:DEPENDENCIES:success]');
+
+    h.reconcileTemplateDependencies.mockResolvedValueOnce(null);
+    await runDeployment(db as never, 1);
   });
 
   it('maps managed database fields to application-specific template env vars', async () => {

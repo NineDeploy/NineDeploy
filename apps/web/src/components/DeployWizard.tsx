@@ -108,22 +108,10 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
             .map((entry) => ({ key: entry.key.trim(), value: entry.value, isSecret: entry.secret })),
           reuseExisting: true,
         };
-        // The prepare call returns the stable service ID immediately. Start
-        // canonical dependency provisioning before yielding to onSuccess, then
-        // let the user follow it from the service Deployments tab.
+        // Preparing is itself the durable queue operation. The worker owns all
+        // dependency provisioning, so navigation/network loss cannot strand it.
         const prepared = await api.templates.prepare(template.id, input);
-        void api.templates.deploy(template.id, input).then((result) => {
-          qc.invalidateQueries({ queryKey: ['services'] });
-          qc.invalidateQueries({ queryKey: ['service', result.serviceId] });
-          qc.invalidateQueries({ queryKey: ['deploys', result.serviceId] });
-          qc.invalidateQueries({ queryKey: ['databases'] });
-          toast('Dependencies are ready — application deploy queued', 'info');
-        }).catch((err) => {
-          qc.invalidateQueries({ queryKey: ['service', prepared.serviceId] });
-          qc.invalidateQueries({ queryKey: ['deploys', prepared.serviceId] });
-          toast(err instanceof Error ? err.message : 'Template provisioning failed', 'error');
-        });
-        return { serviceId: prepared.serviceId, deploymentId: null, canonical: true, background: true };
+        return { serviceId: prepared.serviceId, deploymentId: prepared.deploymentId, canonical: true, background: false };
       }
       const svc = await api.services.create({
         name,

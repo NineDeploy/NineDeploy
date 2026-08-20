@@ -288,6 +288,18 @@ export const dockerBuilder: Builder = {
     // (finalize) only after success; on failure it stops the NEW container,
     // leaving the old one running — a zero-downtime rollback.
 
+    // A worker/host crash can leave this deployment's candidate container
+    // behind before DB finalization. The deployment ID makes the name exact;
+    // remove only that retry candidate, never the previous live runtime.
+    if (previous?.runtimeId !== name) {
+      try {
+        await run('docker', ['rm', '-f', name], {}, swallowLine);
+        log(`Removed interrupted deployment candidate ${name}`);
+      } catch {
+        // Missing container is the normal first-deploy path.
+      }
+    }
+
     const args = ['run', '-d', '--name', name, '--restart', safeRestartPolicy(buildConfig?.restartPolicy), '--network', NETWORK];
     // NOTE: no `-p` host port is published at all. Public traffic enters
     // exclusively through Traefik, which reaches the container by name over the

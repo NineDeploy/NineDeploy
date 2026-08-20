@@ -15,6 +15,7 @@ import { resolveVaultRefs } from '../lib/vault.js';
 import { agentOp } from '../lib/agentClient.js';
 import { getBundledTemplates } from '../templates/registry.js';
 import type { BuildContext, Builder, DeployRuntime } from './types.js';
+import { reconcileTemplateDependencies } from './templateDependencies.js';
 
 const builders: Record<string, Builder> = { docker: dockerBuilder, pm2: pm2Builder, compose: composeBuilder };
 const DEPLOY_HEARTBEAT_MS = 20_000;
@@ -263,6 +264,15 @@ export async function runDeployment(db: DB, deploymentId: number): Promise<void>
 
     // Cancel checkpoint: checkout can take minutes on big repos.
     if (await isCancelled(db, deploymentId)) throw new DeploymentCancelled();
+
+    if (service.templateId) {
+      log('##[stage:DEPENDENCIES:running] Reconciling managed template dependencies');
+      const dependency = await reconcileTemplateDependencies(db, service, log);
+      if (dependency) {
+        log(`Managed database ${dependency.database.slug} is running and attached`);
+      }
+      log('##[stage:DEPENDENCIES:success]');
+    }
 
     const runtimeEnvironment = await loadRuntimeEnv(db, service);
     if (runtimeEnvironment.readyAttachmentCount !== runtimeEnvironment.attachmentCount) {

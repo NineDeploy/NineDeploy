@@ -19,7 +19,7 @@ export function buildServer(
   client: ReturnType<typeof createClient>,
   warn: (msg: string) => void = console.error,
 ): McpServer {
-  const server = new McpServer({ name: 'ninedeploy', version: '0.2.34' });
+  const server = new McpServer({ name: 'ninedeploy', version: '0.2.35' });
 
   for (const tool of TOOLS) {
     server.registerTool(
@@ -88,6 +88,7 @@ export function isDirectRun(argv1: string | undefined, selfUrl: string): boolean
   try {
     return pathToFileURL(argv1).href === selfUrl;
   } catch {
+    /* v8 ignore next -- node:path accepts every string; defensive for exotic runtimes */
     return false;
   }
 }

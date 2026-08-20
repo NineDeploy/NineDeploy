@@ -339,7 +339,10 @@ describe('dockerBuilder.buildAndRun', () => {
   });
 
   it('deletes the env-file even when docker run fails', async () => {
-    h.run.mockRejectedValueOnce(new Error('pull failed')).mockRejectedValueOnce(new Error('name conflict'));
+    h.run
+      .mockRejectedValueOnce(new Error('pull failed'))
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('name conflict'));
     const ctx = makeCtx({ service: { slug: 'web', image: 'nginx:1.25', port: 3000, cpuShares: 0, memLimitMb: 0, volumeMount: null, healthPath: '/health' } });
 
     await expect(dockerBuilder.buildAndRun(ctx as never)).rejects.toThrow('name conflict');
@@ -431,6 +434,15 @@ describe('dockerBuilder.buildAndRun', () => {
       'Re-run the NineDeploy installer to provision the checksum-verified source build tool',
     );
     expect(h.run.mock.calls.some((c) => c[1]?.includes('ghcr.io/railwayapp/nixpacks:latest'))).toBe(false);
+  });
+
+  it('never removes the already-finalized runtime when replaying its deployment id', async () => {
+    const ctx = makeCtx({ service: { slug: 'web', image: 'nginx:1.25', port: 3000, cpuShares: 0, memLimitMb: 0, volumeMount: null, healthPath: '/' } });
+    await dockerBuilder.buildAndRun(ctx as never, { runtimeId: 'web-3', port: 3000, healthPath: '/' });
+    expect(h.run.mock.calls.some((call) => {
+      const args = call[1] as unknown[];
+      return args[0] === 'rm' && args.includes('web-3');
+    })).toBe(false);
   });
 });
 

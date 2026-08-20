@@ -118,6 +118,7 @@ describe('services routes', () => {
 
     expect(res.statusCode).toBe(200);
     expect(inserted).toMatchObject({
+      templateId: 'wordpress',
       cmd: null,
       dockerSocket: false,
       templateDatabaseEnv: {
@@ -204,6 +205,7 @@ describe('services routes', () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ id: 17, status: 'error' });
+    expect(updated?.templateId).toBe('ghost');
     expect(updated?.templateDatabaseEnv).toMatchObject({
       database__connection__host: 'host',
       database__connection__password: 'password',
