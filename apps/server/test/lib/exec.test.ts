@@ -5,7 +5,7 @@ const mockSpawn = vi.hoisted(() => vi.fn());
 
 vi.mock('node:child_process', () => ({ spawn: mockSpawn }));
 
-const { buildEnv, capture, DEFAULT_TIMEOUT_MS, ExecTimeoutError, run, sleep } = await import(
+const { buildEnv, capture, DEFAULT_HEARTBEAT_MS, DEFAULT_TIMEOUT_MS, ExecTimeoutError, run, sleep } = await import(
   '../../src/lib/exec.js'
 );
 
@@ -160,6 +160,48 @@ describe('run', () => {
     const promise = run('missing', [], {}, vi.fn());
     child.emit('error', boom);
     await expect(promise).rejects.toBe(boom);
+  });
+
+  it('reports silent work with a safe label and stops heartbeats after exit', async () => {
+    vi.useFakeTimers();
+    const child = makeChild();
+    mockSpawn.mockReturnValue(child);
+    const sink = vi.fn();
+    const promise = run(
+      'docker',
+      ['login', '--password', 'must-not-leak'],
+      { heartbeatMs: 1000, heartbeatLabel: 'Pulling application image' },
+      sink,
+    );
+
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(sink).toHaveBeenCalledWith('Still working: Pulling application image (1s elapsed) …');
+    expect(sink.mock.calls.flat().join(' ')).not.toContain('must-not-leak');
+
+    child.stdout.emit('data', Buffer.from('activity without a newline'));
+    sink.mockClear();
+    await vi.advanceTimersByTimeAsync(999);
+    expect(sink).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(sink).toHaveBeenCalledWith('Still working: Pulling application image (2s elapsed) …');
+
+    emitClose(child, 0);
+    await promise;
+    sink.mockClear();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(sink).not.toHaveBeenCalled();
+  });
+
+  it('allows heartbeats to be disabled', async () => {
+    vi.useFakeTimers();
+    const child = makeChild();
+    mockSpawn.mockReturnValue(child);
+    const sink = vi.fn();
+    const promise = run('quiet', [], { heartbeatMs: 0 }, sink);
+    await vi.advanceTimersByTimeAsync(DEFAULT_HEARTBEAT_MS * 2);
+    expect(sink).not.toHaveBeenCalled();
+    emitClose(child, 0);
+    await promise;
   });
 });
 
@@ -365,5 +407,11 @@ describe('sleep', () => {
 describe('DEFAULT_TIMEOUT_MS', () => {
   it('is 30 minutes', () => {
     expect(DEFAULT_TIMEOUT_MS).toBe(30 * 60 * 1000);
+  });
+});
+
+describe('DEFAULT_HEARTBEAT_MS', () => {
+  it('is 20 seconds', () => {
+    expect(DEFAULT_HEARTBEAT_MS).toBe(20 * 1000);
   });
 });

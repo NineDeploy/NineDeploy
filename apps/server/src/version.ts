@@ -1,4 +1,4 @@
-export const VERSION = '0.2.24';
+export const VERSION = '0.2.25';
 
 export interface ChangelogEntry {
   version: string;
@@ -8,6 +8,17 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.2.25',
+    date: '2026-08-20',
+    title: 'Visible Deployment Progress',
+    changes: [
+      'Silent deployment commands emit elapsed-time activity heartbeats so the panel never presents active work as frozen',
+      'Normal stdout and stderr postpone heartbeats, preserving readable logs while still detecting genuinely silent work',
+      'Registry export, filesystem packaging, and Docker image import identify their current recovery phase every 15 seconds',
+      'Heartbeat labels never expose subprocess arguments that may contain credentials or other sensitive values',
+    ],
+  },
   {
     version: '0.2.24',
     date: '2026-08-20',

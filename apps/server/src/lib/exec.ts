@@ -5,6 +5,10 @@ export interface ExecOptions {
   env?: Record<string, string>;
   /** Hard kill the process (and its children) after this many ms. Default: 30 min. */
   timeoutMs?: number;
+  /** Emit a progress heartbeat after this much output silence. Set to 0 to disable. */
+  heartbeatMs?: number;
+  /** Safe, user-facing heartbeat label. Command arguments are never logged implicitly. */
+  heartbeatLabel?: string;
 }
 
 /**
@@ -45,6 +49,34 @@ export class ExecTimeoutError extends Error {
 
 /** Default per-command timeout: 30 minutes (builds can be slow). */
 export const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000;
+
+/** A silent command should never make a deployment look frozen for longer than this. */
+export const DEFAULT_HEARTBEAT_MS = 20 * 1000;
+
+function formatElapsed(elapsedMs: number): string {
+  const seconds = Math.max(1, Math.floor(elapsedMs / 1000));
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  return minutes > 0 ? `${minutes}m ${remainingSeconds}s` : `${seconds}s`;
+}
+
+/** Report liveness only while a command is silent, keeping normal logs uncluttered. */
+function armHeartbeat(
+  sink: (line: string) => void,
+  intervalMs: number,
+  label: string,
+  startedAt: number,
+  getLastActivityAt: () => number,
+): () => void {
+  if (intervalMs <= 0) return () => {};
+  const timer = setInterval(() => {
+    const now = Date.now();
+    if (now - getLastActivityAt() < intervalMs) return;
+    sink(`Still working: ${label} (${formatElapsed(now - startedAt)} elapsed) …`);
+  }, intervalMs);
+  timer.unref();
+  return () => clearInterval(timer);
+}
 
 /**
  * Send a signal to a process and all of its children. `spawn({ detached: true })`
@@ -112,6 +144,8 @@ export function run(cmd: string, args: string[], opts: ExecOptions, sink: (line:
   const label = [cmd, ...args].join(' ');
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   return new Promise((resolve, reject) => {
+    const startedAt = Date.now();
+    let lastActivityAt = startedAt;
     const child = spawn(cmd, args, {
       cwd: opts.cwd,
       env: buildEnv(opts.env),
@@ -125,16 +159,25 @@ export function run(cmd: string, args: string[], opts: ExecOptions, sink: (line:
 
     const splitter = makeLineSplitter();
     const onData = (chunk: Buffer) => {
+      lastActivityAt = Date.now();
       for (const line of splitter.feed(chunk)) sink(line);
     };
     child.stdout?.on('data', onData);
     child.stderr?.on('data', onData);
 
     let settled = false;
+    const cancelHeartbeat = armHeartbeat(
+      sink,
+      opts.heartbeatMs ?? 0,
+      opts.heartbeatLabel ?? cmd,
+      startedAt,
+      () => lastActivityAt,
+    );
     // onTimeout fires from the single-shot timer; close/error cancel it first,
     // and Promise settlement is idempotent regardless, so no settled guard here.
     const cancelTimeout = armTimeout(child, timeoutMs, () => {
       settled = true;
+      cancelHeartbeat();
       reject(new ExecTimeoutError(label, timeoutMs));
     });
 
@@ -142,12 +185,14 @@ export function run(cmd: string, args: string[], opts: ExecOptions, sink: (line:
       if (settled) return;
       settled = true;
       cancelTimeout();
+      cancelHeartbeat();
       reject(err);
     });
     child.on('close', (code) => {
       if (settled) return;
       settled = true;
       cancelTimeout();
+      cancelHeartbeat();
       const tail = splitter.flush();
       if (tail.length) sink(tail);
       if (code === 0) resolve();

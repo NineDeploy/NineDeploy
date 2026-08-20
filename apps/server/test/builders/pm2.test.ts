@@ -44,8 +44,30 @@ describe('pm2Builder.buildAndRun', () => {
 
     const runtime = await pm2Builder.buildAndRun(ctx as never, previous);
 
-    expect(h.run).toHaveBeenNthCalledWith(1, 'sh', ['-c', 'npm ci'], { cwd: '/work/api', env: { PORT: '4000' } }, ctx.log);
-    expect(h.run).toHaveBeenNthCalledWith(2, 'sh', ['-c', 'npm run build'], { cwd: '/work/api', env: { PORT: '4000' } }, ctx.log);
+    expect(h.run).toHaveBeenNthCalledWith(
+      1,
+      'sh',
+      ['-c', 'npm ci'],
+      {
+        cwd: '/work/api',
+        env: { PORT: '4000' },
+        heartbeatMs: 20_000,
+        heartbeatLabel: 'Installing application dependencies',
+      },
+      ctx.log,
+    );
+    expect(h.run).toHaveBeenNthCalledWith(
+      2,
+      'sh',
+      ['-c', 'npm run build'],
+      {
+        cwd: '/work/api',
+        env: { PORT: '4000' },
+        heartbeatMs: 20_000,
+        heartbeatLabel: 'Building application',
+      },
+      ctx.log,
+    );
     expect(h.pm2.delete).toHaveBeenCalledWith('api-1', expect.any(Function));
     expect(h.pm2.start).toHaveBeenCalledWith(
       {

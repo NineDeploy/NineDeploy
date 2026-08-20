@@ -3,6 +3,8 @@ import path from 'node:path';
 import type { Builder, DeployRuntime } from '../types.js';
 import { capture, run } from '../../lib/exec.js';
 
+const DEPLOY_HEARTBEAT_MS = 20_000;
+
 /**
  * Docker Compose builder: `docker compose up -d --build` for multi-container
  * apps. Unlike the docker builder there is NO blue-green — compose replaces
@@ -35,7 +37,12 @@ export const composeBuilder: Builder = {
     // Stop the previous project revision first — no blue-green for compose.
     // Always pass -f: with a non-default compose file, plain `down` would look
     // at docker-compose.yml and miss the real project.
-    await run('docker', ['compose', '-p', project, '-f', composeFile, 'down', '--remove-orphans'], { cwd: workDir }, log).catch(() => undefined);
+    await run(
+      'docker',
+      ['compose', '-p', project, '-f', composeFile, 'down', '--remove-orphans'],
+      { cwd: workDir, heartbeatMs: DEPLOY_HEARTBEAT_MS, heartbeatLabel: `Stopping previous Compose project ${project}` },
+      log,
+    ).catch(() => undefined);
 
     const args = ['compose', '-p', project, '-f', composeFile, 'up', '-d', '--build', '--remove-orphans'];
     // Compose reads project env vars from the working directory's .env — we
@@ -45,7 +52,12 @@ export const composeBuilder: Builder = {
       writeFileSync(dotEnv, `${Object.entries(env).map(([k, v]) => `${k}=${v.replace(/\n/g, '\\n')}`).join('\n')}\n`, { mode: 0o600 });
     }
     try {
-      await run('docker', args, { cwd: workDir }, log);
+      await run(
+        'docker',
+        args,
+        { cwd: workDir, heartbeatMs: DEPLOY_HEARTBEAT_MS, heartbeatLabel: `Starting Compose project ${project}` },
+        log,
+      );
     } finally {
       try {
         unlinkSync(dotEnv);

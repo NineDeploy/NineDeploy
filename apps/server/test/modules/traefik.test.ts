@@ -509,7 +509,12 @@ tcp:
 
     expect(res.statusCode, res.body).toBe(200);
     expect(res.json()).toEqual({ ok: true, newVersion: '3.3.0' });
-    expect(exec.run).toHaveBeenCalledWith('docker', ['pull', 'traefik:3'], {}, expect.any(Function));
+    expect(exec.run).toHaveBeenCalledWith(
+      'docker',
+      ['pull', 'traefik:3'],
+      { heartbeatMs: 20_000, heartbeatLabel: 'Pulling application image traefik:3' },
+      expect.any(Function),
+    );
     expect(exec.run).toHaveBeenCalledWith('docker', ['rm', '-f', 'ninedeploy-traefik'], {}, expect.any(Function));
     expect(proxyMocks.ensureNetwork).toHaveBeenCalled();
     expect(proxyMocks.ensureTraefik).toHaveBeenCalledWith(expect.any(Function), 'ops@example.com', null);

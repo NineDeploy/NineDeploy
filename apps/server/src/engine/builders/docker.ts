@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { Builder } from '../types.js';
 import type { BuildConfig } from '@ninedeploy/db';
-import { capture, buildEnv, run, sleep } from '../../lib/exec.js';
+import { buildEnv, capture, run, sleep } from '../../lib/exec.js';
 import { ensureDockerImage, pullDockerImage } from '../../lib/dockerPull.js';
 import { NETWORK } from '../proxy.js';
 import { buildProbeUrl, safeProbePath } from '../../lib/probeUrl.js';
@@ -11,6 +11,7 @@ import { buildProbeUrl, safeProbePath } from '../../lib/probeUrl.js';
 const swallow = () => {};
 const NIXPACKS_IMAGE = 'ghcr.io/railwayapp/nixpacks:latest';
 const PROBE_IMAGE = 'busybox:1.36';
+const DEPLOY_HEARTBEAT_MS = 20_000;
 
 /** Valid docker --restart values: the fixed policies plus on-failure:N. */
 const RE_RESTART = /^(no|always|unless-stopped|on-failure(?::\d{1,3})?)$/;
@@ -107,7 +108,12 @@ async function buildWithNixpacks(
   if (hasCli) {
     const args = ['build', baseDir, '--name', target, ...customArgs];
     log(`⚡ nixpacks CLI build: ${baseDir} …`);
-    await run('nixpacks', args, { cwd: workDir }, log);
+    await run(
+      'nixpacks',
+      args,
+      { cwd: workDir, heartbeatMs: DEPLOY_HEARTBEAT_MS, heartbeatLabel: `Building ${target} with Nixpacks` },
+      log,
+    );
   } else {
     log(`🐳 Nixpacks CLI not found on host — using standalone ${NIXPACKS_IMAGE} container …`);
     await ensureDockerImage(NIXPACKS_IMAGE, log);
@@ -127,7 +133,12 @@ async function buildWithNixpacks(
       target,
       ...customArgs,
     ];
-    await run('docker', dockerArgs, { cwd: workDir }, log);
+    await run(
+      'docker',
+      dockerArgs,
+      { cwd: workDir, heartbeatMs: DEPLOY_HEARTBEAT_MS, heartbeatLabel: `Building ${target} with Nixpacks` },
+      log,
+    );
   }
 }
 
@@ -202,7 +213,17 @@ export const dockerBuilder: Builder = {
         const effectivePort = service.port ?? service.publishedPort;
         if (effectivePort && env.PORT === undefined) env.PORT = String(effectivePort);
       } else {
-        await run('docker', ['build', '-t', target, '-f', dockerfile, baseDir], { cwd: workDir, env: { DOCKER_BUILDKIT: '1' } }, log);
+        await run(
+          'docker',
+          ['build', '-t', target, '-f', dockerfile, baseDir],
+          {
+            cwd: workDir,
+            env: { DOCKER_BUILDKIT: '1' },
+            heartbeatMs: DEPLOY_HEARTBEAT_MS,
+            heartbeatLabel: `Building Docker image ${target}`,
+          },
+          log,
+        );
       }
     }
     } finally {
@@ -249,7 +270,12 @@ export const dockerBuilder: Builder = {
 
     log(`Starting container ${name} …`);
     try {
-      await run('docker', args, {}, log);
+      await run(
+        'docker',
+        args,
+        { heartbeatMs: DEPLOY_HEARTBEAT_MS, heartbeatLabel: `Starting application container ${name}` },
+        log,
+      );
     } finally {
       if (envFile) {
         try {

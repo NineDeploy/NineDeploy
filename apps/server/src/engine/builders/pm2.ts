@@ -4,6 +4,8 @@ import pm2 from 'pm2';
 import type { Builder } from '../types.js';
 import { run, sleep } from '../../lib/exec.js';
 
+const DEPLOY_HEARTBEAT_MS = 20_000;
+
 const connect = () => new Promise<void>((res, rej) => pm2.connect((err) => (err ? rej(err) : res())));
 
 /** Run `fn` against the PM2 daemon, always disconnecting afterwards. */
@@ -38,11 +40,21 @@ export const pm2Builder: Builder = {
     // strings and other config the app needs at build time.
     if (buildConfig?.installCmd) {
       log('Installing dependencies …');
-      await run('sh', ['-c', buildConfig.installCmd], { cwd: workDir, env }, log);
+      await run(
+        'sh',
+        ['-c', buildConfig.installCmd],
+        { cwd: workDir, env, heartbeatMs: DEPLOY_HEARTBEAT_MS, heartbeatLabel: 'Installing application dependencies' },
+        log,
+      );
     }
     if (buildConfig?.buildCmd) {
       log('Building …');
-      await run('sh', ['-c', buildConfig.buildCmd], { cwd: workDir, env }, log);
+      await run(
+        'sh',
+        ['-c', buildConfig.buildCmd],
+        { cwd: workDir, env, heartbeatMs: DEPLOY_HEARTBEAT_MS, heartbeatLabel: 'Building application' },
+        log,
+      );
     }
     // PM2 binds the service port, so two versions cannot coexist — the previous
     // process must stop before the new one starts. True zero-downtime is only

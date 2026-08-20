@@ -46,7 +46,12 @@ describe('pullDockerImage', () => {
 
     await ensureDockerImage('busybox:1.36', log);
 
-    expect(h.run).toHaveBeenCalledWith('docker', ['pull', 'busybox:1.36'], {}, expect.any(Function));
+    expect(h.run).toHaveBeenCalledWith(
+      'docker',
+      ['pull', 'busybox:1.36'],
+      { heartbeatMs: 20_000, heartbeatLabel: 'Pulling application image busybox:1.36' },
+      expect.any(Function),
+    );
   });
 
   it('targets Docker managed containerd when its socket is present', () => {
@@ -172,7 +177,12 @@ describe('pullDockerImage', () => {
       {},
       log,
     );
-    expect(h.run).toHaveBeenLastCalledWith('docker', ['pull', 'mysql:8.4'], {}, log);
+    expect(h.run).toHaveBeenLastCalledWith(
+      'docker',
+      ['pull', 'mysql:8.4'],
+      { heartbeatMs: 20_000, heartbeatLabel: 'Pulling mysql:8.4 after snapshot repair' },
+      log,
+    );
     expect(log).toHaveBeenCalledWith(expect.stringContaining('targeted snapshot metadata repair'));
     expect(log).not.toHaveBeenCalledWith(expect.stringContaining('isolated native snapshotter'));
   });

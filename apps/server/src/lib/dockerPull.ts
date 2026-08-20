@@ -8,6 +8,7 @@ const STALE_EXISTING_SNAPSHOT = /target snapshot .*already exists/i;
 const STALE_SNAPSHOT_KEY = /target snapshot\s+"?(sha256:[a-f0-9]{64})"?\s+already exists/i;
 const CONTAINERD_TRANSFER_PLATFORM_BUG = /no unpack platforms defined/i;
 const CONTAINERD_SOCKETS = ['/run/containerd/containerd.sock', '/var/run/docker/containerd/containerd.sock'] as const;
+const DEPLOY_HEARTBEAT_MS = 20_000;
 const CRANE_VERSION = 'v0.21.7';
 const CRANE_RELEASES = {
   amd64: {
@@ -129,7 +130,12 @@ async function repairUnusedStaleSnapshot(image: string, lines: readonly string[]
     log(`Removing unused stale overlayfs snapshot ${key}; containerd will refuse if it has active dependants …`);
     await run('ctr', containerdCliArgs(['snapshots', '--snapshotter', 'overlayfs', 'remove', key]), {}, log);
     log(`Retrying ${image} after targeted snapshot metadata repair …`);
-    await run('docker', ['pull', image], {}, log);
+    await run(
+      'docker',
+      ['pull', image],
+      { heartbeatMs: DEPLOY_HEARTBEAT_MS, heartbeatLabel: `Pulling ${image} after snapshot repair` },
+      log,
+    );
     return true;
   } catch (error) {
     log(`Targeted stale snapshot repair was not applicable: ${error instanceof Error ? error.message : String(error)}`);
@@ -229,11 +235,24 @@ export async function recoverImageDirectlyFromRegistry(
     const crane = await prepareCrane(log);
     const platform = `linux/${arch}`;
     const config = JSON.parse(await capture(crane, ['config', image, '--platform', platform], { timeoutMs: 30 * 60 * 1000 })) as ImageConfig;
-    await run(crane, ['export', image, rootfsArchive, '--platform', platform], { timeoutMs: 60 * 60 * 1000 }, log);
+    await run(
+      crane,
+      ['export', image, rootfsArchive, '--platform', platform],
+      {
+        timeoutMs: 60 * 60 * 1000,
+        heartbeatMs: 15 * 1000,
+        heartbeatLabel: `Exporting ${image} directly from its registry`,
+      },
+      log,
+    );
     await run(
       'docker',
       ['image', 'import', `--platform=${platform}`, ...importChanges(config), rootfsArchive, targetImage],
-      { timeoutMs: 60 * 60 * 1000 },
+      {
+        timeoutMs: 60 * 60 * 1000,
+        heartbeatMs: 15 * 1000,
+        heartbeatLabel: `Importing recovered ${targetImage} into Docker`,
+      },
       log,
     );
     await capture('docker', ['image', 'inspect', targetImage, '--format', '{{.Id}}']);
@@ -269,7 +288,11 @@ export async function recoverImageWithNativeSnapshotter(image: string, log: (lin
       await run(
         'ctr',
         containerdCliArgs(['images', 'pull', '--snapshotter', 'native', '--platform', platform, ref]),
-        { timeoutMs: 30 * 60 * 1000 },
+        {
+          timeoutMs: 30 * 60 * 1000,
+          heartbeatMs: DEPLOY_HEARTBEAT_MS,
+          heartbeatLabel: `Recovering ${image} with containerd native snapshotter`,
+        },
         pullLog,
       );
     } catch (error) {
@@ -278,7 +301,11 @@ export async function recoverImageWithNativeSnapshotter(image: string, log: (lin
       await run(
         'ctr',
         containerdCliArgs(['images', 'pull', '--local', '--snapshotter', 'native', '--platform', platform, ref]),
-        { timeoutMs: 30 * 60 * 1000 },
+        {
+          timeoutMs: 30 * 60 * 1000,
+          heartbeatMs: DEPLOY_HEARTBEAT_MS,
+          heartbeatLabel: `Recovering ${image} through ctr local mode`,
+        },
         log,
       );
     }
@@ -290,11 +317,24 @@ export async function recoverImageWithNativeSnapshotter(image: string, log: (lin
       log,
     );
     mounted = true;
-    await run('tar', ['--acls', '--xattrs', '--numeric-owner', '-C', rootfs, '-cf', archive, '.'], { timeoutMs: 30 * 60 * 1000 }, log);
+    await run(
+      'tar',
+      ['--acls', '--xattrs', '--numeric-owner', '-C', rootfs, '-cf', archive, '.'],
+      {
+        timeoutMs: 30 * 60 * 1000,
+        heartbeatMs: 15 * 1000,
+        heartbeatLabel: `Packaging recovered ${image} filesystem`,
+      },
+      log,
+    );
     await run(
       'docker',
       ['image', 'import', `--platform=linux/${hostArchitecture()}`, ...importChanges(config), archive, image],
-      { timeoutMs: 30 * 60 * 1000 },
+      {
+        timeoutMs: 30 * 60 * 1000,
+        heartbeatMs: 15 * 1000,
+        heartbeatLabel: `Importing recovered ${image} into Docker`,
+      },
       log,
     );
     await capture('docker', ['image', 'inspect', image, '--format', '{{.Id}}']);
@@ -332,7 +372,12 @@ export async function pullDockerImage(
       log(line);
     };
     try {
-      await run('docker', ['pull', image], {}, sink);
+      await run(
+        'docker',
+        ['pull', image],
+        { heartbeatMs: DEPLOY_HEARTBEAT_MS, heartbeatLabel: `Pulling application image ${image}` },
+        sink,
+      );
       return;
     } catch (err) {
       if (!isTransientSnapshotFailure(lines)) throw err;

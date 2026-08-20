@@ -125,7 +125,12 @@ describe('dockerBuilder.buildAndRun', () => {
     const runtime = await dockerBuilder.buildAndRun(ctx as never);
 
     const log = ctx.log;
-    expect(h.run).toHaveBeenCalledWith('docker', ['pull', 'nginx:1.25'], {}, expect.any(Function));
+    expect(h.run).toHaveBeenCalledWith(
+      'docker',
+      ['pull', 'nginx:1.25'],
+      { heartbeatMs: 20_000, heartbeatLabel: 'Pulling application image nginx:1.25' },
+      expect.any(Function),
+    );
     // Pull failed but a local image exists → tolerated with a clear warning.
     expect(log).toHaveBeenCalledWith(expect.stringContaining('pull failed, using local image'));
     const runArgs = h.run.mock.calls.at(-1)![1] as unknown[];
@@ -192,7 +197,12 @@ describe('dockerBuilder.buildAndRun', () => {
     expect(h.run).toHaveBeenCalledWith(
       'docker',
       ['build', '-t', 'ninedeploy/web:abcdef1', '-f', 'Dockerfile', '.'],
-      { cwd: '/work/web', env: { DOCKER_BUILDKIT: '1' } },
+      {
+        cwd: '/work/web',
+        env: { DOCKER_BUILDKIT: '1' },
+        heartbeatMs: 20_000,
+        heartbeatLabel: 'Building Docker image ninedeploy/web:abcdef1',
+      },
       ctx.log,
     );
   });
@@ -206,7 +216,12 @@ describe('dockerBuilder.buildAndRun', () => {
     expect(h.run).toHaveBeenCalledWith(
       'docker',
       ['build', '-t', 'ninedeploy/web:latest', '-f', 'Dockerfile.prod', '/app'],
-      { cwd: '/work/web', env: { DOCKER_BUILDKIT: '1' } },
+      {
+        cwd: '/work/web',
+        env: { DOCKER_BUILDKIT: '1' },
+        heartbeatMs: 20_000,
+        heartbeatLabel: 'Building Docker image ninedeploy/web:latest',
+      },
       ctx.log,
     );
   });
@@ -341,7 +356,11 @@ describe('dockerBuilder.buildAndRun', () => {
     const nix = h.run.mock.calls.find((c) => c[0] === 'nixpacks');
     expect(nix).toBeDefined();
     expect(nix![1]).toEqual(['build', '.', '--name', 'ninedeploy/web:abcdef1']);
-    expect(nix![2]).toEqual({ cwd: '/work/web' });
+    expect(nix![2]).toEqual({
+      cwd: '/work/web',
+      heartbeatMs: 20_000,
+      heartbeatLabel: 'Building ninedeploy/web:abcdef1 with Nixpacks',
+    });
     // docker build was never invoked — nixpacks produced the image itself.
     expect(h.run.mock.calls.some((c) => c[0] === 'docker' && c[1][0] === 'build')).toBe(false);
   });

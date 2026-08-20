@@ -10,18 +10,24 @@ import { composeBuilder } from './builders/compose.js';
 import { logBus } from './logs.js';
 import { pm2Builder } from './builders/pm2.js';
 import { getAcmeEmail, writeDynamicConfig } from './proxy.js';
-import { sleep, run } from '../lib/exec.js';
+import { run, sleep } from '../lib/exec.js';
 import { resolveVaultRefs } from '../lib/vault.js';
 import { agentOp } from '../lib/agentClient.js';
 import type { BuildContext, Builder, DeployRuntime } from './types.js';
 
 const builders: Record<string, Builder> = { docker: dockerBuilder, pm2: pm2Builder, compose: composeBuilder };
+const DEPLOY_HEARTBEAT_MS = 20_000;
 
 /** Execute a lifecycle hook command in the service workDir with resolved environment. */
 async function runHook(cmd: string, cwd: string, env: Record<string, string>, log: (line: string) => void): Promise<void> {
   const [bin, ...args] = cmd.trim().split(/\s+/);
   if (!bin) return;
-  await run(bin, args, { cwd, env }, log);
+  await run(
+    bin,
+    args,
+    { cwd, env, heartbeatMs: DEPLOY_HEARTBEAT_MS, heartbeatLabel: `Running deployment hook (${bin})` },
+    log,
+  );
 }
 
 /** Render any thrown value as a single-line message (handles non-Error rejections). */
