@@ -244,8 +244,10 @@ describe('jobs routes', () => {
   });
 
   it('lists run history', async () => {
+    // The route resolves the job (scoped to this service) before reading its
+    // runs, so the job row is part of the fixture — see authzRegression M-2.
     const app = await appWith({
-      findFirst: { services: svcRow() },
+      findFirst: { services: svcRow(), scheduledJobs: jobRow({ id: 3 }) },
       findMany: {
         jobRuns: [{
           id: 9, jobId: 3, status: 'completed', output: 'ok', exitCode: 0,
@@ -258,7 +260,7 @@ describe('jobs routes', () => {
     expect(res.json()[0]).toMatchObject({ id: 9, status: 'completed', output: 'ok' });
     // Rows without timestamps serialize to null.
     const app2 = await appWith({
-      findFirst: { services: svcRow() },
+      findFirst: { services: svcRow(), scheduledJobs: jobRow({ id: 3 }) },
       findMany: {
         jobRuns: [{ id: 10, jobId: 3, status: 'running', output: '', exitCode: null, startedAt: null, finishedAt: null, createdAt: new Date(0) }],
       },

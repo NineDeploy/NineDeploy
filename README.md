@@ -3,7 +3,7 @@
 # 🚀 NineDeploy
 
 **Self-hosted Deployment Platform & PaaS.**  
-Deploy apps from Git or container registries with zero downtime, automatic rollback, managed databases, Traefik ingress, and an AI-native 35-tool MCP server.
+Deploy apps from Git or container registries with zero downtime, automatic rollback, durable worker recovery, managed databases, encrypted backups, Traefik ingress, and an AI-native 35-tool MCP server.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js](https://img.shields.io/badge/Node.js-%E2%89%A522.13-green.svg)](https://nodejs.org)
@@ -79,7 +79,7 @@ For in-depth guides, operational workflows, and configuration references:
 | 🔄 [**Deployments & Pipelines**](./docs/DEPLOYMENTS.md) | Blue-green zero-downtime releases, cancellation, watch paths, and ephemeral PR preview environments. |
 | 🏢 [**Workspaces & RBAC**](./docs/WORKSPACES_RBAC.md) | Multi-tenant workspace scoping, team member invitations, and role-based permissions matrix. |
 | 🔒 [**Security & Single Sign-On**](./docs/SECURITY_SSO.md) | Dual-vault AES-256-GCM encryption, OIDC SSO (Google, GitHub, Okta), Passkeys (WebAuthn), and TOTP 2FA. |
-| 🗄️ [**Databases & S3 Backups**](./docs/DATABASES_BACKUPS.md) | 1-click managed databases, auto-injected connection strings, offsite S3 destinations, and tar-slip safe restore. |
+| 🗄️ [**Databases & S3 Backups**](./docs/DATABASES_BACKUPS.md) | 1-click managed databases, auto-injected connection strings, streaming AES-256-GCM encryption, offsite S3 destinations, and tar-slip safe restore. |
 | 🌐 [**Traefik Ingress & Tunnels**](./docs/TRAEFIK_INGRESS.md) | Dynamic routing, Let's Encrypt automated SSL (HTTP-01 & DNS-01), middlewares, and Cloudflare Tunnels. |
 | 🔌 [**Plugins & Microkernel**](./docs/PLUGINS_MICROKERNEL.md) | Microkernel lifecycle hooks (`deploy.before`, `deploy.after`), dynamic menus, and driver registries. |
 | 🤖 [**AI MCP, CLI & SDK**](./docs/AI_MCP_CLI.md) | 35 Model Context Protocol tools for AI assistants (Cursor, Claude, Antigravity), CLI reference, and TypeScript SDK. |
@@ -93,8 +93,9 @@ For in-depth guides, operational workflows, and configuration references:
 - 🚀 **Zero-Downtime Blue-Green Deploys**: Deploy without dropping connections. Health-gated traffic switchover ensures instant rollback if a new build fails.
 - 🏢 **Workspaces & Multi-Tenancy**: Organize projects, servers, databases, and teams across isolated workspaces with 4-tier RBAC.
 - 🔑 **Enterprise SSO & Passkeys**: Authenticate via OpenID Connect (Google, GitHub, Keycloak, Okta), biometric Passkeys (WebAuthn), or TOTP 2FA.
-- 🗄️ **1-Click Databases & S3 Backups**: Instant Postgres (with `pgvector`), MySQL, Redis, MongoDB, ClickHouse, and RabbitMQ with automated cron snapshots to Cloudflare R2 / AWS S3.
-- 🤖 **Native AI Superpowers**: Built-in 35-tool Model Context Protocol (MCP) server enables AI coding agents (Claude, Cursor, Antigravity, Cline) to query logs, trigger builds, and manage resources.
+- 🗄️ **1-Click Databases & Encrypted S3 Backups**: Instant Postgres (with `pgvector`), MySQL, Redis, MongoDB, ClickHouse, and RabbitMQ with streaming AES-256-GCM snapshots and automated offsite sync to Cloudflare R2 / AWS S3.
+- ♻️ **Durable Deployment Recovery**: Worker-owned Hub provisioning survives browser disconnects and server restarts, then idempotently resumes template databases, attachments, environment reconciliation, and application deployment.
+- 🤖 **Native AI Superpowers**: Built-in 35-tool Model Context Protocol (MCP) server enables AI coding agents (Claude, Cursor, Antigravity, Cline) to query logs, trigger builds, and manage resources, with an optional fail-closed read-only mode.
 - 🌐 **Automated Ingress & Tunnels**: Built-in Traefik with automated wildcard Let's Encrypt certificates and zero-configuration Cloudflare Tunnels for NAT-restricted nodes.
 - 💯 **100% Test Coverage**: Monorepo packages enforce strict 100% Vitest coverage globally in CI.
 

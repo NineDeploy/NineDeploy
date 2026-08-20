@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Added
+- **Streaming Encrypted Backups**: Database dumps are encrypted and decrypted as AES-256-GCM streams, so large backups no longer need to be loaded into server memory for creation, download or restore. Existing encrypted envelopes and legacy plaintext backups remain readable.
+- **Read-Only MCP Mode**: Setting `NINEDEPLOY_MCP_READONLY=1` exposes a fail-closed allowlist of inspection tools and excludes mutations, secret-bearing configuration, container inspection, Compose and file operations.
+- **Dashboard Crash Recovery**: Unexpected React render failures now show a recoverable error screen instead of leaving the dashboard blank.
+
+### Changed
+- **Reusable Health Probes**: Docker readiness checks reuse one supervised `ninedeploy-prober` container instead of creating an ephemeral container for every retry.
+- **Serialized Singleton Lifecycles**: PM2 sessions and Traefik recreation are serialized, preventing concurrent callers from disconnecting active PM2 work or racing to replace the shared proxy container.
+- **Header-Based WebSocket Authentication**: Current dashboard clients carry bearer credentials in the WebSocket subprotocol header instead of query strings, reducing exposure through URLs and proxy history while preserving compatibility for older clients.
+
+### Fixed
+- **Tenant-Scoped Inventory Views**: Domain, metrics, topology, network and volume responses now exclude resources outside the authenticated non-admin user's ownership scope.
+- **Safer Preview Deployments**: Pull-request previews reject invalid refs and external fork repositories before they can inherit service environment variables or enter the build queue.
+- **Atomic Deployment Claims**: Competing worker slots can no longer claim two queued deployments for the same service at the same time.
+- **Hardened Secret Handling**: Docker environment files escape multiline values, runtime log redaction handles quoted credentials, config secrets require an explicit admin reveal request, webhook token comparison hides secret length, and installer-created `.env` files are restricted to mode `0600`.
+- **Reliable Startup and UI Controls**: Database connection PRAGMAs finish before migrations and application queries begin; CLI reachability checks require the real health endpoint; terminal clearing no longer reconnects the session.
+
+## [0.2.36] - 2026-08-20
+
+### Fixed
+- **Legacy Template Provisioning Recovery**: Deployments stranded by the browser-owned provisioning flow from `0.2.34` are detected by their provisioning marker and immediately requeued on worker startup, without waiting for the normal stale-deployment timeout.
+
+## [0.2.35] - 2026-08-20
+
+### Added
+- **Durable Template Identity**: Services persist their trusted Hub template ID, allowing the worker to reconstruct and reconcile required database dependencies after a process or host restart.
+
+### Changed
+- **Worker-Owned Hub Provisioning**: Preparing a Hub service is now the durable queue operation. Database startup, attachment, environment reconciliation and application deployment continue in the worker even if the browser navigates away or disconnects.
+- **Interrupted Deployment Resume**: Stale `building` deployments are requeued for idempotent recovery instead of being marked failed automatically.
+
 ## [0.2.34] - 2026-08-20
 
 ### Changed

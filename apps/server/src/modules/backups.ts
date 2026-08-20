@@ -7,6 +7,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { config } from '../config.js';
 import { backupDatabase, createBackupReadStream, databaseSize, restoreDatabase } from '../engine/database.js';
 import { deleteRemoteBackup, fetchRemoteBackup, uploadBackup } from '../lib/backupRemote.js';
+import { type AuthedUser, loadDatabaseForUser, visibleDatabaseIds } from '../lib/resourceAccess.js';
 import { badRequest, notFound, parseId as num } from '../lib/errors.js';
 
 function serialize(b: typeof backups.$inferSelect) {
@@ -19,10 +20,14 @@ function serialize(b: typeof backups.$inferSelect) {
   };
 }
 
-async function getDb(app: Parameters<FastifyPluginAsync>[0], id: number) {
-  const d = await app.db.query.databases.findFirst({ where: eq(databases.id, id) });
-  if (!d) throw notFound('Database not found');
-  return d;
+/**
+ * Resolve a database the caller may see. Delegates to the shared access
+ * choke-point rather than doing a bare id lookup: these routes expose the
+ * existence, name, size and backup cadence of a tenant's database, so they
+ * need the same decision every route in `modules/databases.ts` makes.
+ */
+async function getDb(app: Parameters<FastifyPluginAsync>[0], id: number, user: AuthedUser) {
+  return loadDatabaseForUser(app.db, id, user);
 }
 
 /** Per-database storage + backup actions. Mounted under /databases. */
@@ -30,12 +35,13 @@ export const databaseBackupRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('onRequest', app.authenticate);
 
   app.get('/:id/storage', async (req) => {
-    const d = await getDb(app, num((req.params as { id: string }).id));
+    const d = await getDb(app, num((req.params as { id: string }).id), req.user!);
     return { sizeBytes: await databaseSize(d) };
   });
 
   app.get('/:id/backups', async (req) => {
     const id = num((req.params as { id: string }).id);
+    await getDb(app, id, req.user!);
     const rows = await app.db.query.backups.findMany({ where: eq(backups.databaseId, id), orderBy: desc(backups.createdAt) });
     return rows.map(serialize);
   });
@@ -44,7 +50,7 @@ export const databaseBackupRoutes: FastifyPluginAsync = async (app) => {
   // admin-only, consistent with exec/volume-file access.
   app.post('/:id/backups', { preHandler: [app.requireAdmin] }, async (req) => {
     const id = num((req.params as { id: string }).id);
-    const d = await getDb(app, id);
+    const d = await getDb(app, id, req.user!);
     const ts = new Date().toISOString().replace(/[:.]/g, '-');
     const file = path.join(config.paths.backupsDir, `${d.slug}-${ts}.dump`);
     const log = (line: string) => app.log.info({ component: 'backup' }, line);
@@ -69,7 +75,7 @@ export const databaseBackupRoutes: FastifyPluginAsync = async (app) => {
   app.post('/:id/backups/:bid/restore', { preHandler: [app.requireAdmin] }, async (req) => {
     const id = num((req.params as { id: string }).id);
     const bid = num((req.params as { bid: string }).bid);
-    const d = await getDb(app, id);
+    const d = await getDb(app, id, req.user!);
     const b = await app.db.query.backups.findFirst({ where: eq(backups.id, bid) });
     // Ownership: without this check a backup of database A could be restored
     // into database B (cross-database data corruption).
@@ -108,11 +114,16 @@ export const databaseBackupRoutes: FastifyPluginAsync = async (app) => {
 export const backupRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('onRequest', app.authenticate);
 
-  app.get('/', async () => {
+  app.get('/', async (req) => {
     const rows = await app.db.query.backups.findMany({ orderBy: desc(backups.createdAt) });
     const dbs = await app.db.select().from(databases);
     const name = new Map(dbs.map((d) => [d.id, d.name]));
-    return rows.map((b) => ({ ...serialize(b), databaseName: b.databaseId ? (name.get(b.databaseId) ?? null) : null }));
+    // Members see only backups of databases they may access; `null` means
+    // unrestricted (admin). The instance-wide list would otherwise disclose
+    // every tenant's database names, backup sizes and schedule cadence.
+    const visible = await visibleDatabaseIds(app.db, req.user!);
+    const scoped = visible === null ? rows : rows.filter((b) => b.databaseId != null && visible.includes(b.databaseId));
+    return scoped.map((b) => ({ ...serialize(b), databaseName: b.databaseId ? (name.get(b.databaseId) ?? null) : null }));
   });
 
   app.delete('/:bid', { preHandler: [app.requireAdmin] }, async (req) => {

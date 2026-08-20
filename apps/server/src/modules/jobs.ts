@@ -140,6 +140,14 @@ export const jobRoutes: FastifyPluginAsync = async (app) => {
     const id = parseId((req.params as { id: string }).id);
     await loadServiceForUser(app.db, id, req.user!);
     const jobId = parseId((req.params as { jobId: string }).jobId);
+    // Owning the service is not enough: `jobId` must belong to THIS service.
+    // Without this, any member who owns any service could read every job's
+    // captured output by iterating jobId — including admin-only `exec` jobs,
+    // whose output is up to 60 KB of arbitrary in-container command results.
+    const job = await app.db.query.scheduledJobs.findFirst({
+      where: and(eq(scheduledJobs.id, jobId), eq(scheduledJobs.serviceId, id)),
+    });
+    if (!job) throw notFound('Job not found');
     const rows = await app.db.query.jobRuns.findMany({
       where: eq(jobRuns.jobId, jobId),
       orderBy: desc(jobRuns.createdAt),

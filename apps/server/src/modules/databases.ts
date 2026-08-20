@@ -406,8 +406,12 @@ export const attachmentRoutes: FastifyPluginAsync = async (app) => {
     // runtime env and break `docker run --env-file` at deploy time.
     const input = createAttachment.parse(req.body ?? {});
     await loadServiceForUser(app.db, id, req.user!);
-    const d = await app.db.query.databases.findFirst({ where: eq(databases.id, input.databaseId) });
-    if (!d) throw notFound('Database not found');
+    // BOTH sides need an access decision. Checking only the service let a
+    // member attach ANY database id to a service they own — the deploy
+    // pipeline then injects that database's decrypted password and connection
+    // string into their container env (engine/pipeline.ts), handing them full
+    // read/write access to another tenant's data.
+    const d = await loadDatabaseForUser(app.db, input.databaseId, req.user!);
     const envAlias = input.envAlias ?? aliasFor(d.engine);
     if (input.reuseExisting) {
       const existing = await app.db.query.databaseAttachments.findFirst({
