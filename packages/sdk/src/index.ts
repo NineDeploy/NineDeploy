@@ -129,6 +129,15 @@ export interface TemplateDeployResult {
   alreadyInProgress: boolean;
 }
 
+export interface TemplatePrepareResult {
+  serviceId: number;
+  serviceName: string;
+  serviceSlug: string;
+  deploymentId: number;
+  generatedSecrets: Array<{ key: string; value: string }>;
+  stages: TemplateDeployResult['stages'];
+}
+
 export interface NineDeployClientOptions {
   /** Base URL of the NineDeploy API, e.g. http://localhost:3000. */
   baseUrl: string;
@@ -468,6 +477,7 @@ export interface NineDeployClient {
   templates: {
     list: () => Promise<TemplateSummary[]>;
     get: (id: string) => Promise<Template>;
+    prepare: (id: string, input?: DeployTemplateInput) => Promise<TemplatePrepareResult>;
     deploy: (id: string, input?: DeployTemplateInput) => Promise<TemplateDeployResult>;
   };
   limits: {
@@ -937,6 +947,7 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
     templates: {
       list: () => get<TemplateSummary[]>('/v1/templates'),
       get: (id) => get<Template>(`/v1/templates/${id}`),
+      prepare: (id, input) => send<TemplatePrepareResult>('POST', `/v1/templates/${id}/prepare`, input ?? {}),
       deploy: (id, input) => send<TemplateDeployResult>('POST', `/v1/templates/${id}/deploy`, input ?? {}),
     },
     backups: {

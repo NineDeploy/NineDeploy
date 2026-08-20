@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.34] - 2026-08-20
+
+### Changed
+- **Immediate Hub Handoff**: Pressing Deploy in a Hub service modal now prepares the stable service identity, closes the modal and navigates directly to `/services/{id}?tab=deploys` without waiting for image or database provisioning.
+- **Visible Dependency Provisioning**: The fast prepare response creates a `building` deployment row immediately. The Deployments tab can display and poll it while the server prepares managed dependencies, then the same row is promoted to the normal deployment queue.
+- **Background Panel Flow**: Web provisioning continues through the canonical server endpoint after navigation; completion and failure refresh the service and deployment state and surface a toast without reopening the modal.
+
 ## [0.2.33] - 2026-08-20
 
 ### Fixed

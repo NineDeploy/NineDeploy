@@ -16,7 +16,7 @@ const apiMock = vi.hoisted(() => ({
     deploys: { trigger: vi.fn() },
     databases: { create: vi.fn(), get: vi.fn() },
     attachments: { create: vi.fn() },
-    templates: { deploy: vi.fn() },
+    templates: { prepare: vi.fn(), deploy: vi.fn() },
   },
 }));
 
@@ -42,7 +42,7 @@ const TEMPLATE = {
 
 function LocationProbe() {
   const location = useLocation();
-  return <div data-testid="location">{location.pathname}</div>;
+  return <div data-testid="location">{location.pathname}{location.search}</div>;
 }
 
 function renderWizard(props: { template?: typeof TEMPLATE; onClose?: () => void } = {}) {
@@ -86,6 +86,14 @@ describe('DeployWizard', () => {
     apiMock.api.databases.get.mockResolvedValue({ id: 7, name: 'db', engine: 'postgres', status: 'running' });
     apiMock.api.attachments.create.mockResolvedValue({ id: 9, databaseId: 7, envAlias: 'DATABASE_URL' });
     apiMock.api.deploys.trigger.mockResolvedValue({ deploymentId: 7 });
+    apiMock.api.templates.prepare.mockResolvedValue({
+      serviceId: 42,
+      serviceName: 'app',
+      serviceSlug: 'app',
+      deploymentId: 6,
+      generatedSecrets: [],
+      stages: [],
+    });
     apiMock.api.templates.deploy.mockResolvedValue({
       serviceId: 42,
       serviceName: 'app',
@@ -246,6 +254,7 @@ describe('DeployWizard', () => {
     await user.click(screen.getByRole('button', { name: /continue/i }));
     expect(screen.getByText('n8n')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /deploy/i }));
+    await waitFor(() => expect(apiMock.api.templates.prepare).toHaveBeenCalledWith('n8n', expect.objectContaining({ name: 'n8n', reuseExisting: true })));
     await waitFor(() => expect(apiMock.api.templates.deploy).toHaveBeenCalledWith('n8n', expect.objectContaining({ name: 'n8n', reuseExisting: true })));
     expect(apiMock.api.services.create).not.toHaveBeenCalled();
     // An untouched registry secret is omitted so the server can generate it
@@ -281,34 +290,37 @@ describe('DeployWizard', () => {
     await waitFor(() => expect(onClose).toHaveBeenCalled());
   });
 
-  it('shows the server-owned provisioning stages while a database template request is pending', async () => {
+  it('closes and navigates to Deployments while server provisioning continues', async () => {
     const tpl = { ...TEMPLATE, dbEngine: 'postgres' as const };
     const pending = deferred<Awaited<ReturnType<typeof apiMock.api.templates.deploy>>>();
     apiMock.api.templates.deploy.mockReturnValue(pending.promise);
-    renderWizard({ template: tpl });
+    const { onClose } = renderWizard({ template: tpl });
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: /continue/i }));
     await user.click(screen.getByRole('button', { name: /continue/i }));
     await user.click(screen.getByRole('button', { name: /continue/i }));
     await user.click(screen.getByRole('button', { name: /continue/i }));
     await user.click(screen.getByRole('button', { name: /deploy/i }));
-    expect(screen.getByText('Server provisioning pipeline')).toBeInTheDocument();
-    expect(screen.getByText(/Start and verify the required postgres database/)).toBeInTheDocument();
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/services/42?tab=deploys'));
+    expect(apiMock.api.templates.deploy).toHaveBeenCalledOnce();
   });
 
-  it('reports a canonical provisioning failure without triggering a client-side deploy', async () => {
+  it('reports a background canonical provisioning failure on the service page', async () => {
     const toastMod = await vi.importActual<typeof import('../src/components/Toast.js')>('../src/components/Toast.js');
     void toastMod;
     const tpl = { ...TEMPLATE, dbEngine: 'postgres' as const };
     apiMock.api.templates.deploy.mockRejectedValue(new Error('Failed to start template database'));
-    renderWizard({ template: tpl });
+    const { onClose } = renderWizard({ template: tpl });
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: /continue/i }));
     await user.click(screen.getByRole('button', { name: /continue/i }));
     await user.click(screen.getByRole('button', { name: /continue/i }));
     await user.click(screen.getByRole('button', { name: /continue/i }));
     await user.click(screen.getByRole('button', { name: /deploy/i }));
-    await waitFor(() => expect(screen.getByText(/Failed — try again/)).toBeInTheDocument());
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/services/42?tab=deploys'));
+    await waitFor(() => expect(screen.getByText('Failed to start template database')).toBeInTheDocument());
     expect(apiMock.api.deploys.trigger).not.toHaveBeenCalled();
   });
 

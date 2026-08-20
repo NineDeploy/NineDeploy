@@ -1092,6 +1092,10 @@ describe('createClient', () => {
       await client.templates.get('nextjs');
       expect(last(calls)).toMatchObject({ url: '/v1/templates/nextjs', init: { method: 'GET' } });
 
+      await client.templates.prepare('wordpress', { name: 'Blog' });
+      expect(last(calls)).toMatchObject({ url: '/v1/templates/wordpress/prepare', init: { method: 'POST' } });
+      expect(JSON.parse(last(calls).init.body ?? '{}')).toEqual({ name: 'Blog' });
+
       await client.templates.deploy('nextjs');
       expect(last(calls)).toMatchObject({ url: '/v1/templates/nextjs/deploy', init: { method: 'POST' } });
 

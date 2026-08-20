@@ -94,7 +94,7 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
     },
     mutationFn: async () => {
       if (template) {
-        const result = await api.templates.deploy(template.id, {
+        const input = {
           name,
           projectId: projectId ?? undefined,
           serverId: serverId ? toInt(serverId) : undefined,
@@ -107,8 +107,23 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
             .filter((entry) => !(entry.secret && entry.value === '' && template.env?.some((preset) => preset.key === entry.key && preset.secret)))
             .map((entry) => ({ key: entry.key.trim(), value: entry.value, isSecret: entry.secret })),
           reuseExisting: true,
+        };
+        // The prepare call returns the stable service ID immediately. Start
+        // canonical dependency provisioning before yielding to onSuccess, then
+        // let the user follow it from the service Deployments tab.
+        const prepared = await api.templates.prepare(template.id, input);
+        void api.templates.deploy(template.id, input).then((result) => {
+          qc.invalidateQueries({ queryKey: ['services'] });
+          qc.invalidateQueries({ queryKey: ['service', result.serviceId] });
+          qc.invalidateQueries({ queryKey: ['deploys', result.serviceId] });
+          qc.invalidateQueries({ queryKey: ['databases'] });
+          toast('Dependencies are ready — application deploy queued', 'info');
+        }).catch((err) => {
+          qc.invalidateQueries({ queryKey: ['service', prepared.serviceId] });
+          qc.invalidateQueries({ queryKey: ['deploys', prepared.serviceId] });
+          toast(err instanceof Error ? err.message : 'Template provisioning failed', 'error');
         });
-        return { serviceId: result.serviceId, deploymentId: result.deploymentId, canonical: true };
+        return { serviceId: prepared.serviceId, deploymentId: null, canonical: true, background: true };
       }
       const svc = await api.services.create({
         name,
@@ -136,12 +151,12 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
         }
       }
       const deployment = await api.deploys.trigger(svc.id);
-      return { serviceId: svc.id, deploymentId: deployment.deploymentId, canonical: false };
+      return { serviceId: svc.id, deploymentId: deployment.deploymentId, canonical: false, background: false };
     },
     onSuccess: (result) => {
       qc.invalidateQueries({ queryKey: ['services'] });
       qc.invalidateQueries({ queryKey: ['databases'] });
-      toast(result.canonical ? 'Dependencies are ready — application deploy queued' : 'Deploy started — building…', 'info');
+      toast(result.background ? 'Provisioning started — follow progress in Deployments' : 'Deploy started — building…', 'info');
       navigate(`/services/${result.serviceId}?tab=deploys`);
       onClose();
     },

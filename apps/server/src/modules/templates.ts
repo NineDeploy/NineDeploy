@@ -8,7 +8,7 @@ import {
   type Database,
   type Service,
 } from '@ninedeploy/db';
-import { deployTemplate } from '@ninedeploy/schemas';
+import { deployTemplate, type DeployTemplate } from '@ninedeploy/schemas';
 import { and, desc, eq, inArray } from 'drizzle-orm';
 import { audit } from '../lib/audit.js';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
@@ -34,6 +34,8 @@ type ProvisionStage = {
   status: 'success' | 'skipped';
   message: string;
 };
+
+const provisioningMessage = (template: Template) => `Provisioning template dependencies: ${template.name}`;
 
 function sameTemplateService(service: Service, template: Template, ownerUserId: number, projectId: number | null): boolean {
   return service.ownerUserId === ownerUserId
@@ -170,6 +172,67 @@ async function reconcileDatabase(
   };
 }
 
+async function prepareTemplateService(
+  app: FastifyInstance,
+  template: Template,
+  input: DeployTemplate,
+  ownerUserId: number,
+): Promise<{ service: Service; generatedSecrets: Array<{ key: string; value: string }>; stages: ProvisionStage[] }> {
+  const projectId = input.projectId ?? null;
+  const name = input.name ?? template.name;
+  const slug = input.name ? slugify(name) : `${slugify(template.name)}-${Date.now().toString(36).slice(-4)}`;
+  const stages: ProvisionStage[] = [];
+
+  let service = await app.db.query.services.findFirst({ where: eq(services.slug, slug) });
+  if (service) {
+    if (!input.reuseExisting || !sameTemplateService(service, template, ownerUserId, projectId)) {
+      throw badRequest(`A service with slug '${slug}' already exists`, 'slug_taken');
+    }
+    const trusted = {
+      name,
+      serverId: input.serverId === undefined ? service.serverId : input.serverId,
+      publishedPort: input.publishedPort === undefined ? service.publishedPort : input.publishedPort,
+      healthPath: input.healthPath ?? service.healthPath,
+      cpuShares: input.cpuShares ?? service.cpuShares,
+      memLimitMb: input.memLimitMb ?? service.memLimitMb,
+      cmd: template.cmd ?? null,
+      dockerSocket: template.dockerSocket ?? false,
+      templateDatabaseEnv: template.databaseEnv ?? null,
+    };
+    await app.db.update(services).set(trusted).where(eq(services.id, service.id));
+    service = { ...service, ...trusted };
+    stages.push({ id: 'service', status: 'success', message: 'Existing interrupted service reconciled' });
+  } else {
+    const [created] = await app.db.insert(services).values({
+      projectId,
+      ownerUserId,
+      name,
+      slug,
+      type: 'docker',
+      image: template.image,
+      port: template.port,
+      publishedPort: input.publishedPort ?? null,
+      healthPath: input.healthPath ?? '/',
+      volumeMount: template.volumeMount ?? null,
+      repoUrl: null,
+      serverId: input.serverId ?? null,
+      cpuShares: input.cpuShares ?? 0,
+      memLimitMb: input.memLimitMb ?? 0,
+      cmd: template.cmd ?? null,
+      dockerSocket: template.dockerSocket ?? false,
+      templateDatabaseEnv: template.databaseEnv ?? null,
+    }).returning();
+    if (!created) throw badRequest('Could not create template service');
+    service = created;
+    await app.db.insert(buildConfigs).values({ serviceId: service.id, buildPack: 'auto', baseDir: '/' });
+    stages.push({ id: 'service', status: 'success', message: 'Service configuration created' });
+  }
+
+  const generatedSecrets = await reconcileEnvironment(app, service.id, template, input.env ?? []);
+  stages.push({ id: 'environment', status: 'success', message: 'Environment and secrets reconciled' });
+  return { service, generatedSecrets, stages };
+}
+
 /** Template hub: list, detail, canonical retry-safe one-click provisioning. */
 export const templateRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('onRequest', app.authenticate);
@@ -182,65 +245,69 @@ export const templateRoutes: FastifyPluginAsync = async (app) => {
     return { ...t, runtimeVerified: t.runtimeVerified === true };
   });
 
+  // Fast UI hand-off: materialize the service identity first so the panel can
+  // close immediately and navigate to its Deployments tab while the normal
+  // deploy endpoint performs dependency provisioning in a separate request.
+  app.post('/:id/prepare', async (req) => {
+    const t = (await getTemplates(app.db)).find((x) => x.id === (req.params as { id: string }).id);
+    if (!t) throw notFound('Template not found');
+    const input = deployTemplate.parse(req.body ?? {});
+    const prepared = await prepareTemplateService(app, t, input, req.user!.id);
+    let deployment = await app.db.query.deployments.findFirst({
+      where: and(
+        eq(deployments.serviceId, prepared.service.id),
+        inArray(deployments.status, ['queued', 'building', 'deploying']),
+      ),
+      orderBy: desc(deployments.id),
+    });
+    if (!deployment) {
+      [deployment] = await app.db.insert(deployments).values({
+        serviceId: prepared.service.id,
+        status: 'building',
+        trigger: 'user',
+        message: provisioningMessage(t),
+        startedAt: new Date(),
+      }).returning();
+    }
+    if (!deployment) throw badRequest('Could not create template provisioning deployment');
+    void audit(app.db, req.user!.id, 'template.prepare', `${t.name} → ${prepared.service.name}`);
+    return {
+      serviceId: prepared.service.id,
+      serviceName: prepared.service.name,
+      serviceSlug: prepared.service.slug,
+      deploymentId: deployment.id,
+      generatedSecrets: prepared.generatedSecrets,
+      stages: prepared.stages,
+    };
+  });
+
   app.post('/:id/deploy', async (req) => {
     const t = (await getTemplates(app.db)).find((x) => x.id === (req.params as { id: string }).id);
     if (!t) throw notFound('Template not found');
     const input = deployTemplate.parse(req.body ?? {});
     const ownerUserId = req.user!.id;
     const projectId = input.projectId ?? null;
-    const name = input.name ?? t.name;
-    const slug = input.name ? slugify(name) : `${slugify(t.name)}-${Date.now().toString(36).slice(-4)}`;
-    const stages: ProvisionStage[] = [];
+    const prepared = await prepareTemplateService(app, t, input, ownerUserId);
+    const { service, generatedSecrets, stages } = prepared;
 
-    let service = await app.db.query.services.findFirst({ where: eq(services.slug, slug) });
-    if (service) {
-      if (!input.reuseExisting || !sameTemplateService(service, t, ownerUserId, projectId)) {
-        throw badRequest(`A service with slug '${slug}' already exists`, 'slug_taken');
+    const existingProgress = await app.db.query.deployments.findFirst({
+      where: and(eq(deployments.serviceId, service.id), inArray(deployments.status, ['queued', 'building', 'deploying'])),
+      orderBy: desc(deployments.id),
+    });
+    const preparedDeployment = existingProgress?.status === 'building'
+      && existingProgress.message === provisioningMessage(t)
+      ? existingProgress
+      : undefined;
+
+    let databaseResult: Awaited<ReturnType<typeof reconcileDatabase>>;
+    try {
+      databaseResult = await reconcileDatabase(app, service, t, ownerUserId, projectId);
+    } catch (error) {
+      if (preparedDeployment) {
+        await app.db.update(deployments).set({ status: 'failed', finishedAt: new Date() }).where(eq(deployments.id, preparedDeployment.id));
       }
-      const trusted = {
-        name,
-        serverId: input.serverId === undefined ? service.serverId : input.serverId,
-        publishedPort: input.publishedPort === undefined ? service.publishedPort : input.publishedPort,
-        healthPath: input.healthPath ?? service.healthPath,
-        cpuShares: input.cpuShares ?? service.cpuShares,
-        memLimitMb: input.memLimitMb ?? service.memLimitMb,
-        cmd: t.cmd ?? null,
-        dockerSocket: t.dockerSocket ?? false,
-        templateDatabaseEnv: t.databaseEnv ?? null,
-      };
-      await app.db.update(services).set(trusted).where(eq(services.id, service.id));
-      service = { ...service, ...trusted };
-      stages.push({ id: 'service', status: 'success', message: 'Existing interrupted service reconciled' });
-    } else {
-      const [created] = await app.db.insert(services).values({
-        projectId,
-        ownerUserId,
-        name,
-        slug,
-        type: 'docker',
-        image: t.image,
-        port: t.port,
-        publishedPort: input.publishedPort ?? null,
-        healthPath: input.healthPath ?? '/',
-        volumeMount: t.volumeMount ?? null,
-        repoUrl: null,
-        serverId: input.serverId ?? null,
-        cpuShares: input.cpuShares ?? 0,
-        memLimitMb: input.memLimitMb ?? 0,
-        cmd: t.cmd ?? null,
-        dockerSocket: t.dockerSocket ?? false,
-        templateDatabaseEnv: t.databaseEnv ?? null,
-      }).returning();
-      if (!created) throw badRequest('Could not create template service');
-      service = created;
-      await app.db.insert(buildConfigs).values({ serviceId: service.id, buildPack: 'auto', baseDir: '/' });
-      stages.push({ id: 'service', status: 'success', message: 'Service configuration created' });
+      throw error;
     }
-
-    const generatedSecrets = await reconcileEnvironment(app, service.id, t, input.env ?? []);
-    stages.push({ id: 'environment', status: 'success', message: 'Environment and secrets reconciled' });
-
-    const databaseResult = await reconcileDatabase(app, service, t, ownerUserId, projectId);
     if (databaseResult) {
       stages.push({ id: 'database', status: 'success', message: `${t.dbEngine} database is running` });
       stages.push({
@@ -253,14 +320,18 @@ export const templateRoutes: FastifyPluginAsync = async (app) => {
       stages.push({ id: 'attachment', status: 'skipped', message: 'No database attachment required' });
     }
 
-    const inProgress = await app.db.query.deployments.findFirst({
-      where: and(eq(deployments.serviceId, service.id), inArray(deployments.status, ['queued', 'building', 'deploying'])),
-      orderBy: desc(deployments.id),
-    });
     let deploymentId: number;
     let alreadyInProgress = false;
-    if (inProgress) {
-      deploymentId = inProgress.id;
+    if (preparedDeployment) {
+      deploymentId = preparedDeployment.id;
+      await app.db.update(deployments).set({
+        status: 'queued',
+        startedAt: null,
+        message: `Deploy from template: ${t.name}`,
+      }).where(eq(deployments.id, preparedDeployment.id));
+      stages.push({ id: 'deployment', status: 'success', message: 'Application deployment queued' });
+    } else if (existingProgress) {
+      deploymentId = existingProgress.id;
       alreadyInProgress = true;
       stages.push({ id: 'deployment', status: 'success', message: 'Existing deployment remains in progress' });
     } else {

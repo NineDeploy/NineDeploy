@@ -183,6 +183,79 @@ describe('template routes', () => {
     expect(attachmentInsert).toMatchObject({ serviceId: 7, databaseId: 9, envAlias: 'DATABASE_URL' });
   });
 
+  it('prepares a database-backed service identity without waiting for dependency provisioning', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        insert: {
+          services: (value) => [svcRow({ ...(value as Record<string, unknown>), id: 15 })],
+          databases: () => { throw new Error('prepare must not create database'); },
+          database_attachments: () => { throw new Error('prepare must not attach database'); },
+          deployments: [depRow({ id: 16, serviceId: 15, status: 'building', message: 'Provisioning template dependencies: Ghost' })],
+        },
+      }),
+    });
+    await app.register(templateRoutes);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/ghost/prepare',
+      headers: asUser(),
+      payload: { name: 'Ghost' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ serviceId: 15, serviceName: 'Ghost', serviceSlug: 'ghost', deploymentId: 16 });
+    expect(databaseMocks.startDatabase).not.toHaveBeenCalled();
+  });
+
+  it('promotes the prepared provisioning row into the normal deployment queue', async () => {
+    let deploymentUpdate: Record<string, unknown> | undefined;
+    const existingService = svcRow({
+      id: 25,
+      ownerUserId: 1,
+      name: 'Ghost',
+      slug: 'ghost',
+      image: 'ghost:5-alpine',
+      port: 2368,
+      volumeMount: '/var/lib/ghost/content',
+      status: 'idle',
+    });
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: {
+          services: existingService,
+          deployments: depRow({
+            id: 26,
+            serviceId: 25,
+            status: 'building',
+            message: 'Provisioning template dependencies: Ghost',
+          }),
+        },
+        insert: {
+          databases: (value) => [dbRow({ ...(value as Record<string, unknown>), id: 27 })],
+          deployments: () => { throw new Error('must reuse prepared deployment'); },
+        },
+        update: {
+          deployments: (value) => {
+            deploymentUpdate = value as Record<string, unknown>;
+            return [value as Record<string, unknown>];
+          },
+        },
+      }),
+    });
+    await app.register(templateRoutes);
+
+    const res = await app.inject({ method: 'POST', url: '/ghost/deploy', headers: asUser(), payload: { name: 'Ghost' } });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ serviceId: 25, deploymentId: 26, databaseId: 27, alreadyInProgress: false });
+    expect(deploymentUpdate).toMatchObject({
+      status: 'queued',
+      startedAt: null,
+      message: 'Deploy from template: Ghost',
+    });
+  });
+
   it('keeps registry-controlled runtime fields authoritative for panel deploys', async () => {
     let serviceInsert: Record<string, unknown> | undefined;
     const envInserts: Array<Record<string, unknown>> = [];
