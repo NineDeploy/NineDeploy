@@ -80,7 +80,7 @@ Re-running the installation script performs a seamless, zero-data-loss upgrade:
 curl -fsSL https://raw.githubusercontent.com/NineDeploy/NineDeploy/main/install.sh | bash
 
 # Pin to a specific version
-bash install.sh --version v0.2.28
+bash install.sh --version v0.2.29
 
 # Track edge (main branch)
 bash install.sh --channel main

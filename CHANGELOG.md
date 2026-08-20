@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.29] - 2026-08-20
+
+### Added
+- **Guided Cloudflare Setup**: The Tunnels panel now gives numbered instructions for choosing a remotely managed Cloudflare Tunnel with `cloudflared`, extracting the connector token and confirming connector health.
+- **Exact Routing Values**: The guide provides a copyable `http://ninedeploy-traefik:80` Published application origin and a final end-to-end verification checklist.
+
+### Changed
+- **Domain and TLS Guidance**: The panel explicitly requires the same public hostname in NineDeploy with SSL disabled because Cloudflare terminates browser TLS and forwards HTTP to Traefik.
+- **Safer Token Entry**: The connector token is masked and clearly distinguished from API tokens, API keys, Tunnel IDs and certificates.
+
 ## [0.2.28] - 2026-08-20
 
 ### Added

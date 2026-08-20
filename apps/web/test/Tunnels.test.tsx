@@ -20,6 +20,25 @@ describe('Tunnels', () => {
     vi.clearAllMocks();
   });
 
+  it('shows the complete cloudflared routing guide', async () => {
+    mockOf(api.tunnels.list).mockResolvedValue([] as never);
+    renderWithProviders(<Tunnels />);
+    expect(screen.getByText(/Cloudflare Tunnel \/ cloudflared/)).toBeInTheDocument();
+    expect(screen.getByText(/Do not choose Mesh/)).toBeInTheDocument();
+    expect(screen.getByText('http://ninedeploy-traefik:80')).toBeInTheDocument();
+    expect(screen.getByText(/Keep SSL off in NineDeploy/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Open Cloudflare Zero Trust/ })).toHaveAttribute('href', 'https://one.dash.cloudflare.com/');
+  });
+
+  it('copies the Traefik origin from the guide', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+    mockOf(api.tunnels.list).mockResolvedValue([] as never);
+    renderWithProviders(<Tunnels />);
+    await userEvent.click(screen.getByRole('button', { name: 'Copy Traefik origin' }));
+    expect(writeText).toHaveBeenCalledWith('http://ninedeploy-traefik:80');
+  });
+
   it('shows skeleton while loading', () => {
     mockOf(api.tunnels.list).mockReturnValue(new Promise(() => {}));
     renderWithProviders(<Tunnels />);
@@ -52,8 +71,7 @@ describe('Tunnels', () => {
     await userEvent.type(screen.getByPlaceholderText('eyJhIjoi…'), 'tok');
     fireEvent.click(screen.getByRole('button', { name: /Start tunnel/ }));
     await waitFor(() => expect(api.tunnels.create).toHaveBeenCalled());
-    const deleteButtons = screen.getAllByRole('button').filter((b) => b.textContent?.trim() === '');
-    fireEvent.click(deleteButtons[0]!);
+    fireEvent.click(screen.getByRole('button', { name: 'Delete production' }));
     fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
     await waitFor(() => expect(api.tunnels.remove).toHaveBeenCalled());
   });
@@ -117,8 +135,7 @@ describe('Tunnels', () => {
     mockOf(api.tunnels.remove).mockResolvedValue(undefined as never);
     renderWithProviders(<Tunnels />);
     await screen.findByText('production');
-    const deleteButtons = screen.getAllByRole('button').filter((b) => b.textContent?.trim() === '');
-    fireEvent.click(deleteButtons[0]!);
+    fireEvent.click(screen.getByRole('button', { name: 'Delete production' }));
     fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
     await waitFor(() => expect(api.tunnels.remove).toHaveBeenCalledWith(1));
   });

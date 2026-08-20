@@ -1,4 +1,4 @@
-export const VERSION = '0.2.28';
+export const VERSION = '0.2.29';
 
 export interface ChangelogEntry {
   version: string;
@@ -8,6 +8,18 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.2.29',
+    date: '2026-08-20',
+    title: 'Guided Cloudflare Tunnel Setup',
+    changes: [
+      'The Tunnels panel explains why public hostname routing requires Cloudflare Tunnel with cloudflared rather than Mesh or private network connectors',
+      'A numbered guide covers remotely managed tunnel creation, connector token selection and NineDeploy startup',
+      'The exact Traefik HTTP origin is shown with one-click copy and matching Published application route instructions',
+      'Domain guidance explicitly requires the same hostname with NineDeploy SSL disabled because Cloudflare terminates public TLS',
+      'Connector tokens are entered through a password field with API key and Tunnel ID warnings',
+    ],
+  },
   {
     version: '0.2.28',
     date: '2026-08-20',
