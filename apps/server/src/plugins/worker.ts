@@ -42,11 +42,16 @@ export default fp(
     try {
       const buildingRows = (await fastify.db.select().from(deployments).where(eq(deployments.status, 'building'))) as Array<{
         id: number;
+        message: string | null;
         startedAt: Date | null;
         createdAt: Date | null;
       }>;
       const stale = buildingRows
         .filter((r) => {
+          // v0.2.34 let the browser own dependency provisioning and left this
+          // marker behind if that request was interrupted. No worker can be
+          // running such a row, so migrate it immediately regardless of age.
+          if (r.message?.startsWith('Provisioning template dependencies:')) return true;
           const ts = r.startedAt ?? r.createdAt;
           return !!ts && ts.getTime() < staleCutoff.getTime();
         })

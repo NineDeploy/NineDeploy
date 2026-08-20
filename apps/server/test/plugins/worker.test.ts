@@ -112,6 +112,16 @@ describe('worker plugin', () => {
     expect(updates.find((u) => u.status === 'queued')).toBeUndefined();
   });
 
+  it('immediately recovers legacy browser-owned provisioning rows', async () => {
+    const { db, updates } = makeDb({
+      queued: [],
+      building: [{ id: 10, message: 'Provisioning template dependencies: Ghost', startedAt: new Date() }],
+    });
+    const app = await buildApp(db);
+    await app.close();
+    expect(updates.find((u) => u.status === 'queued')).toBeDefined();
+  });
+
   it('starts anyway and warns when the startup sweep query fails', async () => {
     vi.useFakeTimers();
     const update = vi.fn((_table: unknown) => ({
