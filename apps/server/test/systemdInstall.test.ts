@@ -58,4 +58,16 @@ describe('bare-metal systemd installation policy', () => {
     expect(installer).toContain("-H 'Host: ninedeploy-install-check.invalid' http://127.0.0.1/");
     expect(installer).toContain('Traefik is running but its HTTP entrypoint on :80 is not responding');
   });
+
+  it('installs a pinned and checksum-verified Nixpacks CLI instead of treating its base image as a CLI image', () => {
+    const installer = rootFile('install.sh');
+    const containerfile = rootFile('Dockerfile');
+
+    expect(installer).toContain('NIXPACKS_VERSION="1.37.0"');
+    expect(installer).toContain('NIXPACKS_ACTUAL_SHA=$(sha256sum');
+    expect(installer).toContain('sudo install -m 0755 "$NIXPACKS_STAGE/nixpacks" /usr/local/bin/nixpacks');
+    expect(containerfile).toContain('ARG NIXPACKS_VERSION=1.37.0');
+    expect(containerfile).toContain('echo "$' + '{NIXPACKS_SHA256}  /tmp/$' + '{NIXPACKS_ASSET}" | sha256sum -c -');
+    expect(rootFile('apps/server/src/engine/builders/docker.ts')).not.toContain('ghcr.io/railwayapp/nixpacks:latest');
+  });
 });

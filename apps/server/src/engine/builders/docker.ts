@@ -9,7 +9,6 @@ import { NETWORK } from '../proxy.js';
 import { buildProbeUrl, safeProbePath } from '../../lib/probeUrl.js';
 
 const swallow = () => {};
-const NIXPACKS_IMAGE = 'ghcr.io/railwayapp/nixpacks:latest';
 const PROBE_IMAGE = 'busybox:1.36';
 const DEPLOY_HEARTBEAT_MS = 20_000;
 
@@ -115,29 +114,8 @@ async function buildWithNixpacks(
       log,
     );
   } else {
-    log(`🐳 Nixpacks CLI not found on host — using standalone ${NIXPACKS_IMAGE} container …`);
-    await ensureDockerImage(NIXPACKS_IMAGE, log);
-    const dockerArgs = [
-      'run',
-      '--rm',
-      '-v',
-      '/var/run/docker.sock:/var/run/docker.sock',
-      '-v',
-      `${workDir}:/app`,
-      '-w',
-      '/app',
-      NIXPACKS_IMAGE,
-      'build',
-      '.',
-      '--name',
-      target,
-      ...customArgs,
-    ];
-    await run(
-      'docker',
-      dockerArgs,
-      { cwd: workDir, heartbeatMs: DEPLOY_HEARTBEAT_MS, heartbeatLabel: `Building ${target} with Nixpacks` },
-      log,
+    throw new Error(
+      'Nixpacks CLI is unavailable. Re-run the NineDeploy installer to provision the checksum-verified source build tool.',
     );
   }
 }

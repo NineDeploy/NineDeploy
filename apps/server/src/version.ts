@@ -1,4 +1,4 @@
-export const VERSION = '0.2.25';
+export const VERSION = '0.2.26';
 
 export interface ChangelogEntry {
   version: string;
@@ -8,6 +8,17 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.2.26',
+    date: '2026-08-20',
+    title: 'Reliable Source Builds',
+    changes: [
+      'Ubuntu installs provision the real Nixpacks 1.37.0 CLI from official release assets with architecture-specific SHA-256 verification',
+      'NineDeploy runtime and remote-agent images include the same verified Nixpacks CLI for consistent source builds',
+      'Source builds no longer attempt to execute the Nixpacks build-base image as a CLI container',
+      'A missing build CLI now fails immediately with an actionable installer repair instruction',
+    ],
+  },
   {
     version: '0.2.25',
     date: '2026-08-20',

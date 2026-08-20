@@ -50,10 +50,25 @@ RUN pnpm build
 FROM node:22-slim AS runtime
 WORKDIR /app
 
+ARG NIXPACKS_VERSION=1.37.0
+ARG TARGETARCH
+
 # docker CLI: the deploy engine shells out to `docker` (via the mounted socket).
 # git: repo checkouts. tini: proper signal handling / zombie reaping as PID 1.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends docker.io git tini \
+  && apt-get install -y --no-install-recommends ca-certificates curl docker.io git tini \
+  && case "$TARGETARCH" in \
+       amd64) NIXPACKS_TARGET="x86_64-unknown-linux-musl"; NIXPACKS_SHA256="76f2c9d77a233ec4b14bd6c410ed551e35dca5f1f3e451665af133f09b9c2447" ;; \
+       arm64) NIXPACKS_TARGET="aarch64-unknown-linux-musl"; NIXPACKS_SHA256="6cce1d5fef567d4693054403c0ffaa08d196e0b44f90a58e2596553a72d50077" ;; \
+       *) echo "Unsupported Nixpacks architecture: $TARGETARCH" >&2; exit 1 ;; \
+     esac \
+  && NIXPACKS_ASSET="nixpacks-v${NIXPACKS_VERSION}-${NIXPACKS_TARGET}.tar.gz" \
+  && curl -fsSL "https://github.com/railwayapp/nixpacks/releases/download/v${NIXPACKS_VERSION}/${NIXPACKS_ASSET}" -o "/tmp/${NIXPACKS_ASSET}" \
+  && echo "${NIXPACKS_SHA256}  /tmp/${NIXPACKS_ASSET}" | sha256sum -c - \
+  && tar -xzf "/tmp/${NIXPACKS_ASSET}" -C /usr/local/bin nixpacks \
+  && chmod 0755 /usr/local/bin/nixpacks \
+  && nixpacks --version \
+  && rm -f "/tmp/${NIXPACKS_ASSET}" \
   && rm -rf /var/lib/apt/lists/*
 
 RUN corepack enable

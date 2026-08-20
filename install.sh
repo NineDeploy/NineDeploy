@@ -97,6 +97,46 @@ if ! command -v pnpm &>/dev/null; then
 fi
 ok "pnpm $(pnpm -v 2>/dev/null || echo 'installed')"
 
+# Nixpacks CLI — required for source repositories without a Dockerfile.
+# ghcr.io/railwayapp/nixpacks is a build base image, not a runnable CLI image,
+# so install the pinned upstream binary and verify it before exposing it.
+NIXPACKS_VERSION="1.37.0"
+install_nixpacks() {
+  case "$(uname -m)" in
+    x86_64|amd64)
+      NIXPACKS_TARGET="x86_64-unknown-linux-musl"
+      NIXPACKS_SHA256="76f2c9d77a233ec4b14bd6c410ed551e35dca5f1f3e451665af133f09b9c2447"
+      ;;
+    aarch64|arm64)
+      NIXPACKS_TARGET="aarch64-unknown-linux-musl"
+      NIXPACKS_SHA256="6cce1d5fef567d4693054403c0ffaa08d196e0b44f90a58e2596553a72d50077"
+      ;;
+    *) fail "Nixpacks ${NIXPACKS_VERSION} has no verified binary for architecture $(uname -m)" ;;
+  esac
+
+  NIXPACKS_ASSET="nixpacks-v${NIXPACKS_VERSION}-${NIXPACKS_TARGET}.tar.gz"
+  NIXPACKS_STAGE=$(mktemp -d) || fail "Could not create Nixpacks installation workspace"
+  curl -fsSL "https://github.com/railwayapp/nixpacks/releases/download/v${NIXPACKS_VERSION}/${NIXPACKS_ASSET}" \
+    -o "$NIXPACKS_STAGE/$NIXPACKS_ASSET" || { rm -rf "$NIXPACKS_STAGE"; fail "Could not download Nixpacks ${NIXPACKS_VERSION}"; }
+  NIXPACKS_ACTUAL_SHA=$(sha256sum "$NIXPACKS_STAGE/$NIXPACKS_ASSET" | awk '{print $1}')
+  if [ "$NIXPACKS_ACTUAL_SHA" != "$NIXPACKS_SHA256" ]; then
+    rm -rf "$NIXPACKS_STAGE"
+    fail "Nixpacks checksum verification failed; refusing to install an unverified build tool"
+  fi
+  tar -xzf "$NIXPACKS_STAGE/$NIXPACKS_ASSET" -C "$NIXPACKS_STAGE" nixpacks || { rm -rf "$NIXPACKS_STAGE"; fail "Could not extract Nixpacks"; }
+  sudo install -m 0755 "$NIXPACKS_STAGE/nixpacks" /usr/local/bin/nixpacks || { rm -rf "$NIXPACKS_STAGE"; fail "Could not install Nixpacks"; }
+  rm -rf "$NIXPACKS_STAGE"
+}
+
+if command -v nixpacks &>/dev/null && nixpacks --version 2>/dev/null | grep -q "${NIXPACKS_VERSION}"; then
+  ok "Nixpacks $(nixpacks --version 2>/dev/null)"
+else
+  info "Installing checksum-verified Nixpacks ${NIXPACKS_VERSION} for source builds…"
+  install_nixpacks
+  nixpacks --version 2>/dev/null | grep -q "${NIXPACKS_VERSION}" || fail "Nixpacks installation verification failed"
+  ok "Nixpacks $(nixpacks --version 2>/dev/null)"
+fi
+
 # Docker
 if ! command -v docker &>/dev/null; then
   warn "Docker not found. Installing via official script (get.docker.com)…"

@@ -388,14 +388,15 @@ describe('dockerBuilder.buildAndRun', () => {
     );
   });
 
-  it('falls back to ghcr.io/railwayapp/nixpacks container when nixpacks CLI is not installed', async () => {
+  it('fails with an actionable installer instruction when the Nixpacks CLI is missing', async () => {
     h2.exists.mockReturnValue(false);
     h.capture.mockRejectedValueOnce(new Error('ENOENT'));
     const ctx = makeCtx({ buildConfig: { buildPack: 'nixpacks' } });
 
-    await dockerBuilder.buildAndRun(ctx as never);
-    const dockerNixCall = h.run.mock.calls.find((c) => c[0] === 'docker' && c[1]?.includes('ghcr.io/railwayapp/nixpacks:latest'));
-    expect(dockerNixCall).toBeDefined();
+    await expect(dockerBuilder.buildAndRun(ctx as never)).rejects.toThrow(
+      'Re-run the NineDeploy installer to provision the checksum-verified source build tool',
+    );
+    expect(h.run.mock.calls.some((c) => c[1]?.includes('ghcr.io/railwayapp/nixpacks:latest'))).toBe(false);
   });
 });
 
