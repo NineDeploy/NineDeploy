@@ -2,28 +2,37 @@ import { databaseAttachments, databases, deployments, envVars, services } from '
 import { eq } from 'drizzle-orm';
 import { audit } from '../lib/audit.js';
 import type { FastifyPluginAsync } from 'fastify';
-import { getRuntimeVerifiedTemplates, type Template } from '../templates/registry.js';
+import { getTemplates, type Template } from '../templates/registry.js';
 import { encrypt, randomToken } from '../lib/crypto.js';
 import { badRequest, notFound } from '../lib/errors.js';
 import { slugify } from '../lib/slug.js';
 import { defaultPort, ENGINES, startDatabase } from '../engine/database.js';
 
-const summary = (t: Template) => ({ id: t.id, name: t.name, tagline: t.tagline, category: t.category, emoji: t.emoji, featured: t.featured });
+const summary = (t: Template) => ({
+  id: t.id,
+  name: t.name,
+  tagline: t.tagline,
+  category: t.category,
+  emoji: t.emoji,
+  featured: t.featured,
+  runtimeVerified: t.runtimeVerified === true,
+  verifiedAt: t.verifiedAt,
+});
 
 /** Template hub: list, detail, one-click deploy. Mounted under /templates. */
 export const templateRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('onRequest', app.authenticate);
 
-  app.get('/', async () => (await getRuntimeVerifiedTemplates(app.db)).map(summary));
+  app.get('/', async () => (await getTemplates(app.db)).map(summary));
 
   app.get('/:id', async (req) => {
-    const t = (await getRuntimeVerifiedTemplates(app.db)).find((x) => x.id === (req.params as { id: string }).id);
+    const t = (await getTemplates(app.db)).find((x) => x.id === (req.params as { id: string }).id);
     if (!t) throw notFound('Template not found');
-    return t;
+    return { ...t, runtimeVerified: t.runtimeVerified === true };
   });
 
   app.post('/:id/deploy', async (req) => {
-    const t = (await getRuntimeVerifiedTemplates(app.db)).find((x) => x.id === (req.params as { id: string }).id);
+    const t = (await getTemplates(app.db)).find((x) => x.id === (req.params as { id: string }).id);
     if (!t) throw notFound('Template not found');
 
     // Unique slug to allow deploying the same template multiple times.

@@ -33,6 +33,7 @@ const templates = [
     category: 'Automation',
     tagline: 'Workflow automation',
     featured: true,
+    runtimeVerified: true,
   },
   {
     id: 'ghost',
@@ -41,6 +42,7 @@ const templates = [
     category: 'Blogging',
     tagline: 'Publishing platform',
     featured: false,
+    runtimeVerified: false,
   },
 ];
 
@@ -59,6 +61,7 @@ const templateDetail = {
     { key: 'N8N_HOST', value: 'localhost' },
     { key: 'N8N_KEY', value: '', secret: true },
   ],
+  runtimeVerified: true,
 };
 
 const marketplaceCatalog = [
@@ -145,6 +148,36 @@ describe('Hub', () => {
     // filter by search
     await user.type(screen.getByPlaceholderText('Search templates…'), 'n8n');
     expect(screen.queryByText('Publishing platform')).not.toBeInTheDocument();
+  });
+
+  it('separates runtime-verified and community templates without hiding either tier', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<Hub />);
+    await screen.findByText('n8n');
+
+    expect(screen.getByRole('button', { name: 'All 2' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Verified 1' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Community 1' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Community 1' }));
+    expect(screen.queryByText('Workflow automation')).not.toBeInTheDocument();
+    expect(screen.getByText('Publishing platform')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Verified 1' }));
+    expect(screen.getByText('Workflow automation')).toBeInTheDocument();
+    expect(screen.queryByText('Publishing platform')).not.toBeInTheDocument();
+  });
+
+  it('warns before configuring a community template', async () => {
+    mockOf(api.templates.get).mockResolvedValue({
+      ...templateDetail,
+      id: 'ghost',
+      name: 'Ghost',
+      runtimeVerified: false,
+    } as never);
+    renderWithProviders(<Hub />);
+    fireEvent.click(await screen.findByRole('button', { name: /Ghost/ }));
+    expect(await screen.findByText(/Community template: its manifest is validated/)).toBeInTheDocument();
   });
 
   it('shows the requires hint for templates that need extra setup', async () => {

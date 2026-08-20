@@ -223,6 +223,11 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
         </div>
 
         <form onSubmit={onSubmit} className="flex-1 overflow-auto p-5">
+          {template && !template.runtimeVerified && (
+            <div className="mb-4 rounded-xl border border-amber-500/20 bg-amber-500/[0.08] p-3 text-xs leading-relaxed text-amber-200">
+              Community template — registry-valid but not yet runtime-certified. Confirm its port, environment and storage settings before deployment.
+            </div>
+          )}
           {/* Step 1: Source */}
           {step === 0 && (
             <div className="space-y-4">

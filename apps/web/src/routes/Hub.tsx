@@ -24,6 +24,7 @@ export function Hub() {
   const customSource = settings.data?.templatesSource ?? null;
 
   const [category, setCategory] = useState('All');
+  const [verification, setVerification] = useState<'all' | 'verified' | 'community'>('all');
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<string | null>(null);
   const [wizardTpl, setWizardTpl] = useState<Template | null>(null);
@@ -64,8 +65,11 @@ export function Hub() {
   const filteredTemplates = (list.data ?? []).filter(
     (t) =>
       (category === 'All' || t.category === category) &&
+      (verification === 'all' || (verification === 'verified' ? t.runtimeVerified === true : t.runtimeVerified !== true)) &&
       ((t.name ?? '').toLowerCase().includes(query.toLowerCase()) || (t.tagline ?? '').toLowerCase().includes(query.toLowerCase())),
   );
+  const verifiedCount = (list.data ?? []).filter((t) => t.runtimeVerified === true).length;
+  const communityCount = (list.data ?? []).length - verifiedCount;
 
   const filteredMarketplace = (marketplace.data?.catalog ?? []).filter(
     (m) =>
@@ -79,7 +83,7 @@ export function Hub() {
       <PageHeader
         icon={<Sparkles size={18} />}
         title="Hub"
-        subtitle="One-click apps and certified extensions — deploy in seconds."
+        subtitle="Curated one-click apps with transparent runtime certification."
         actions={
           customSource ? (
             <span
@@ -149,7 +153,27 @@ export function Hub() {
           />
         </div>
         {activeTab === 'templates' && (
-          <div className="flex flex-wrap gap-1.5">
+          <div className="flex flex-wrap items-center gap-1.5">
+            {([
+              ['all', `All ${list.data?.length ?? 0}`],
+              ['verified', `Verified ${verifiedCount}`],
+              ['community', `Community ${communityCount}`],
+            ] as const).map(([value, label]) => (
+              <button
+                type="button"
+                key={value}
+                onClick={() => setVerification(value)}
+                className={cn(
+                  'rounded-full px-3 py-1 text-xs font-medium transition',
+                  verification === value
+                    ? 'bg-emerald-500/20 text-emerald-200 ring-1 ring-inset ring-emerald-500/30'
+                    : 'bg-white/[0.04] text-slate-400 hover:bg-white/[0.08]',
+                )}
+              >
+                {label}
+              </button>
+            ))}
+            <span className="mx-1 h-4 w-px bg-white/10" />
             {categories.map((c) => (
               <button
                 type="button"
@@ -209,6 +233,15 @@ export function Hub() {
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <span className="font-semibold text-slate-100">{t.name}</span>
+                      {t.runtimeVerified ? (
+                        <span className="inline-flex items-center gap-1 rounded bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-medium uppercase text-emerald-300 ring-1 ring-inset ring-emerald-500/20">
+                          <ShieldCheck size={9} /> verified
+                        </span>
+                      ) : (
+                        <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-medium uppercase text-amber-300 ring-1 ring-inset ring-amber-500/20">
+                          community
+                        </span>
+                      )}
                       {t.featured && (
                         <span className="rounded bg-indigo-500/15 px-1.5 py-0.5 text-[9px] font-medium uppercase text-indigo-300">
                           featured
@@ -442,6 +475,11 @@ function TemplateDetail({
             </div>
 
             <div className="max-h-[50vh] space-y-4 overflow-auto p-5">
+              {!detail.data.runtimeVerified && (
+                <div className="rounded-xl border border-amber-500/20 bg-amber-500/[0.08] p-3 text-xs leading-relaxed text-amber-200">
+                  Community template: its manifest is validated and curated, but this exact image has not yet passed NineDeploy's isolated runtime smoke test. Review the image, environment and requirements before deploying.
+                </div>
+              )}
               {subTab === 'overview' ? (
                 <>
                   <p className="text-sm leading-relaxed text-slate-300">{detail.data.description}</p>

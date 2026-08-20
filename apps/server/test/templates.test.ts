@@ -19,8 +19,8 @@ describe('template routes', () => {
     const res = await app.inject({ method: 'GET', url: '/', headers: asUser() });
     expect(res.statusCode).toBe(200);
     const rows = res.json();
-    expect(rows).toHaveLength(15);
-    expect(rows[0]).toMatchObject({ id: 'n8n', name: 'n8n', category: 'Automation' });
+    expect(rows).toHaveLength(88);
+    expect(rows[0]).toMatchObject({ id: 'n8n', name: 'n8n', category: 'Automation', runtimeVerified: true });
     expect(rows[0]).not.toHaveProperty('description');
   });
 
@@ -39,11 +39,12 @@ describe('template routes', () => {
     expect(res.statusCode).toBe(404);
   });
 
-  it('does not expose registry-only templates before runtime certification', async () => {
+  it('exposes curated community templates without falsely marking them verified', async () => {
     const app = await buildTestApp({ db: createFakeDb() });
     await app.register(templateRoutes);
     const res = await app.inject({ method: 'GET', url: '/ollama', headers: asUser() });
-    expect(res.statusCode).toBe(404);
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ id: 'ollama', runtimeVerified: false });
   });
 
   it('generates fresh secrets for secret env values on one-click deploys', async () => {
@@ -123,6 +124,23 @@ describe('template routes', () => {
     const res = await app.inject({ method: 'POST', url: '/excalidraw/deploy', headers: asUser() });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ serviceId: 7, deploymentId: 8 });
+  });
+
+  it('allows an explicitly labelled community template to enter the normal deployment pipeline', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        insert: {
+          services: [svcRow({ id: 17, name: 'Ollama', slug: 'ollama-0001' })],
+          deployments: [depRow({ id: 18 })],
+        },
+      }),
+    });
+    await app.register(templateRoutes);
+
+    const res = await app.inject({ method: 'POST', url: '/ollama/deploy', headers: asUser() });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ serviceId: 17, deploymentId: 18 });
   });
 
   it('provisions and attaches the managed database before a CLI template deploy', async () => {

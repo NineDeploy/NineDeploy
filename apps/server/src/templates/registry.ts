@@ -151,9 +151,9 @@ export async function getTemplates(db: DB | null): Promise<Template[]> {
   return templates;
 }
 
-/** Templates exposed by the one-click Hub. Registry-valid but not yet runtime
- * certified entries stay available for verification work without being
- * advertised as deployable to users. */
+/** Runtime-certified subset used by smoke tooling and release verification.
+ * The Hub itself exposes every schema-valid curated entry and communicates
+ * certification state instead of hiding the community catalog. */
 export async function getRuntimeVerifiedTemplates(db: DB | null): Promise<Template[]> {
   return (await getTemplates(db)).filter((template) => template.runtimeVerified === true);
 }

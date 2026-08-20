@@ -437,6 +437,8 @@ export const templateSummary = z.object({
   category: z.string(),
   emoji: z.string(),
   featured: z.boolean().optional(),
+  runtimeVerified: z.boolean().optional(),
+  verifiedAt: z.iso.date().optional(),
 });
 export type TemplateSummary = z.infer<typeof templateSummary>;
 

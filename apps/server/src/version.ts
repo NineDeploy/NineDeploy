@@ -1,4 +1,4 @@
-export const VERSION = '0.2.27';
+export const VERSION = '0.2.28';
 
 export interface ChangelogEntry {
   version: string;
@@ -8,6 +8,17 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.2.28',
+    date: '2026-08-20',
+    title: 'Full Curated Hub',
+    changes: [
+      'All 88 schema-valid curated application templates are visible and deployable again',
+      'Fifteen isolated-smoke-tested apps retain a clear Verified badge while 73 others are labelled Community',
+      'Hub filters expose All, Verified and Community counts without conflating manifest validation with runtime certification',
+      'Community detail and deployment screens show an explicit pre-deploy review warning',
+    ],
+  },
   {
     version: '0.2.27',
     date: '2026-08-20',
