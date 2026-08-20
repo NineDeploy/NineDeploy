@@ -1,4 +1,4 @@
-export const VERSION = '0.2.21';
+export const VERSION = '0.2.22';
 
 export interface ChangelogEntry {
   version: string;
@@ -8,6 +8,17 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.2.22',
+    date: '2026-08-20',
+    title: 'Snapshotter-Independent Registry Recovery',
+    changes: [
+      'Images recover directly from their registry when both Docker overlayfs and containerd native snapshotters are unusable',
+      'The fallback uses a pinned and checksum-verified crane binary to flatten the image into a fresh single-layer chain',
+      'OCI environment, entrypoint, command, ports, volumes, labels, user, working directory and healthcheck metadata are retained',
+      'A destructive-state-free MySQL 8.4 smoke test proves registry export, Docker import and database readiness end to end',
+    ],
+  },
   {
     version: '0.2.21',
     date: '2026-08-20',

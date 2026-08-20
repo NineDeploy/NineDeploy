@@ -93,8 +93,59 @@ describe('pullDockerImage', () => {
     });
 
     await expect(pullDockerImage('n8nio/n8n', vi.fn())).rejects.toThrow('still broken');
-    expect(h.run).toHaveBeenCalledTimes(4);
+    expect(h.run).toHaveBeenCalledTimes(5);
     expect(h.sleep).toHaveBeenCalledTimes(2);
+  });
+
+  it('bypasses both broken snapshotters with a checksum-verified registry export', async () => {
+    h.run.mockImplementation(async (cmd, args, _opts, sink) => {
+      if (cmd === 'docker' && args[0] === 'pull') {
+        sink('unable to prepare extraction snapshot: target snapshot "sha256:abc" already exists');
+        throw new Error('docker pull exited 1');
+      }
+      if (cmd === 'ctr' && args.includes('native')) throw new Error('native snapshotter exited 1');
+    });
+    h.capture
+      .mockResolvedValueOnce(JSON.stringify({
+        config: {
+          Env: ['MYSQL_VERSION=8.4'],
+          Entrypoint: ['docker-entrypoint.sh'],
+          Cmd: ['mysqld'],
+          ExposedPorts: { '3306/tcp': {} },
+          Volumes: { '/var/lib/mysql': {} },
+        },
+      }))
+      .mockResolvedValueOnce('sha256:flattened');
+    const log = vi.fn();
+
+    await pullDockerImage('mysql:8.4', log, 1);
+
+    expect(h.run).toHaveBeenCalledWith(
+      'sha256sum',
+      ['--check', '--strict', '-'],
+      {},
+      log,
+      expect.any(Buffer),
+    );
+    expect(h.run).toHaveBeenCalledWith(
+      expect.stringMatching(/[\\/]crane$/),
+      expect.arrayContaining(['export', 'mysql:8.4', '--platform', 'linux/amd64']),
+      expect.any(Object),
+      log,
+    );
+    expect(h.run).toHaveBeenCalledWith(
+      'docker',
+      expect.arrayContaining([
+        'image', 'import',
+        '--platform=linux/amd64',
+        '--change', 'ENTRYPOINT ["docker-entrypoint.sh"]',
+        '--change', 'CMD ["mysqld"]',
+        'mysql:8.4',
+      ]),
+      expect.any(Object),
+      log,
+    );
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('containerd extraction was bypassed'));
   });
 
   it('repairs an unused committed overlayfs snapshot before falling back to flattening', async () => {

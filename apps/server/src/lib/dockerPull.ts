@@ -7,6 +7,17 @@ const SNAPSHOT_FAILURE = /extraction snapshot|target snapshot .*already exists|p
 const STALE_EXISTING_SNAPSHOT = /target snapshot .*already exists/i;
 const STALE_SNAPSHOT_KEY = /target snapshot\s+"?(sha256:[a-f0-9]{64})"?\s+already exists/i;
 const CONTAINERD_SOCKETS = ['/run/containerd/containerd.sock', '/var/run/docker/containerd/containerd.sock'] as const;
+const CRANE_VERSION = 'v0.21.8';
+const CRANE_RELEASES = {
+  amd64: {
+    asset: 'go-containerregistry_Linux_x86_64.tar.gz',
+    sha256: '59b59f68ee37aba51f5523d69ec779ee925d9be4e279f9220eca357267f2ee67',
+  },
+  arm64: {
+    asset: 'go-containerregistry_Linux_arm64.tar.gz',
+    sha256: '9a528bee5f3443a9b20a25b46040ed518384b07c470ad444028fdb2dcebd4056',
+  },
+} as const;
 const imagePreparations = new Map<string, Promise<void>>();
 
 /** Docker/containerd snapshot errors known to be transient on Docker 29+. */
@@ -158,6 +169,58 @@ function importChanges(imageConfig: ImageConfig): string[] {
   return changes.flatMap((change) => ['--change', change]);
 }
 
+async function verifySha256(file: string, expected: string, log: (line: string) => void): Promise<void> {
+  await run('sha256sum', ['--check', '--strict', '-'], {}, log, Buffer.from(`${expected}  ${file}\n`));
+}
+
+/**
+ * Last-resort recovery that does not ask any host containerd snapshotter to
+ * unpack the source image. A pinned, checksum-verified crane binary flattens
+ * the registry image directly; Docker then sees a new single-layer chain ID
+ * instead of the stale layer chain that blocked the original pull.
+ */
+export async function recoverImageDirectlyFromRegistry(
+  image: string,
+  log: (line: string) => void,
+  targetImage = image,
+): Promise<void> {
+  const arch = hostArchitecture();
+  const release = CRANE_RELEASES[arch as keyof typeof CRANE_RELEASES];
+  if (!release) throw new Error(`direct registry recovery does not support linux/${arch}`);
+
+  const staging = mkdtempSync(path.join(tmpdir(), 'ninedeploy-registry-recovery-'));
+  const releaseArchive = path.join(staging, release.asset);
+  const crane = path.join(staging, 'crane');
+  const rootfsArchive = path.join(staging, 'rootfs.tar');
+  const releaseUrl = `https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/${release.asset}`;
+  try {
+    log(`Both Docker snapshotters are unusable; exporting ${image} directly from its registry …`);
+    await run(
+      'curl',
+      ['--proto', '=https', '--tlsv1.2', '--fail', '--location', '--retry', '3', '--output', releaseArchive, releaseUrl],
+      { timeoutMs: 10 * 60 * 1000 },
+      log,
+    );
+    await verifySha256(releaseArchive, release.sha256, log);
+    await run('tar', ['-xzf', releaseArchive, '-C', staging, 'crane'], {}, log);
+    await run('chmod', ['0755', crane], {}, log);
+
+    const platform = `linux/${arch}`;
+    const config = JSON.parse(await capture(crane, ['config', image, '--platform', platform], { timeoutMs: 30 * 60 * 1000 })) as ImageConfig;
+    await run(crane, ['export', image, rootfsArchive, '--platform', platform], { timeoutMs: 60 * 60 * 1000 }, log);
+    await run(
+      'docker',
+      ['image', 'import', `--platform=${platform}`, ...importChanges(config), rootfsArchive, targetImage],
+      { timeoutMs: 60 * 60 * 1000 },
+      log,
+    );
+    await capture('docker', ['image', 'inspect', targetImage, '--format', '{{.Id}}']);
+    log(`Recovered ${image} directly from its registry as ${targetImage}; containerd extraction was bypassed`);
+  } finally {
+    rmSync(staging, { recursive: true, force: true });
+  }
+}
+
 /**
  * Recover an image without touching the corrupt overlayfs snapshot. containerd
  * verifies and unpacks the original image in its independent `native` store;
@@ -240,8 +303,16 @@ export async function pullDockerImage(
   } catch (recoveryError) {
     const recoveryMessage = recoveryError instanceof Error ? recoveryError.message : String(recoveryError);
     log(`Native snapshot recovery failed: ${recoveryMessage}`);
-    const pullMessage = snapshotError instanceof Error ? snapshotError.message : String(snapshotError);
-    throw new Error(`${pullMessage}; native snapshot recovery failed: ${recoveryMessage}`);
+    try {
+      await recoverImageDirectlyFromRegistry(image, log);
+    } catch (registryError) {
+      const registryMessage = registryError instanceof Error ? registryError.message : String(registryError);
+      log(`Direct registry recovery failed: ${registryMessage}`);
+      const pullMessage = snapshotError instanceof Error ? snapshotError.message : String(snapshotError);
+      throw new Error(
+        `${pullMessage}; native snapshot recovery failed: ${recoveryMessage}; direct registry recovery failed: ${registryMessage}`,
+      );
+    }
   }
 }
 

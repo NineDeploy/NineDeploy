@@ -50,10 +50,10 @@ echo ""
 
 # Base system packages on Debian/Ubuntu
 if [ "$(uname -s)" = "Linux" ] && command -v apt-get &>/dev/null; then
-  if ! command -v curl &>/dev/null || ! command -v git &>/dev/null || ! command -v tar &>/dev/null; then
-    info "Installing base system packages (curl, git, ca-certificates, tar)…"
+  if ! command -v curl &>/dev/null || ! command -v git &>/dev/null || ! command -v tar &>/dev/null || ! command -v sha256sum &>/dev/null; then
+    info "Installing base system packages (curl, git, ca-certificates, tar, coreutils)…"
     sudo apt-get update -y >/dev/null 2>&1 || true
-    sudo apt-get install -y curl git ca-certificates tar gzip >/dev/null 2>&1 || true
+    sudo apt-get install -y curl git ca-certificates tar gzip coreutils >/dev/null 2>&1 || true
   fi
 fi
 
