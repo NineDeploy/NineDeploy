@@ -21,6 +21,7 @@ import { ActivityTab } from './ActivityTab.js';
 import { DangerZone } from './DangerZone.js';
 
 import { ContainerFileBrowser } from '../../components/ContainerFileBrowser.js';
+import { ServiceDomainLauncher } from '../../components/ServiceDomainLauncher.js';
 
 type TabId = 'overview' | 'terminal' | 'architecture' | 'manifest' | 'deploys' | 'environment' | 'network' | 'volumes' | 'files' | 'settings' | 'activity' | 'danger';
 
@@ -206,6 +207,7 @@ export function ServiceDetail() {
           )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <ServiceDomainLauncher serviceId={id} serviceName={svc.name} label />
           <Button onClick={() => trigger.mutate()} disabled={trigger.isPending}>
             <Rocket size={16} /> {trigger.isPending ? 'Triggering…' : 'Deploy'}
           </Button>

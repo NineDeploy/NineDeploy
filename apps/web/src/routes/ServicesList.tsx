@@ -6,6 +6,7 @@ import { api } from '../lib/api.js';
 import { useProjectScope } from '../lib/projects.js';
 import { Button, Card, EmptyState, ErrorCard, Input, PageHeader, Skeleton, StatusBadge } from '../components/ui.js';
 import { DeployWizard } from '../components/DeployWizard.js';
+import { ServiceDomainLauncher } from '../components/ServiceDomainLauncher.js';
 
 export function ServicesList() {
   const [wizard, setWizard] = useState(false);
@@ -137,7 +138,8 @@ export function ServicesList() {
                 const isRunning = s.status === 'running';
 
                 return (
-                  <Link key={s.id} to={`/services/${s.id}`} className="block">
+                  <div key={s.id} className="relative h-full">
+                    <Link to={`/services/${s.id}`} className="block h-full">
                     <Card interactive className="group h-full p-5 flex flex-col justify-between">
                       <div>
                         <div className="flex items-start justify-between">
@@ -174,7 +176,7 @@ export function ServicesList() {
                         )}
                       </div>
 
-                      <div className="mt-4 pt-3 border-t border-white/[0.04] flex items-center justify-between text-xs text-slate-500">
+                      <div className="mt-4 flex items-center justify-between border-t border-white/[0.04] pt-3 pr-12 text-xs text-slate-500">
                         <div className="flex items-center gap-3">
                           <span className="font-mono uppercase tracking-wide text-slate-400 text-[10px]">{s.type}</span>
                           <span className="flex items-center gap-1 font-mono text-[11px]">
@@ -188,7 +190,9 @@ export function ServicesList() {
                         ) : null}
                       </div>
                     </Card>
-                  </Link>
+                    </Link>
+                    <ServiceDomainLauncher serviceId={s.id} serviceName={s.name} className="absolute bottom-3 right-3 z-10" />
+                  </div>
                 );
               })}
             </div>

@@ -32,6 +32,7 @@ import { api } from '../lib/api.js';
 import type { TopologyGraph } from '@ninedeploy/sdk';
 import { Button, ErrorCard, PageHeader, StatusBadge, cn } from '../components/ui.js';
 import { downloadBlob, formatBytes } from '../lib/format.js';
+import { ServiceDomainLauncher } from '../components/ServiceDomainLauncher.js';
 
 // Layout Column Offsets
 const DOMAIN_X = 30;
@@ -144,6 +145,7 @@ function ServiceNode(props: NodeProps) {
           )}
         </div>
       </div>
+      <ServiceDomainLauncher serviceId={data.id} serviceName={data.name} className="nodrag nopan mt-2 h-7 w-full" label />
     </div>
   );
 }

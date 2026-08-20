@@ -215,6 +215,7 @@ function DomainsCard({ serviceId }: { serviceId: number }) {
     onSuccess: () => {
       setHostname('');
       qc.invalidateQueries({ queryKey: ['domains', serviceId] });
+      qc.invalidateQueries({ queryKey: ['domains-all'] });
     },
     onError: () => toast('Could not add the domain', 'error'),
   });
@@ -271,19 +272,28 @@ function DomainItemRow({ domain: d, serviceId }: { domain: any; serviceId: numbe
 
   const remove = useMutation({
     mutationFn: () => api.domains.remove(serviceId, d.id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['domains', serviceId] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['domains', serviceId] });
+      qc.invalidateQueries({ queryKey: ['domains-all'] });
+    },
     onError: () => toast('Could not remove the domain', 'error'),
   });
 
   const toggleSsl = useMutation({
     mutationFn: () => api.domains.setSsl(d.id, !d.ssl),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['domains', serviceId] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['domains', serviceId] });
+      qc.invalidateQueries({ queryKey: ['domains-all'] });
+    },
     onError: () => toast('Could not toggle SSL', 'error'),
   });
 
   const toggleWww = useMutation({
     mutationFn: () => api.domains.update(serviceId, d.id, { redirectWww: !d.redirectWww }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['domains', serviceId] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['domains', serviceId] });
+      qc.invalidateQueries({ queryKey: ['domains-all'] });
+    },
     onError: () => toast('Could not toggle the www redirect', 'error'),
   });
 
@@ -297,6 +307,7 @@ function DomainItemRow({ domain: d, serviceId }: { domain: any; serviceId: numbe
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['domains', serviceId] });
+      qc.invalidateQueries({ queryKey: ['domains-all'] });
       toast('Domain security settings updated', 'success');
       setExpanded(false);
     },

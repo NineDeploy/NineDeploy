@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.30] - 2026-08-20
+
+### Added
+- **Service Domain Launcher**: Services with at least one configured domain now expose a consistent open-site icon in service cards, dashboard health and activity rows, the service header, and topology nodes.
+- **Safe Destination Modal**: Clicking the icon always previews the exact destination before opening it in a new tab. Multiple domains are listed individually with their HTTP/HTTPS protocol and route path.
+
+### Changed
+- **Shared Domain State**: All launchers share one cached domain query instead of issuing a request per service, and refresh immediately when a domain is added, removed or updated.
+
 ## [0.2.29] - 2026-08-20
 
 ### Added

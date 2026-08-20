@@ -6,6 +6,7 @@ import { api } from '../lib/api.js';
 import { useToast } from '../components/Toast.js';
 import { Button, Card, CardBody, ErrorCard, Skeleton, cn } from '../components/ui.js';
 import { formatBytes, formatDateTime } from '../lib/format.js';
+import { ServiceDomainLauncher } from '../components/ServiceDomainLauncher.js';
 
 export function Dashboard() {
   const navigate = useNavigate();
@@ -268,8 +269,9 @@ export function Dashboard() {
               const liveStat = snapshot.data?.containers.find((c) => c.refId === h.serviceId && c.kind === 'service');
 
               return (
-                <Link key={h.serviceId} to={`/services/${h.serviceId}`}>
-                  <Card interactive className="group p-4 flex flex-col justify-between">
+                <div key={h.serviceId} className="relative h-full">
+                  <Link to={`/services/${h.serviceId}`} className="block h-full">
+                  <Card interactive className="group flex h-full flex-col justify-between p-4 pb-12">
                     <div>
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2.5">
@@ -335,7 +337,9 @@ export function Dashboard() {
                       />
                     </div>
                   </Card>
-                </Link>
+                  </Link>
+                  <ServiceDomainLauncher serviceId={h.serviceId} serviceName={h.name} className="absolute bottom-2.5 right-3 z-10 h-7" />
+                </div>
               );
             })}
           </div>
@@ -354,7 +358,10 @@ export function Dashboard() {
                 data.recentDeploys.map((d) => (
                   <tr key={d.id} className="border-b border-white/5 last:border-0 hover:bg-white/[0.02]">
                     <td className="px-5 py-3">
-                      <Link to={`/services/${d.serviceId}`} className="font-medium text-slate-200 hover:text-indigo-300">{d.serviceName}</Link>
+                      <span className="inline-flex items-center gap-2">
+                        <Link to={`/services/${d.serviceId}`} className="font-medium text-slate-200 hover:text-indigo-300">{d.serviceName}</Link>
+                        <ServiceDomainLauncher serviceId={d.serviceId} serviceName={d.serviceName} className="h-6 px-2" />
+                      </span>
                       <span className="ml-2 font-mono text-[10px] text-slate-500">#{d.id} · {d.commitSha ?? '—'}</span>
                     </td>
                     <td className="px-5 py-3 text-xs">

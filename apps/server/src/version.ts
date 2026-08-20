@@ -1,4 +1,4 @@
-export const VERSION = '0.2.29';
+export const VERSION = '0.2.30';
 
 export interface ChangelogEntry {
   version: string;
@@ -8,6 +8,17 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.2.30',
+    date: '2026-08-20',
+    title: 'Service Domain Launcher',
+    changes: [
+      'Services with configured domains expose a consistent open-site action across service lists, dashboard health and activity, service detail, and topology views',
+      'Opening a service always shows a confirmation modal before navigating to a new browser tab',
+      'Services with multiple domains show every HTTPS or HTTP destination, route path, and an explicit selection instead of guessing a primary domain',
+      'Domain launchers share one cached global domain query and refresh immediately after domain configuration changes',
+    ],
+  },
   {
     version: '0.2.29',
     date: '2026-08-20',

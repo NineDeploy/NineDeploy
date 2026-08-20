@@ -1,0 +1,58 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { ServiceDomainLauncher } from '../src/components/ServiceDomainLauncher.js';
+import { api } from '../src/lib/api.js';
+import { mockOf, renderWithProviders } from './helpers.js';
+
+vi.mock('../src/lib/api.js', async () => {
+  const { createFakeApiModule } = await import('./helpers.js');
+  return createFakeApiModule();
+});
+
+describe('ServiceDomainLauncher', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('stays hidden when the service has no domain', async () => {
+    mockOf(api.domains.all).mockResolvedValue([] as never);
+    renderWithProviders(<ServiceDomainLauncher serviceId={1} serviceName="api" />);
+    await waitFor(() => expect(api.domains.all).toHaveBeenCalled());
+    expect(screen.queryByRole('button', { name: /Open api domain/ })).not.toBeInTheDocument();
+  });
+
+  it('confirms a single HTTPS destination before opening it in a new tab', async () => {
+    const user = userEvent.setup();
+    mockOf(api.domains.all).mockResolvedValue([
+      { id: 10, serviceId: 1, hostname: 'api.example.com', path: '/docs', ssl: true },
+    ] as never);
+    renderWithProviders(<ServiceDomainLauncher serviceId={1} serviceName="api" />);
+
+    await user.click(await screen.findByRole('button', { name: 'Open api domain' }));
+    expect(screen.getByRole('dialog', { name: 'Open api' })).toBeInTheDocument();
+    expect(screen.getByText('This page will open in a new tab.')).toBeInTheDocument();
+    const link = screen.getByRole('link', { name: 'Open https://api.example.com/docs in a new tab' });
+    expect(link).toHaveAttribute('href', 'https://api.example.com/docs');
+    expect(link).toHaveAttribute('target', '_blank');
+  });
+
+  it('lists every service domain and preserves HTTP routes', async () => {
+    const user = userEvent.setup();
+    mockOf(api.domains.all).mockResolvedValue([
+      { id: 10, serviceId: 1, hostname: 'app.example.com', path: '/', ssl: true },
+      { id: 11, serviceId: 1, hostname: 'internal.example.com', path: '/admin', ssl: false },
+      { id: 12, serviceId: 2, hostname: 'other.example.com', path: '/', ssl: true },
+    ] as never);
+    renderWithProviders(<ServiceDomainLauncher serviceId={1} serviceName="app" />);
+
+    const trigger = await screen.findByRole('button', { name: 'Open app domains' });
+    expect(trigger).toHaveTextContent('2');
+    await user.click(trigger);
+    expect(screen.getByText('Choose the page to open in a new tab.')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Open https://app.example.com in a new tab' })).toHaveAttribute('href', 'https://app.example.com');
+    expect(screen.getByRole('link', { name: 'Open http://internal.example.com/admin in a new tab' })).toHaveAttribute('href', 'http://internal.example.com/admin');
+    expect(screen.queryByText(/other\.example\.com/)).not.toBeInTheDocument();
+  });
+});
+
