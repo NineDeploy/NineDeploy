@@ -18,7 +18,7 @@ vi.mock('../../src/config.js', () => ({ config: h.config }));
 vi.mock('../../src/lib/settings.js', () => ({ getSettingString: h.getSettingString }));
 
 import {
-  BUNDLED_REGISTRY, getTemplates, invalidateTemplateCache, parseBundle, parseTemplates,
+  BUNDLED_REGISTRY, getBundledTemplates, getTemplates, invalidateTemplateCache, parseBundle, parseTemplates,
 } from '../../src/templates/registry.js';
 
 const cacheFile = () => path.join(h.base, 'templates-cache.json');
@@ -61,6 +61,7 @@ describe('bundled registry (default source)', () => {
 
   it('the bundled bundle parses cleanly', () => {
     expect(() => parseBundle(BUNDLED_REGISTRY)).not.toThrow();
+    expect(getBundledTemplates().some((template) => template.id === 'ghost')).toBe(true);
   });
 });
 

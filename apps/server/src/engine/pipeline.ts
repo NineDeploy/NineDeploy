@@ -13,6 +13,7 @@ import { getAcmeEmail, writeDynamicConfig } from './proxy.js';
 import { run, sleep } from '../lib/exec.js';
 import { resolveVaultRefs } from '../lib/vault.js';
 import { agentOp } from '../lib/agentClient.js';
+import { getBundledTemplates } from '../templates/registry.js';
 import type { BuildContext, Builder, DeployRuntime } from './types.js';
 
 const builders: Record<string, Builder> = { docker: dockerBuilder, pm2: pm2Builder, compose: composeBuilder };
@@ -48,8 +49,16 @@ async function isCancelled(db: DB, deploymentId: number): Promise<boolean> {
 
 /** Collect runtime env vars: shared project env ← service env ← attached-database
  * connection strings (later wins), then resolve `${{provider:KEY}}` vault refs. */
-async function loadRuntimeEnv(db: DB, service: typeof services.$inferSelect): Promise<Record<string, string>> {
+type RuntimeEnvironment = {
+  values: Record<string, string>;
+  attachmentCount: number;
+  readyAttachmentCount: number;
+  managedDatabaseKeys: string[];
+};
+
+async function loadRuntimeEnv(db: DB, service: typeof services.$inferSelect): Promise<RuntimeEnvironment> {
   const env: Record<string, string> = {};
+  const managedDatabaseKeys = new Set<string>();
 
   // Project-scope shared env (lowest precedence).
   if (service.projectId != null) {
@@ -64,12 +73,25 @@ async function loadRuntimeEnv(db: DB, service: typeof services.$inferSelect): Pr
   for (const r of rows) env[r.key] = decrypt(r.valueEncrypted);
 
   const attaches = await db.query.databaseAttachments.findMany({ where: eq(databaseAttachments.serviceId, service.id) });
+  let readyAttachmentCount = 0;
   for (const a of attaches) {
     const d = await db.query.databases.findFirst({ where: eq(databases.id, a.databaseId) });
     if (d && d.status === 'running') {
-      const mapping = service.templateDatabaseEnv;
+      readyAttachmentCount++;
+      // Services created by an older or interrupted Hub flow may have a valid
+      // attachment but a missing persisted mapping. Recover the trusted
+      // built-in contract from the exact image/port/volume/database signature
+      // instead of silently falling back to a generic URL the app may ignore.
+      const bundledMapping = getBundledTemplates().find((template) =>
+        template.image === service.image
+        && template.port === service.port
+        && (template.volumeMount ?? null) === (service.volumeMount ?? null)
+        && template.dbEngine === d.engine
+      )?.databaseEnv;
+      const mapping = bundledMapping ?? service.templateDatabaseEnv;
       if (!mapping || Object.keys(mapping).length === 0) {
         env[a.envAlias] = connectionString(d);
+        managedDatabaseKeys.add(a.envAlias);
         continue;
       }
       const cfg = ENGINES[d.engine];
@@ -88,12 +110,20 @@ async function loadRuntimeEnv(db: DB, service: typeof services.$inferSelect): Pr
         password,
         database,
       };
-      for (const [key, source] of Object.entries(mapping)) env[key] = values[source];
+      for (const [key, source] of Object.entries(mapping)) {
+        env[key] = values[source];
+        managedDatabaseKeys.add(key);
+      }
     }
   }
 
   // Vault references resolve last, from the fully-merged map.
-  return resolveVaultRefs(db, env);
+  return {
+    values: await resolveVaultRefs(db, env),
+    attachmentCount: attaches.length,
+    readyAttachmentCount,
+    managedDatabaseKeys: [...managedDatabaseKeys].sort(),
+  };
 }
 
 /**
@@ -234,6 +264,16 @@ export async function runDeployment(db: DB, deploymentId: number): Promise<void>
     // Cancel checkpoint: checkout can take minutes on big repos.
     if (await isCancelled(db, deploymentId)) throw new DeploymentCancelled();
 
+    const runtimeEnvironment = await loadRuntimeEnv(db, service);
+    if (runtimeEnvironment.readyAttachmentCount !== runtimeEnvironment.attachmentCount) {
+      throw new Error(
+        `Managed database dependency is not ready (${runtimeEnvironment.readyAttachmentCount}/${runtimeEnvironment.attachmentCount} attachments running)`,
+      );
+    }
+    if (runtimeEnvironment.managedDatabaseKeys.length > 0) {
+      log(`Managed database environment ready: ${runtimeEnvironment.managedDatabaseKeys.join(', ')}`);
+    }
+
     const ctx: BuildContext = {
       deploymentId,
       service,
@@ -242,7 +282,7 @@ export async function runDeployment(db: DB, deploymentId: number): Promise<void>
       commitSha: sha,
       // For image rollback, pin the exact image by its stored digest.
       imageDigest: dep.imageDigest ?? undefined,
-      env: await loadRuntimeEnv(db, service),
+      env: runtimeEnvironment.values,
       // Registry-type sources provide private-image credentials.
       registryAuth: await loadRegistryAuth(db, service),
       // Remote deploys: route builder operations through the typed agent.
@@ -389,7 +429,8 @@ export async function runDeployment(db: DB, deploymentId: number): Promise<void>
       log('##[stage:CLEANUP:running] Graceful shutdown of old container instance');
       if (buildConfig?.preStopCmd) {
         log(`▶ Running Pre-Stop Hook: ${buildConfig.preStopCmd} …`);
-        await runHook(buildConfig.preStopCmd, workDir, await loadRuntimeEnv(db, service), log).catch((err) =>
+        const currentEnvironment = await loadRuntimeEnv(db, service);
+        await runHook(buildConfig.preStopCmd, workDir, currentEnvironment.values, log).catch((err) =>
           log(`pre-stop warning: ${msg(err)}`),
         );
       }

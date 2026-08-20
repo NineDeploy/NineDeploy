@@ -652,13 +652,8 @@ describe('runDeployment', () => {
     ]);
     db.query.databaseAttachments.findMany.mockResolvedValue([
       { id: 1, databaseId: 10, envAlias: 'DB_URL' },
-      { id: 2, databaseId: 20, envAlias: 'SKIP' },
-      { id: 3, databaseId: 30, envAlias: 'GONE' },
     ]);
-    db.query.databases.findFirst
-      .mockResolvedValueOnce({ id: 10, status: 'running' })
-      .mockResolvedValueOnce({ id: 20, status: 'stopped' })
-      .mockResolvedValueOnce(undefined);
+    db.query.databases.findFirst.mockResolvedValueOnce({ id: 10, status: 'running' });
 
     await runDeployment(db as never, 1);
 
@@ -703,6 +698,61 @@ describe('runDeployment', () => {
       WORDPRESS_DB_NAME: 'app',
     });
     expect(ctx.env).not.toHaveProperty('MYSQL_URL');
+  });
+
+  it('recovers a missing Ghost mapping from the trusted bundled runtime contract', async () => {
+    const { db } = makeDb();
+    baseSetup(db, {
+      image: 'ghost:5-alpine',
+      port: 2368,
+      volumeMount: '/var/lib/ghost/content',
+      templateDatabaseEnv: { DATABASE_URL: 'url' },
+    });
+    db.query.databaseAttachments.findMany.mockResolvedValue([
+      { id: 1, databaseId: 10, envAlias: 'DATABASE_URL' },
+    ]);
+    db.query.databases.findFirst.mockResolvedValue({
+      id: 10,
+      engine: 'mysql',
+      status: 'running',
+      containerName: 'nd-db-ghost-db',
+      internalHost: 'nd-db-ghost-db',
+      internalPort: 3306,
+      username: 'root',
+      passwordEncrypted: 'ghost-db-secret',
+      dbName: 'app',
+    });
+    const lines = collectLogs(1);
+
+    await runDeployment(db as never, 1);
+
+    const [ctx] = h.builder.buildAndRun.mock.calls[0] as [{ env: Record<string, string> }];
+    expect(ctx.env).toMatchObject({
+      database__connection__host: 'nd-db-ghost-db',
+      database__connection__port: '3306',
+      database__connection__user: 'root',
+      database__connection__password: 'dec:ghost-db-secret',
+      database__connection__database: 'app',
+    });
+    expect(ctx.env).not.toHaveProperty('DATABASE_URL');
+    expect(lines).toContain(
+      'Managed database environment ready: database__connection__database, database__connection__host, database__connection__password, database__connection__port, database__connection__user',
+    );
+  });
+
+  it('fails before container startup when an attached database is not running', async () => {
+    const { db } = makeDb();
+    baseSetup(db, { image: 'ghost:5-alpine' });
+    db.query.databaseAttachments.findMany.mockResolvedValue([
+      { id: 1, databaseId: 10, envAlias: 'DATABASE_URL' },
+    ]);
+    db.query.databases.findFirst.mockResolvedValue({ id: 10, engine: 'mysql', status: 'error' });
+    const lines = collectLogs(1);
+
+    await runDeployment(db as never, 1);
+
+    expect(h.builder.buildAndRun).not.toHaveBeenCalled();
+    expect(lines).toContain('✗ Deployment failed: Managed database dependency is not ready (0/1 attachments running)');
   });
 
   // ── private-registry auth ────────────────────────────────────────────────

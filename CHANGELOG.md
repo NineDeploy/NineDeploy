@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.33] - 2026-08-20
+
+### Fixed
+- **Ghost Database Environment Repair**: Runtime deployment now recovers the trusted application-specific database mapping from the exact bundled template contract. Existing Ghost services with a missing, empty or stale `template_database_env` receive all five `database__connection__*` variables instead of falling back to localhost MySQL.
+- **Dependency Readiness Gate**: A service with an attached database that is not running now fails before its application container starts, with the exact attachment readiness count, instead of entering a restart loop and timing out in HTTP healthchecks.
+- **Safe Runtime Diagnostics**: Deployment logs list the managed database environment key names injected into the application without exposing credential values.
+
+### Verified
+- **Ghost Runtime Contract Regression**: The pipeline test covers `ghost:5-alpine` with a missing persisted mapping and verifies the resolved MySQL host, port, user, password and database variables plus pre-container failure for unavailable databases.
+
 ## [0.2.32] - 2026-08-20
 
 ### Changed

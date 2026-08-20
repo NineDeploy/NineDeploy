@@ -70,6 +70,11 @@ function bundledList(): Template[] {
   return bundledTemplates;
 }
 
+/** Validated built-in contracts for runtime repair paths. Never performs I/O. */
+export function getBundledTemplates(): Template[] {
+  return bundledList();
+}
+
 /** In-memory cache: one successful load per source string. */
 const memo = new Map<string, Template[]>();
 
