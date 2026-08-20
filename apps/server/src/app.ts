@@ -16,6 +16,7 @@ import jobSchedulerPlugin from './plugins/jobScheduler.js';
 import kernelPlugin from './plugins/kernel.js';
 import rateLimitPlugin from './plugins/rateLimit.js';
 import rawBodyPlugin from './plugins/rawBody.js';
+import securityHeadersPlugin from './plugins/securityHeaders.js';
 import staticFilesPlugin from './plugins/staticFiles.js';
 import traefikPlugin from './plugins/traefik.js';
 import workerPlugin from './plugins/worker.js';
@@ -61,6 +62,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   ];
   await app.register(cors, { origin: allowedOrigins, credentials: true });
   await app.register(websocket);
+  await app.register(securityHeadersPlugin);
   await app.register(rateLimitPlugin);
   await app.register(rawBodyPlugin);
   await app.register(dbPlugin);

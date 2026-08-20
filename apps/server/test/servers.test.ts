@@ -12,7 +12,13 @@ vi.mock('../src/lib/agentClient.js', async () => {
 });
 
 const cryptoMocks = vi.hoisted(() => ({ encrypt: vi.fn((s: string) => `enc:${s}`), decrypt: vi.fn((s: string) => s.replace('enc:', '')) }));
-vi.mock('../src/lib/crypto.js', () => cryptoMocks);
+// Only the envelope helpers are stubbed (so tests can read the stored value);
+// everything else — notably the constant-time `secretEquals` the announce
+// route compares tokens with — stays real.
+vi.mock('../src/lib/crypto.js', async () => {
+  const actual = await vi.importActual<typeof import('../src/lib/crypto.js')>('../src/lib/crypto.js');
+  return { ...actual, ...cryptoMocks };
+});
 
 const auditMocks = vi.hoisted(() => ({ audit: vi.fn(async () => undefined) }));
 vi.mock('../src/lib/audit.js', () => auditMocks);

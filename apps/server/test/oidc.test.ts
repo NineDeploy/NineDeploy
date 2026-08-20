@@ -285,6 +285,29 @@ describe('OIDC and OAuth2 SSO endpoints', () => {
       expect(res.statusCode).toBe(200);
       expect(res.json().authUrl).toContain('https://accounts.google.com/o/oauth2/v2/auth');
     });
+
+    it('M-4: builds redirect_uri from the configured public URL, not the Host header', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          authorization_endpoint: 'https://accounts.google.com/o/oauth2/v2/auth',
+          token_endpoint: 'https://oauth2.googleapis.com/token',
+        }),
+      } as never);
+
+      const res = await app.inject({
+        method: 'GET',
+        url: '/v1/auth/oidc/google/login?json=true',
+        // A spoofed Host used to flow straight into redirect_uri, so an IdP
+        // with a permissive redirect registration would deliver the auth code
+        // to the attacker's host.
+        headers: { host: 'evil.example.com' },
+      });
+      expect(res.statusCode).toBe(200);
+      const redirectUri = new URL(res.json().authUrl).searchParams.get('redirect_uri');
+      expect(redirectUri).not.toContain('evil.example.com');
+      expect(redirectUri).toBe('http://localhost:3000/v1/auth/oidc/google/callback');
+    });
   });
 
   describe('Callback & Token Exchange (/v1/auth/oidc/:slug/callback)', () => {

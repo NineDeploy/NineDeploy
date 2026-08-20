@@ -37,6 +37,20 @@ function serializeOidc(p: OidcProvider): OidcProviderEntry {
   };
 }
 
+/**
+ * The OAuth/OIDC callback URL for a provider.
+ *
+ * Derived from the CONFIGURED public URL, never from `req.hostname` — that is
+ * the client's `Host` header, so an attacker could otherwise choose the
+ * `redirect_uri` handed to the identity provider and, against a provider with
+ * a permissive redirect registration, have the authorization code delivered to
+ * a host they control. The same value must be used for the authorize request
+ * and the token exchange, so both call sites go through here.
+ */
+function oidcRedirectUri(slug: string): string {
+  return `${config.publicUrl}/v1/auth/oidc/${slug}/callback`;
+}
+
 /** Count existing users (used to decide first-user-is-admin). */
 async function userCount(db: Pick<DB, 'select'>): Promise<number> {
   const [row] = await db.select({ n: count() }).from(users);
@@ -550,8 +564,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     if (!provider) throw notFound(`OAuth2/OIDC provider "${slug}" not found or disabled`);
 
     const state = generateOAuthState(slug, returnTo);
-    const origin = `${req.protocol}://${req.hostname}`;
-    const redirectUri = `${origin}/v1/auth/oidc/${slug}/callback`;
+    const redirectUri = oidcRedirectUri(slug);
 
     let authUrl: string;
     if (slug === 'github' || (!provider.issuerUrl && slug.includes('github'))) {
@@ -604,8 +617,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     if (!provider) throw notFound(`OAuth2/OIDC provider "${slug}" not found or disabled`);
 
     const clientSecret = decrypt(provider.clientSecretEncrypted);
-    const origin = `${req.protocol}://${req.hostname}`;
-    const redirectUri = `${origin}/v1/auth/oidc/${slug}/callback`;
+    const redirectUri = oidcRedirectUri(slug);
 
     let userInfo: { sub: string; email: string; emailVerified: boolean; name?: string | null };
 

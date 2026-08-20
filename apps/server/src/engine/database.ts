@@ -1,13 +1,12 @@
 import { createReadStream, createWriteStream, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { open } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type { Database } from '@ninedeploy/db';
 import { createBackupCipher, createBackupDecipher, decrypt } from '../lib/crypto.js';
 import { ensureDockerImage, pullDockerImage } from '../lib/dockerPull.js';
 import { capture, run } from '../lib/exec.js';
+import { writeSecretFile } from '../lib/secretFile.js';
 import { NETWORK } from './proxy.js';
 
 const swallow = () => {};
@@ -334,16 +333,10 @@ export async function startDatabase(d: Database, log: (line: string) => void): P
   // Pass secrets via a 0600 env-file instead of `-e KEY=value` on the argv —
   // argv is visible to every local user via `ps`.
   const vars = cfg.env(password);
-  const envFile = path.join(tmpdir(), `nd-db-${d.id}-${Date.now()}.env`);
-  try {
-    unlinkSync(envFile); // best-effort: clear any stale copy
-  } catch {
-    /* not present */
-  }
-  if (Object.keys(vars).length > 0) {
-    writeFileSync(envFile, `${Object.entries(vars).map(([k, v]) => `${k}=${v}`).join('\n')}\n`, { mode: 0o600 });
-    args.push('--env-file', envFile);
-  }
+  const envFile = Object.keys(vars).length > 0
+    ? writeSecretFile('nd-db', 'database.env', `${Object.entries(vars).map(([k, v]) => `${k}=${v}`).join('\n')}\n`)
+    : null;
+  if (envFile) args.push('--env-file', envFile.path);
   // redis/valkey have no password env var — the password is passed as the
   // container command's `--requirepass` argument (visible via docker inspect,
   // but the container refuses unauthenticated connections on the shared
@@ -360,11 +353,7 @@ export async function startDatabase(d: Database, log: (line: string) => void): P
     startFailed = true;
     startError = err;
   } finally {
-    try {
-      if (Object.keys(vars).length > 0) unlinkSync(envFile);
-    } catch {
-      /* best-effort */
-    }
+    envFile?.cleanup();
   }
 
   if (startFailed) {

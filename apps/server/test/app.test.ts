@@ -77,6 +77,50 @@ describe('buildApp', () => {
     await app.close();
   });
 
+  it('M-3: sends baseline security headers on every response', async () => {
+    const app = await buildApp();
+    const res = await app.inject({ method: 'GET', url: '/health' });
+    expect(res.headers['x-content-type-options']).toBe('nosniff');
+    // The panel drives deploys, deletions and node approvals — it must never
+    // be framable.
+    expect(res.headers['x-frame-options']).toBe('DENY');
+    expect(res.headers['referrer-policy']).toBe('no-referrer');
+    expect(res.headers['permissions-policy']).toContain('camera=()');
+    await app.close();
+  });
+
+  it('M-3: sends a frame-blocking CSP on HTML documents only', async () => {
+    const app = await buildApp();
+    // The hook keys off content-type, so exercise the document path directly.
+    // Routes must be added before the first inject boots the instance.
+    app.get('/__csp-probe', async (_req, reply) => reply.type('text/html').send('<p>hi</p>'));
+    await app.ready();
+
+    const json = await app.inject({ method: 'GET', url: '/health' });
+    // A CSP on a JSON body buys nothing; keep it off the API surface.
+    expect(json.headers['content-security-policy']).toBeUndefined();
+
+    const doc = await app.inject({ method: 'GET', url: '/__csp-probe' });
+    const csp = doc.headers['content-security-policy'] as string;
+    expect(csp).toContain("frame-ancestors 'none'");
+    expect(csp).toContain("default-src 'self'");
+    expect(csp).not.toContain('unsafe-eval');
+    await app.close();
+  });
+
+  it('M-3: only sends HSTS for HTTPS requests in production', async () => {
+    const plain = await buildApp({ NODE_ENV: 'production', NINEDEPLOY_JWT_SECRET: 'a-strong-production-secret-value' });
+    const overHttp = await plain.inject({ method: 'GET', url: '/health' });
+    expect(overHttp.headers['strict-transport-security']).toBeUndefined();
+    const overHttps = await plain.inject({
+      method: 'GET',
+      url: '/health',
+      headers: { 'x-forwarded-proto': 'https' },
+    });
+    expect(overHttps.headers['strict-transport-security']).toContain('max-age=31536000');
+    await plain.close();
+  });
+
   it('never logs query strings (WebSocket ?token= must not reach the logs)', async () => {
     const app = await buildApp();
     const infoSpy = vi.spyOn(app.log, 'info');

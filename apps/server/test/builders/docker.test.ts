@@ -1,4 +1,5 @@
-import { existsSync, readFileSync, unlinkSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { containerExposedTcpPorts, dockerBuilder, sanitiseRuntimeLogs, writeEnvFile } from '../../src/engine/builders/docker.js';
 
@@ -246,9 +247,30 @@ describe('dockerBuilder.buildAndRun', () => {
     const file = writeEnvFile({ PRIVATE_KEY: 'line-1\r\nline-2\nINJECTED=yes' });
     expect(file).toBeTruthy();
     try {
-      expect(readFileSync(file!, 'utf8')).toBe('PRIVATE_KEY=line-1\\nline-2\\nINJECTED=yes\n');
+      expect(readFileSync(file!.path, 'utf8')).toBe('PRIVATE_KEY=line-1\\nline-2\\nINJECTED=yes\n');
     } finally {
-      unlinkSync(file!);
+      file!.cleanup();
+    }
+  });
+
+  it('writes the env file into a private per-call directory, not a guessable path', () => {
+    // Regression for M-5: a predictable `${tmpdir()}/nd-env-<pid>-<ms>.env`
+    // let a local user pre-plant a symlink there and have the panel (root,
+    // under the systemd install) overwrite an arbitrary file.
+    const a = writeEnvFile({ A: '1' })!;
+    const b = writeEnvFile({ A: '1' })!;
+    try {
+      expect(dirname(a.path)).not.toBe(dirname(b.path));
+      // mkdtemp dirs are 0700; the file itself stays 0600.
+      if (process.platform !== 'win32') {
+        expect(statSync(dirname(a.path)).mode & 0o777).toBe(0o700);
+        expect(statSync(a.path).mode & 0o777).toBe(0o600);
+      }
+      a.cleanup();
+      expect(existsSync(dirname(a.path))).toBe(false);
+    } finally {
+      a.cleanup();
+      b.cleanup();
     }
   });
 

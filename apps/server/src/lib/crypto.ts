@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes, type CipherGCM, type DecipherGCM } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, randomBytes, timingSafeEqual, type CipherGCM, type DecipherGCM } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { hash as argonHash, verify as argonVerify } from '@node-rs/argon2';
@@ -26,6 +26,17 @@ export function sha256(input: string): string {
 /** URL-safe random token (base64url). Used for opaque API tokens and refresh ids. */
 export function randomToken(bytes = 32): string {
   return randomBytes(bytes).toString('base64url');
+}
+
+/**
+ * Constant-time equality for two secrets held in plaintext.
+ *
+ * Both sides are hashed first so the comparison is over fixed-length buffers:
+ * `timingSafeEqual` throws on a length mismatch, and short-circuiting on length
+ * would itself leak how long the stored secret is.
+ */
+export function secretEquals(a: string, b: string): boolean {
+  return timingSafeEqual(createHash('sha256').update(a).digest(), createHash('sha256').update(b).digest());
 }
 
 // ── Symmetric encryption (secrets at rest) ────────────────────────────────

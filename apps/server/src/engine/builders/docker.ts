@@ -1,5 +1,4 @@
-import { existsSync, mkdirSync, unlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import type { Builder } from '../types.js';
 import type { BuildConfig } from '@ninedeploy/db';
@@ -7,6 +6,7 @@ import { buildEnv, capture, run, sleep } from '../../lib/exec.js';
 import { ensureDockerImage, pullDockerImage } from '../../lib/dockerPull.js';
 import { NETWORK } from '../proxy.js';
 import { buildProbeUrl, safeProbePath } from '../../lib/probeUrl.js';
+import { writeSecretFile, type SecretFile } from '../../lib/secretFile.js';
 
 const swallow = () => {};
 const PROBE_IMAGE = 'busybox:1.36';
@@ -57,21 +57,20 @@ async function ensureProbeContainer(log: (line: string) => void): Promise<void> 
 }
 
 /**
- * Write runtime env vars to a temp file (mode 0600) which docker then loads
- * via its env-file option. Keeping secrets in a file — rather than on the
- * command line — keeps them out of process listings and container inspection.
+ * Write runtime env vars to a private temp file (mode 0600, inside a 0700
+ * mkdtemp directory) which docker then loads via its env-file option. Keeping
+ * secrets in a file — rather than on the command line — keeps them out of
+ * process listings and container inspection; the private directory keeps a
+ * local user from pre-planting a symlink at the path (see lib/secretFile.ts).
  */
-export function writeEnvFile(env: Record<string, string>): string | null {
+export function writeEnvFile(env: Record<string, string>): SecretFile | null {
   const entries = Object.entries(env);
   if (entries.length === 0) return null;
-  const file = path.join(tmpdir(), `nd-env-${process.pid}-${Date.now()}.env`);
-  mkdirSync(path.dirname(file), { recursive: true });
   // docker --env-file cannot contain physical newlines inside a value. Store
   // them as explicit escape sequences so subsequent lines cannot be parsed as
   // attacker-controlled keys and the convention matches the Compose builder.
   const body = entries.map(([k, v]) => `${k}=${v.replace(/\r\n?|\n/g, '\\n')}`).join('\n');
-  writeFileSync(file, `${body}\n`, { mode: 0o600 });
-  return file;
+  return writeSecretFile('nd-env', 'service.env', `${body}\n`);
 }
 
 /** Shared no-op sinks (EPIPE guards / best-effort log drains). */
@@ -357,7 +356,7 @@ export const dockerBuilder: Builder = {
     if (service.dockerSocket) args.push('-v', '/var/run/docker.sock:/var/run/docker.sock');
 
     const envFile = writeEnvFile(env);
-    if (envFile) args.push('--env-file', envFile);
+    if (envFile) args.push('--env-file', envFile.path);
     args.push(target);
     // Template-defined command (argv after the image) — e.g. minio needs
     // `server /data` because its bare entrypoint just prints help and exits.
@@ -372,13 +371,7 @@ export const dockerBuilder: Builder = {
         log,
       );
     } finally {
-      if (envFile) {
-        try {
-          unlinkSync(envFile);
-        } catch {
-          /* already removed */
-        }
-      }
+      envFile?.cleanup();
     }
 
     // Capture the resolved image digest so rollback can later pin this exact image.

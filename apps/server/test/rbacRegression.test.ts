@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { databasesRoutes } from '../src/modules/databases.js';
+import { attachmentRoutes, databasesRoutes } from '../src/modules/databases.js';
 import { deploysRoutes } from '../src/modules/deploys.js';
 import { envRoutes } from '../src/modules/env.js';
 import { jobRoutes } from '../src/modules/jobs.js';
@@ -75,6 +75,10 @@ describe('K2: service-scoped routes enforce ownership for members', () => {
     await app.register(envRoutes, { prefix: '/services' });
     await app.register(webhookMgmtRoutes, { prefix: '/services' });
     await app.register(jobRoutes, { prefix: '/services' });
+    // attachmentRoutes was missing here, so the /attachments case below was
+    // asserting Fastify's route-not-found 404 rather than the ownership 404 —
+    // it would have passed with the access check removed entirely.
+    await app.register(attachmentRoutes, { prefix: '/services' });
     return app;
   }
 

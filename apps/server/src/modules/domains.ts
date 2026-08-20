@@ -1,12 +1,83 @@
 import { and, eq } from 'drizzle-orm';
 import { audit } from '../lib/audit.js';
 import { domains, type Domain } from '@ninedeploy/db';
-import type { FastifyPluginAsync } from 'fastify';
+import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import { createDomain, domainPatch } from '@ninedeploy/schemas';
 import { parseHeaders, writeDynamicConfig } from '../engine/proxy.js';
 import { createDnsRecord, deleteDnsRecord, detectPublicIp, getDnsRecordsConfig } from '../lib/cloudflare.js';
 import { loadServiceForUser } from '../lib/serviceAccess.js';
 import { conflict, notFound, parseId as num } from '../lib/errors.js';
+import { getSettingString } from '../lib/settings.js';
+
+/** Normalise a hostname for comparison: DNS is case-insensitive and the
+ *  trailing root dot is not significant. */
+function normalizeHost(raw: string): string {
+  return raw.trim().toLowerCase().replace(/\.$/, '');
+}
+
+/**
+ * True when two host patterns can match the same HTTP request — either an
+ * exact match, or a `*.suffix` wildcard covering a single-label host under it
+ * (which is exactly what `writeDynamicConfig` turns into a HostRegexp router).
+ */
+function hostsCollide(a: string, b: string): boolean {
+  const x = normalizeHost(a);
+  const y = normalizeHost(b);
+  if (x === y) return true;
+  const covers = (pattern: string, host: string): boolean =>
+    pattern.startsWith('*.') && !host.startsWith('*.')
+      ? new RegExp(`^[a-z0-9-]+\\.${pattern.slice(2).replace(/[.+?^${}()|[\]\\]/g, '\\$&')}$`).test(host)
+      : false;
+  return covers(x, y) || covers(y, x);
+}
+
+/**
+ * Refuse a hostname the caller has no claim to.
+ *
+ * Traefik ranks routers by RULE LENGTH when no explicit priority is set, so a
+ * second router for the same host with a longer rule — `Host(x) &&
+ * PathPrefix(/api)` versus a bare `Host(x)` — silently outranks the original
+ * and receives its traffic, `Authorization` headers included. The unique index
+ * is on (hostname, path), so nothing stopped a second service from claiming
+ * another tenant's host on a different path.
+ *
+ * This is deliberately NOT "one hostname, one service": sharing a host across
+ * services on different paths is a legitimate routing pattern. The rule is
+ * that every service already routing that host must be one the caller can
+ * manage.
+ */
+async function assertHostnameClaimable(
+  app: Parameters<FastifyPluginAsync>[0],
+  hostname: string,
+  serviceId: number,
+  user: NonNullable<FastifyRequest['user']>,
+): Promise<void> {
+  // The panel's own hostname is never a service route: claiming it would put
+  // an attacker-controlled container in front of the control plane's login.
+  let panelDomain: string | null = null;
+  try {
+    panelDomain = (await getSettingString(app.db, 'panel_domain', null)) ?? process.env['NINEDEPLOY_DOMAIN'] ?? null;
+  } catch {
+    panelDomain = process.env['NINEDEPLOY_DOMAIN'] ?? null;
+  }
+  if (panelDomain && hostsCollide(hostname, panelDomain)) {
+    throw conflict('That hostname is reserved for the NineDeploy panel');
+  }
+
+  const rows = await app.db.query.domains.findMany();
+  for (const row of rows) {
+    if (row.serviceId === serviceId) continue;
+    if (!hostsCollide(row.hostname, hostname)) continue;
+    try {
+      // Admins pass; a member passes only for their own service.
+      await loadServiceForUser(app.db, row.serviceId, user);
+    } catch {
+      // Same 409 whether the holder exists-but-is-foreign or the row is
+      // orphaned — the caller learns only that the host is taken.
+      throw conflict('That hostname is already routed by another service');
+    }
+  }
+}
 
 function serialize(d: Domain) {
   return {
@@ -42,12 +113,17 @@ export const domainsRoutes: FastifyPluginAsync = async (app) => {
     const id = num((req.params as { id: string }).id);
     const input = createDomain.parse(req.body);
     await loadServiceForUser(app.db, id, req.user!);
+    // Store normalised: DNS is case-insensitive, so `Victim.Example.com` and
+    // `victim.example.com` are the same route to Traefik — and would otherwise
+    // be two different rows to the unique index and to the check below.
+    const hostname = normalizeHost(input.hostname);
+    await assertHostnameClaimable(app, hostname, id, req.user!);
 
     const [d] = await app.db
       .insert(domains)
       .values({
         serviceId: id,
-        hostname: input.hostname,
+        hostname,
         path: input.path,
         ssl: input.ssl,
         redirectWww: input.redirectWww ?? false,
@@ -70,7 +146,7 @@ export const domainsRoutes: FastifyPluginAsync = async (app) => {
     if (dnsCfg.enabled && dnsCfg.token) {
       try {
         const content = dnsCfg.content || (await detectPublicIp());
-        dnsRecordId = await createDnsRecord(dnsCfg.token, input.hostname, content);
+        dnsRecordId = await createDnsRecord(dnsCfg.token, hostname, content);
         await app.db.update(domains).set({ dnsRecordId }).where(eq(domains.id, d.id));
       } catch (err) {
         dnsWarning = err instanceof Error ? err.message : String(err);
@@ -81,7 +157,7 @@ export const domainsRoutes: FastifyPluginAsync = async (app) => {
       app.db,
       req.user!.id,
       'domain.add',
-      input.hostname,
+      hostname,
       dnsRecordId ? { dnsRecordId } : dnsWarning ? { dnsWarning } : undefined,
     );
     return { ...serialize(d), dnsRecordId, dnsWarning };

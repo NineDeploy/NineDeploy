@@ -3,7 +3,7 @@ import { servers, services, type ServerRow } from '@ninedeploy/db';
 import { serverAnnounce, serverCreate, serverSshBootstrap, serverSshTest } from '@ninedeploy/schemas';
 import type { FastifyPluginAsync } from 'fastify';
 import { audit } from '../lib/audit.js';
-import { decrypt, encrypt } from '../lib/crypto.js';
+import { decrypt, encrypt, secretEquals } from '../lib/crypto.js';
 import { badRequest, notFound, parseId, unauthorized } from '../lib/errors.js';
 import { agentPing, generateAgentToken } from '../lib/agentClient.js';
 import { bootstrapServer, getBootstrapLogs, testSshConnection } from '../engine/serverProvisioner.js';
@@ -42,7 +42,10 @@ export const serverRoutes: FastifyPluginAsync = async (app) => {
       // announce presenting the SAME token. A different token never overwrites
       // the registry — that would break every subsequent agentOp deploy.
       const storedToken = existing.tokenEncrypted ? decrypt(existing.tokenEncrypted) : '';
-      if (storedToken !== token) {
+      // Constant-time: `!==` on a secret leaks its prefix through response
+      // timing, and this route is public. `secretEquals` hashes both sides so
+      // the comparison is length-independent too.
+      if (!secretEquals(storedToken, token)) {
         throw unauthorized(`A server is already registered at ${host}:${port}; token mismatch`);
       }
       await app.db
