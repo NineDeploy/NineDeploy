@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ExternalLink, Globe, Plus, Radio, Shield, Trash2 } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api } from '../../lib/api.js';
 import { useToast } from '../../components/Toast.js';
 import { Button, Card, CardBody, Input, Skeleton, cn } from '../../components/ui.js';
@@ -11,9 +11,69 @@ import type { Service } from '@ninedeploy/sdk';
 export function NetworkTab({ serviceId, svc }: { serviceId: number; svc?: Service | null }) {
   return (
     <div className="mt-5 max-w-3xl space-y-5">
+      <ContainerPortCard serviceId={serviceId} svc={svc} />
       <DirectPortCard serviceId={serviceId} svc={svc} />
       <DomainsCard serviceId={serviceId} />
     </div>
+  );
+}
+
+// ── Internal Container Port / Traefik Target ────────────────────────────────
+function ContainerPortCard({ serviceId, svc }: { serviceId: number; svc?: Service | null }) {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const [portInput, setPortInput] = useState(String(svc?.port ?? 3000));
+
+  useEffect(() => setPortInput(String(svc?.port ?? 3000)), [svc?.port]);
+
+  const update = useMutation({
+    mutationFn: (port: number) => api.services.update(serviceId, { port }),
+    onSuccess: (_, port) => {
+      qc.invalidateQueries({ queryKey: ['service', serviceId] });
+      qc.invalidateQueries({ queryKey: ['services'] });
+      toast(`Container port :${port} saved — Traefik routing updated`, 'success');
+    },
+    onError: () => toast('Could not update the container port', 'error'),
+  });
+
+  const parsed = Number(portInput);
+  const valid = Number.isInteger(parsed) && parsed >= 1 && parsed <= 65535;
+
+  return (
+    <Card>
+      <CardBody>
+        <div className="mb-2 flex items-center gap-2 text-sm font-medium text-slate-300">
+          <Globe size={15} className="text-indigo-400" /> Container Port / Traefik Target
+        </div>
+        <p className="mb-4 text-xs text-slate-400">
+          The TCP port your application listens on inside the container. Domains, healthchecks and direct host publishing all route to this port. Redeploy after changing it so buildpack apps receive the same value through <span className="font-mono text-slate-300">PORT</span>.
+        </p>
+        <form
+          className="flex items-end gap-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (valid) update.mutate(parsed);
+          }}
+        >
+          <label className="flex-1 text-[11px] font-medium text-slate-400">
+            Internal container port
+            <Input
+              aria-label="Internal container port"
+              value={portInput}
+              onChange={(e) => setPortInput(e.target.value)}
+              inputMode="numeric"
+              autoComplete="off"
+              placeholder="3000"
+              className="mt-1 h-9 font-mono text-xs"
+            />
+          </label>
+          <Button type="submit" size="sm" disabled={!valid || update.isPending}>
+            {update.isPending ? 'Saving…' : 'Save Port'}
+          </Button>
+        </form>
+        {!valid && portInput !== '' && <p className="mt-2 text-xs text-rose-400">Enter a port from 1 to 65535.</p>}
+      </CardBody>
+    </Card>
   );
 }
 
@@ -36,7 +96,7 @@ function DirectPortCard({ serviceId, svc }: { serviceId: number; svc?: Service |
   });
 
   const currentPublished = svc?.publishedPort ?? null;
-  const containerPort = svc?.port ?? 80;
+  const containerPort = svc?.port ?? currentPublished ?? 'unknown';
   const hostUrl = currentPublished ? `http://${window.location.hostname}:${currentPublished}` : null;
 
   return (

@@ -1,4 +1,4 @@
-export const VERSION = '0.2.26';
+export const VERSION = '0.2.27';
 
 export interface ChangelogEntry {
   version: string;
@@ -8,6 +8,17 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.2.27',
+    date: '2026-08-20',
+    title: 'Deterministic Container Routing',
+    changes: [
+      'Nixpacks source deployments default to container port 3000 and receive the same value through PORT',
+      'Single EXPOSE ports are detected automatically for Dockerfile and image deployments',
+      'Runtime healthchecks, direct publishing and Traefik now share one resolved internal port',
+      'The Network tab exposes an explicit Container Port and Traefik Target control for manual overrides',
+    ],
+  },
   {
     version: '0.2.26',
     date: '2026-08-20',

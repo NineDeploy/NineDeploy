@@ -283,6 +283,24 @@ describe('services routes', () => {
     expect(res.json()).toMatchObject({ id: 1, name: 'renamed' });
   });
 
+  it('rewrites Traefik immediately when a running service container port is corrected', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { services: svcRow({ id: 1, runtimeId: 'next-app-12', port: null }) },
+        update: { services: [svcRow({ id: 1, runtimeId: 'next-app-12', port: 3000 })] },
+      }),
+    });
+    await app.register(servicesRoutes);
+
+    const res = await app.inject({
+      method: 'PATCH', url: '/1', headers: asUser(), payload: { port: 3000 },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().port).toBe(3000);
+    expect(proxyMocks.writeDynamicConfig).toHaveBeenCalledWith(app.db);
+  });
+
   it('patches restart policy and stop grace into the build config', async () => {
     const app = await buildTestApp({
       db: createFakeDb({

@@ -11,11 +11,18 @@ import { buildProbeUrl, safeProbePath } from '../../lib/probeUrl.js';
 const swallow = () => {};
 const PROBE_IMAGE = 'busybox:1.36';
 const DEPLOY_HEARTBEAT_MS = 20_000;
+const DEFAULT_NIXPACKS_PORT = 3000;
 
 /** Valid docker --restart values: the fixed policies plus on-failure:N. */
 const RE_RESTART = /^(no|always|unless-stopped|on-failure(?::\d{1,3})?)$/;
 const safeRestartPolicy = (raw: string | undefined): string =>
   raw && RE_RESTART.test(raw) ? raw : 'unless-stopped';
+
+const validPort = (raw: string | undefined): number | null => {
+  if (!raw || !/^\d+$/.test(raw)) return null;
+  const port = Number(raw);
+  return port >= 1 && port <= 65535 ? port : null;
+};
 
 /**
  * Write runtime env vars to a temp file (mode 0600) which docker then loads
@@ -152,6 +159,8 @@ export const dockerBuilder: Builder = {
 
     // Determine the image to run: a pre-built image (template/one-click) or build from source.
     let target: string;
+    let builtWithNixpacks = false;
+    let resolvedPort: number | null = service.port ?? validPort(env.PORT);
     try {
     if (service.image) {
       // On rollback, pin the exact image by digest instead of the mutable tag.
@@ -185,11 +194,8 @@ export const dockerBuilder: Builder = {
       const useNixpacks = pack === 'nixpacks' || (pack === 'auto' && !hasDockerfile);
       log(`Building image ${target} …`);
       if (useNixpacks) {
+        builtWithNixpacks = true;
         await buildWithNixpacks(target, baseDir, buildConfig, workDir, log);
-        // Buildpack apps conventionally listen on $PORT — align it with the
-        // declared service port so Traefik routing matches without extra config.
-        const effectivePort = service.port ?? service.publishedPort;
-        if (effectivePort && env.PORT === undefined) env.PORT = String(effectivePort);
       } else {
         await run(
           'docker',
@@ -204,6 +210,31 @@ export const dockerBuilder: Builder = {
         );
       }
     }
+
+    // One canonical internal port drives the process, healthcheck and Traefik.
+    // Explicit service configuration wins, followed by an existing PORT env.
+    // Nixpacks apps follow the buildpack $PORT convention, so Dockerfile-less
+    // source deploys get a deterministic 3000 default instead of completing
+    // with a null port and therefore no Traefik route.
+    if (!resolvedPort && builtWithNixpacks) {
+      resolvedPort = DEFAULT_NIXPACKS_PORT;
+      log(`No container port configured; using Nixpacks default ${resolvedPort}/tcp for runtime, healthcheck and Traefik`);
+    }
+    if (builtWithNixpacks && env.PORT === undefined) env.PORT = String(resolvedPort);
+
+    // Dockerfile/image deploys often declare exactly one EXPOSE port. Adopt it
+    // automatically while leaving ambiguous multi-port images for the user to
+    // select explicitly in Service → Network.
+    if (!resolvedPort) {
+      const exposedPorts = await containerExposedTcpPorts(target);
+      if (exposedPorts.length === 1) {
+        resolvedPort = exposedPorts[0]!;
+        log(`Detected container port ${resolvedPort}/tcp from image metadata`);
+      }
+    }
+    // Backward compatibility for direct-port-only services created before the
+    // internal-port field was exposed in the UI.
+    resolvedPort ??= service.publishedPort ?? null;
     } finally {
       if (loggedIn) {
         const logoutArgs = ['logout', ...(server ? [server] : [])];
@@ -233,7 +264,7 @@ export const dockerBuilder: Builder = {
     if (service.volumeMount) args.push('-v', `nd-svc-${service.slug}-data:${service.volumeMount}`);
     // Direct host port mapping (e.g. 8080:3000) for domain-less external access.
     if (service.publishedPort) {
-      const containerPort = service.port ?? service.publishedPort;
+      const containerPort = resolvedPort ?? service.publishedPort;
       args.push('-p', `${service.publishedPort}:${containerPort}`);
     }
     // Template-only flag (registry is admin-controlled): expose Docker control.
@@ -272,7 +303,7 @@ export const dockerBuilder: Builder = {
       /* non-fatal — digest is best-effort */
     }
 
-    return { runtimeId: name, port: service.port ?? null, healthPath: service.healthPath ?? '/', imageDigest: digest };
+    return { runtimeId: name, port: resolvedPort, healthPath: service.healthPath ?? '/', imageDigest: digest };
   },
 
   // 5-minute deadline: first boots (model downloads, DB migrations) are slow.

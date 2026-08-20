@@ -112,7 +112,7 @@ function SettingsCard({ serviceId }: { serviceId: number }) {
           <Field label="Branch"><Input value={form.branch} onChange={set('branch')} className="h-9" /></Field>
           <Field label="Repo URL"><Input value={form.repoUrl} onChange={set('repoUrl')} placeholder="https://github.com/…" className="h-9 font-mono text-xs" /></Field>
           <Field label="Image (image deploys)"><Input value={form.image} onChange={set('image')} placeholder="nginx:latest" className="h-9 font-mono text-xs" /></Field>
-          <Field label="Port"><Input value={form.port} onChange={set('port')} inputMode="numeric" placeholder="3000" className="h-9 font-mono text-xs" /></Field>
+          <Field label="Container port (Traefik target)"><Input value={form.port} onChange={set('port')} inputMode="numeric" autoComplete="off" placeholder="3000" className="h-9 font-mono text-xs" /></Field>
           <Field label="Health path"><Input value={form.healthPath} onChange={set('healthPath')} placeholder="/" className="h-9 font-mono text-xs" /></Field>
           <Field label="Volume mount"><Input value={form.volumeMount} onChange={set('volumeMount')} placeholder="/app/data" className="h-9 font-mono text-xs" /></Field>
 

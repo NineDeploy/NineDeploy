@@ -130,6 +130,7 @@ describe('DeployWizard', () => {
     await user.click(screen.getByRole('button', { name: /continue/i }));
 
     // Runtime
+    await user.clear(screen.getByPlaceholderText('3000'));
     await user.type(screen.getByPlaceholderText('3000'), '8080');
     await user.type(screen.getByPlaceholderText('/app/data'), '/data');
     await user.clear(screen.getByPlaceholderText('/'));
@@ -500,6 +501,7 @@ describe('DeployWizard', () => {
     await user.click(screen.getByRole('button', { name: /continue/i }));
 
     // Runtime step: fill container port and direct host port
+    await user.clear(screen.getByPlaceholderText('3000'));
     await user.type(screen.getByPlaceholderText('3000'), '3000');
     await user.type(screen.getByPlaceholderText('e.g. 8080'), '8080');
     await user.click(screen.getByRole('button', { name: /continue/i })); // Env

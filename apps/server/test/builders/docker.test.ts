@@ -227,6 +227,7 @@ describe('dockerBuilder.buildAndRun', () => {
   });
 
   it('omits port/cpu/memory/volume/env flags when unset', async () => {
+    h2.exists.mockReturnValue(true); // Dockerfile build with no declared port
     const ctx = makeCtx({
       service: { slug: 'x', image: null, port: null, cpuShares: 0, memLimitMb: 0, volumeMount: null, healthPath: '/' },
       env: {},
@@ -239,6 +240,39 @@ describe('dockerBuilder.buildAndRun', () => {
     expect(runArgs).toEqual([
       'run', '-d', '--name', 'x-3', '--restart', 'unless-stopped', '--network', 'ninedeploy', 'ninedeploy/x:abc',
     ]);
+  });
+
+  it('defaults Dockerfile-less Nixpacks source apps to port 3000 and passes PORT through the env file', async () => {
+    h2.exists.mockReturnValue(false);
+    const ctx = makeCtx({
+      service: { slug: 'next-app', image: null, port: null, cpuShares: 0, memLimitMb: 0, volumeMount: null, healthPath: '/' },
+      buildConfig: { buildPack: 'auto', baseDir: '/' },
+      env: {},
+    });
+
+    const runtime = await dockerBuilder.buildAndRun(ctx as never);
+
+    const runArgs = h.run.mock.calls.at(-1)![1] as unknown[];
+    expect(runArgs).toContain('--env-file');
+    expect(runtime.port).toBe(3000);
+    expect(ctx.log).toHaveBeenCalledWith(
+      'No container port configured; using Nixpacks default 3000/tcp for runtime, healthcheck and Traefik',
+    );
+  });
+
+  it('adopts the single TCP port declared by a Docker image', async () => {
+    h.capture
+      .mockResolvedValueOnce('{"8080/tcp":{}}')
+      .mockResolvedValueOnce('sha256:image');
+    const ctx = makeCtx({
+      service: { slug: 'custom', image: 'example/web', port: null, cpuShares: 0, memLimitMb: 0, volumeMount: null, healthPath: '/' },
+      env: {},
+    });
+
+    const runtime = await dockerBuilder.buildAndRun(ctx as never);
+
+    expect(runtime.port).toBe(8080);
+    expect(ctx.log).toHaveBeenCalledWith('Detected container port 8080/tcp from image metadata');
   });
 
   it('passes -p hostPort:containerPort when publishedPort is configured', async () => {

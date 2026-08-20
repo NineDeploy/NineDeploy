@@ -1170,6 +1170,28 @@ describe('ServiceDetail', () => {
     unmount2();
   });
 
+  it('edits the internal container port from the Network tab for Traefik routing', async () => {
+    mockOf(api.services.get).mockResolvedValue({
+      id: 1,
+      name: 'next-app',
+      slug: 'next-app',
+      port: null,
+      publishedPort: null,
+      status: 'running',
+    } as never);
+    mockOf(api.services.update).mockResolvedValue({ id: 1, port: 4173 } as never);
+
+    renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+    await openTab('Network');
+
+    const input = await screen.findByRole('textbox', { name: 'Internal container port' });
+    expect(input).toHaveValue('3000');
+    fireEvent.change(input, { target: { value: '4173' } });
+    fireEvent.submit(input.closest('form')!);
+
+    await waitFor(() => expect(api.services.update).toHaveBeenCalledWith(1, { port: 4173 }));
+  });
+
   it('handles direct host port update errors', async () => {
     mockOf(api.services.get).mockResolvedValue({
       id: 1,
@@ -1190,7 +1212,7 @@ describe('ServiceDetail', () => {
     await waitFor(() => expect(api.services.update).toHaveBeenCalledWith(1, { publishedPort: 8080 }));
   });
 
-  it('renders fallback container port :80 when port is null and shows Saving... while pending', async () => {
+  it('renders the published port as the legacy container-port fallback and shows Saving... while pending', async () => {
     let resolveUpdate!: (val: any) => void;
     mockOf(api.services.get).mockResolvedValue({
       id: 1,
@@ -1208,7 +1230,7 @@ describe('ServiceDetail', () => {
 
     const { unmount } = renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
     await openTab('Network');
-    expect(await screen.findByText('→ :80')).toBeInTheDocument();
+    expect(await screen.findByText('→ :8080')).toBeInTheDocument();
 
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: /Change Port/i }));

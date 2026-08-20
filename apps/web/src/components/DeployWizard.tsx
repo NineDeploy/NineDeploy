@@ -67,7 +67,10 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
     enabled: Boolean(sourceId && Number(sourceId) > 0 && repoUrl),
   });
   const [image, setImage] = useState(template?.image ?? '');
-  const [port, setPort] = useState(template ? String(template.port) : '');
+  // Source/buildpack apps conventionally listen on $PORT. A visible default
+  // prevents a successful first deploy from ending up with no Traefik target;
+  // image/template deploys retain their registry-declared port.
+  const [port, setPort] = useState(template ? String(template.port) : '3000');
   const [publishedPort, setPublishedPort] = useState('');
   const [volumeMount, setVolumeMount] = useState(template?.volumeMount ?? '');
   const [healthPath, setHealthPath] = useState('/');
@@ -341,7 +344,7 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
           {step === 1 && (
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-3">
-                <L label="Internal Port"><Input value={port} onChange={(e) => setPort(e.target.value)} placeholder="3000" className="font-mono text-xs" /></L>
+                <L label="Container Port"><Input value={port} onChange={(e) => setPort(e.target.value)} inputMode="numeric" autoComplete="off" placeholder="3000" className="font-mono text-xs" /></L>
                 <L label="Public Host Port (optional)"><Input value={publishedPort} onChange={(e) => setPublishedPort(e.target.value)} placeholder="e.g. 8080" className="font-mono text-xs" /></L>
               </div>
               <L label="Persistent Volume Mount"><Input value={volumeMount} onChange={(e) => setVolumeMount(e.target.value)} placeholder="/app/data" className="font-mono text-xs" /></L>

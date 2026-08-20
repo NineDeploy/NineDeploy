@@ -214,6 +214,16 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
         if (updated.length === 0) throw notFound('Service not found');
       }
     }
+    // The internal container port is also Traefik's upstream port. Apply a
+    // manual correction to routing immediately for an already-running service;
+    // the next redeploy will additionally pass it to buildpack apps as $PORT.
+    if (patch.port !== undefined && svc.runtimeId) {
+      try {
+        await writeDynamicConfig(app.db);
+      } catch (err) {
+        req.log.warn({ err, serviceId: id, port: patch.port }, 'failed to rewrite traefik config after container port update');
+      }
+    }
     void audit(app.db, req.user!.id, 'service.update', svc.name);
     return serialize(svc);
   });
