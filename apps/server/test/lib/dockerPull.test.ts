@@ -115,10 +115,13 @@ describe('pullDockerImage', () => {
           Volumes: { '/var/lib/mysql': {} },
         },
       }))
-      .mockResolvedValueOnce('sha256:flattened');
+      .mockResolvedValueOnce('sha256:flattened')
+      .mockResolvedValueOnce(JSON.stringify({ config: { Cmd: ['postgres'] } }))
+      .mockResolvedValueOnce('sha256:flattened-postgres');
     const log = vi.fn();
 
     await pullDockerImage('mysql:8.4', log, 1);
+    await pullDockerImage('postgres:16', log, 1);
 
     expect(h.run).toHaveBeenCalledWith(
       'sha256sum',
@@ -146,6 +149,7 @@ describe('pullDockerImage', () => {
       log,
     );
     expect(log).toHaveBeenCalledWith(expect.stringContaining('containerd extraction was bypassed'));
+    expect(h.run.mock.calls.filter(([cmd]) => cmd === 'curl')).toHaveLength(1);
   });
 
   it('repairs an unused committed overlayfs snapshot before falling back to flattening', async () => {

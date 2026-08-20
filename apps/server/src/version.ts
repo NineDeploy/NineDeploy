@@ -1,4 +1,4 @@
-export const VERSION = '0.2.22';
+export const VERSION = '0.2.23';
 
 export interface ChangelogEntry {
   version: string;
@@ -8,6 +8,17 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.2.23',
+    date: '2026-08-20',
+    title: 'Hub-Wide Snapshot Recovery Certification',
+    changes: [
+      'Every runtime-certified Hub application now passes forced snapshotter-independent export, import, startup and TCP probing',
+      'WordPress plus MySQL and Directus plus PostgreSQL pass the same recovery path with real database initialization and wiring',
+      'Docker Hub, GHCR and Codeberg registry images are covered by one image-independent recovery implementation',
+      'The checksum-verified registry tool is reused safely within the server process and pinned to a BusyBox-compatible release',
+    ],
+  },
   {
     version: '0.2.22',
     date: '2026-08-20',

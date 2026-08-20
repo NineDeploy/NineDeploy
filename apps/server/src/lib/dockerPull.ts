@@ -7,18 +7,19 @@ const SNAPSHOT_FAILURE = /extraction snapshot|target snapshot .*already exists|p
 const STALE_EXISTING_SNAPSHOT = /target snapshot .*already exists/i;
 const STALE_SNAPSHOT_KEY = /target snapshot\s+"?(sha256:[a-f0-9]{64})"?\s+already exists/i;
 const CONTAINERD_SOCKETS = ['/run/containerd/containerd.sock', '/var/run/docker/containerd/containerd.sock'] as const;
-const CRANE_VERSION = 'v0.21.8';
+const CRANE_VERSION = 'v0.21.7';
 const CRANE_RELEASES = {
   amd64: {
     asset: 'go-containerregistry_Linux_x86_64.tar.gz',
-    sha256: '59b59f68ee37aba51f5523d69ec779ee925d9be4e279f9220eca357267f2ee67',
+    sha256: '1a57bc98207fa1c0d04bf760699099e26f8383499bfd55b99c1b919a928a7230',
   },
   arm64: {
     asset: 'go-containerregistry_Linux_arm64.tar.gz',
-    sha256: '9a528bee5f3443a9b20a25b46040ed518384b07c470ad444028fdb2dcebd4056',
+    sha256: 'b6ee979d9411dfb05ce35ab9e156fe5de7def11a230764a7856ffa2eb971fa88',
   },
 } as const;
 const imagePreparations = new Map<string, Promise<void>>();
+let cranePreparation: Promise<string> | undefined;
 
 /** Docker/containerd snapshot errors known to be transient on Docker 29+. */
 export function isTransientSnapshotFailure(lines: readonly string[]): boolean {
@@ -173,6 +174,41 @@ async function verifySha256(file: string, expected: string, log: (line: string) 
   await run('sha256sum', ['--check', '--strict', '-'], {}, log, Buffer.from(`${expected}  ${file}\n`));
 }
 
+async function prepareCrane(log: (line: string) => void): Promise<string> {
+  if (cranePreparation) return cranePreparation;
+  const preparation = (async () => {
+    const arch = hostArchitecture();
+    const release = CRANE_RELEASES[arch as keyof typeof CRANE_RELEASES];
+    if (!release) throw new Error(`direct registry recovery does not support linux/${arch}`);
+
+    const staging = mkdtempSync(path.join(tmpdir(), 'ninedeploy-crane-'));
+    const releaseArchive = path.join(staging, release.asset);
+    const crane = path.join(staging, 'crane');
+    const releaseUrl = `https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/${release.asset}`;
+    try {
+      await run(
+        'curl',
+        ['--proto', '=https', '--tlsv1.2', '--fail', '--location', '--retry', '3', '--output', releaseArchive, releaseUrl],
+        { timeoutMs: 10 * 60 * 1000 },
+        log,
+      );
+      await verifySha256(releaseArchive, release.sha256, log);
+      await run('tar', ['-xzf', releaseArchive, '-C', staging, 'crane'], {}, log);
+      await run('chmod', ['0755', crane], {}, log);
+      rmSync(releaseArchive, { force: true });
+      return crane;
+    } catch (error) {
+      rmSync(staging, { recursive: true, force: true });
+      throw error;
+    }
+  })();
+  cranePreparation = preparation;
+  preparation.catch(() => {
+    if (cranePreparation === preparation) cranePreparation = undefined;
+  });
+  return preparation;
+}
+
 /**
  * Last-resort recovery that does not ask any host containerd snapshotter to
  * unpack the source image. A pinned, checksum-verified crane binary flattens
@@ -185,26 +221,11 @@ export async function recoverImageDirectlyFromRegistry(
   targetImage = image,
 ): Promise<void> {
   const arch = hostArchitecture();
-  const release = CRANE_RELEASES[arch as keyof typeof CRANE_RELEASES];
-  if (!release) throw new Error(`direct registry recovery does not support linux/${arch}`);
-
   const staging = mkdtempSync(path.join(tmpdir(), 'ninedeploy-registry-recovery-'));
-  const releaseArchive = path.join(staging, release.asset);
-  const crane = path.join(staging, 'crane');
   const rootfsArchive = path.join(staging, 'rootfs.tar');
-  const releaseUrl = `https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/${release.asset}`;
   try {
     log(`Both Docker snapshotters are unusable; exporting ${image} directly from its registry …`);
-    await run(
-      'curl',
-      ['--proto', '=https', '--tlsv1.2', '--fail', '--location', '--retry', '3', '--output', releaseArchive, releaseUrl],
-      { timeoutMs: 10 * 60 * 1000 },
-      log,
-    );
-    await verifySha256(releaseArchive, release.sha256, log);
-    await run('tar', ['-xzf', releaseArchive, '-C', staging, 'crane'], {}, log);
-    await run('chmod', ['0755', crane], {}, log);
-
+    const crane = await prepareCrane(log);
     const platform = `linux/${arch}`;
     const config = JSON.parse(await capture(crane, ['config', image, '--platform', platform], { timeoutMs: 30 * 60 * 1000 })) as ImageConfig;
     await run(crane, ['export', image, rootfsArchive, '--platform', platform], { timeoutMs: 60 * 60 * 1000 }, log);
