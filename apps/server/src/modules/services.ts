@@ -108,10 +108,8 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
     // SQLite's unique index treats NULLs as distinct.
     const dup = await app.db.query.services.findFirst({ where: eq(services.slug, slug) });
     if (dup) {
-      const reusable =
-        input.reuseExisting === true &&
+      const sameDefinition =
         dup.ownerUserId === req.user!.id &&
-        dup.status === 'idle' &&
         dup.projectId === (input.projectId ?? null) &&
         dup.type === input.type &&
         dup.repoUrl === (input.repoUrl ?? null) &&
@@ -122,7 +120,11 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
         dup.volumeMount === (input.volumeMount ?? null) &&
         dup.composeService === (input.composeService ?? null) &&
         dup.port === (input.port ?? null) &&
-        dup.publishedPort === (input.publishedPort ?? null) &&
+        dup.publishedPort === (input.publishedPort ?? null);
+      const reusable =
+        input.reuseExisting === true &&
+        dup.status === 'idle' &&
+        sameDefinition &&
         (!template || (
           JSON.stringify(dup.templateDatabaseEnv) === JSON.stringify(template.databaseEnv ?? null) &&
           JSON.stringify(dup.cmd) === JSON.stringify(template.cmd ?? null) &&
@@ -131,6 +133,27 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
       if (reusable) {
         void audit(app.db, req.user!.id, 'service.reuse', input.name);
         return serialize(dup);
+      }
+      // A failed/stopped Hub service may have been created from an older,
+      // incomplete template contract (for example Ghost before its required
+      // MySQL mapping was declared). A Hub retry is allowed to repair only the
+      // registry-controlled fields of the same caller-owned definition. The
+      // wizard then provisions/attaches the newly declared database before it
+      // triggers another deployment.
+      const repairableTemplate =
+        input.reuseExisting === true &&
+        template != null &&
+        sameDefinition &&
+        ['idle', 'error', 'stopped'].includes(dup.status);
+      if (repairableTemplate) {
+        const trusted = {
+          templateDatabaseEnv: template.databaseEnv ?? null,
+          cmd: template.cmd ?? null,
+          dockerSocket: template.dockerSocket ?? false,
+        };
+        await app.db.update(services).set(trusted).where(eq(services.id, dup.id));
+        void audit(app.db, req.user!.id, 'service.repair_template', input.name);
+        return serialize({ ...dup, ...trusted });
       }
       throw badRequest(`A service with slug '${slug}' already exists`, 'slug_taken');
     }

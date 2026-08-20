@@ -163,6 +163,53 @@ describe('services routes', () => {
     expect(res.json()).toMatchObject({ id: 9, slug: 'my-app', status: 'idle' });
   });
 
+  it('repairs an older failed Hub service with the current trusted template database contract', async () => {
+    let updated: Record<string, unknown> | undefined;
+    const existing = svcRow({
+      id: 17,
+      ownerUserId: 1,
+      name: 'Ghost',
+      slug: 'ghost',
+      status: 'error',
+      type: 'docker',
+      repoUrl: null,
+      image: 'ghost:5-alpine',
+      port: 2368,
+      volumeMount: '/var/lib/ghost/content',
+      templateDatabaseEnv: null,
+      serverId: null,
+    });
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { services: existing },
+        update: { services: (value) => { updated = value as Record<string, unknown>; return [value as Record<string, unknown>]; } },
+      }),
+    });
+    await app.register(servicesRoutes);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/',
+      headers: asUser(),
+      payload: {
+        templateId: 'ghost',
+        reuseExisting: true,
+        name: 'Ghost',
+        type: 'docker',
+        image: 'ghost:5-alpine',
+        port: 2368,
+        volumeMount: '/var/lib/ghost/content',
+        build: { buildPack: 'auto', baseDir: '/' },
+      },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ id: 17, status: 'error' });
+    expect(updated?.templateDatabaseEnv).toMatchObject({
+      database__connection__host: 'host',
+      database__connection__password: 'password',
+    });
+  });
+
   it('does not reuse another user service or an already deployed service', async () => {
     for (const existing of [
       svcRow({ ownerUserId: 2, slug: 'my-app', repoUrl: 'https://github.com/acme/app.git', port: 8080, serverId: null }),

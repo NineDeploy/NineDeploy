@@ -29,7 +29,7 @@ describe('bundled Hub template contract', () => {
   it('defines explicit application env mappings for every managed database template', () => {
     const databaseTemplates = templates.filter((template) => template.dbEngine);
     expect(databaseTemplates.map((template) => template.id).sort()).toEqual([
-      'directus', 'hasura', 'matomo', 'umami', 'vikunja', 'wordpress', 'yourls',
+      'directus', 'ghost', 'hasura', 'matomo', 'umami', 'vikunja', 'wordpress', 'yourls',
     ]);
     for (const template of databaseTemplates) {
       expect(Object.keys(template.databaseEnv ?? {}).length, template.id).toBeGreaterThan(0);
@@ -40,6 +40,16 @@ describe('bundled Hub template contract', () => {
       WORDPRESS_DB_USER: 'username',
       WORDPRESS_DB_PASSWORD: 'password',
       WORDPRESS_DB_NAME: 'database',
+    });
+    expect(templates.find((template) => template.id === 'ghost')).toMatchObject({
+      dbEngine: 'mysql',
+      databaseEnv: {
+        database__connection__host: 'host',
+        database__connection__port: 'port',
+        database__connection__user: 'username',
+        database__connection__password: 'password',
+        database__connection__database: 'database',
+      },
     });
   });
 
@@ -61,7 +71,7 @@ describe('bundled Hub template contract', () => {
 
   it('advertises only templates that passed an isolated runtime smoke test', () => {
     expect(templates.filter((template) => template.runtimeVerified).map((template) => template.id).sort()).toEqual([
-      'actual-budget', 'directus', 'excalidraw', 'forgejo', 'gitea', 'grafana',
+      'actual-budget', 'directus', 'excalidraw', 'forgejo', 'ghost', 'gitea', 'grafana',
       'kavita', 'memos', 'minio', 'n8n', 'pocketbase', 'qdrant', 'uptime-kuma',
       'vaultwarden', 'wordpress',
     ]);

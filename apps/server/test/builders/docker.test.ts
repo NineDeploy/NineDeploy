@@ -467,6 +467,26 @@ describe('dockerBuilder.isHealthy', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('fails an exited container early and includes redacted runtime logs', async () => {
+    h.capture.mockImplementation(async (_cmd: string, args: string[]) => {
+      const format = args.at(-1);
+      if (format === '{{.State.Status}}|{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}') return 'exited|';
+      if (format === '{{json .State}}') return JSON.stringify({ Status: 'exited', ExitCode: 1, OOMKilled: false, Error: '' });
+      if (args[0] === 'logs') return 'database password=super-secret\nconnect ECONNREFUSED 3306';
+      return '';
+    });
+    const log = vi.fn();
+
+    await expect(
+      dockerBuilder.isHealthy({ runtimeId: 'ghost-17', port: 2368, healthPath: '/' }, 60_000, 0, log),
+    ).resolves.toBe(false);
+
+    expect(log).toHaveBeenCalledWith('container ghost-17 is exited (exit 1)');
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('connect ECONNREFUSED 3306'));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('password=[REDACTED]'));
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining('super-secret'));
+  });
+
   it('returns false when the container has no network IP (not on the network yet)', async () => {
     h.capture.mockResolvedValue('running|');
     await expect(

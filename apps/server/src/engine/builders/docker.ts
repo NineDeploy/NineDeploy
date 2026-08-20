@@ -63,6 +63,42 @@ export async function containerIp(name: string): Promise<string | null> {
   }
 }
 
+type DockerContainerState = {
+  Status?: string;
+  ExitCode?: number;
+  OOMKilled?: boolean;
+  Error?: string;
+};
+
+/** Keep runtime diagnostics useful without echoing common credential shapes. */
+function sanitiseRuntimeLogs(raw: string): string {
+  return raw
+    .replace(/:\/\/([^:\s/@]+):([^@\s/]+)@/g, '://$1:[REDACTED]@')
+    .replace(/((?:password|passwd|token|secret|api[_-]?key)\s*[=:]\s*)\S+/gi, '$1[REDACTED]')
+    .split('\n')
+    .slice(-30)
+    .join('\n')
+    .slice(-8_000);
+}
+
+/** Inspect and log why a container is not reachable. Returns its state. */
+async function logContainerDiagnostic(name: string, log: (line: string) => void): Promise<DockerContainerState | null> {
+  try {
+    const state = JSON.parse((await capture('docker', ['inspect', name, '--format', '{{json .State}}'])).trim()) as DockerContainerState;
+    log(`container ${name} is ${state.Status ?? 'unavailable'} (exit ${state.ExitCode ?? 'unknown'}${state.OOMKilled ? ', OOM-killed' : ''})`);
+    if (state.Error) log(`container runtime error: ${state.Error}`);
+    try {
+      const tail = sanitiseRuntimeLogs(await capture('docker', ['logs', '--tail', '30', name]));
+      if (tail.trim()) log(`Recent container logs:\n${tail}`);
+    } catch {
+      /* the state line is still actionable when logs cannot be read */
+    }
+    return state;
+  } catch {
+    return null;
+  }
+}
+
 /** TCP ports declared by the image/container metadata (for safe port recovery). */
 export async function containerExposedTcpPorts(name: string): Promise<number[]> {
   try {
@@ -321,6 +357,7 @@ export const dockerBuilder: Builder = {
     let usedSiblingProbe = false;
     let siblingImageReady = false;
     let fallbackPorts: number[] | null = null;
+    let restartDiagnosticWritten = false;
     while (Date.now() < deadline) {
       // Resolve the container's network address fresh on every attempt: null
       // when it is not running (a process that exits right after `docker run -d`
@@ -328,6 +365,26 @@ export const dockerBuilder: Builder = {
       // makes blue-green and rollback probes correct without persisting ports.
       const ip = await containerIp(runtime.runtimeId);
       if (!ip) {
+        const elapsed = Date.now() - start;
+        // A process that has exited cannot recover. A restart loop gets a
+        // short grace period for transient dependency startup, then fails with
+        // its real logs instead of printing five minutes of TCP probe noise.
+        try {
+          const raw = await capture('docker', ['inspect', runtime.runtimeId, '--format', '{{json .State}}']);
+          const state = JSON.parse(raw.trim()) as DockerContainerState;
+          const terminal = state.Status === 'exited' || state.Status === 'dead';
+          const restartLoop = state.Status === 'restarting' && elapsed >= 30_000;
+          if (terminal || restartLoop) {
+            await logContainerDiagnostic(runtime.runtimeId, log);
+            return false;
+          }
+          if (state.Status === 'restarting' && !restartDiagnosticWritten) {
+            log(`container ${runtime.runtimeId} is restarting; waiting briefly before declaring startup failure`);
+            restartDiagnosticWritten = true;
+          }
+        } catch {
+          /* container can still be transitioning into the running state */
+        }
         await sleep(1000);
         continue;
       }
@@ -402,6 +459,7 @@ export const dockerBuilder: Builder = {
         return true;
       }
     }
+    await logContainerDiagnostic(runtime.runtimeId, log);
     void usedSiblingProbe;
     return false;
   },

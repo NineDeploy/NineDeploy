@@ -1359,10 +1359,25 @@
         {
           "key": "url",
           "value": "http://localhost:2368"
+        },
+        {
+          "key": "database__client",
+          "value": "mysql"
         }
       ],
       "website": "https://ghost.org",
-      "featured": true
+      "requires": "Ghost needs a MySQL database in production — one is provisioned and attached automatically",
+      "dbEngine": "mysql",
+      "databaseEnv": {
+        "database__connection__host": "host",
+        "database__connection__port": "port",
+        "database__connection__user": "username",
+        "database__connection__password": "password",
+        "database__connection__database": "database"
+      },
+      "featured": true,
+      "runtimeVerified": true,
+      "verifiedAt": "2026-08-20"
     },
     {
       "id": "wordpress",

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.31] - 2026-08-20
+
+### Fixed
+- **Working Ghost 5 Template**: Ghost Hub installs now provision MySQL automatically and inject `database__client` plus all required `database__connection__*` values before deployment.
+- **Existing Failed Install Repair**: Repeating the same Ghost Hub installation repairs the trusted template contract on an older failed service, then provisions and attaches its missing database.
+- **Actionable Health Failures**: Containers that exit or remain in a restart loop fail early with exit state and redacted recent runtime logs instead of five minutes of repeated sibling-probe errors.
+
+### Verified
+- **Real Ghost Smoke Test**: `ghost:5-alpine` was started against the managed `mysql:8.4` contract on an isolated Docker network and accepted connections on port 2368.
+
 ## [0.2.30] - 2026-08-20
 
 ### Added

@@ -1,4 +1,4 @@
-export const VERSION = '0.2.30';
+export const VERSION = '0.2.31';
 
 export interface ChangelogEntry {
   version: string;
@@ -8,6 +8,17 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.2.31',
+    date: '2026-08-20',
+    title: 'Reliable Ghost Deployment',
+    changes: [
+      'Ghost 5 Hub installs automatically provision MySQL and inject every required nested database connection setting',
+      'A failed Ghost service created from the older incomplete template can be repaired in place by repeating the same Hub install',
+      'Healthchecks stop early when a container exits or remains in a restart loop and include redacted exit diagnostics and recent logs',
+      'Ghost 5 with MySQL 8.4 passed an isolated real-container startup and port 2368 smoke test',
+    ],
+  },
   {
     version: '0.2.30',
     date: '2026-08-20',
