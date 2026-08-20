@@ -6,6 +6,7 @@ import { capture, run, sleep } from './exec.js';
 const SNAPSHOT_FAILURE = /extraction snapshot|target snapshot .*already exists|parent snapshot .*does not exist/i;
 const STALE_EXISTING_SNAPSHOT = /target snapshot .*already exists/i;
 const STALE_SNAPSHOT_KEY = /target snapshot\s+"?(sha256:[a-f0-9]{64})"?\s+already exists/i;
+const CONTAINERD_TRANSFER_PLATFORM_BUG = /no unpack platforms defined/i;
 const CONTAINERD_SOCKETS = ['/run/containerd/containerd.sock', '/var/run/docker/containerd/containerd.sock'] as const;
 const CRANE_VERSION = 'v0.21.7';
 const CRANE_RELEASES = {
@@ -251,6 +252,7 @@ export async function recoverImageDirectlyFromRegistry(
  */
 export async function recoverImageWithNativeSnapshotter(image: string, log: (line: string) => void): Promise<void> {
   const ref = normalizeContainerdImageRef(image);
+  const platform = `linux/${hostArchitecture()}`;
   const staging = mkdtempSync(path.join(tmpdir(), 'ninedeploy-image-recovery-'));
   const rootfs = path.join(staging, 'rootfs');
   const archive = path.join(staging, 'rootfs.tar');
@@ -258,9 +260,35 @@ export async function recoverImageWithNativeSnapshotter(image: string, log: (lin
   try {
     mkdirSync(rootfs);
     log(`Docker overlayfs snapshot is stale; recovering ${image} through containerd's isolated native snapshotter …`);
-    await run('ctr', containerdCliArgs(['images', 'pull', '--snapshotter', 'native', ref]), { timeoutMs: 30 * 60 * 1000 }, log);
+    const pullLines: string[] = [];
+    const pullLog = (line: string) => {
+      pullLines.push(line);
+      log(line);
+    };
+    try {
+      await run(
+        'ctr',
+        containerdCliArgs(['images', 'pull', '--snapshotter', 'native', '--platform', platform, ref]),
+        { timeoutMs: 30 * 60 * 1000 },
+        pullLog,
+      );
+    } catch (error) {
+      if (!CONTAINERD_TRANSFER_PLATFORM_BUG.test(pullLines.join('\n'))) throw error;
+      log(`containerd transfer API cannot unpack ${platform}; retrying through ctr local mode …`);
+      await run(
+        'ctr',
+        containerdCliArgs(['images', 'pull', '--local', '--snapshotter', 'native', '--platform', platform, ref]),
+        { timeoutMs: 30 * 60 * 1000 },
+        log,
+      );
+    }
     const config = await readContainerdImageConfig(ref);
-    await run('ctr', containerdCliArgs(['images', 'mount', '--snapshotter', 'native', ref, rootfs]), {}, log);
+    await run(
+      'ctr',
+      containerdCliArgs(['images', 'mount', '--snapshotter', 'native', '--platform', platform, ref, rootfs]),
+      {},
+      log,
+    );
     mounted = true;
     await run('tar', ['--acls', '--xattrs', '--numeric-owner', '-C', rootfs, '-cf', archive, '.'], { timeoutMs: 30 * 60 * 1000 }, log);
     await run(

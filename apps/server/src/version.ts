@@ -1,4 +1,4 @@
-export const VERSION = '0.2.23';
+export const VERSION = '0.2.24';
 
 export interface ChangelogEntry {
   version: string;
@@ -8,6 +8,16 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.2.24',
+    date: '2026-08-20',
+    title: 'Containerd Transfer Platform Recovery',
+    changes: [
+      'Native snapshot recovery explicitly selects the host Linux platform for multi-platform OCI image indexes',
+      'Containerd 2 transfer API unpack failures retry through ctr local mode before falling back to direct registry export',
+      'Native image mounts use the same explicit platform so WordPress and other multi-architecture images resolve consistently',
+    ],
+  },
   {
     version: '0.2.23',
     date: '2026-08-20',

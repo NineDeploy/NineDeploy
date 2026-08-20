@@ -177,11 +177,15 @@ describe('pullDockerImage', () => {
     expect(log).not.toHaveBeenCalledWith(expect.stringContaining('isolated native snapshotter'));
   });
 
-  it('recovers a persistently broken overlayfs pull through a flattened native snapshot', async () => {
+  it('recovers through ctr local mode when the transfer API loses the unpack platform', async () => {
     h.run.mockImplementation(async (cmd, args, _opts, sink) => {
       if (cmd === 'docker' && args[0] === 'pull') {
         sink('unable to prepare extraction snapshot: target snapshot "sha256:abc" already exists');
         throw new Error('docker pull exited 1');
+      }
+      if (cmd === 'ctr' && args.includes('pull') && !args.includes('--local')) {
+        sink('ctr: unable to initialize unpacker: no unpack platforms defined: invalid argument');
+        throw new Error('ctr transfer pull exited 1');
       }
     });
     h.capture
@@ -207,7 +211,19 @@ describe('pullDockerImage', () => {
 
     expect(h.run).toHaveBeenCalledWith(
       'ctr',
-      ['--namespace', 'moby', 'images', 'pull', '--snapshotter', 'native', 'docker.io/gitea/gitea:latest'],
+      [
+        '--namespace', 'moby', 'images', 'pull', '--snapshotter', 'native',
+        '--platform', 'linux/amd64', 'docker.io/gitea/gitea:latest',
+      ],
+      expect.any(Object),
+      expect.any(Function),
+    );
+    expect(h.run).toHaveBeenCalledWith(
+      'ctr',
+      [
+        '--namespace', 'moby', 'images', 'pull', '--local', '--snapshotter', 'native',
+        '--platform', 'linux/amd64', 'docker.io/gitea/gitea:latest',
+      ],
       expect.any(Object),
       log,
     );
@@ -227,6 +243,7 @@ describe('pullDockerImage', () => {
       log,
     );
     expect(log).toHaveBeenCalledWith(expect.stringContaining('existing Docker state was preserved'));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('retrying through ctr local mode'));
     expect(h.sleep).not.toHaveBeenCalled();
   });
 });
