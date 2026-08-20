@@ -4,7 +4,7 @@ import { buildConfigs, databaseAttachments, databases, type DB, deployments, dom
 import { config } from '../config.js';
 import { decrypt } from '../lib/crypto.js';
 import { checkoutCommit, type CloneCreds } from '../lib/git.js';
-import { connectionString } from './database.js';
+import { connectionString, ENGINES } from './database.js';
 import { dockerBuilder } from './builders/docker.js';
 import { composeBuilder } from './builders/compose.js';
 import { logBus } from './logs.js';
@@ -60,7 +60,30 @@ async function loadRuntimeEnv(db: DB, service: typeof services.$inferSelect): Pr
   const attaches = await db.query.databaseAttachments.findMany({ where: eq(databaseAttachments.serviceId, service.id) });
   for (const a of attaches) {
     const d = await db.query.databases.findFirst({ where: eq(databases.id, a.databaseId) });
-    if (d && d.status === 'running') env[a.envAlias] = connectionString(d);
+    if (d && d.status === 'running') {
+      const mapping = service.templateDatabaseEnv;
+      if (!mapping || Object.keys(mapping).length === 0) {
+        env[a.envAlias] = connectionString(d);
+        continue;
+      }
+      const cfg = ENGINES[d.engine];
+      if (!cfg) continue;
+      const host = d.internalHost ?? d.containerName ?? '';
+      const port = d.internalPort ?? cfg.port;
+      const username = cfg.username() ?? d.username ?? '';
+      const password = d.passwordEncrypted ? decrypt(d.passwordEncrypted) : '';
+      const database = cfg.dbName() ?? d.dbName ?? '';
+      const values: Record<'url' | 'host' | 'hostPort' | 'port' | 'username' | 'password' | 'database', string> = {
+        url: connectionString(d),
+        host,
+        hostPort: `${host}:${port}`,
+        port: String(port),
+        username,
+        password,
+        database,
+      };
+      for (const [key, source] of Object.entries(mapping)) env[key] = values[source];
+    }
   }
 
   // Vault references resolve last, from the fully-merged map.

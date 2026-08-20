@@ -452,7 +452,7 @@ export interface NineDeployClient {
   templates: {
     list: () => Promise<TemplateSummary[]>;
     get: (id: string) => Promise<Template>;
-    deploy: (id: string) => Promise<{ serviceId: number; deploymentId: number }>;
+    deploy: (id: string) => Promise<{ serviceId: number; deploymentId: number; databaseId: number | null; generatedSecrets: Array<{ key: string; value: string }> }>;
   };
   limits: {
     setService: (serviceId: number, input: SetLimitsInput) => Promise<{ cpuShares: number; memLimitMb: number }>;
@@ -921,7 +921,7 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
     templates: {
       list: () => get<TemplateSummary[]>('/v1/templates'),
       get: (id) => get<Template>(`/v1/templates/${id}`),
-      deploy: (id) => send<{ serviceId: number; deploymentId: number }>('POST', `/v1/templates/${id}/deploy`),
+      deploy: (id) => send<{ serviceId: number; deploymentId: number; databaseId: number | null; generatedSecrets: Array<{ key: string; value: string }> }>('POST', `/v1/templates/${id}/deploy`),
     },
     backups: {
       storage: (databaseId) => get<{ sizeBytes: number }>(`/v1/databases/${databaseId}/storage`),

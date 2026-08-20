@@ -2,6 +2,7 @@ import { and, eq } from 'drizzle-orm';
 import type { FastifyPluginAsync } from 'fastify';
 import { buildConfigs, envVars, services, type Service } from '@ninedeploy/db';
 import { createService, setLimits, updateService } from '@ninedeploy/schemas';
+import { getTemplates } from '../templates/registry.js';
 import { capture, run } from '../lib/exec.js';
 import { audit } from '../lib/audit.js';
 import { config } from '../config.js';
@@ -91,6 +92,16 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
 
   app.post('/', async (req) => {
     const input = createService.parse(req.body);
+    const template = input.templateId
+      ? (await getTemplates(app.db)).find((candidate) => candidate.id === input.templateId)
+      : undefined;
+    if (input.templateId && !template) throw badRequest('Template not found');
+    if (template && (
+      input.type !== 'docker' ||
+      input.image !== template.image ||
+      input.port !== template.port ||
+      (input.volumeMount ?? null) !== (template.volumeMount ?? null)
+    )) throw badRequest('Template image, port and volume are registry-controlled');
     const slug = input.slug ?? slugify(input.name);
     // Explicit duplicate-slug check → a clean 409 instead of an uncaught
     // unique-index error (500). Covers the NULL-project case too, where
@@ -111,7 +122,12 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
         dup.volumeMount === (input.volumeMount ?? null) &&
         dup.composeService === (input.composeService ?? null) &&
         dup.port === (input.port ?? null) &&
-        dup.publishedPort === (input.publishedPort ?? null);
+        dup.publishedPort === (input.publishedPort ?? null) &&
+        (!template || (
+          JSON.stringify(dup.templateDatabaseEnv) === JSON.stringify(template.databaseEnv ?? null) &&
+          JSON.stringify(dup.cmd) === JSON.stringify(template.cmd ?? null) &&
+          dup.dockerSocket === (template.dockerSocket ?? false)
+        ));
       if (reusable) {
         void audit(app.db, req.user!.id, 'service.reuse', input.name);
         return serialize(dup);
@@ -137,6 +153,9 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
         memLimitMb: input.memLimitMb ?? 0,
         port: input.port ?? null,
         publishedPort: input.publishedPort ?? null,
+        cmd: template?.cmd ?? null,
+        dockerSocket: template?.dockerSocket ?? false,
+        templateDatabaseEnv: template?.databaseEnv ?? null,
         previewDeploymentsEnabled: input.previewDeploymentsEnabled ?? false,
         previewAutoDestroyOnClose: input.previewAutoDestroyOnClose ?? true,
         previewDomainPattern: input.previewDomainPattern ?? null,

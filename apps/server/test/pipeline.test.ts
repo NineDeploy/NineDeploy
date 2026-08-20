@@ -14,6 +14,10 @@ const h = vi.hoisted(() => {
   const checkoutCommit = vi.fn(async () => 'sha-1234567');
   const decrypt = vi.fn((v: string) => `dec:${v}`);
   const connectionString = vi.fn(() => 'postgres://db/app');
+  const ENGINES = {
+    postgres: { port: 5432, username: () => 'nine', dbName: () => 'app' },
+    mysql: { port: 3306, username: () => 'root', dbName: () => 'app' },
+  };
   const writeDynamicConfig = vi.fn(async () => undefined);
   const getAcmeEmail = vi.fn(async () => null as string | null);
   const config: { paths: { reposDir: string; logsDir: string; dataDir: string }; wildcardDomain: string } = {
@@ -21,7 +25,7 @@ const h = vi.hoisted(() => {
     wildcardDomain: '',
   };
   const agentOp = vi.fn(async () => ({ exitCode: 0, lines: [] }));
-  return { builder, checkoutCommit, decrypt, connectionString, writeDynamicConfig, getAcmeEmail, config, agentOp };
+  return { builder, checkoutCommit, decrypt, connectionString, ENGINES, writeDynamicConfig, getAcmeEmail, config, agentOp };
 });
 
 vi.mock('../src/config.js', () => ({ config: h.config }));
@@ -35,7 +39,7 @@ vi.mock('../src/lib/exec.js', () => execMock);
 vi.mock('../src/lib/crypto.js', () => ({ decrypt: h.decrypt }));
 vi.mock('../src/lib/git.js', () => ({ checkoutCommit: h.checkoutCommit }));
 vi.mock('../src/lib/agentClient.js', () => ({ agentOp: h.agentOp }));
-vi.mock('../src/engine/database.js', () => ({ connectionString: h.connectionString }));
+vi.mock('../src/engine/database.js', () => ({ connectionString: h.connectionString, ENGINES: h.ENGINES }));
 vi.mock('../src/engine/builders/docker.js', () => ({ dockerBuilder: h.builder }));
 vi.mock('../src/engine/builders/pm2.js', () => ({ pm2Builder: h.builder }));
 vi.mock('../src/engine/proxy.js', () => ({
@@ -663,6 +667,42 @@ describe('runDeployment', () => {
     expect(h.connectionString).toHaveBeenCalledTimes(1);
     expect(h.connectionString).toHaveBeenCalledWith(expect.objectContaining({ id: 10 }));
     expect(h.decrypt).toHaveBeenCalledWith('e1');
+  });
+
+  it('maps managed database fields to application-specific template env vars', async () => {
+    const { db } = makeDb();
+    baseSetup(db, {
+      templateDatabaseEnv: {
+        WORDPRESS_DB_HOST: 'hostPort',
+        WORDPRESS_DB_USER: 'username',
+        WORDPRESS_DB_PASSWORD: 'password',
+        WORDPRESS_DB_NAME: 'database',
+      },
+    });
+    db.query.databaseAttachments.findMany.mockResolvedValue([
+      { id: 1, databaseId: 10, envAlias: 'MYSQL_URL' },
+    ]);
+    db.query.databases.findFirst.mockResolvedValue({
+      id: 10,
+      engine: 'mysql',
+      status: 'running',
+      internalHost: 'nd-db-wordpress',
+      internalPort: 3306,
+      username: 'root',
+      passwordEncrypted: 'db-secret',
+      dbName: 'app',
+    });
+
+    await runDeployment(db as never, 1);
+
+    const [ctx] = h.builder.buildAndRun.mock.calls[0] as [{ env: Record<string, string> }];
+    expect(ctx.env).toMatchObject({
+      WORDPRESS_DB_HOST: 'nd-db-wordpress:3306',
+      WORDPRESS_DB_USER: 'root',
+      WORDPRESS_DB_PASSWORD: 'dec:db-secret',
+      WORDPRESS_DB_NAME: 'app',
+    });
+    expect(ctx.env).not.toHaveProperty('MYSQL_URL');
   });
 
   // ── private-registry auth ────────────────────────────────────────────────

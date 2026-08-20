@@ -88,6 +88,47 @@ describe('services routes', () => {
     expect(res.json()).toMatchObject({ id: 4, slug: 'my-app' });
   });
 
+  it('persists trusted command, socket and database mappings from a Hub template', async () => {
+    let inserted: Record<string, unknown> | undefined;
+    const app = await buildTestApp({
+      db: createFakeDb({
+        insert: {
+          services: (value) => {
+            inserted = value as Record<string, unknown>;
+            return [svcRow({ id: 4, name: 'WordPress', slug: 'wordpress' })];
+          },
+        },
+      }),
+    });
+    await app.register(servicesRoutes);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/',
+      headers: asUser(),
+      payload: {
+        templateId: 'wordpress',
+        name: 'WordPress',
+        type: 'docker',
+        image: 'wordpress:latest',
+        port: 80,
+        volumeMount: '/var/www/html',
+        build: { buildPack: 'auto', baseDir: '/' },
+      },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(inserted).toMatchObject({
+      cmd: null,
+      dockerSocket: false,
+      templateDatabaseEnv: {
+        WORDPRESS_DB_HOST: 'hostPort',
+        WORDPRESS_DB_USER: 'username',
+        WORDPRESS_DB_PASSWORD: 'password',
+        WORDPRESS_DB_NAME: 'database',
+      },
+    });
+  });
+
   it('returns 409-style 400 for a duplicate slug (including project-less rows)', async () => {
     const app = await buildTestApp({
       db: createFakeDb({ findFirst: { services: svcRow({ id: 9, slug: 'my-app' }) } }),

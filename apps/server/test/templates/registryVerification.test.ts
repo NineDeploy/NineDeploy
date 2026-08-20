@@ -3,129 +3,59 @@ import { template as templateSchema } from '@ninedeploy/schemas';
 import bundledRegistry from '../../src/templates/registry.json' with { type: 'json' };
 import { parseBundle } from '../../src/templates/registry.js';
 
-describe('Hub Template Registry Proof & Verification Suite', () => {
-  const templates = bundledRegistry.templates as any[];
+describe('bundled Hub template contract', () => {
+  const templates = parseBundle(bundledRegistry);
 
-  it('validates the overall registry structure and versioning', () => {
-    expect(bundledRegistry.version).toBeGreaterThanOrEqual(1);
-    expect(bundledRegistry.updated).toBeDefined();
-    expect(Array.isArray(templates)).toBe(true);
-    expect(templates.length).toBeGreaterThan(30);
+  it('has a versioned, unique, schema-valid curated catalog', () => {
+    expect(bundledRegistry.version).toBeGreaterThanOrEqual(2);
+    expect(templates.length).toBeGreaterThan(50);
+    expect(new Set(templates.map((template) => template.id)).size).toBe(templates.length);
+    for (const template of templates) expect(templateSchema.safeParse(template).success).toBe(true);
   });
 
-  it('proves every single template conforms strictly to the Zod Template Schema', () => {
-    const parsed = parseBundle(bundledRegistry);
-    expect(parsed.length).toBe(templates.length);
-
-    for (const t of templates) {
-      const result = templateSchema.safeParse(t);
-      if (!result.success) {
-        throw new Error(`Template validation failed for "${t.id}": ${JSON.stringify(result.error.issues)}`);
-      }
-      expect(result.success).toBe(true);
-      expect(result.data.id).toBe(t.id);
-      expect(result.data.name).toBe(t.name);
-      expect(result.data.image).toBe(t.image);
-      expect(result.data.port).toBeGreaterThanOrEqual(1);
-      expect(result.data.port).toBeLessThanOrEqual(65535);
+  it('uses valid ports, image references, env names and persistent paths', () => {
+    const image = /^(?:[a-z0-9.-]+(?::\d+)?\/)?[a-z0-9._/-]+(?::[A-Za-z0-9._-]+)?$/;
+    const envName = /^[A-Za-z_][A-Za-z0-9_]*$/;
+    for (const template of templates) {
+      expect(template.port, template.id).toBeGreaterThanOrEqual(1);
+      expect(template.port, template.id).toBeLessThanOrEqual(65535);
+      expect(template.image, template.id).toMatch(image);
+      if (template.volumeMount) expect(template.volumeMount, template.id).toMatch(/^\//);
+      for (const entry of template.env ?? []) expect(entry.key, template.id).toMatch(envName);
+      for (const key of Object.keys(template.databaseEnv ?? {})) expect(key, template.id).toMatch(envName);
     }
   });
 
-  it('guarantees unique IDs across all templates (no collisions)', () => {
-    const ids = new Set<string>();
-    for (const t of templates) {
-      expect(ids.has(t.id)).toBe(false);
-      ids.add(t.id);
+  it('defines explicit application env mappings for every managed database template', () => {
+    const databaseTemplates = templates.filter((template) => template.dbEngine);
+    expect(databaseTemplates.map((template) => template.id).sort()).toEqual([
+      'directus', 'hasura', 'matomo', 'umami', 'vikunja', 'wordpress', 'yourls',
+    ]);
+    for (const template of databaseTemplates) {
+      expect(Object.keys(template.databaseEnv ?? {}).length, template.id).toBeGreaterThan(0);
     }
-    expect(ids.size).toBe(templates.length);
+
+    expect(templates.find((template) => template.id === 'wordpress')?.databaseEnv).toEqual({
+      WORDPRESS_DB_HOST: 'hostPort',
+      WORDPRESS_DB_USER: 'username',
+      WORDPRESS_DB_PASSWORD: 'password',
+      WORDPRESS_DB_NAME: 'database',
+    });
   });
 
-  it('validates standard categories and emojis for UI rendering', () => {
-    for (const t of templates) {
-      expect(t.category).toBeDefined();
-      expect(typeof t.category).toBe('string');
-      expect(t.category.trim().length).toBeGreaterThan(0);
-      expect(t.emoji).toBeDefined();
-      expect(t.emoji.length).toBeGreaterThanOrEqual(1);
-      expect(t.name.trim().length).toBeGreaterThanOrEqual(2);
-      expect(t.description.trim().length).toBeGreaterThanOrEqual(10);
-    }
+  it('does not advertise known multi-container components as one-click services', () => {
+    const ids = new Set(templates.map((template) => template.id));
+    for (const unsupported of [
+      'affine', 'appwrite', 'authentik', 'dify', 'discourse', 'immich',
+      'langfuse', 'mastodon', 'plane', 'posthog', 'signoz', 'strapi', 'taiga', 'zulip',
+    ]) expect(ids.has(unsupported), unsupported).toBe(false);
   });
 
-  it('validates database requirements and env configurations', () => {
-    const validEngines = new Set(['postgres', 'mysql', 'mariadb', 'redis', 'valkey', 'mongo', 'clickhouse', 'meilisearch', 'rabbitmq', 'sqlite']);
-
-    for (const t of templates) {
-      if (t.dbEngine) {
-        expect(validEngines.has(t.dbEngine)).toBe(true);
-      }
-      if (t.env) {
-        expect(Array.isArray(t.env)).toBe(true);
-        for (const e of t.env) {
-          expect(e.key).toBeDefined();
-          expect(typeof e.key).toBe('string');
-          expect(e.key.length).toBeGreaterThan(0);
-          expect(e.value).toBeDefined();
-        }
-      }
-      if (t.volumeMount) {
-        expect(t.volumeMount.startsWith('/')).toBe(true);
-      }
-    }
-  });
-
-  it('guarantees valid POSIX environment variable names and valid Docker image formats', () => {
-    const posixEnvRegex = /^[A-Za-z_][A-Za-z0-9_]*$/;
-    const dockerImageRegex = /^[a-z0-9._\-/:]+$/;
-
-    for (const t of templates) {
-      expect(t.image, `Invalid image format for ${t.id}`).toMatch(dockerImageRegex);
-      if (t.env) {
-        for (const e of t.env) {
-          expect(e.key, `Invalid POSIX env key "${e.key}" in template "${t.id}"`).toMatch(posixEnvRegex);
-        }
-      }
-    }
-  });
-
-  it('proves every single template can be provisioned and deployed without failure (Zero-Fail Matrix)', async () => {
-    for (const t of templates) {
-      // 1. Service Creation Payload
-      const svcPayload = {
-        name: t.name,
-        type: 'docker',
-        image: t.image,
-        port: t.port,
-        volumeMount: t.volumeMount,
-        healthPath: '/',
-      };
-      expect(svcPayload.name).toBeDefined();
-      expect(svcPayload.image).toBeDefined();
-      expect(svcPayload.port).toBeGreaterThan(0);
-
-      // 2. Env Variables Injection & Cryptographic Secret Generation
-      const injectedEnv: Record<string, string> = {};
-      if (t.env) {
-        for (const e of t.env) {
-          injectedEnv[e.key] = e.secret ? 'auto-generated-secret-entropy-value' : e.value;
-          expect(injectedEnv[e.key]).toBeDefined();
-        }
-      }
-
-      // 3. Database Requirement Auto-Resolution
-      if (t.dbEngine) {
-        const mockDatabase = {
-          name: `${t.id}-db`,
-          engine: t.dbEngine,
-          status: 'running',
-        };
-        expect(mockDatabase.engine).toBe(t.dbEngine);
-        injectedEnv.DATABASE_URL = `postgres://user:pass@${t.id}-db:5432/app`;
-      }
-
-      // 4. Deployment Readiness Verification
-      expect(Object.keys(injectedEnv).length).toBeGreaterThanOrEqual(0);
-      expect(svcPayload.image.length).toBeGreaterThan(3);
-    }
+  it('pins corrected upstream image names and runnable commands', () => {
+    const byId = new Map(templates.map((template) => [template.id, template]));
+    expect(byId.get('memos')?.image).toBe('neosmemo/memos:stable');
+    expect(byId.get('forgejo')?.image).toBe('codeberg.org/forgejo/forgejo:16');
+    expect(byId.get('kavita')?.image).toBe('jvmilazz0/kavita:latest');
+    expect(byId.get('minio')?.cmd).toEqual(['server', '/data', '--console-address', ':9001']);
   });
 });

@@ -105,14 +105,14 @@ describe('ENGINES metadata', () => {
     expect(ENGINES.mongo.username()).toBe('nine');
     expect(ENGINES.redis.username()).toBeUndefined();
     expect(ENGINES.postgres.dbName()).toBe('app');
-    expect(ENGINES.mysql.dbName()).toBeUndefined();
-    expect(ENGINES.mariadb.dbName()).toBeUndefined();
+    expect(ENGINES.mysql.dbName()).toBe('app');
+    expect(ENGINES.mariadb.dbName()).toBe('app');
     expect(ENGINES.redis.dbName()).toBeUndefined();
     expect(ENGINES.mongo.dbName()).toBeUndefined();
 
     expect(ENGINES.postgres.env('p')).toEqual({ POSTGRES_USER: 'nine', POSTGRES_PASSWORD: 'p', POSTGRES_DB: 'app' });
-    expect(ENGINES.mysql.env('p')).toEqual({ MYSQL_ROOT_PASSWORD: 'p' });
-    expect(ENGINES.mariadb.env('p')).toEqual({ MARIADB_ROOT_PASSWORD: 'p' });
+    expect(ENGINES.mysql.env('p')).toEqual({ MYSQL_ROOT_PASSWORD: 'p', MYSQL_DATABASE: 'app' });
+    expect(ENGINES.mariadb.env('p')).toEqual({ MARIADB_ROOT_PASSWORD: 'p', MARIADB_DATABASE: 'app' });
     expect(ENGINES.redis.env('p')).toEqual({});
     expect(ENGINES.mongo.env('p')).toEqual({ MONGO_INITDB_ROOT_USERNAME: 'nine', MONGO_INITDB_ROOT_PASSWORD: 'p' });
     expect(ENGINES.redis.authViaArg).toBe(true);
@@ -121,7 +121,7 @@ describe('ENGINES metadata', () => {
   });
 
   it('renders mariadb connection strings', () => {
-    expect(ENGINES.mariadb.connectionString('db', 3306, 'root', 'pw', undefined)).toBe('mariadb://root:pw@db:3306/');
+    expect(ENGINES.mariadb.connectionString('db', 3306, 'root', 'pw', undefined)).toBe('mariadb://root:pw@db:3306/app');
   });
 });
 
@@ -352,7 +352,7 @@ describe('connectionString', () => {
 
   it('falls back to the container name and engine port', () => {
     const d = dbRow({ engine: 'mysql' });
-    expect(connectionString(d)).toBe('mysql://root:pw%3Aenc@c:3306/');
+    expect(connectionString(d)).toBe('mysql://root:pw%3Aenc@c:3306/app');
   });
 
   it('handles missing host/port and an empty user (redis)', () => {

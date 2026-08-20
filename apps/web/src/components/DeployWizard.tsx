@@ -95,6 +95,7 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
     },
     mutationFn: async () => {
       const svc = await api.services.create({
+        ...(template ? { templateId: template.id } : {}),
         name,
         type,
         ...(template ? { reuseExisting: true } : {}),
@@ -129,7 +130,9 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
       if (dbEngine && autoDb) {
         setDbStatus(`Creating ${dbEngine} database…`);
         const db = await api.databases.create({
-          name: `${template!.name}-db`.toLowerCase().replace(/[^a-z0-9-]+/g, '-'),
+          // Scope the database to the actual service slug. Two deployments of
+          // the same template under different names must never share data.
+          name: `${svc.slug}-db`,
           engine: dbEngine,
           reuseExisting: true,
         });

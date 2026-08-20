@@ -5,6 +5,10 @@ export const serviceType = z.enum(['pm2', 'docker', 'compose']);
 export const buildPack = z.enum(['auto', 'nixpacks', 'dockerfile']);
 
 export const createService = z.object({
+  /** Bundled/remote Hub template ID. The server resolves privileged template
+   * settings (cmd, Docker socket and database env mapping) from the trusted
+   * registry; clients cannot submit those settings directly. */
+  templateId: z.string().min(1).max(100).optional(),
   projectId: z.number().int().positive().optional(),
   name: z.string().min(1).max(100),
   slug: slug.optional(), // derived from name if omitted
@@ -453,8 +457,14 @@ export const template = z.object({
   /** Human hint about extra setup this template needs (shown in the Hub). */
   requires: z.string().optional(),
   /** When set, the wizard can auto-provision + attach a managed database of
-   *  this engine (DATABASE_URL/REDIS_URL injected at deploy time). */
+   *  this engine. databaseEnv controls the application-specific injection. */
   dbEngine: z.enum(['postgres', 'mysql', 'mariadb', 'redis', 'valkey', 'mongo', 'clickhouse', 'meilisearch', 'rabbitmq']).optional(),
+  /** Map application-specific environment keys to managed database connection
+   * fields. Without this, attachments expose only their legacy URL alias. */
+  databaseEnv: z.record(
+    envVarName,
+    z.enum(['url', 'host', 'hostPort', 'port', 'username', 'password', 'database']),
+  ).optional(),
   /** Container command (argv) appended after the image — needed by images
    *  whose default entrypoint prints help and exits (e.g. minio). */
   cmd: z.array(z.string()).min(1).optional(),
@@ -462,6 +472,14 @@ export const template = z.object({
    *  only settable from the admin-controlled template registry, never via
    *  the create-service API). */
   dockerSocket: z.boolean().optional(),
+}).superRefine((value, ctx) => {
+  if (value.dbEngine && !value.databaseEnv) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['databaseEnv'],
+      message: 'databaseEnv is required when dbEngine is set',
+    });
+  }
 });
 export type Template = z.infer<typeof template>;
 

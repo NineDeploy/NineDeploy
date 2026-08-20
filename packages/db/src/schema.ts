@@ -225,6 +225,9 @@ export const services = sqliteTable(
     cmd: text('cmd', { mode: 'json' }).$type<string[]>(),
     // Bind-mount the host Docker socket (template flag only — docker control).
     dockerSocket: integer('docker_socket', { mode: 'boolean' }).notNull().default(false),
+    // Trusted Hub template mapping from application env names to managed DB
+    // connection fields. Generic service requests cannot set this directly.
+    templateDatabaseEnv: text('template_database_env', { mode: 'json' }).$type<Record<string, 'url' | 'host' | 'hostPort' | 'port' | 'username' | 'password' | 'database'>>(),
     // Remote server this service deploys to (null = this host). Agent-based.
     serverId: integer('server_id').references(() => servers.id, { onDelete: 'set null' }),
     // Compose deploys: the "main" service in the compose file (routing target).

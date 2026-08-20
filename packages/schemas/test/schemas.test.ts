@@ -635,6 +635,11 @@ describe('service', () => {
       expect(data?.port).toBe(3000);
       expect(template.safeParse({ id: 'x', name: 'x', tagline: 'x', description: 'x', category: 'x', emoji: 'x', image: 'x', port: 3000 }).success).toBe(true);
       bad(template, { id: 'x', name: 'x', tagline: 'x', description: 'x', category: 'x', emoji: 'x', image: 'x', port: '3000' });
+      bad(template, { id: 'db', name: 'DB App', tagline: 'x', description: 'x', category: 'x', emoji: 'x', image: 'x', port: 3000, dbEngine: 'postgres' });
+      expect(template.safeParse({
+        id: 'db', name: 'DB App', tagline: 'x', description: 'x', category: 'x', emoji: 'x', image: 'x', port: 3000,
+        dbEngine: 'postgres', databaseEnv: { DATABASE_URL: 'url' },
+      }).success).toBe(true);
     });
   });
 

@@ -12,7 +12,7 @@ const faqs = [
   },
   {
     q: "Can I run it in Docker?",
-    a: "Yes — the published Docker image mounts the host Docker socket with a persistent /data volume. PM2-managed bare-metal services require the systemd install because they run natively on the host; Docker containers, Docker Compose stacks, and all 52 template apps work seamlessly in both modes.",
+    a: "Yes — the published Docker image mounts the host Docker socket with a persistent /data volume. PM2-managed bare-metal services require the systemd install because they run natively on the host; Docker containers, Docker Compose stacks, and the 88 registry-checked template apps work in both modes.",
   },
   {
     q: "How does zero-downtime blue-green deployment work?",

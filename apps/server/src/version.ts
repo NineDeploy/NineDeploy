@@ -1,4 +1,4 @@
-export const VERSION = '0.2.19';
+export const VERSION = '0.2.20';
 
 export interface ChangelogEntry {
   version: string;
@@ -8,6 +8,18 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.2.20',
+    date: '2026-08-20',
+    title: 'Honest and Working Template Deployments',
+    changes: [
+      'The Hub now publishes only templates compatible with its current one-application and optional one-database deployment model',
+      'WordPress, Directus, and every supported database template receive their image-specific connection environment variables',
+      'CLI template deploys provision and attach managed databases before the application is queued',
+      'All 88 bundled images pass a real OCI manifest check, with corrected Memos, Forgejo, and Kavita references',
+      'Real WordPress plus MySQL and Directus plus PostgreSQL container boots validate the database mappings',
+    ],
+  },
   {
     version: '0.2.19',
     date: '2026-08-20',
@@ -20,7 +32,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     ],
   },
   {
-    version: '0.2.19',
+    version: '0.2.18',
     date: '2026-08-20',
     title: 'Targeted Containerd Snapshot Repair',
     changes: [
