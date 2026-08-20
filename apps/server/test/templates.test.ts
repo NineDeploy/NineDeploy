@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { templateRoutes } from '../src/modules/templates.js';
 import { asUser, buildTestApp, createFakeDb, dbRow, depRow, svcRow } from './helpers.js';
 
@@ -13,6 +13,11 @@ const databaseMocks = vi.hoisted(() => ({
 vi.mock('../src/engine/database.js', () => databaseMocks);
 
 describe('template routes', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    databaseMocks.startDatabase.mockResolvedValue(undefined);
+  });
+
   it('lists template summaries', async () => {
     const app = await buildTestApp({ db: createFakeDb() });
     await app.register(templateRoutes);
@@ -176,6 +181,223 @@ describe('template routes', () => {
     });
     expect(databaseMocks.startDatabase).toHaveBeenCalledOnce();
     expect(attachmentInsert).toMatchObject({ serviceId: 7, databaseId: 9, envAlias: 'DATABASE_URL' });
+  });
+
+  it('keeps registry-controlled runtime fields authoritative for panel deploys', async () => {
+    let serviceInsert: Record<string, unknown> | undefined;
+    const envInserts: Array<Record<string, unknown>> = [];
+    const app = await buildTestApp({
+      db: createFakeDb({
+        insert: {
+          services: (value) => {
+            serviceInsert = value as Record<string, unknown>;
+            return [svcRow({ ...(value as Record<string, unknown>), id: 21 })];
+          },
+          env_vars: (value) => {
+            envInserts.push(value as Record<string, unknown>);
+            return [{ id: envInserts.length, ...(value as Record<string, unknown>) }];
+          },
+          deployments: [depRow({ id: 22, serviceId: 21, status: 'queued' })],
+        },
+      }),
+    });
+    await app.register(templateRoutes);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/n8n/deploy',
+      headers: asUser(),
+      payload: {
+        name: 'Automation',
+        serverId: 3,
+        publishedPort: 8080,
+        healthPath: '/healthz',
+        cpuShares: 512,
+        memLimitMb: 1024,
+        env: [{ key: 'CUSTOM_SETTING', value: 'enabled', isSecret: false }],
+        image: 'attacker/image',
+        port: 9999,
+        volumeMount: '/host',
+      },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(serviceInsert).toMatchObject({
+      name: 'Automation',
+      slug: 'automation',
+      serverId: 3,
+      publishedPort: 8080,
+      healthPath: '/healthz',
+      cpuShares: 512,
+      memLimitMb: 1024,
+      image: 'n8nio/n8n',
+      port: 5678,
+      volumeMount: '/home/node/.n8n',
+    });
+    expect(envInserts).toContainEqual(expect.objectContaining({ key: 'CUSTOM_SETTING', serviceId: 21 }));
+  });
+
+  it('reconciles an interrupted install without rotating secrets or duplicating its deployment', async () => {
+    let serviceUpdate: Record<string, unknown> | undefined;
+    const existing = svcRow({
+      id: 31,
+      ownerUserId: 1,
+      name: 'Grafana',
+      slug: 'grafana',
+      image: 'grafana/grafana',
+      port: 3000,
+      volumeMount: '/var/lib/grafana',
+      status: 'error',
+      serverId: 9,
+      publishedPort: 8081,
+      healthPath: '/api/health',
+      cpuShares: 256,
+      memLimitMb: 512,
+    });
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: {
+          services: existing,
+          deployments: depRow({ id: 32, serviceId: 31, status: 'building' }),
+        },
+        findMany: {
+          env_vars: [{ id: 33, serviceId: 31, key: 'GF_SECURITY_ADMIN_PASSWORD', valueEncrypted: 'preserved', isSecret: true }],
+        },
+        insert: {
+          services: () => { throw new Error('must not duplicate service'); },
+          env_vars: () => { throw new Error('must not rotate secret'); },
+          deployments: () => { throw new Error('must not duplicate deployment'); },
+        },
+        update: {
+          services: (value) => {
+            serviceUpdate = value as Record<string, unknown>;
+            return [value as Record<string, unknown>];
+          },
+        },
+      }),
+    });
+    await app.register(templateRoutes);
+
+    const res = await app.inject({ method: 'POST', url: '/grafana/deploy', headers: asUser(), payload: { name: 'Grafana' } });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ serviceId: 31, deploymentId: 32, alreadyInProgress: true, generatedSecrets: [] });
+    expect(serviceUpdate).toMatchObject({ serverId: 9, publishedPort: 8081, healthPath: '/api/health', cpuShares: 256, memLimitMb: 512 });
+  });
+
+  it('reuses and restarts an attached managed database on retry', async () => {
+    const existingService = svcRow({
+      id: 41,
+      ownerUserId: 1,
+      name: 'WordPress',
+      slug: 'wordpress',
+      image: 'wordpress:latest',
+      port: 80,
+      volumeMount: '/var/www/html',
+      status: 'error',
+    });
+    const existingDatabase = dbRow({
+      id: 42,
+      ownerUserId: 1,
+      name: 'WordPress DB',
+      slug: 'wordpress-db',
+      engine: 'mysql',
+      status: 'error',
+      containerName: 'nd-db-wordpress-db',
+      internalPort: 3306,
+    });
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: {
+          services: existingService,
+          databases: existingDatabase,
+          deployments: depRow({ id: 43, serviceId: 41, status: 'deploying' }),
+        },
+        findMany: {
+          database_attachments: [{ id: 44, serviceId: 41, databaseId: 42, envAlias: 'DATABASE_URL' }],
+        },
+        insert: {
+          services: () => { throw new Error('must not duplicate service'); },
+          databases: () => { throw new Error('must not duplicate database'); },
+          database_attachments: () => { throw new Error('must not duplicate attachment'); },
+          deployments: () => { throw new Error('must not duplicate deployment'); },
+        },
+      }),
+    });
+    await app.register(templateRoutes);
+
+    const res = await app.inject({ method: 'POST', url: '/wordpress/deploy', headers: asUser(), payload: { name: 'WordPress' } });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ serviceId: 41, databaseId: 42, deploymentId: 43, alreadyInProgress: true });
+    expect(databaseMocks.startDatabase).toHaveBeenCalledOnce();
+  });
+
+  it('never queues the application when its required database cannot start', async () => {
+    databaseMocks.startDatabase.mockRejectedValueOnce(new Error('container exited'));
+    const app = await buildTestApp({
+      db: createFakeDb({
+        insert: {
+          services: [svcRow({ id: 51, name: 'WordPress', slug: 'wordpress-0001' })],
+          databases: [dbRow({ id: 52, ownerUserId: 1, slug: 'wordpress-0001-db', engine: 'mysql' })],
+          deployments: () => { throw new Error('deployment must not be queued'); },
+        },
+      }),
+    });
+    await app.register(templateRoutes);
+
+    const res = await app.inject({ method: 'POST', url: '/wordpress/deploy', headers: asUser() });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.message).toContain('Failed to start template database');
+  });
+
+  it('provisions every bundled managed-database template through the same contract', async () => {
+    const ids = ['directus', 'ghost', 'hasura', 'matomo', 'umami', 'vikunja', 'wordpress', 'yourls'];
+    for (const [index, id] of ids.entries()) {
+      const serviceId = 100 + index;
+      const databaseId = 200 + index;
+      const app = await buildTestApp({
+        db: createFakeDb({
+          insert: {
+            services: (value) => [svcRow({ ...(value as Record<string, unknown>), id: serviceId })],
+            databases: (value) => [dbRow({ ...(value as Record<string, unknown>), id: databaseId })],
+            deployments: [depRow({ id: 300 + index, serviceId, status: 'queued' })],
+          },
+        }),
+      });
+      await app.register(templateRoutes);
+
+      const res = await app.inject({ method: 'POST', url: `/${id}/deploy`, headers: asUser() });
+
+      expect(res.statusCode, id).toBe(200);
+      expect(res.json(), id).toMatchObject({ serviceId, databaseId });
+      await app.close();
+    }
+    expect(databaseMocks.startDatabase).toHaveBeenCalledTimes(ids.length);
+  });
+
+  it('rejects reuse when the stable service slug belongs to another owner', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: {
+          services: svcRow({
+            id: 61,
+            ownerUserId: 2,
+            slug: 'grafana',
+            image: 'grafana/grafana',
+            port: 3000,
+            volumeMount: '/var/lib/grafana',
+          }),
+        },
+      }),
+    });
+    await app.register(templateRoutes);
+
+    const res = await app.inject({ method: 'POST', url: '/grafana/deploy', headers: asUser(), payload: { name: 'Grafana' } });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toMatchObject({ error: { code: 'slug_taken' } });
   });
 
   it('returns 404 when deploying an unknown template', async () => {

@@ -28,6 +28,7 @@ import type {
   MenuListResponse,
   DemoSeedResult,
   Deployment,
+  DeployTemplateInput,
   DockerResources,
   Domain,
   DomainPatch,
@@ -111,6 +112,21 @@ export interface HealthStatus {
   db?: string;
   version?: string;
   time?: string;
+}
+
+export interface TemplateDeployResult {
+  serviceId: number;
+  serviceName: string;
+  serviceSlug: string;
+  deploymentId: number;
+  databaseId: number | null;
+  generatedSecrets: Array<{ key: string; value: string }>;
+  stages: Array<{
+    id: 'service' | 'environment' | 'database' | 'attachment' | 'deployment';
+    status: 'success' | 'skipped';
+    message: string;
+  }>;
+  alreadyInProgress: boolean;
 }
 
 export interface NineDeployClientOptions {
@@ -452,7 +468,7 @@ export interface NineDeployClient {
   templates: {
     list: () => Promise<TemplateSummary[]>;
     get: (id: string) => Promise<Template>;
-    deploy: (id: string) => Promise<{ serviceId: number; deploymentId: number; databaseId: number | null; generatedSecrets: Array<{ key: string; value: string }> }>;
+    deploy: (id: string, input?: DeployTemplateInput) => Promise<TemplateDeployResult>;
   };
   limits: {
     setService: (serviceId: number, input: SetLimitsInput) => Promise<{ cpuShares: number; memLimitMb: number }>;
@@ -921,7 +937,7 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
     templates: {
       list: () => get<TemplateSummary[]>('/v1/templates'),
       get: (id) => get<Template>(`/v1/templates/${id}`),
-      deploy: (id) => send<{ serviceId: number; deploymentId: number; databaseId: number | null; generatedSecrets: Array<{ key: string; value: string }> }>('POST', `/v1/templates/${id}/deploy`),
+      deploy: (id, input) => send<TemplateDeployResult>('POST', `/v1/templates/${id}/deploy`, input ?? {}),
     },
     backups: {
       storage: (databaseId) => get<{ sizeBytes: number }>(`/v1/databases/${databaseId}/storage`),

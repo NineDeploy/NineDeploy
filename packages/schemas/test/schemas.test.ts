@@ -30,6 +30,7 @@ import {
   createdApiToken,
   createdWebhook,
   deployment,
+  deployTemplate,
   dockerResources,
   domain,
   domainEntry,
@@ -640,6 +641,21 @@ describe('service', () => {
         id: 'db', name: 'DB App', tagline: 'x', description: 'x', category: 'x', emoji: 'x', image: 'x', port: 3000,
         dbEngine: 'postgres', databaseEnv: { DATABASE_URL: 'url' },
       }).success).toBe(true);
+    });
+
+    it('accepts only caller-safe canonical template deploy controls', () => {
+      const data = ok(deployTemplate, {
+        name: 'My App', projectId: 2, serverId: 3, publishedPort: 8080,
+        healthPath: '/healthz', cpuShares: 512, memLimitMb: 1024,
+        env: [{ key: 'APP_MODE', value: 'production', isSecret: false }],
+        reuseExisting: true,
+        image: 'ignored/by/object-schema', port: 9999,
+      });
+      expect(data).not.toHaveProperty('image');
+      expect(data).not.toHaveProperty('port');
+      bad(deployTemplate, { publishedPort: 70000 });
+      bad(deployTemplate, { healthPath: 'healthz' });
+      bad(deployTemplate, { env: [{ key: 'INVALID-KEY', value: 'x' }] });
     });
   });
 

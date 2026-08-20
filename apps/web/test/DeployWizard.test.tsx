@@ -16,6 +16,7 @@ const apiMock = vi.hoisted(() => ({
     deploys: { trigger: vi.fn() },
     databases: { create: vi.fn(), get: vi.fn() },
     attachments: { create: vi.fn() },
+    templates: { deploy: vi.fn() },
   },
 }));
 
@@ -85,6 +86,16 @@ describe('DeployWizard', () => {
     apiMock.api.databases.get.mockResolvedValue({ id: 7, name: 'db', engine: 'postgres', status: 'running' });
     apiMock.api.attachments.create.mockResolvedValue({ id: 9, databaseId: 7, envAlias: 'DATABASE_URL' });
     apiMock.api.deploys.trigger.mockResolvedValue({ deploymentId: 7 });
+    apiMock.api.templates.deploy.mockResolvedValue({
+      serviceId: 42,
+      serviceName: 'app',
+      serviceSlug: 'app',
+      deploymentId: 7,
+      databaseId: null,
+      generatedSecrets: [],
+      stages: [],
+      alreadyInProgress: false,
+    });
   });
 
   it('renders the repo flow by default with a "New service" title', async () => {
@@ -231,78 +242,49 @@ describe('DeployWizard', () => {
     await user.click(screen.getByRole('button', { name: /continue/i }));
     // Step 2 (env): template row is prefilled
     expect(screen.getAllByDisplayValue('N8N_BASIC_AUTH_ACTIVE')).toHaveLength(1);
-    // Toggling one row while another exists exercises the map's identity branch.
-    await user.click(screen.getAllByTitle('Toggle secret')[0]);
     await user.click(screen.getByRole('button', { name: /continue/i }));
     await user.click(screen.getByRole('button', { name: /continue/i }));
     expect(screen.getByText('n8n')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /deploy/i }));
-    await waitFor(() =>
-      expect(apiMock.api.services.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          image: 'n8nio/n8n',
-          repoUrl: undefined,
-          port: 5678,
-          volumeMount: '/home/node/.n8n',
-        }),
-      ),
-    );
-    // Secret rows deploy with a freshly GENERATED value — never the registry
-    // default ('true'/'y' must not reach the container as-is).
+    await waitFor(() => expect(apiMock.api.templates.deploy).toHaveBeenCalledWith('n8n', expect.objectContaining({ name: 'n8n', reuseExisting: true })));
+    expect(apiMock.api.services.create).not.toHaveBeenCalled();
+    // An untouched registry secret is omitted so the server can generate it
+    // once and preserve it across interrupted-install retries.
     await waitFor(() => {
-      // Row 0 was toggled to non-secret (generated value preserved); the
-      // untoggled secret-prefilled rows deploy as freshly generated secrets.
-      const rows = Object.fromEntries(apiMock.api.env.create.mock.calls.map((c) => [c[1].key, c[1]]));
+      const input = apiMock.api.templates.deploy.mock.calls[0]?.[1];
+      const rows = Object.fromEntries(input.env.map((row: { key: string }) => [row.key, row]));
       expect(rows['N8N_EXTRA']!).toEqual(expect.objectContaining({ key: 'N8N_EXTRA', value: 'y', isSecret: false }));
-      expect(rows['N8N_BASIC_AUTH_ACTIVE']!.isSecret).toBe(false);
-      expect(rows['N8N_BASIC_AUTH_ACTIVE']!.value).not.toBe('true');
-      expect(rows['N8N_BASIC_AUTH_ACTIVE']!.value.length).toBeGreaterThanOrEqual(16);
+      expect(rows['N8N_BASIC_AUTH_ACTIVE']).toBeUndefined();
     });
     await waitFor(() => expect(onClose).toHaveBeenCalled());
   });
 
-  it('auto-provisions and attaches a database for templates that need one', async () => {
+  it('delegates the complete required-database pipeline to the canonical server route', async () => {
     const tpl = { ...TEMPLATE, dbEngine: 'postgres' as const, requires: 'Umami needs a PostgreSQL database — one is provisioned automatically' };
     const { onClose } = renderWizard({ template: tpl });
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: /continue/i }));
     await user.click(screen.getByRole('button', { name: /continue/i }));
-    // Env step shows the requires hint and the auto-attach checkbox (default on).
+    // The required database cannot be disabled in the Hub wizard.
     expect(screen.getByText(tpl.requires)).toBeInTheDocument();
-    expect(screen.getByRole('checkbox')).toBeChecked();
+    expect(screen.getByText('Required managed postgres database')).toBeInTheDocument();
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /continue/i }));
     await user.click(screen.getByRole('button', { name: /continue/i }));
     await user.click(screen.getByRole('button', { name: /deploy/i }));
 
-    await waitFor(() =>
-      expect(apiMock.api.databases.create).toHaveBeenCalledWith(expect.objectContaining({ engine: 'postgres', reuseExisting: true })),
-    );
-    await waitFor(() => expect(apiMock.api.attachments.create).toHaveBeenCalledWith(42, { databaseId: 7, reuseExisting: true }));
-    // The deploy triggers only AFTER the database is running + attached.
-    await waitFor(() => expect(apiMock.api.deploys.trigger).toHaveBeenCalledWith(42));
+    await waitFor(() => expect(apiMock.api.templates.deploy).toHaveBeenCalledWith('n8n', expect.objectContaining({ reuseExisting: true })));
+    expect(apiMock.api.databases.create).not.toHaveBeenCalled();
+    expect(apiMock.api.databases.get).not.toHaveBeenCalled();
+    expect(apiMock.api.attachments.create).not.toHaveBeenCalled();
+    expect(apiMock.api.deploys.trigger).not.toHaveBeenCalled();
     await waitFor(() => expect(onClose).toHaveBeenCalled());
   });
 
-  it('skips the database when the auto-attach checkbox is unchecked', async () => {
-    const tpl = { ...TEMPLATE, dbEngine: 'mysql' as const };
-    renderWizard({ template: tpl });
-    const user = userEvent.setup();
-    await user.click(screen.getByRole('button', { name: /continue/i }));
-    await user.click(screen.getByRole('button', { name: /continue/i }));
-    await user.click(screen.getByRole('checkbox'));
-    await user.click(screen.getByRole('button', { name: /continue/i }));
-    await user.click(screen.getByRole('button', { name: /continue/i }));
-    await user.click(screen.getByRole('button', { name: /deploy/i }));
-    await waitFor(() => expect(apiMock.api.deploys.trigger).toHaveBeenCalledWith(42));
-    expect(apiMock.api.databases.create).not.toHaveBeenCalled();
-  });
-
-  it('polls while the database is still creating before attaching', { timeout: 20_000 }, async () => {
+  it('shows the server-owned provisioning stages while a database template request is pending', async () => {
     const tpl = { ...TEMPLATE, dbEngine: 'postgres' as const };
-    apiMock.api.databases.get
-      .mockResolvedValueOnce({ id: 7, status: 'creating' })
-      .mockResolvedValueOnce({ id: 7, status: 'creating' })
-      .mockResolvedValueOnce({ id: 7, status: 'running' });
+    const pending = deferred<Awaited<ReturnType<typeof apiMock.api.templates.deploy>>>();
+    apiMock.api.templates.deploy.mockReturnValue(pending.promise);
     renderWizard({ template: tpl });
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: /continue/i }));
@@ -310,16 +292,15 @@ describe('DeployWizard', () => {
     await user.click(screen.getByRole('button', { name: /continue/i }));
     await user.click(screen.getByRole('button', { name: /continue/i }));
     await user.click(screen.getByRole('button', { name: /deploy/i }));
-    await waitFor(() => expect(apiMock.api.databases.get).toHaveBeenCalledTimes(3), { timeout: 15_000 });
-    await waitFor(() => expect(apiMock.api.attachments.create).toHaveBeenCalledWith(42, { databaseId: 7, reuseExisting: true }));
-    await waitFor(() => expect(apiMock.api.deploys.trigger).toHaveBeenCalled());
+    expect(screen.getByText('Server provisioning pipeline')).toBeInTheDocument();
+    expect(screen.getByText(/Start and verify the required postgres database/)).toBeInTheDocument();
   });
 
-  it('fails with a helpful error when the provisioned database errors out', async () => {
+  it('reports a canonical provisioning failure without triggering a client-side deploy', async () => {
     const toastMod = await vi.importActual<typeof import('../src/components/Toast.js')>('../src/components/Toast.js');
     void toastMod;
     const tpl = { ...TEMPLATE, dbEngine: 'postgres' as const };
-    apiMock.api.databases.get.mockResolvedValue({ id: 7, status: 'error' });
+    apiMock.api.templates.deploy.mockRejectedValue(new Error('Failed to start template database'));
     renderWizard({ template: tpl });
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: /continue/i }));

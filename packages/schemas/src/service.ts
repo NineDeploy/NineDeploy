@@ -489,6 +489,30 @@ export const template = z.object({
 });
 export type Template = z.infer<typeof template>;
 
+/**
+ * One canonical Hub installation request. Image, internal port, volume,
+ * command, Docker socket and database mapping are intentionally absent: they
+ * are privileged registry-owned fields resolved by the server.
+ */
+export const deployTemplate = z.object({
+  name: z.string().trim().min(1).max(100).optional(),
+  projectId: z.number().int().positive().optional(),
+  serverId: z.number().int().positive().nullable().optional(),
+  publishedPort: z.number().int().min(1).max(65535).nullable().optional(),
+  healthPath: httpPath.optional(),
+  cpuShares: z.number().int().min(0).max(262144).optional(),
+  memLimitMb: z.number().int().min(0).optional(),
+  env: z.array(z.object({
+    key: envVarName,
+    value: z.string().max(32_768),
+    isSecret: z.boolean().optional().default(false),
+  })).max(200).optional(),
+  /** Reconcile an interrupted caller-owned install with the same slug. */
+  reuseExisting: z.boolean().optional().default(true),
+});
+export type DeployTemplateInput = z.input<typeof deployTemplate>;
+export type DeployTemplate = z.infer<typeof deployTemplate>;
+
 // ── Domain routing index + volumes ─────────────────────────────────────────
 export const domainEntry = z.object({
   id: z.number().int(),

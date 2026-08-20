@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.32] - 2026-08-20
+
+### Changed
+- **Canonical Hub Provisioning**: The API now owns service configuration, environment reconciliation, managed database startup, database attachment and application queueing as one ordered operation. The Web panel no longer coordinates those resources through separate requests.
+- **Registry-Owned Runtime Contract**: Hub images, internal ports, persistent mounts, commands, Docker socket access and database mappings are resolved exclusively from the trusted server registry and cannot be overridden by the panel request.
+- **Visible Dependency Pipeline**: Database-backed installs show the server-owned provisioning order and required databases can no longer be accidentally disabled in the wizard.
+
+### Fixed
+- **Safe Interrupted-Install Retry**: Repeating an install with the same name reuses the caller-owned failed service, persistent database, volume and attachment instead of creating duplicates. Existing generated secrets are preserved unless the user explicitly replaces them.
+- **Dependency-First Queueing**: An application deployment is never queued until its required managed database has started successfully and its attachment has been reconciled. Existing in-progress deployments are reused.
+- **All Database Templates on One Path**: Directus, Ghost, Hasura, Matomo, Umami, Vikunja, WordPress and YOURLS are covered by the same provisioning contract and regression suite.
+
 ## [0.2.31] - 2026-08-20
 
 ### Fixed

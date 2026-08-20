@@ -14,13 +14,6 @@ const STEPS = ['Source', 'Runtime', 'Environment', 'Resources', 'Review'];
 
 interface EnvRow { key: string; value: string; secret: boolean }
 
-/** Crypto-strong secret prefill for template env rows marked secret. */
-function generateSecret(bytes = 18): string {
-  const arr = new Uint8Array(bytes);
-  crypto.getRandomValues(arr);
-  return btoa(String.fromCharCode(...arr)).replace(/[+/=]/g, '').slice(0, 24);
-}
-
 export function DeployWizard({ template, onClose }: { template?: Template; onClose: () => void }) {
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -76,15 +69,15 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
   const [healthPath, setHealthPath] = useState('/');
   const [cpuShares, setCpuShares] = useState('');
   const [memLimitMb, setMemLimitMb] = useState('');
-  // Secret rows are prefilled with a FRESH strong value (never the registry
-  // default like "changeme"); the user can still edit it on the env step.
+  // Empty registry-secret rows are omitted from the request. The canonical
+  // server route generates them on first install and preserves them on retry;
+  // typing an explicit value here intentionally overrides the stored secret.
   const [envRows, setEnvRows] = useState<EnvRow[]>(
-    (template?.env ?? []).map((e) => ({ key: e.key, value: e.secret ? generateSecret() : e.value, secret: e.secret ?? false })),
+    (template?.env ?? []).map((e) => ({ key: e.key, value: e.secret ? '' : e.value, secret: e.secret ?? false })),
   );
-  // Templates that need a database can auto-provision + attach one.
+  // Database-backed templates are provisioned atomically by the server route.
   const dbEngine = template?.dbEngine ?? null;
-  const [autoDb, setAutoDb] = useState(true);
-  const [dbStatus, setDbStatus] = useState<string | null>(null);
+  const [provisionStatus, setProvisionStatus] = useState<string | null>(null);
 
   const deploy = useMutation({
     onMutate: () => {
@@ -92,16 +85,34 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
       // closing the dialog must not run: the flow would keep going against
       // an unmounted wizard and the final navigate would fire anyway.
       busyRef.current = true;
+      setProvisionStatus(template
+        ? `Server is reconciling service → environment${dbEngine ? ` → ${dbEngine} database → attachment` : ''} → deployment queue…`
+        : 'Creating service and queueing deployment…');
     },
     onSettled: () => {
       busyRef.current = false;
     },
     mutationFn: async () => {
+      if (template) {
+        const result = await api.templates.deploy(template.id, {
+          name,
+          projectId: projectId ?? undefined,
+          serverId: serverId ? toInt(serverId) : undefined,
+          publishedPort: toInt(publishedPort),
+          healthPath: healthPath || undefined,
+          cpuShares: toInt(cpuShares),
+          memLimitMb: toInt(memLimitMb),
+          env: envRows
+            .filter((entry) => entry.key.trim())
+            .filter((entry) => !(entry.secret && entry.value === '' && template.env?.some((preset) => preset.key === entry.key && preset.secret)))
+            .map((entry) => ({ key: entry.key.trim(), value: entry.value, isSecret: entry.secret })),
+          reuseExisting: true,
+        });
+        return { serviceId: result.serviceId, deploymentId: result.deploymentId, canonical: true };
+      }
       const svc = await api.services.create({
-        ...(template ? { templateId: template.id } : {}),
         name,
         type,
-        ...(template ? { reuseExisting: true } : {}),
         projectId: projectId ?? undefined,
         ...(serverId ? { serverId: toInt(serverId) } : {}),
         repoUrl: mode === 'repo' ? repoUrl : undefined,
@@ -121,48 +132,23 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
             key: e.key,
             value: e.value,
             isSecret: e.secret,
-            ...(template ? { overwriteExisting: true } : {}),
           });
         }
       }
-
-      // Auto-provision + attach the database this template needs. The deploy
-      // pipeline injects DATABASE_URL/REDIS_URL into the container env from
-      // the attachment — but only once the database is actually running, so
-      // wait for it (bounded) BEFORE triggering the deploy.
-      if (dbEngine && autoDb) {
-        setDbStatus(`Creating ${dbEngine} database…`);
-        const db = await api.databases.create({
-          // Scope the database to the actual service slug. Two deployments of
-          // the same template under different names must never share data.
-          name: `${svc.slug}-db`,
-          engine: dbEngine,
-          reuseExisting: true,
-        });
-        const deadline = Date.now() + 120_000;
-        for (;;) {
-          const cur = await api.databases.get(db.id);
-          if (cur.status === 'running') break;
-          if (cur.status === 'error' || Date.now() > deadline) {
-            throw new Error(`Database failed to start (${cur.status}) — attach one manually after deploy`);
-          }
-          setDbStatus(`Waiting for ${dbEngine} (${cur.status})…`);
-          await new Promise((r) => setTimeout(r, 2000));
-        }
-        await api.attachments.create(svc.id, { databaseId: db.id, reuseExisting: true });
-        setDbStatus(null);
-      }
-
-      await api.deploys.trigger(svc.id);
-      return svc;
+      const deployment = await api.deploys.trigger(svc.id);
+      return { serviceId: svc.id, deploymentId: deployment.deploymentId, canonical: false };
     },
-    onSuccess: (svc) => {
+    onSuccess: (result) => {
       qc.invalidateQueries({ queryKey: ['services'] });
-      toast('Deploy started — building…', 'info');
-      navigate(`/services/${svc.id}`);
+      qc.invalidateQueries({ queryKey: ['databases'] });
+      toast(result.canonical ? 'Dependencies are ready — application deploy queued' : 'Deploy started — building…', 'info');
+      navigate(`/services/${result.serviceId}?tab=deploys`);
       onClose();
     },
-    onError: (err) => toast(err instanceof Error ? err.message : 'Deploy failed', 'error'),
+    onError: (err) => {
+      setProvisionStatus('Provisioning failed — nothing was queued before its required dependencies were ready.');
+      toast(err instanceof Error ? err.message : 'Deploy failed', 'error');
+    },
   });
 
   const canNext =
@@ -223,6 +209,17 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
         </div>
 
         <form onSubmit={onSubmit} className="flex-1 overflow-auto p-5">
+          {deploy.isPending && template && (
+            <div role="status" className="mb-4 rounded-xl border border-indigo-500/25 bg-indigo-500/[0.08] p-3.5">
+              <div className="mb-2 text-xs font-semibold text-indigo-200">Server provisioning pipeline</div>
+              <div className="grid gap-1.5 text-[11px] text-slate-300">
+                <span>1. Reconcile service configuration and persistent storage</span>
+                <span>2. Reconcile environment variables and preserve existing secrets</span>
+                {dbEngine && <span>3. Start and verify the required {dbEngine} database, then attach it</span>}
+                <span>{dbEngine ? '4' : '3'}. Queue the application deployment only after dependencies are ready</span>
+              </div>
+            </div>
+          )}
           {template && !template.runtimeVerified && (
             <div className="mb-4 rounded-xl border border-amber-500/20 bg-amber-500/[0.08] p-3 text-xs leading-relaxed text-amber-200">
               Community template — registry-valid but not yet runtime-certified. Confirm its port, environment and storage settings before deployment.
@@ -234,7 +231,7 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
               <L label="Name"><Input ref={nameInputRef} value={name} onChange={(e) => setName(e.target.value)} placeholder="my-app" /></L>
               <div className="grid grid-cols-2 gap-3">
                 <L label="Type">
-                  <Select value={type} onChange={(e) => setType(e.target.value as 'docker' | 'pm2' | 'compose')}>
+                  <Select value={type} disabled={!!template} onChange={(e) => setType(e.target.value as 'docker' | 'pm2' | 'compose')}>
                     <option value="docker">Docker / Nixpacks</option>
                     <option value="compose">Compose</option>
                     <option value="pm2">PM2</option>
@@ -243,7 +240,7 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
                 <L label="Source type">
                   <div className="flex h-10 items-center gap-1 rounded-lg bg-black/30 p-1 ring-1 ring-inset ring-white/10">
                     {(['repo', 'image'] as const).map((m) => (
-                      <button key={m} type="button" onClick={() => setMode(m)} className={cn('flex-1 rounded-md py-1 text-xs font-medium transition', mode === m ? 'bg-indigo-500 text-white' : 'text-slate-400')}>{m === 'repo' ? 'Git repo' : 'Image'}</button>
+                      <button key={m} type="button" disabled={!!template} onClick={() => setMode(m)} className={cn('flex-1 rounded-md py-1 text-xs font-medium transition disabled:opacity-50', mode === m ? 'bg-indigo-500 text-white' : 'text-slate-400')}>{m === 'repo' ? 'Git repo' : 'Image'}</button>
                     ))}
                   </div>
                 </L>
@@ -317,7 +314,7 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
                   )}
                 </>
               ) : (
-                <L label="Image"><Input value={image} onChange={(e) => setImage(e.target.value)} placeholder="n8nio/n8n" className="font-mono text-xs" /></L>
+                <L label={template ? 'Registry-managed image' : 'Image'}><Input value={image} disabled={!!template} onChange={(e) => setImage(e.target.value)} placeholder="n8nio/n8n" className="font-mono text-xs" /></L>
               )}
 
               {!isAdvanced && (
@@ -349,10 +346,10 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
           {step === 1 && (
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-3">
-                <L label="Container Port"><Input value={port} onChange={(e) => setPort(e.target.value)} inputMode="numeric" autoComplete="off" placeholder="3000" className="font-mono text-xs" /></L>
+                <L label={template ? 'Registry-managed container port' : 'Container Port'}><Input value={port} disabled={!!template} onChange={(e) => setPort(e.target.value)} inputMode="numeric" autoComplete="off" placeholder="3000" className="font-mono text-xs" /></L>
                 <L label="Public Host Port (optional)"><Input value={publishedPort} onChange={(e) => setPublishedPort(e.target.value)} placeholder="e.g. 8080" className="font-mono text-xs" /></L>
               </div>
-              <L label="Persistent Volume Mount"><Input value={volumeMount} onChange={(e) => setVolumeMount(e.target.value)} placeholder="/app/data" className="font-mono text-xs" /></L>
+              <L label={template ? 'Registry-managed volume mount' : 'Persistent Volume Mount'}><Input value={volumeMount} disabled={!!template} onChange={(e) => setVolumeMount(e.target.value)} placeholder="/app/data" className="font-mono text-xs" /></L>
               <L label="Healthcheck Path"><Input value={healthPath} onChange={(e) => setHealthPath(e.target.value)} placeholder="/" className="font-mono text-xs" /></L>
 
               {servers.data && servers.data.length > 0 && (
@@ -382,17 +379,12 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
               )}
               {dbEngine && (
                 <div className="rounded-xl border border-indigo-500/20 bg-indigo-500/5 p-3.5 space-y-2">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-3">
                     <div>
-                      <div className="text-xs font-semibold text-indigo-300">Managed {dbEngine} Database</div>
-                      <div className="text-[11px] text-slate-400">Auto-create and attach a dedicated {dbEngine} database</div>
+                      <div className="text-xs font-semibold text-indigo-300">Required managed {dbEngine} database</div>
+                      <div className="text-[11px] text-slate-400">The server creates, waits for and attaches a dedicated database before the application is queued.</div>
                     </div>
-                    <input
-                      type="checkbox"
-                      checked={autoDb}
-                      onChange={(e) => setAutoDb(e.target.checked)}
-                      className="h-4 w-4 rounded border-white/20 bg-black/40 text-indigo-500 focus:ring-indigo-500/30"
-                    />
+                    <span className="shrink-0 rounded-full bg-emerald-500/15 px-2 py-1 text-[10px] font-semibold uppercase text-emerald-300 ring-1 ring-inset ring-emerald-500/20">Required</span>
                   </div>
                 </div>
               )}
@@ -475,7 +467,7 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
         <div className="flex items-center justify-between border-t border-white/5 p-4 bg-slate-950/50">
           <Button type="button" variant="ghost" size="sm" onClick={back} className={cn(step === 0 && 'invisible')}><ArrowLeft size={14} /> Back</Button>
           <div className="flex items-center gap-3">
-            {dbStatus && <span className="text-xs text-emerald-300">{dbStatus}</span>}
+            {provisionStatus && <span className={cn('max-w-xs text-right text-xs', deploy.isError ? 'text-rose-300' : 'text-emerald-300')}>{provisionStatus}</span>}
             {deploy.isError && <span className="text-xs text-rose-400">Failed — try again</span>}
             <Button type="submit" onClick={onSubmit} disabled={!canNext || deploy.isPending}>
               {step === STEPS.length - 1 ? (deploy.isPending ? 'Deploying…' : <><Rocket size={15} /> Deploy</>) : <>Continue <ArrowRight size={14} /></>}

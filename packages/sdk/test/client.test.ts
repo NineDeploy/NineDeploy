@@ -1094,6 +1094,10 @@ describe('createClient', () => {
 
       await client.templates.deploy('nextjs');
       expect(last(calls)).toMatchObject({ url: '/v1/templates/nextjs/deploy', init: { method: 'POST' } });
+
+      await client.templates.deploy('wordpress', { name: 'Blog', publishedPort: 8080, reuseExisting: true });
+      expect(last(calls)).toMatchObject({ url: '/v1/templates/wordpress/deploy', init: { method: 'POST' } });
+      expect(JSON.parse(last(calls).init.body ?? '{}')).toEqual({ name: 'Blog', publishedPort: 8080, reuseExisting: true });
     });
   });
 
