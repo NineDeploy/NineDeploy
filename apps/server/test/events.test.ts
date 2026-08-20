@@ -22,7 +22,7 @@ describe('events websocket', () => {
     const app = await buildTestApp({ websocket: true });
     await app.register(eventRoutes);
     const port = await listen(app);
-    const ws = await openWs(wsUrl(port, '/v1/events?token=valid'));
+    const ws = await openWs(wsUrl(port, '/v1/events'), 'ninedeploy.bearer.valid');
     sockets.push(ws);
     const messages = collectMessages(ws);
 

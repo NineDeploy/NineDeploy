@@ -344,7 +344,11 @@ function ActivityDrawer({ onClose }: { onClose: () => void }) {
 
   useEffect(() => {
     const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    const ws = new WebSocket(`${proto}://${window.location.host}/v1/events?token=${getToken() ?? ''}`);
+    const token = getToken();
+    const ws = new WebSocket(
+      `${proto}://${window.location.host}/v1/events`,
+      token ? [`ninedeploy.bearer.${token}`] : ['ninedeploy'],
+    );
     ws.onmessage = (e) => {
       try {
         const lines = String(e.data).split('\n').filter(Boolean);

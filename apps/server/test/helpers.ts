@@ -301,8 +301,8 @@ export async function listen(app: FastifyInstance): Promise<number> {
 export const wsUrl = (port: number, path: string): string => `ws://127.0.0.1:${port}${path}`;
 
 /** Open a WebSocket and wait for the open handshake. */
-export async function openWs(url: string): Promise<WebSocket> {
-  const ws = new WebSocket(url);
+export async function openWs(url: string, protocols?: string | string[]): Promise<WebSocket> {
+  const ws = new WebSocket(url, protocols);
   await once(ws, 'open');
   return ws;
 }

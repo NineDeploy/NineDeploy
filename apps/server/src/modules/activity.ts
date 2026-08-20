@@ -16,6 +16,9 @@ const listQuery = z.object({
 /** Recent activity (audit log). Mounted under /activity. */
 export const activityRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('onRequest', app.authenticate);
+  // Audit rows do not carry a workspace/resource id, so they cannot be
+  // tenant-scoped reliably. Keep the instance-wide feed operator-only.
+  app.addHook('preHandler', app.requireAdmin);
 
   app.get('/', async (req) => {
     const q = listQuery.parse(req.query);

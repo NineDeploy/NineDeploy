@@ -95,10 +95,11 @@ describe('serverRunner', () => {
       expect(ok).toBe(true);
     });
 
-    it('returns true when fetch returns 401 or 404', async () => {
+    it('returns false when another service returns 401 or 404', async () => {
       global.fetch = vi.fn().mockResolvedValue({ status: 401 } as Response);
       const ok = await isServerReachable('http://localhost:3000');
-      expect(ok).toBe(true);
+      expect(ok).toBe(false);
+      expect(global.fetch).toHaveBeenCalledWith('http://localhost:3000/health', expect.any(Object));
     });
 
     it('returns false when fetch rejects with error', async () => {

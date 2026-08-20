@@ -52,7 +52,8 @@ async function ensureEssentialColumns(db: DB) {
 export default fp(
   async (fastify) => {
     if (!fastify.db) {
-      const { db } = createDb({ url: config.dbUrl });
+      const { db, ready } = createDb({ url: config.dbUrl });
+      await ready;
       // Self-migrating startup: applies pending migrations via the RUNTIME
       // migrator (drizzle-kit is a devDependency, absent in production builds
       // and containers). Idempotent — a no-op when the schema is current.

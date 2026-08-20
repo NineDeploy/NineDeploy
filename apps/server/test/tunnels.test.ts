@@ -29,6 +29,14 @@ describe('tunnel routes', () => {
     ]);
   });
 
+  it('rejects an invalid tunnel id', async () => {
+    const app = await buildTestApp();
+    await app.register(tunnelRoutes);
+    const res = await app.inject({ method: 'DELETE', url: '/invalid', headers: asUser() });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('invalid_id');
+  });
+
   it('creates and starts a tunnel', async () => {
     const app = await buildTestApp({
       db: createFakeDb({ insert: { tunnels: [tunnelRow({ id: 3, name: 'edge' })] } }),

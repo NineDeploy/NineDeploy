@@ -247,6 +247,25 @@ describe('pm2Builder.stop', () => {
 });
 
 describe('pm2 lifecycle helpers', () => {
+  it('serializes process-global PM2 connection sessions', async () => {
+    let finishRestart!: () => void;
+    h.pm2.restart.mockImplementationOnce((_name: string, cb: (err?: Error | null) => void) => {
+      finishRestart = () => cb(null);
+    });
+
+    const first = pm2Restart('api-1');
+    const second = pm2Stop('api-2');
+    await vi.waitFor(() => expect(h.pm2.restart).toHaveBeenCalledOnce());
+    expect(h.pm2.stop).not.toHaveBeenCalled();
+    expect(h.pm2.connect).toHaveBeenCalledTimes(1);
+
+    finishRestart();
+    await first;
+    await second;
+    expect(h.pm2.disconnect).toHaveBeenCalledTimes(2);
+    expect(h.pm2.connect).toHaveBeenCalledTimes(2);
+  });
+
   it('pm2Stop stops the process but keeps it registered', async () => {
     await expect(pm2Stop('api-1')).resolves.toBeUndefined();
 

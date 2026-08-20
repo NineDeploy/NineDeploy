@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { and, asc, eq, notInArray } from 'drizzle-orm';
+import { and, asc, eq, notInArray, sql } from 'drizzle-orm';
 import { migrate } from 'drizzle-orm/libsql/migrator';
 import { fileURLToPath } from 'node:url';
 import { createDb, deployments, services } from '@ninedeploy/db';
@@ -84,5 +84,25 @@ describe('deploy worker claim semantics (real SQLite)', () => {
       .orderBy(asc(deployments.createdAt))
       .limit(1);
     expect(claimed).toBeUndefined();
+  });
+
+  it('lets only one same-service candidate win the atomic building guard', async () => {
+    const { db } = createDb({ url: ':memory:' });
+    await migrate(db, { migrationsFolder });
+    const [web] = await db.insert(services).values({ name: 'web', slug: 'web', type: 'docker' }).returning();
+    await db.insert(deployments).values([
+      { serviceId: web!.id, status: 'queued', trigger: 'user', createdAt: new Date(Date.now() - 2000) },
+      { serviceId: web!.id, status: 'queued', trigger: 'user', createdAt: new Date(Date.now() - 1000) },
+    ]);
+
+    const claim = (id: number) => db.update(deployments).set({ status: 'building' }).where(and(
+      eq(deployments.id, id),
+      eq(deployments.status, 'queued'),
+      sql`NOT EXISTS (SELECT 1 FROM deployments AS active WHERE active.service_id = ${deployments.serviceId} AND active.status = 'building')`,
+    ));
+    const first = await claim(1);
+    const second = await claim(2);
+    expect(first.rowsAffected).toBe(1);
+    expect(second.rowsAffected).toBe(0);
   });
 });

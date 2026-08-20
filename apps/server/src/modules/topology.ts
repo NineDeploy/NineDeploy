@@ -8,6 +8,7 @@ import {
   networkMembers,
   resolveVolumeOwner,
 } from '../lib/inventory.js';
+import { visibleDatabaseIds } from '../lib/resourceAccess.js';
 
 /** Whole-workspace graph for the topology view. Mounted under /topology.
  *
@@ -18,13 +19,27 @@ import {
 export const topologyRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('onRequest', app.authenticate);
 
-  app.get('/', async () => {
-    const [svcs, dbs, atts, doms] = await Promise.all([
+  app.get('/', async (req) => {
+    const [allServices, allDatabases, allAttachments, allDomains, visibleDatabases] = await Promise.all([
       app.db.select().from(services),
       app.db.select().from(databases),
       app.db.select().from(databaseAttachments),
       app.db.select().from(domains),
+      visibleDatabaseIds(app.db, req.user!),
     ]);
+    const isAdmin = req.user!.role === 'admin';
+    const svcs = isAdmin
+      ? allServices
+      : allServices.filter((service) => service.ownerUserId === req.user!.id);
+    const dbs = visibleDatabases === null
+      ? allDatabases
+      : allDatabases.filter((database) => visibleDatabases.includes(database.id));
+    const serviceIds = new Set(svcs.map((service) => service.id));
+    const databaseIds = new Set(dbs.map((database) => database.id));
+    const atts = allAttachments.filter(
+      (attachment) => serviceIds.has(attachment.serviceId) && databaseIds.has(attachment.databaseId),
+    );
+    const doms = allDomains.filter((domain) => serviceIds.has(domain.serviceId));
 
     // Runtime layers (volumes/networks/gateway) come from docker — any probe
     // failure degrades to an empty list rather than failing the whole graph.
@@ -33,10 +48,21 @@ export const topologyRoutes: FastifyPluginAsync = async (app) => {
     // Member lists are only resolved for the shared NineDeploy network —
     // inspecting every user network gets slow and the topology only needs to
     // visualise OUR mesh.
+    const allowedContainers = new Set([
+      ...svcs.flatMap((service) =>
+        [service.runtimeId, `nd-app-${service.slug}`].filter((name): name is string => name != null),
+      ),
+      ...dbs.map((database) => database.containerName ?? `nd-db-${database.name}`),
+    ]);
+    const visibleNets = isAdmin ? nets : nets.filter((network) => network.name === NETWORK);
     const networks = await Promise.all(
-      nets.map(async (n) => ({
+      visibleNets.map(async (n) => ({
         ...n,
-        containers: n.name === NETWORK ? await networkMembers(n.name).catch(() => [] as string[]) : [],
+        containers: n.name === NETWORK
+          ? (await networkMembers(n.name).catch(() => [] as string[])).filter(
+              (container) => isAdmin || allowedContainers.has(container),
+            )
+          : [],
       })),
     );
     const gatewayRunning = await containerRunning(TRAEFIK_CONTAINER);
@@ -62,9 +88,10 @@ export const topologyRoutes: FastifyPluginAsync = async (app) => {
       })),
       attachments: atts.map((a) => ({ id: a.id, serviceId: a.serviceId, databaseId: a.databaseId, envAlias: a.envAlias })),
       domains: doms.map((d) => ({ id: d.id, serviceId: d.serviceId, hostname: d.hostname, ssl: d.ssl })),
-      volumes: volumeNames.map((name) => {
+      volumes: volumeNames.flatMap((name) => {
         const owner = resolveVolumeOwner(svcs, dbs, name);
-        return { name, owner: owner ? { kind: owner.kind, refId: owner.refId, name: owner.name, ...(owner.engine ? { engine: owner.engine } : {}) } : null };
+        if (!isAdmin && !owner) return [];
+        return [{ name, owner: owner ? { kind: owner.kind, refId: owner.refId, name: owner.name, ...(owner.engine ? { engine: owner.engine } : {}) } : null }];
       }),
       networks,
       gateway: { name: TRAEFIK_CONTAINER, network: NETWORK, running: gatewayRunning },

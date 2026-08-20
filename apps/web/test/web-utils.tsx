@@ -43,6 +43,7 @@ export class FakeWebSocket {
   static instances: FakeWebSocket[] = [];
 
   url: string;
+  protocols: string | string[] | undefined;
   readyState = FakeWebSocket.CONNECTING;
   binaryType = '';
   onopen: ((ev?: unknown) => void) | null = null;
@@ -52,8 +53,9 @@ export class FakeWebSocket {
   close = vi.fn();
   send = vi.fn();
 
-  constructor(url: string) {
+  constructor(url: string, protocols?: string | string[]) {
     this.url = url;
+    this.protocols = protocols;
     FakeWebSocket.instances.push(this);
   }
 

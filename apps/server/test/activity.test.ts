@@ -24,6 +24,13 @@ describe('activity routes', () => {
     expect(res.statusCode).toBe(401);
   });
 
+  it('rejects non-admin users because audit rows have no tenant scope', async () => {
+    const app = await buildTestApp();
+    await app.register(activityRoutes);
+    const res = await app.inject({ method: 'GET', url: '/', headers: asUser({ role: 'member' }) });
+    expect(res.statusCode).toBe(403);
+  });
+
   it('maps audit log rows to ISO strings and enriches with user metadata', async () => {
     const app = await buildTestApp({
       db: createFakeDb({

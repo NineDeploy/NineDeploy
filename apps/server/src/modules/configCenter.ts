@@ -104,7 +104,7 @@ export const configCenterRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // Get specific key
-  app.get<{ Params: { key: string } }>('/:key', async (req, reply) => {
+  app.get<{ Params: { key: string }; Querystring: { reveal?: string } }>('/:key', async (req, reply) => {
     const { key } = req.params;
     const def = req.kernel.configCenter.getDefinition(key);
     const row = await app.db.query.configEntries.findFirst({
@@ -121,7 +121,7 @@ export const configCenterRoutes: FastifyPluginAsync = async (app) => {
     let value: unknown;
 
     if (isSecret) {
-      if (req.user!.role === 'admin') {
+      if (req.user!.role === 'admin' && req.query.reveal === 'true') {
         value = await req.kernel.configCenter.getSecret(key);
       } else {
         value = '••••••••';

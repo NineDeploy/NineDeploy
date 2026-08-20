@@ -5,7 +5,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { createTunnel } from '@ninedeploy/schemas';
 import { startTunnel, stopTunnel } from '../engine/tunnel.js';
 import { encrypt } from '../lib/crypto.js';
-import { badRequest, notFound } from '../lib/errors.js';
+import { badRequest, notFound, parseId } from '../lib/errors.js';
 import { slugify } from '../lib/slug.js';
 
 function serialize(t: Tunnel) {
@@ -50,7 +50,7 @@ export const tunnelRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.delete('/:id', async (req) => {
-    const id = Number((req.params as { id: string }).id);
+    const id = parseId((req.params as { id: string }).id);
     const t = await app.db.query.tunnels.findFirst({ where: eq(tunnels.id, id) });
     if (!t) throw notFound('Tunnel not found');
     await stopTunnel(t);

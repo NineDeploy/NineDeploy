@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { deployLogsWsUrl } from './api.js';
+import { deployLogsWsUrl, websocketAuthProtocols } from './api.js';
 
 /** Stream a deployment's logs over WebSocket (backlog + live lines). */
 export function useDeployLogs(serviceId: number | null, deploymentId: number | null) {
@@ -17,7 +17,7 @@ export function useDeployLogs(serviceId: number | null, deploymentId: number | n
     chunksRef.current = [];
     setLines('');
 
-    const ws = new WebSocket(deployLogsWsUrl(serviceId, deploymentId));
+    const ws = new WebSocket(deployLogsWsUrl(serviceId, deploymentId), websocketAuthProtocols());
     ws.onopen = () => setOpen(true);
     ws.onmessage = (event) => {
       if (activeId.current !== deploymentId) return;

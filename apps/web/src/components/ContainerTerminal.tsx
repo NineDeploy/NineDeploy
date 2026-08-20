@@ -4,7 +4,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { Maximize2, Minimize2, RefreshCw, Terminal as TerminalIcon, Trash2, X } from 'lucide-react';
-import { execWsUrl } from '../lib/api.js';
+import { execWsUrl, websocketAuthProtocols } from '../lib/api.js';
 import { Button, cn } from './ui.js';
 
 interface ContainerTerminalProps {
@@ -12,6 +12,8 @@ interface ContainerTerminalProps {
   serviceName?: string;
   onClose?: () => void;
 }
+
+const activeTerminals = new WeakMap<HTMLDivElement, Terminal>();
 
 export function ContainerTerminal({ serviceId, serviceName, onClose }: ContainerTerminalProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -30,6 +32,7 @@ export function ContainerTerminal({ serviceId, serviceName, onClose }: Container
       fontFamily: "'JetBrains Mono', ui-monospace, monospace",
       theme: { background: '#0a0a10', foreground: '#cbd5e1', cursor: '#6366f1' },
     });
+    activeTerminals.set(container, term);
 
     const fit = new FitAddon();
     term.loadAddon(fit);
@@ -38,7 +41,7 @@ export function ContainerTerminal({ serviceId, serviceName, onClose }: Container
 
     term.writeln('Connecting to container shell…');
 
-    const ws = new WebSocket(execWsUrl(serviceId));
+    const ws = new WebSocket(execWsUrl(serviceId), websocketAuthProtocols());
     ws.binaryType = 'arraybuffer';
 
     ws.onopen = () => {
@@ -86,11 +89,17 @@ export function ContainerTerminal({ serviceId, serviceName, onClose }: Container
       window.removeEventListener('keydown', onKeyDown);
       ws.close();
       term.dispose();
+      if (activeTerminals.get(container) === term) activeTerminals.delete(container);
     };
   }, [serviceId, sessionKey]);
 
   const handleReconnect = () => {
     setSessionKey((k) => k + 1);
+  };
+
+  const handleClear = () => {
+    const container = containerRef.current;
+    if (container) activeTerminals.get(container)?.clear();
   };
 
   const toggleFullscreen = () => {
@@ -146,7 +155,7 @@ export function ContainerTerminal({ serviceId, serviceName, onClose }: Container
           <Button
             size="sm"
             variant="ghost"
-            onClick={handleReconnect}
+            onClick={handleClear}
             title="Clear terminal output"
             className="h-7 px-2 text-xs text-slate-400 hover:text-slate-200"
           >

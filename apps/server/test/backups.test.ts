@@ -9,8 +9,11 @@ const engineMocks = vi.hoisted(() => ({
   backupDatabase: vi.fn(async () => undefined),
   databaseSize: vi.fn(async () => 1024),
   restoreDatabase: vi.fn(async () => undefined),
-  // Downloads decrypt the at-rest envelope into plaintext bytes.
-  readBackupBytes: vi.fn(() => Buffer.from('plain-dump-bytes')),
+  // Downloads decrypt the at-rest envelope as a stream.
+  createBackupReadStream: vi.fn(async () => {
+    const { Readable } = await import('node:stream');
+    return Readable.from(Buffer.from('plain-dump-bytes'));
+  }),
 }));
 vi.mock('../src/engine/database.js', () => engineMocks);
 
@@ -318,7 +321,7 @@ describe('backup routes', () => {
     expect(res.headers['content-disposition']).toContain('attachment; filename="db.dump"');
     // The user receives the PLAINTEXT dump, not the encrypted envelope.
     expect(res.body).toBe('plain-dump-bytes');
-    expect(engineMocks.readBackupBytes).toHaveBeenCalledWith(dumpFile);
+    expect(engineMocks.createBackupReadStream).toHaveBeenCalledWith(dumpFile);
   });
 
   it('returns 404 when downloading a missing backup', async () => {

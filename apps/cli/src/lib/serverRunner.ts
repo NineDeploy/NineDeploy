@@ -55,9 +55,9 @@ export async function isDockerAvailable(): Promise<boolean> {
 export async function isServerReachable(baseUrl: string, timeoutMs = 1500): Promise<boolean> {
   try {
     const cleanUrl = normalizeServerUrl(baseUrl);
-    const url = new URL('/api/v1/health', cleanUrl);
+    const url = new URL('/health', cleanUrl);
     const res = await fetch(url.toString(), { signal: AbortSignal.timeout(timeoutMs) }).catch(() => null);
-    return res !== null && (res.status === 200 || res.status === 404 || res.status === 401);
+    return res?.status === 200;
   } catch {
     return false;
   }

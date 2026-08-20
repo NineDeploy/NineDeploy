@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 
 export type Provider = 'github' | 'gitlab' | 'gitea';
 
@@ -14,9 +14,11 @@ export interface PushEvent {
 
 /** Constant-time comparison of two hex/base64 strings. */
 function safeEqual(a: string, b: string): boolean {
-  const ab = Buffer.from(a);
-  const bb = Buffer.from(b);
-  if (ab.length !== bb.length) return false;
+  // Hash both sides first so even raw-token providers (GitLab) always compare
+  // equal-length buffers. Returning early on length exposed the secret's
+  // length through a measurable timing difference.
+  const ab = createHash('sha256').update(a).digest();
+  const bb = createHash('sha256').update(b).digest();
   return timingSafeEqual(ab, bb);
 }
 

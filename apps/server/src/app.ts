@@ -35,8 +35,8 @@ function formatZodError(error: ZodError) {
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
     logger: {
-      // Never persist query strings: WebSocket auth passes the bearer token in
-      // ?token=…, and the default req serializer logs the full URL at info level.
+      // Never persist query strings. Current WebSocket clients use an auth
+      // subprotocol header, while older clients may still send ?token=.
       serializers: {
         req(req: { method?: string; url: string; remoteAddress?: string; hostname?: string }) {
           const url = req.url.split('?')[0]!;

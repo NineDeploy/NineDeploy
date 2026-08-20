@@ -21,6 +21,7 @@ import {
   refreshAccessToken,
   setSessionTokens,
   setToken,
+  websocketAuthProtocols,
 } from '../src/lib/api.js';
 
 const TOKEN_KEY = 'ninedeploy.token';
@@ -360,23 +361,21 @@ describe('authedFetch', () => {
 describe('deployLogsWsUrl', () => {
   beforeEach(() => sessionStorage.clear());
 
-  it('builds a ws:// URL on an http origin, embedding the token', () => {
+  it('builds a credential-free ws:// URL and puts the token in a subprotocol', () => {
     sessionStorage.setItem(TOKEN_KEY, 'sec');
-    expect(deployLogsWsUrl(7, 42)).toBe(
-      'ws://localhost/v1/services/7/deploys/42/logs?token=sec',
-    );
+    expect(deployLogsWsUrl(7, 42)).toBe('ws://localhost/v1/services/7/deploys/42/logs');
+    expect(websocketAuthProtocols()).toEqual(['ninedeploy.bearer.sec']);
   });
 
   it('uses an empty token when none is stored', () => {
-    expect(deployLogsWsUrl(7, 42)).toBe(
-      'ws://localhost/v1/services/7/deploys/42/logs?token=',
-    );
+    expect(deployLogsWsUrl(7, 42)).toBe('ws://localhost/v1/services/7/deploys/42/logs');
+    expect(websocketAuthProtocols()).toEqual(['ninedeploy']);
   });
 
   it('builds a wss:// URL on an https origin', () => {
     withWindowLocation({ protocol: 'https:', host: 'panel.example.com' }, () => {
       expect(deployLogsWsUrl(3, 9)).toBe(
-        'wss://panel.example.com/v1/services/3/deploys/9/logs?token=',
+        'wss://panel.example.com/v1/services/3/deploys/9/logs',
       );
     });
   });

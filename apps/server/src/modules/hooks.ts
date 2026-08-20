@@ -1,7 +1,7 @@
 import { and, desc, eq, inArray } from 'drizzle-orm';
 import { buildConfigs, deployments, domains, envVars, services, webhooks } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
-import { webhookCreate } from '@ninedeploy/schemas';
+import { gitBranch, gitRepoUrl, webhookCreate } from '@ninedeploy/schemas';
 import { config } from '../config.js';
 import { decrypt, encrypt, randomToken } from '../lib/crypto.js';
 import { matchesAny, parseWatchPaths } from '../lib/glob.js';
@@ -22,6 +22,14 @@ async function stopRuntimeFor(service: { runtimeId: string | null; type: string 
   } catch {
     /* swallow runtime stop error */
   }
+}
+
+/** Compare repository identity independently of HTTPS/SSH transport and .git suffix. */
+function repositoryIdentity(raw: string): string | null {
+  const parsed = gitRepoUrl.safeParse(raw);
+  if (!parsed.success) return null;
+  const url = new URL(parsed.data);
+  return `${url.hostname.toLowerCase()}/${url.pathname.replace(/^\/+|\/+$/g, '').replace(/\.git$/i, '').toLowerCase()}`;
 }
 
 /** Public webhook receiver — auto-deploys on verified provider push & PR events. */
@@ -73,6 +81,22 @@ export const hookReceiveRoutes: FastifyPluginAsync = async (app) => {
         return { ok: true, action: 'preview_destroyed', prNumber: pr.prNumber, serviceId: existingPreview.id };
       }
 
+      // A verified webhook only proves that the provider sent the event; it
+      // does not make a fork's head repository trusted. Preview builds inherit
+      // the parent's service-scoped environment, so only same-repository heads
+      // may reach the build queue. Validate the ref before persisting it too,
+      // because git treats leading-dash refs as command options.
+      const branch = gitBranch.safeParse(pr.branch);
+      const parentRepository = parent.repoUrl ? repositoryIdentity(parent.repoUrl) : null;
+      const previewRepoUrl = pr.repoUrl ?? parent.repoUrl;
+      const previewRepository = previewRepoUrl ? repositoryIdentity(previewRepoUrl) : null;
+      if (!branch.success || !parentRepository || !previewRepository) {
+        return { ok: 'ignored', reason: 'invalid_preview_source' };
+      }
+      if (previewRepository !== parentRepository) {
+        return { ok: 'skipped', reason: 'external_pr_repository' };
+      }
+
       // Opened / Synchronize / Reopened
       let targetService = existingPreview;
       if (!targetService) {
@@ -97,8 +121,8 @@ export const hookReceiveRoutes: FastifyPluginAsync = async (app) => {
             slug: previewSlug,
             type: parent.type,
             status: 'idle',
-            repoUrl: pr.repoUrl || parent.repoUrl,
-            branch: pr.branch,
+            repoUrl: previewRepoUrl,
+            branch: branch.data,
             commitSha: pr.sha,
             sourceId: parent.sourceId,
             image: parent.image,
@@ -164,7 +188,7 @@ export const hookReceiveRoutes: FastifyPluginAsync = async (app) => {
           });
         }
       } else {
-        await app.db.update(services).set({ branch: pr.branch, commitSha: pr.sha }).where(eq(services.id, targetService.id));
+        await app.db.update(services).set({ branch: branch.data, commitSha: pr.sha }).where(eq(services.id, targetService.id));
       }
 
       if (!targetService) return { ok: 'error', reason: 'failed_to_create_preview' };

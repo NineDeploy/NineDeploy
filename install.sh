@@ -469,8 +469,11 @@ if [ ! -f ".env" ]; then
   MASTER_KEY=$(openssl rand -hex 32 2>/dev/null || node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")
   sed -i.bak "s|^NINEDEPLOY_MASTER_KEY=.*|NINEDEPLOY_MASTER_KEY=${MASTER_KEY}|" .env && rm -f .env.bak
 
+  chmod 600 .env
+
   ok ".env created with generated production secrets"
 else
+  chmod 600 .env
   ok ".env already exists"
 fi
 

@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, notInArray } from 'drizzle-orm';
+import { and, asc, eq, inArray, notInArray, sql } from 'drizzle-orm';
 import { deployments, services } from '@ninedeploy/db';
 import fp from 'fastify-plugin';
 import { config } from '../config.js';
@@ -113,7 +113,18 @@ export default fp(
           const claimed = (await fastify.db
             .update(deployments)
             .set({ status: 'building' })
-            .where(and(eq(deployments.id, queued.id), eq(deployments.status, 'queued')))) as
+            .where(and(
+              eq(deployments.id, queued.id),
+              eq(deployments.status, 'queued'),
+              // Selection and update are separate statements. Re-check the
+              // service invariant inside the atomic write so two slots that
+              // selected different queued rows for one service cannot both win.
+              sql`NOT EXISTS (
+                SELECT 1 FROM deployments AS active
+                WHERE active.service_id = ${deployments.serviceId}
+                  AND active.status = 'building'
+              )`,
+            ))) as
             | { rowsAffected?: number }
             | undefined;
 

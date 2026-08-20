@@ -12,8 +12,8 @@ vi.mock('@modelcontextprotocol/sdk/server/stdio.js', () => ({
 }));
 
 /** End-to-end over an in-memory MCP transport with a fake SDK client. */
-async function connected(client: NineDeployClient) {
-  const server = buildServer(client);
+async function connected(client: NineDeployClient, options: { readOnly?: boolean } = {}) {
+  const server = buildServer(client, () => undefined, options);
   const mcp = new Client({ name: 'test', version: '0' });
   const [cs, ss] = InMemoryTransport.createLinkedPair();
   await Promise.all([mcp.connect(cs), server.connect(ss)]);
@@ -49,6 +49,19 @@ describe('buildServer', () => {
     const mcp = await connected(c);
     const res = await mcp.callTool({ name: 'list_services', arguments: {} });
     expect(res.content).toEqual([{ type: 'text', text: JSON.stringify([{ id: 1, name: 'api', status: 'running' }], null, 2) }]);
+  });
+
+  it('uses a fail-closed allowlist in read-only mode', async () => {
+    const mcp = await connected(fake(), { readOnly: true });
+    const names = (await mcp.listTools()).tools.map((tool) => tool.name);
+    expect(names).toContain('list_services');
+    expect(names).not.toContain('inspect_container');
+    expect(names).not.toContain('get_container_compose');
+    expect(names).not.toContain('list_configs');
+    expect(names).not.toContain('deploy_service');
+    expect(names).not.toContain('set_config');
+    expect(names).not.toContain('system_autoprune');
+    expect(names).not.toContain('install_plugin');
   });
 
   it('rejects invalid arguments with isError', async () => {

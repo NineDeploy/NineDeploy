@@ -8,14 +8,23 @@ const DEPLOY_HEARTBEAT_MS = 20_000;
 
 const connect = () => new Promise<void>((res, rej) => pm2.connect((err) => (err ? rej(err) : res())));
 
-/** Run `fn` against the PM2 daemon, always disconnecting afterwards. */
+// The pm2 package owns one process-global RPC connection. Parallel callers
+// cannot independently connect/disconnect it: one caller's disconnect closes
+// another caller's in-flight request. Serialize complete sessions instead.
+let pm2SessionTail: Promise<void> = Promise.resolve();
+
+/** Run `fn` against the PM2 daemon in an exclusive connection session. */
 const withPm2 = async <T>(fn: () => Promise<T>): Promise<T> => {
-  await connect();
-  try {
-    return await fn();
-  } finally {
-    pm2.disconnect();
-  }
+  const session = pm2SessionTail.then(async () => {
+    await connect();
+    try {
+      return await fn();
+    } finally {
+      pm2.disconnect();
+    }
+  });
+  pm2SessionTail = session.then(() => undefined, () => undefined);
+  return session;
 };
 
 /**

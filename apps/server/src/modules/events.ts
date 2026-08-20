@@ -1,11 +1,12 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { canReceiveEvent, eventBus } from '../lib/events.js';
 import { resolveUser } from '../lib/auth.js';
+import { websocketBearerToken } from '../lib/websocketAuth.js';
 
 /** Real-time event stream over WebSocket. Mounted at root level. */
 export const eventRoutes: FastifyPluginAsync = async (app) => {
   app.get('/v1/events', { websocket: true }, async (socket, req) => {
-    const token = (req.query as { token?: string }).token;
+    const token = websocketBearerToken(req.headers, req.query as { token?: string });
     const user = token ? await resolveUser(app.db, token) : null;
     if (!user) {
       socket.close(1008, 'unauthorized');

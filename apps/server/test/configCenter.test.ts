@@ -208,14 +208,22 @@ describe('Config Center HTTP API', () => {
     expect(getCustomSecMemberRes.statusCode).toBe(200);
     expect(getCustomSecMemberRes.json().value).toBe('••••••••');
 
-    // Get secret as admin (decrypted)
+    // Get secret as admin stays masked unless reveal=true is explicit.
     const getSecretAdminRes = await app.inject({
       method: 'GET',
       url: '/plugin:smtp:password',
       headers: asUser({ role: 'admin' }),
     });
     expect(getSecretAdminRes.statusCode).toBe(200);
-    expect(getSecretAdminRes.json().value).toBe('super-secret-pass');
+    expect(getSecretAdminRes.json().value).toBe('••••••••');
+
+    const getSecretAdminRevealRes = await app.inject({
+      method: 'GET',
+      url: '/plugin:smtp:password?reveal=true',
+      headers: asUser({ role: 'admin' }),
+    });
+    expect(getSecretAdminRevealRes.statusCode).toBe(200);
+    expect(getSecretAdminRevealRes.json().value).toBe('super-secret-pass');
 
     // 8. 404 on missing key
     const missingRes = await app.inject({

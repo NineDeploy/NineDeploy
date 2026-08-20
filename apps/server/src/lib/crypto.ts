@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, randomBytes, type CipherGCM, type DecipherGCM } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { hash as argonHash, verify as argonVerify } from '@node-rs/argon2';
@@ -84,6 +84,7 @@ function getKeyRing(): KeyRing {
 
 /** Match a leading `v<digits>:` version prefix on an envelope. */
 const VERSION_RE = /^v(\d+):/;
+const BACKUP_HEADER_RE = /^NDBK1:v(\d+):([A-Za-z0-9+/=]+)\n$/;
 
 /** Encrypt plaintext → "v<version>:iv:tag:ciphertext" (all base64). */
 export function encrypt(plaintext: string): string {
@@ -116,6 +117,29 @@ export function decrypt(payload: string): string {
   const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(ivB, 'base64'));
   decipher.setAuthTag(Buffer.from(tagB, 'base64'));
   return Buffer.concat([decipher.update(Buffer.from(encB, 'base64')), decipher.final()]).toString('utf8');
+}
+
+/** Create a streaming AES-GCM backup cipher and its small versioned header. */
+export function createBackupCipher(): { cipher: CipherGCM; header: Buffer } {
+  const ring = getKeyRing();
+  const iv = randomBytes(12);
+  return {
+    cipher: createCipheriv('aes-256-gcm', ring.activeKey, iv),
+    header: Buffer.from(`NDBK1:v${ring.activeVersion}:${iv.toString('base64')}\n`),
+  };
+}
+
+/** Create the matching streaming decipher after the trailing GCM tag is read. */
+export function createBackupDecipher(header: string, authTag: Buffer): DecipherGCM {
+  const match = BACKUP_HEADER_RE.exec(header);
+  if (!match) throw new Error('Invalid NineDeploy backup header');
+  const ring = getKeyRing();
+  const version = Number(match[1]);
+  const key = ring.keys.get(version);
+  if (!key) throw new Error(`Unknown master key version ${version} — is NINEDEPLOY_MASTER_KEYS missing this version?`);
+  const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(match[2]!, 'base64'));
+  decipher.setAuthTag(authTag);
+  return decipher;
 }
 
 /**

@@ -2,7 +2,11 @@ import { act, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FakeWebSocket } from './web-utils.js';
 
-const apiMock = vi.hoisted(() => ({ getToken: vi.fn(() => 'tok-1') }));
+const apiMock = vi.hoisted(() => ({
+  getToken: vi.fn(() => 'tok-1'),
+  execWsUrl: vi.fn((id: number) => `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/v1/services/${id}/exec`),
+  websocketAuthProtocols: vi.fn(() => ['ninedeploy.bearer.tok-1']),
+}));
 
 vi.mock('../src/lib/api.js', () => apiMock);
 
@@ -122,7 +126,8 @@ describe('ContainerTerminal', () => {
 
     expect(FakeWebSocket.instances).toHaveLength(1);
     const ws = FakeWebSocket.instances[0];
-    expect(ws?.url).toBe('ws://localhost/v1/services/1/exec?token=tok-1');
+    expect(ws?.url).toBe('ws://localhost/v1/services/1/exec');
+    expect(ws?.protocols).toEqual(['ninedeploy.bearer.tok-1']);
     expect(ws?.binaryType).toBe('arraybuffer');
 
     act(() => ws?.open());
@@ -142,7 +147,7 @@ describe('ContainerTerminal', () => {
     render(<ContainerTerminal serviceId={1} onClose={vi.fn()} />);
     runEffect();
     const ws = FakeWebSocket.instances[0];
-    expect(ws?.url).toBe('wss://panel.example.com/v1/services/1/exec?token=tok-1');
+    expect(ws?.url).toBe('wss://panel.example.com/v1/services/1/exec');
   });
 
   it('uses an empty token when none is stored', () => {
@@ -150,7 +155,7 @@ describe('ContainerTerminal', () => {
     render(<ContainerTerminal serviceId={1} onClose={vi.fn()} />);
     runEffect();
     const ws = FakeWebSocket.instances[0];
-    expect(ws?.url).toBe('ws://localhost/v1/services/1/exec?token=');
+    expect(ws?.url).toBe('ws://localhost/v1/services/1/exec');
   });
 
   it('writes binary and string messages to the terminal', () => {
@@ -220,5 +225,16 @@ describe('ContainerTerminal', () => {
     runEffect();
     act(() => screen.getByText('close').click());
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it('clears the existing terminal without reconnecting the shell', () => {
+    render(<ContainerTerminal serviceId={1} onClose={vi.fn()} />);
+    runEffect();
+    const term = xtermMock.terminals[0] as { clear: ReturnType<typeof vi.fn> };
+    term.clear.mockClear();
+    const socketCount = FakeWebSocket.instances.length;
+    act(() => screen.getByText('Clear').click());
+    expect(term.clear).toHaveBeenCalledOnce();
+    expect(FakeWebSocket.instances).toHaveLength(socketCount);
   });
 });

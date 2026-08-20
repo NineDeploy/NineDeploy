@@ -1,8 +1,11 @@
-import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { createReadStream, createWriteStream, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { open } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { Readable, Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import type { Database } from '@ninedeploy/db';
-import { decrypt, encrypt } from '../lib/crypto.js';
+import { createBackupCipher, createBackupDecipher, decrypt } from '../lib/crypto.js';
 import { ensureDockerImage, pullDockerImage } from '../lib/dockerPull.js';
 import { capture, run } from '../lib/exec.js';
 import { NETWORK } from './proxy.js';
@@ -15,6 +18,8 @@ const RESTORE_TMP = '/tmp/ninedeploy-restore';
 /** Matches a versioned secret envelope ("v<ver>:…"). Backups written since the
  *  encryption change carry this prefix; anything else is a legacy plaintext dump. */
 const ENVELOPE_RE = /^v\d+:/;
+const STREAM_HEADER_PREFIX = 'NDBK1:';
+const GCM_TAG_BYTES = 16;
 
 /**
  * Encrypt a backup file in place (master-key envelope over base64-encoded dump
@@ -22,9 +27,81 @@ const ENVELOPE_RE = /^v\d+:/;
  * they contain to anyone who steals the data directory, defeating the at-rest
  * encryption of the credentials themselves.
  */
-function encryptFileInPlace(file: string): void {
-  const plain = readFileSync(file).toString('base64');
-  writeFileSync(file, encrypt(plain), { mode: 0o600 });
+async function encryptFileInPlace(file: string): Promise<void> {
+  const tmp = `${file}.${process.pid}.${Date.now()}.enc`;
+  const { cipher, header } = createBackupCipher();
+  const output = createWriteStream(tmp, { mode: 0o600 });
+  let headerWritten = false;
+  const envelope = new Transform({
+    transform(chunk, _encoding, callback) {
+      if (!headerWritten) {
+        this.push(header);
+        headerWritten = true;
+      }
+      callback(null, chunk);
+    },
+    flush(callback) {
+      if (!headerWritten) this.push(header);
+      this.push(cipher.getAuthTag());
+      callback();
+    },
+  });
+  try {
+    await pipeline(createReadStream(file), cipher, envelope, output);
+    renameSync(tmp, file);
+  } catch (error) {
+    output.destroy();
+    try { unlinkSync(tmp); } catch { /* absent */ }
+    throw error;
+  }
+}
+
+interface StreamBackupLayout {
+  dataStart: number;
+  dataEnd: number;
+  header: string;
+  authTag: Buffer;
+}
+
+async function streamBackupLayout(file: string): Promise<StreamBackupLayout | null> {
+  const handle = await open(file, 'r');
+  try {
+    const stat = await handle.stat();
+    const prefix = Buffer.alloc(Math.min(128, stat.size));
+    await handle.read(prefix, 0, prefix.length, 0);
+    const newline = prefix.indexOf(0x0a);
+    if (newline < 0) return null;
+    const header = prefix.subarray(0, newline + 1).toString('utf8');
+    if (!header.startsWith(STREAM_HEADER_PREFIX) || stat.size < newline + 1 + GCM_TAG_BYTES) return null;
+    const authTag = Buffer.alloc(GCM_TAG_BYTES);
+    await handle.read(authTag, 0, GCM_TAG_BYTES, stat.size - GCM_TAG_BYTES);
+    return { dataStart: newline + 1, dataEnd: stat.size - GCM_TAG_BYTES - 1, header, authTag };
+  } finally {
+    await handle.close();
+  }
+}
+
+async function fileHead(file: string, bytes = 32): Promise<string> {
+  const handle = await open(file, 'r');
+  try {
+    const head = Buffer.alloc(bytes);
+    const { bytesRead } = await handle.read(head, 0, bytes, 0);
+    return head.subarray(0, bytesRead).toString('utf8');
+  } finally {
+    await handle.close();
+  }
+}
+
+/** Plaintext backup stream for downloads; current backups never enter the heap. */
+export async function createBackupReadStream(file: string): Promise<Readable> {
+  const layout = await streamBackupLayout(file);
+  if (layout) {
+    return createReadStream(file, { start: layout.dataStart, end: layout.dataEnd })
+      .pipe(createBackupDecipher(layout.header, layout.authTag));
+  }
+  const head = await fileHead(file);
+  if (ENVELOPE_RE.test(head)) return Readable.from(readBackupBytes(file));
+  return createReadStream(file);
 }
 
 /** Read a backup file and return its PLAINTEXT bytes (envelope-aware). */
@@ -45,8 +122,18 @@ export function readBackupBytes(file: string): Buffer {
  * sibling temp file; legacy plaintext files are used as-is. Returns the path to
  * feed to `docker cp` and a cleanup function.
  */
-function stageForRestore(file: string): { path: string; cleanup: () => void } {
-  const head = readFileSync(file, 'utf8').slice(0, 32);
+async function stageForRestore(file: string): Promise<{ path: string; cleanup: () => void }> {
+  const layout = await streamBackupLayout(file);
+  if (layout) {
+    const dec = `${file}.${process.pid}.${Date.now()}.dec`;
+    await pipeline(
+      createReadStream(file, { start: layout.dataStart, end: layout.dataEnd }),
+      createBackupDecipher(layout.header, layout.authTag),
+      createWriteStream(dec, { mode: 0o600 }),
+    );
+    return { path: dec, cleanup: () => { try { unlinkSync(dec); } catch { /* gone */ } } };
+  }
+  const head = await fileHead(file);
   if (!ENVELOPE_RE.test(head)) return { path: file, cleanup: () => undefined };
   const dec = `${file}.dec`;
   writeFileSync(dec, readBackupBytes(file), { mode: 0o600 });
@@ -410,7 +497,7 @@ export async function backupDatabase(d: Database, file: string, log: (line: stri
   }
   // Everything on disk is encrypted with the master key: a stolen data dir
   // must not leak the (otherwise encrypted-at-rest) DB credentials via dumps.
-  encryptFileInPlace(file);
+  await encryptFileInPlace(file);
 }
 
 /**
@@ -437,7 +524,7 @@ export async function restoreDatabase(d: Database, file: string, log: (line: str
     throw new Error(`restore not supported for ${d.engine}`);
   }
 
-  const staged = stageForRestore(file);
+  const staged = await stageForRestore(file);
   try {
     if (d.engine === 'redis' || d.engine === 'valkey') {
       await run('docker', ['cp', staged.path, `${cn}:/data/dump.rdb`], {}, log);

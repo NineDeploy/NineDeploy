@@ -156,16 +156,20 @@ function getWsBase(): { proto: string; host: string } {
   };
 }
 
-/** Build a WebSocket URL for streaming a deployment's logs (token via query). */
-export function deployLogsWsUrl(serviceId: number, deploymentId: number): string {
-  const { proto, host } = getWsBase();
-  const token = getToken() ?? '';
-  return `${proto}://${host}/v1/services/${serviceId}/deploys/${deploymentId}/logs?token=${token}`;
+/** Browser-safe WebSocket auth: bearer token travels in a header, not the URL. */
+export function websocketAuthProtocols(): string[] {
+  const token = getToken();
+  return token ? [`ninedeploy.bearer.${token}`] : ['ninedeploy'];
 }
 
-/** Build a WebSocket URL for container interactive exec terminal (token via query). */
+/** Build a WebSocket URL for streaming a deployment's logs. */
+export function deployLogsWsUrl(serviceId: number, deploymentId: number): string {
+  const { proto, host } = getWsBase();
+  return `${proto}://${host}/v1/services/${serviceId}/deploys/${deploymentId}/logs`;
+}
+
+/** Build a WebSocket URL for container interactive exec terminal. */
 export function execWsUrl(serviceId: number): string {
   const { proto, host } = getWsBase();
-  const token = getToken() ?? '';
-  return `${proto}://${host}/v1/services/${serviceId}/exec?token=${token}`;
+  return `${proto}://${host}/v1/services/${serviceId}/exec`;
 }

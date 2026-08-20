@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { domains, services, type DB } from '@ninedeploy/db';
@@ -31,7 +31,7 @@ function writeAtomic(file: string, content: string): void {
   // Unique temp name per write: both writes are fully synchronous (no yield
   // point in Node), but a second process — or a stale `.tmp` from a crashed
   // run — must never collide with this write.
-  const tmp = `${file}.${process.pid}.tmp`;
+  const tmp = `${file}.${process.pid}.${randomUUID()}.tmp`;
   writeFileSync(tmp, content);
   renameSync(tmp, file);
 }
@@ -266,7 +266,7 @@ async function hasConfigFingerprint(container: string, fingerprint: string): Pro
 }
 
 /** Ensure the Traefik reverse-proxy container is running on the shared network (idempotent). */
-export async function ensureTraefik(
+async function ensureTraefikUnlocked(
   log: (line: string) => void,
   acmeEmail: string | null = config.acmeEmail ?? null,
   dns: DnsConfig | null = null,
@@ -366,6 +366,21 @@ export async function ensureTraefik(
     log('domain routing will be unavailable until traefik can bind :80/:443');
     throw err instanceof Error ? err : new Error(String(err));
   }
+}
+
+// Container recreation is a multi-step read/remove/run sequence. Keep the
+// entire sequence exclusive so concurrent startup/admin refreshes cannot both
+// remove and recreate the singleton container.
+let traefikEnsureTail: Promise<void> = Promise.resolve();
+
+export function ensureTraefik(
+  log: (line: string) => void,
+  acmeEmail: string | null = config.acmeEmail ?? null,
+  dns: DnsConfig | null = null,
+): Promise<void> {
+  const runEnsure = traefikEnsureTail.then(() => ensureTraefikUnlocked(log, acmeEmail, dns));
+  traefikEnsureTail = runEnsure.then(() => undefined, () => undefined);
+  return runEnsure;
 }
 
 /** Fingerprint every static input that requires a Traefik container recreate. */

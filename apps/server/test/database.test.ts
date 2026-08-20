@@ -5,6 +5,7 @@ import path from 'node:path';
 import {
   backupDatabase,
   connectionString,
+  createBackupReadStream,
   databaseLogs,
   readBackupBytes,
   databaseSize,
@@ -33,7 +34,19 @@ const h = vi.hoisted(() => {
   return { decrypt, encrypt, run, capture, pullDockerImage, ensureDockerImage, config };
 });
 
-vi.mock('../src/lib/crypto.js', () => ({ decrypt: h.decrypt, encrypt: h.encrypt }));
+vi.mock('../src/lib/crypto.js', async () => {
+  const { PassThrough } = await import('node:stream');
+  return {
+    decrypt: h.decrypt,
+    encrypt: h.encrypt,
+    createBackupCipher: () => {
+      const cipher = new PassThrough() as PassThrough & { getAuthTag: () => Buffer };
+      cipher.getAuthTag = () => Buffer.alloc(16, 7);
+      return { cipher, header: Buffer.from('NDBK1:v0:AAAAAAAAAAAAAAAA\n') };
+    },
+    createBackupDecipher: () => new PassThrough(),
+  };
+});
 vi.mock('../src/lib/exec.js', () => ({ run: h.run, capture: h.capture, sleep: vi.fn() }));
 vi.mock('../src/lib/dockerPull.js', () => ({
   pullDockerImage: h.pullDockerImage,
@@ -444,7 +457,7 @@ describe('backupDatabase', () => {
     expect(h.run).toHaveBeenCalledWith('docker', ['cp', 'c:/tmp/ninedeploy-dump', file], {}, log);
     expect(h.run).toHaveBeenCalledWith('docker', ['exec', 'c', 'rm', '-f', '/tmp/ninedeploy-dump'], {}, expect.any(Function));
     expect(h.capture).not.toHaveBeenCalled();
-    expect(readFileSync(file, 'utf8')).toBe(`v0:${Buffer.from('').toString('base64')}`);
+    expect(readFileSync(file).subarray(0, 6).toString()).toBe('NDBK1:');
   });
 
   it('backs up mysql with the decrypted password via result-file + docker cp', async () => {
@@ -458,7 +471,7 @@ describe('backupDatabase', () => {
     expect(h.run).toHaveBeenCalledWith('docker', ['cp', 'c:/tmp/ninedeploy-dump', file], {}, log);
     expect(h.decrypt).toHaveBeenCalledWith('enc');
     expect(h.capture).not.toHaveBeenCalled();
-    expect(readFileSync(file, 'utf8')).toBe(`v0:${Buffer.from('').toString('base64')}`);
+    expect(readFileSync(file).subarray(0, 6).toString()).toBe('NDBK1:');
   });
 
   it('backs up redis via authed redis-cli SAVE + docker cp, then encrypts', async () => {
@@ -469,7 +482,7 @@ describe('backupDatabase', () => {
     expect(h.run).toHaveBeenCalledWith('docker', ['exec', 'c', 'redis-cli', '-a', 'pw:enc', '--no-auth-warning', 'SAVE'], {}, log);
     expect(h.run).toHaveBeenCalledWith('docker', ['cp', 'c:/data/dump.rdb', file], {}, log);
     expect(h.decrypt).toHaveBeenCalledWith('enc');
-    expect(readFileSync(file, 'utf8')).toBe(`v0:${Buffer.from('RDB-BYTES').toString('base64')}`);
+    expect(readFileSync(file).includes(Buffer.from('RDB-BYTES'))).toBe(true);
   });
 
   it('backs up mongo via a static container temp file + docker cp, then encrypts', async () => {
@@ -484,7 +497,7 @@ describe('backupDatabase', () => {
     ], {}, log);
     expect(h.run).toHaveBeenCalledWith('docker', ['cp', 'c:/tmp/ninedeploy-dump', file], {}, log);
     expect(h.run).toHaveBeenCalledWith('docker', ['exec', 'c', 'rm', '-f', '/tmp/ninedeploy-dump'], {}, expect.any(Function));
-    expect(readFileSync(file, 'utf8')).toBe(`v0:${Buffer.from('MONGO-BYTES').toString('base64')}`);
+    expect(readFileSync(file).includes(Buffer.from('MONGO-BYTES'))).toBe(true);
   });
 
   it('throws for databases that are not runnable', async () => {
@@ -514,6 +527,23 @@ describe('readBackupBytes', () => {
     // Legacy backups predate envelope encryption: the raw file bytes ARE the dump.
     writeFileSync(f, Buffer.from('legacy'));
     expect(readBackupBytes(f).toString()).toBe('legacy');
+  });
+});
+
+describe('createBackupReadStream', () => {
+  const streamTmp = mkdtempSync(path.join(os.tmpdir(), 'nd-stream-read-'));
+  afterAll(() => rmSync(streamTmp, { recursive: true, force: true }));
+
+  it('streams the plaintext payload from the current backup envelope', async () => {
+    const file = path.join(streamTmp, 'streamed.dump');
+    writeFileSync(file, Buffer.concat([
+      Buffer.from('NDBK1:v0:AAAAAAAAAAAAAAAA\nhello-stream'),
+      Buffer.alloc(16, 7),
+    ]));
+    const stream = await createBackupReadStream(file);
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream) chunks.push(Buffer.from(chunk));
+    expect(Buffer.concat(chunks).toString()).toBe('hello-stream');
   });
 });
 
@@ -565,7 +595,7 @@ describe('restoreDatabase', () => {
     ], {}, log);
     expect(h.run).toHaveBeenCalledWith('docker', ['cp', 'c:/tmp/ninedeploy-dump', file], {}, log);
     expect(h.capture).not.toHaveBeenCalled();
-    expect(readFileSync(file, 'utf8')).toBe(`v0:${Buffer.from('').toString('base64')}`);
+    expect(readFileSync(file).subarray(0, 6).toString()).toBe('NDBK1:');
   });
 
   it('restores mariadb via the mariadb client', async () => {

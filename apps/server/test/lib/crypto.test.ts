@@ -70,6 +70,18 @@ describe('encrypt/decrypt with an env master key', () => {
   it('decrypt rejects a malformed payload', () => {
     expect(() => crypto.decrypt('not-a-valid-payload')).toThrow();
   });
+
+  it('roundtrips backup bytes through the streaming AES-GCM primitives', async () => {
+    const { cipher, header } = crypto.createBackupCipher();
+    const encrypted: Buffer[] = [];
+    cipher.end(Buffer.from('large-backup-chunk'));
+    for await (const chunk of cipher) encrypted.push(Buffer.from(chunk));
+    const decipher = crypto.createBackupDecipher(header.toString(), cipher.getAuthTag());
+    const plain: Buffer[] = [];
+    decipher.end(Buffer.concat(encrypted));
+    for await (const chunk of decipher) plain.push(Buffer.from(chunk));
+    expect(Buffer.concat(plain).toString()).toBe('large-backup-chunk');
+  });
 });
 
 describe('master key resolution from the key file', () => {

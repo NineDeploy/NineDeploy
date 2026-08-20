@@ -133,7 +133,8 @@ Add NineDeploy to your Claude Desktop or Cursor configuration:
       "args": ["-y", "@ninedeploy/mcp"],
       "env": {
         "NINEDEPLOY_URL": "https://your-ninedeploy-instance.com",
-        "NINEDEPLOY_API_TOKEN": "nd_tok_xxxxxxxxxxxx"
+        "NINEDEPLOY_TOKEN": "nd_tok_xxxxxxxxxxxx",
+        "NINEDEPLOY_MCP_READONLY": "1"
       }
     }
   }

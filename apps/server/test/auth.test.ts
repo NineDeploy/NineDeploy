@@ -497,6 +497,16 @@ describe('auth routes', () => {
     ]);
   });
 
+  it('rejects invalid ids for user-owned auth resources', async () => {
+    const app = await buildTestApp();
+    await app.register(authRoutes);
+    for (const url of ['/passkey/nope', '/sessions/nope', '/tokens/nope']) {
+      const res = await app.inject({ method: 'DELETE', url, headers: asUser() });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error.code).toBe('invalid_id');
+    }
+  });
+
   it('deletes an API token', async () => {
     const app = await buildTestApp({ db: createFakeDb() });
     await app.register(authRoutes);

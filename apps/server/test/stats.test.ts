@@ -53,12 +53,31 @@ describe('stats routes', () => {
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ host: null, containers: [] });
   });
+
+  it('limits live container stats to resources visible to a member', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        select: {
+          services: [
+            svcRow({ id: 1, ownerUserId: 7, runtimeId: 'c1', name: 'mine' }),
+            svcRow({ id: 2, ownerUserId: 9, runtimeId: 'c2', name: 'theirs' }),
+          ],
+          databases: [],
+        },
+      }),
+      stats: { containers, host: { cpuCores: 8 } },
+    });
+    await app.register(statsRoutes);
+    const res = await app.inject({ method: 'GET', url: '/', headers: asUser({ id: 7, role: 'member' }) });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().containers.map((entry: { refId: number }) => entry.refId)).toEqual([1]);
+  });
 });
 
 describe('metric routes', () => {
   it('returns cpu points by default (storage pct×100 → display %)', async () => {
     const app = await buildTestApp({
-      db: createFakeDb({ findMany: { metrics: [metricRow({ value: 325, ts: new Date('2026-01-01T00:01:00Z') })] } }),
+      db: createFakeDb({ findMany: { metrics: [metricRow({ value: 325, ts: new Date('2026-01-01T00:01:00Z') })] }, findFirst: { services: svcRow({ id: 1 }) } }),
     });
     await app.register(metricRoutes);
     const res = await app.inject({ method: 'GET', url: '/1/metrics', headers: asUser() });
@@ -68,7 +87,7 @@ describe('metric routes', () => {
 
   it('returns memory points when requested', async () => {
     const app = await buildTestApp({
-      db: createFakeDb({ findMany: { metrics: [metricRow({ kind: 'memory', value: 42 * 1024 * 1024 })] } }),
+      db: createFakeDb({ findMany: { metrics: [metricRow({ kind: 'memory', value: 42 * 1024 * 1024 })] }, findFirst: { services: svcRow({ id: 1 }) } }),
     });
     await app.register(metricRoutes);
     const res = await app.inject({ method: 'GET', url: '/1/metrics?kind=memory&minutes=10', headers: asUser() });
@@ -78,7 +97,7 @@ describe('metric routes', () => {
   });
 
   it('clamps minutes to the allowed range', async () => {
-    const app = await buildTestApp({ db: createFakeDb({ findMany: { metrics: [] } }) });
+    const app = await buildTestApp({ db: createFakeDb({ findMany: { metrics: [] }, findFirst: { services: svcRow({ id: 1 }) } }) });
     await app.register(metricRoutes);
     const res = await app.inject({ method: 'GET', url: '/1/metrics?minutes=99999', headers: asUser() });
     expect(res.statusCode).toBe(200);
@@ -86,7 +105,7 @@ describe('metric routes', () => {
   });
 
   it('falls back to 60 minutes for invalid values', async () => {
-    const app = await buildTestApp({ db: createFakeDb({ findMany: { metrics: [] } }) });
+    const app = await buildTestApp({ db: createFakeDb({ findMany: { metrics: [] }, findFirst: { services: svcRow({ id: 1 }) } }) });
     await app.register(metricRoutes);
     const res = await app.inject({ method: 'GET', url: '/1/metrics?minutes=0', headers: asUser() });
     expect(res.statusCode).toBe(200);
@@ -110,5 +129,14 @@ describe('metric routes', () => {
     const resMem = await app.inject({ method: 'GET', url: '/1/metrics?kind=memory', headers: asUser() });
     expect(resMem.statusCode).toBe(200);
     expect(resMem.json().points[0].value).toBe(120);
+  });
+
+  it('returns 404 for another members service metrics', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({ findFirst: { services: svcRow({ id: 1, ownerUserId: 9 }) } }),
+    });
+    await app.register(metricRoutes);
+    const res = await app.inject({ method: 'GET', url: '/1/metrics', headers: asUser({ id: 7, role: 'member' }) });
+    expect(res.statusCode).toBe(404);
   });
 });

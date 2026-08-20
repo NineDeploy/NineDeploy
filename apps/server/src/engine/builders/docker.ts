@@ -10,6 +10,7 @@ import { buildProbeUrl, safeProbePath } from '../../lib/probeUrl.js';
 
 const swallow = () => {};
 const PROBE_IMAGE = 'busybox:1.36';
+const PROBE_CONTAINER = 'ninedeploy-prober';
 const DEPLOY_HEARTBEAT_MS = 20_000;
 const DEFAULT_NIXPACKS_PORT = 3000;
 
@@ -24,17 +25,51 @@ const validPort = (raw: string | undefined): number | null => {
   return port >= 1 && port <= 65535 ? port : null;
 };
 
+let probeContainerReady = false;
+let probeContainerInit: Promise<void> | null = null;
+
+/** Keep one tiny network probe container instead of creating one per retry. */
+async function ensureProbeContainer(log: (line: string) => void): Promise<void> {
+  if (probeContainerReady) return;
+  if (probeContainerInit) return probeContainerInit;
+  probeContainerInit = (async () => {
+    const state = await capture('docker', [
+      'inspect', PROBE_CONTAINER,
+      '--format', '{{.State.Running}}|{{json .NetworkSettings.Networks}}',
+    ]).catch(() => '');
+    if (!state) {
+      await ensureDockerImage(PROBE_IMAGE, log);
+      await run('docker', [
+        'run', '-d', '--name', PROBE_CONTAINER, '--restart', 'unless-stopped',
+        '--network', NETWORK, PROBE_IMAGE, 'sh', '-c', 'while :; do sleep 3600; done',
+      ], {}, log);
+    } else {
+      if (!state.startsWith('true|')) await run('docker', ['start', PROBE_CONTAINER], {}, log);
+      if (!state.includes(`"${NETWORK}"`)) {
+        await run('docker', ['network', 'connect', NETWORK, PROBE_CONTAINER], {}, log).catch(() => undefined);
+      }
+    }
+    probeContainerReady = true;
+  })().finally(() => {
+    probeContainerInit = null;
+  });
+  return probeContainerInit;
+}
+
 /**
  * Write runtime env vars to a temp file (mode 0600) which docker then loads
  * via its env-file option. Keeping secrets in a file — rather than on the
  * command line — keeps them out of process listings and container inspection.
  */
-function writeEnvFile(env: Record<string, string>): string | null {
+export function writeEnvFile(env: Record<string, string>): string | null {
   const entries = Object.entries(env);
   if (entries.length === 0) return null;
   const file = path.join(tmpdir(), `nd-env-${process.pid}-${Date.now()}.env`);
   mkdirSync(path.dirname(file), { recursive: true });
-  const body = entries.map(([k, v]) => [k, v].join('=')).join('\n');
+  // docker --env-file cannot contain physical newlines inside a value. Store
+  // them as explicit escape sequences so subsequent lines cannot be parsed as
+  // attacker-controlled keys and the convention matches the Compose builder.
+  const body = entries.map(([k, v]) => `${k}=${v.replace(/\r\n?|\n/g, '\\n')}`).join('\n');
   writeFileSync(file, `${body}\n`, { mode: 0o600 });
   return file;
 }
@@ -71,10 +106,13 @@ type DockerContainerState = {
 };
 
 /** Keep runtime diagnostics useful without echoing common credential shapes. */
-function sanitiseRuntimeLogs(raw: string): string {
+export function sanitiseRuntimeLogs(raw: string): string {
   return raw
     .replace(/:\/\/([^:\s/@]+):([^@\s/]+)@/g, '://$1:[REDACTED]@')
-    .replace(/((?:password|passwd|token|secret|api[_-]?key)\s*[=:]\s*)\S+/gi, '$1[REDACTED]')
+    .replace(
+      /((?:["']?)(?:password|passwd|token|secret|api[_-]?key)(?:["']?)\s*[=:]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\S+)/gi,
+      '$1[REDACTED]',
+    )
     .split('\n')
     .slice(-30)
     .join('\n')
@@ -367,7 +405,6 @@ export const dockerBuilder: Builder = {
     // name-based DNS works everywhere the app itself will be reached.
     const start = Date.now();
     let usedSiblingProbe = false;
-    let siblingImageReady = false;
     let fallbackPorts: number[] | null = null;
     let restartDiagnosticWritten = false;
     while (Date.now() < deadline) {
@@ -430,16 +467,13 @@ export const dockerBuilder: Builder = {
         // "Is the port accepting connections inside the network" is exactly
         // the signal this fallback needs.
         try {
-          if (!siblingImageReady) {
-            await ensureDockerImage(PROBE_IMAGE, log);
-            siblingImageReady = true;
-          }
+          await ensureProbeContainer(log);
           await run('docker', [
-            'run', '--rm', '--network', NETWORK,
-            PROBE_IMAGE, 'nc', '-w', '3', ip, String(runtime.port),
+            'exec', PROBE_CONTAINER, 'nc', '-w', '3', ip, String(runtime.port),
           ], {}, log);
           return true;
         } catch (probeErr) {
+          probeContainerReady = false;
           usedSiblingProbe = true;
           // Surface WHY the sibling probe failed — healthcheck debugging
           // otherwise degrades to a bare "did not become ready".
@@ -455,8 +489,7 @@ export const dockerBuilder: Builder = {
         for (const candidate of fallbackPorts) {
           try {
             await run('docker', [
-              'run', '--rm', '--network', NETWORK,
-              PROBE_IMAGE, 'nc', '-w', '3', ip, String(candidate),
+              'exec', PROBE_CONTAINER, 'nc', '-w', '3', ip, String(candidate),
             ], {}, () => undefined);
             log(`detected healthy image port ${candidate}/tcp; replacing incorrect configured port ${runtime.port}`);
             runtime.port = candidate;

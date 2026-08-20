@@ -13,15 +13,18 @@ export { TOOLS };
  * Credentials come from the environment — never from the model:
  *   NINEDEPLOY_URL   base URL of the control plane (default http://127.0.0.1:3000)
  *   NINEDEPLOY_TOKEN an API token (create one in Settings → API tokens)
+ *   NINEDEPLOY_MCP_READONLY=1 exposes only the non-mutating, non-secret allowlist
  */
 
 export function buildServer(
   client: ReturnType<typeof createClient>,
   warn: (msg: string) => void = console.error,
+  options: { readOnly?: boolean } = {},
 ): McpServer {
   const server = new McpServer({ name: 'ninedeploy', version: '0.2.36' });
 
-  for (const tool of TOOLS) {
+  const tools = options.readOnly ? TOOLS.filter((tool) => READ_ONLY_TOOL_NAMES.has(tool.name)) : TOOLS;
+  for (const tool of tools) {
     server.registerTool(
       tool.name,
       {
@@ -49,7 +52,7 @@ export function buildServer(
 }
 
 export async function main(
-  env: { NINEDEPLOY_URL?: string; NINEDEPLOY_TOKEN?: string } = process.env,
+  env: { NINEDEPLOY_URL?: string; NINEDEPLOY_TOKEN?: string; NINEDEPLOY_MCP_READONLY?: string } = process.env,
   io: {
     error: (msg: string) => void;
     exit: (code: number) => void;
@@ -63,9 +66,19 @@ export async function main(
     io.exit(1);
   } else {
     const client = createClient({ baseUrl: url, getToken: staticToken(token) });
-    await io.connect(buildServer(client));
+    const readOnly = /^(?:1|true|yes)$/i.test(env.NINEDEPLOY_MCP_READONLY ?? '');
+    await io.connect(buildServer(client, console.error, { readOnly }));
   }
 }
+
+/** Explicit allowlist: newly added tools default to unavailable in read-only mode. */
+export const READ_ONLY_TOOL_NAMES = new Set([
+  'list_services', 'get_service', 'service_logs', 'list_deploys',
+  'list_domains', 'list_databases', 'list_projects', 'list_alerts',
+  'activity_log', 'system_stats', 'topology', 'health',
+  'list_plugins', 'marketplace_plugins', 'list_menus',
+  'list_workspaces', 'get_workspace', 'list_log_drains',
+]);
 
 /** A getToken closure that always returns the configured static token. */
 export function staticToken(token: string): () => string {

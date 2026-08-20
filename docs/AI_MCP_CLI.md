@@ -17,12 +17,19 @@ NineDeploy includes an official stdio MCP server exposing **35 dedicated tools**
       "args": ["-y", "@ninedeploy/mcp"],
       "env": {
         "NINEDEPLOY_URL": "https://your-ninedeploy-server.com",
-        "NINEDEPLOY_API_TOKEN": "nd_tok_xxxxxxxxxxxx"
+        "NINEDEPLOY_TOKEN": "nd_tok_xxxxxxxxxxxx",
+        "NINEDEPLOY_MCP_READONLY": "1"
       }
     }
   }
 }
 ```
+
+`NINEDEPLOY_MCP_READONLY=1` is recommended for inspection-only agents. It uses
+a fail-closed allowlist that omits mutations and secret-bearing configuration,
+container inspection, compose, and file tools. Omit it only when the agent is
+explicitly trusted to operate the instance. HTTP API role checks still apply to
+every MCP call through the configured token.
 
 ### Available MCP Tools (Sample):
 - `list_services`, `get_service`, `deploy_service`, `rollback_deploy`, `service_logs`

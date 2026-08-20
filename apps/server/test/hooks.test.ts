@@ -314,6 +314,7 @@ describe('webhook receiver', () => {
       id: 1,
       slug: 'my-app',
       name: 'My App',
+      repoUrl: 'https://github.com/org/repo.git',
       previewDeploymentsEnabled: true,
       previewAutoDestroyOnClose: true,
       previewDomainPattern: 'pr-{{pr}}-{{slug}}.{{domain}}',
@@ -373,6 +374,37 @@ describe('webhook receiver', () => {
       previewServiceId: 10,
       deploymentId: 15,
     });
+  });
+
+  it('rejects fork preview builds before parent secrets are copied', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: {
+          webhooks: hook({ serviceId: 1 }),
+          services: svcRow({
+            id: 1,
+            previewDeploymentsEnabled: true,
+            repoUrl: 'https://github.com/acme/app.git',
+          }),
+        },
+      }),
+      rawBody: true,
+    });
+    await app.register(hookReceiveRoutes);
+    const body = JSON.stringify({
+      action: 'opened',
+      number: 77,
+      pull_request: {
+        number: 77,
+        title: 'untrusted fork',
+        head: { ref: 'steal-secrets', sha: 'bad', repo: { clone_url: 'https://github.com/attacker/app.git' } },
+      },
+    });
+    const res = await app.inject({
+      method: 'POST', url: '/1', payload: body,
+      headers: { 'content-type': 'application/json', 'x-github-event': 'pull_request', 'x-hub-signature-256': sig(body) },
+    });
+    expect(res.json()).toEqual({ ok: 'skipped', reason: 'external_pr_repository' });
   });
 
   it('handles pull request closed events by auto-destroying ephemeral preview container and records', async () => {
@@ -621,7 +653,7 @@ describe('webhook receiver', () => {
           services: () => {
             c++;
             return c === 1
-              ? svcRow({ id: 1, previewDeploymentsEnabled: true })
+              ? svcRow({ id: 1, previewDeploymentsEnabled: true, repoUrl: 'https://github.com/org/repo.git' })
               : svcRow({ id: 5, previewParentServiceId: 1, prNumber: 1 });
           },
         },
@@ -632,7 +664,7 @@ describe('webhook receiver', () => {
     await app.register(hookReceiveRoutes);
     const syncBody = JSON.stringify({
       action: 'synchronize', number: 1,
-      pull_request: { number: 1, title: 'sync commit', head: { ref: 'b', sha: 'sha-new' } },
+      pull_request: { number: 1, title: 'sync commit', head: { ref: 'b', sha: 'sha-new', repo: { clone_url: 'https://github.com/org/repo.git' } } },
     });
     const res = await app.inject({
       method: 'POST', url: '/1',
@@ -645,7 +677,7 @@ describe('webhook receiver', () => {
   it('prunes oldest preview when max active cap is reached and handles creation failure', async () => {
     const prBody = JSON.stringify({
       action: 'opened', number: 1,
-      pull_request: { number: 1, title: 't', head: { ref: 'b', sha: 's' } },
+      pull_request: { number: 1, title: 't', head: { ref: 'b', sha: 's', repo: { clone_url: 'https://github.com/org/repo.git' } } },
     });
     for (const oldest of [
       svcRow({ id: 100, previewParentServiceId: 1, isEphemeralPreview: true, runtimeId: 'old-rt', type: 'pm2' }),
@@ -660,7 +692,7 @@ describe('webhook receiver', () => {
             webhooks: hook({ serviceId: 1 }),
             services: () => {
               c++;
-              return c === 1 ? svcRow({ id: 1, previewDeploymentsEnabled: true, previewMaxActive: 1 }) : undefined;
+              return c === 1 ? svcRow({ id: 1, previewDeploymentsEnabled: true, previewMaxActive: 1, repoUrl: 'https://github.com/org/repo.git' }) : undefined;
             },
           },
           findMany: {
@@ -676,7 +708,7 @@ describe('webhook receiver', () => {
       await app.register(hookReceiveRoutes);
       const pr2 = JSON.stringify({
         action: 'opened', number: 2,
-        pull_request: { number: 2, title: 'pr2', head: { ref: 'b2', sha: '' } },
+        pull_request: { number: 2, title: 'pr2', head: { ref: 'b2', sha: '', repo: { clone_url: 'https://github.com/org/repo.git' } } },
       });
       const res = await app.inject({
         method: 'POST', url: '/1',
@@ -694,7 +726,7 @@ describe('webhook receiver', () => {
           webhooks: hook({ serviceId: 1 }),
           services: () => {
             c8++;
-            return c8 === 1 ? svcRow({ id: 1, previewDeploymentsEnabled: true }) : undefined;
+            return c8 === 1 ? svcRow({ id: 1, previewDeploymentsEnabled: true, repoUrl: 'https://github.com/org/repo.git' }) : undefined;
           },
         },
         insert: {

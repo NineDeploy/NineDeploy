@@ -7,6 +7,7 @@ import { AuthProvider } from './lib/auth.js';
 import { ProjectScopeProvider } from './lib/projects.js';
 import { ThemeProvider } from './lib/theme.js';
 import { ToastProvider } from './components/Toast.js';
+import { AppErrorBoundary } from './components/AppErrorBoundary.js';
 import './index.css';
 
 const rootEl = document.getElementById('root');
@@ -20,18 +21,20 @@ const queryClient = new QueryClient({
 
 createRoot(rootEl).render(
   <StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <ThemeProvider>
-        <ToastProvider>
-          <BrowserRouter>
-            <AuthProvider>
-              <ProjectScopeProvider>
-                <App />
-              </ProjectScopeProvider>
-            </AuthProvider>
-          </BrowserRouter>
-        </ToastProvider>
-      </ThemeProvider>
-    </QueryClientProvider>
+    <AppErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        <ThemeProvider>
+          <ToastProvider>
+            <BrowserRouter>
+              <AuthProvider>
+                <ProjectScopeProvider>
+                  <App />
+                </ProjectScopeProvider>
+              </AuthProvider>
+            </BrowserRouter>
+          </ToastProvider>
+        </ThemeProvider>
+      </QueryClientProvider>
+    </AppErrorBoundary>
   </StrictMode>,
 );

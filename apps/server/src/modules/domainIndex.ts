@@ -3,7 +3,7 @@ import { audit } from '../lib/audit.js';
 import { domains, services } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { readCertificates, writeDynamicConfig } from '../engine/proxy.js';
-import { notFound } from '../lib/errors.js';
+import { notFound, parseId } from '../lib/errors.js';
 
 import { loadServiceForUser } from '../lib/serviceAccess.js';
 
@@ -11,13 +11,19 @@ import { loadServiceForUser } from '../lib/serviceAccess.js';
 export const domainIndexRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('onRequest', app.authenticate);
 
-  app.get('/', async () => {
+  app.get('/', async (req) => {
     const rows = await app.db.query.domains.findMany();
-    const svcs = await app.db.select().from(services);
+    const allServices = await app.db.select().from(services);
+    const svcs = req.user!.role === 'admin'
+      ? allServices
+      : allServices.filter((service) => service.ownerUserId === req.user!.id);
     const byId = new Map(svcs.map((s) => [s.id, s]));
+    const visibleRows = req.user!.role === 'admin'
+      ? rows
+      : rows.filter((domain) => byId.has(domain.serviceId));
     // Certificate expiry comes from Traefik's ACME storage (empty without ACME).
     const certs = new Map(readCertificates().map((c) => [c.domain, c.expiresAt]));
-    return rows.map((d) => {
+    return visibleRows.map((d) => {
       const s = byId.get(d.serviceId);
       return {
         id: d.id,
@@ -37,7 +43,7 @@ export const domainIndexRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.patch('/:id', async (req) => {
-    const id = Number((req.params as { id: string }).id);
+    const id = parseId((req.params as { id: string }).id);
     const input = (req.body ?? {}) as { ssl?: boolean };
     const domain = await app.db.query.domains.findFirst({ where: eq(domains.id, id) });
     if (!domain) throw notFound('Domain not found');

@@ -194,7 +194,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.delete('/passkey/:id', { onRequest: [app.authenticate] }, async (req) => {
-    const id = Number((req.params as { id: string }).id);
+    const id = parseId((req.params as { id: string }).id);
     await app.db
       .delete(webauthnCredentials)
       .where(and(eq(webauthnCredentials.id, id), eq(webauthnCredentials.userId, req.user!.id)));
@@ -268,7 +268,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.delete('/sessions/:id', { onRequest: [app.authenticate] }, async (req) => {
-    const id = Number((req.params as { id: string }).id);
+    const id = parseId((req.params as { id: string }).id);
     await app.db
       .update(sessionsTable)
       .set({ revokedAt: new Date() })
@@ -453,7 +453,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.delete('/tokens/:id', { onRequest: [app.authenticate] }, async (req) => {
-    const id = Number((req.params as { id: string }).id);
+    const id = parseId((req.params as { id: string }).id);
     await app.db.delete(apiTokens).where(and(eq(apiTokens.id, id), eq(apiTokens.userId, req.user!.id)));
     return { ok: true };
   });

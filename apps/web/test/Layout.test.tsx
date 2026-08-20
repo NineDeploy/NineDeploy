@@ -214,7 +214,8 @@ describe('Layout', () => {
     await user.click(screen.getByTitle('Activity'));
     expect(screen.getByText('Events')).toBeInTheDocument();
     const ws = FakeWebSocket.instances[0];
-    expect(ws?.url).toBe('ws://localhost/v1/events?token=tok');
+    expect(ws?.url).toBe('ws://localhost/v1/events');
+    expect(ws?.protocols).toEqual(['ninedeploy.bearer.tok']);
 
     const now = Date.now();
     const payload = [
@@ -237,7 +238,7 @@ describe('Layout', () => {
     renderLayout();
     await user.click(screen.getByTitle('Activity'));
     await waitFor(() => expect(FakeWebSocket.instances.length).toBeGreaterThan(0));
-    expect(FakeWebSocket.instances[0]?.url).toBe('ws://localhost/v1/events?token=');
+    expect(FakeWebSocket.instances[0]?.url).toBe('ws://localhost/v1/events');
   });
 
   it('uses wss when the page is served over https', async () => {
@@ -250,7 +251,7 @@ describe('Layout', () => {
       const user = userEvent.setup();
       renderLayout();
       await user.click(screen.getByTitle('Activity'));
-      expect(FakeWebSocket.instances[0]?.url).toBe('wss://example.com/v1/events?token=tok');
+      expect(FakeWebSocket.instances[0]?.url).toBe('wss://example.com/v1/events');
     } finally {
       Object.defineProperty(window, 'location', { value: original, configurable: true });
     }
@@ -261,7 +262,7 @@ describe('Layout', () => {
     const user = userEvent.setup();
     renderLayout();
     await user.click(screen.getByTitle('Activity'));
-    expect(FakeWebSocket.instances[0]?.url).toBe('ws://localhost/v1/events?token=');
+    expect(FakeWebSocket.instances[0]?.url).toBe('ws://localhost/v1/events');
   });
 
   it('ignores malformed socket payloads', async () => {

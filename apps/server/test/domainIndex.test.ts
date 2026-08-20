@@ -38,6 +38,29 @@ describe('domain index routes', () => {
     expect(rows[0]).toMatchObject({ certExpiresAt: null });
   });
 
+  it('limits a member to domains on services they own', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findMany: {
+          domains: [
+            domainRow({ id: 1, serviceId: 1, hostname: 'mine.example.com' }),
+            domainRow({ id: 2, serviceId: 2, hostname: 'theirs.example.com' }),
+          ],
+        },
+        select: {
+          services: [
+            svcRow({ id: 1, ownerUserId: 7 }),
+            svcRow({ id: 2, ownerUserId: 9 }),
+          ],
+        },
+      }),
+    });
+    await app.register(domainIndexRoutes);
+    const res = await app.inject({ method: 'GET', url: '/', headers: asUser({ id: 7, role: 'member' }) });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().map((domain: { hostname: string }) => domain.hostname)).toEqual(['mine.example.com']);
+  });
+
   it('attaches certificate expiry to matching hostnames', async () => {
     proxyMocks.readCertificates.mockReturnValueOnce([
       { domain: 'a.example.com', expiresAt: new Date('2026-09-01T00:00:00Z') },
@@ -121,5 +144,13 @@ describe('domain index routes', () => {
     await app.register(domainIndexRoutes);
     const res = await app.inject({ method: 'PATCH', url: '/99', headers: asUser(), payload: {} });
     expect(res.statusCode).toBe(404);
+  });
+
+  it('rejects an invalid domain id before querying', async () => {
+    const app = await buildTestApp();
+    await app.register(domainIndexRoutes);
+    const res = await app.inject({ method: 'PATCH', url: '/not-an-id', headers: asUser(), payload: {} });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('invalid_id');
   });
 });

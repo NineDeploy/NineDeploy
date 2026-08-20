@@ -1,6 +1,6 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, unlinkSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { containerExposedTcpPorts, dockerBuilder } from '../../src/engine/builders/docker.js';
+import { containerExposedTcpPorts, dockerBuilder, sanitiseRuntimeLogs, writeEnvFile } from '../../src/engine/builders/docker.js';
 
 const h = vi.hoisted(() => {
   const run = vi.fn(async (_cmd: string, _args: unknown[], _opts: unknown, sink?: (line: string) => void) => {
@@ -240,6 +240,22 @@ describe('dockerBuilder.buildAndRun', () => {
     expect(runArgs).toEqual([
       'run', '-d', '--name', 'x-3', '--restart', 'unless-stopped', '--network', 'ninedeploy', 'ninedeploy/x:abc',
     ]);
+  });
+
+  it('encodes physical newlines so they cannot inject extra env-file keys', () => {
+    const file = writeEnvFile({ PRIVATE_KEY: 'line-1\r\nline-2\nINJECTED=yes' });
+    expect(file).toBeTruthy();
+    try {
+      expect(readFileSync(file!, 'utf8')).toBe('PRIVATE_KEY=line-1\\nline-2\\nINJECTED=yes\n');
+    } finally {
+      unlinkSync(file!);
+    }
+  });
+
+  it('redacts quoted structured secrets including spaces', () => {
+    expect(sanitiseRuntimeLogs('{"password": "secret phrase", "token":"abc def"}')).toBe(
+      '{"password": [REDACTED], "token":[REDACTED]}',
+    );
   });
 
   it('defaults Dockerfile-less Nixpacks source apps to port 3000 and passes PORT through the env file', async () => {
@@ -525,7 +541,7 @@ describe('dockerBuilder.isHealthy', () => {
       dockerBuilder.isHealthy({ runtimeId: 'r', port: 3000, healthPath: '/x' }, 5_000, 100),
     ).resolves.toBe(true);
 
-    const siblingCall = h.run.mock.calls.find((c) => c[1].includes('busybox:1.36'));
+    const siblingCall = h.run.mock.calls.find((c) => c[1][0] === 'exec' && c[1].includes('ninedeploy-prober'));
     expect(siblingCall).toBeDefined();
     // TCP probe by the inspected IP, not the (DNS-flaky) container name.
     expect(siblingCall![1].join(' ')).toContain('nc -w 3 172.17.0.2 3000');

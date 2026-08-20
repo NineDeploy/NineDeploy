@@ -22,6 +22,7 @@ const apiMock = vi.hoisted(() => ({
     auth: { me: vi.fn(), status: vi.fn() },
   },
   deployLogsWsUrl: vi.fn(() => 'ws://localhost/v1/logs'),
+  websocketAuthProtocols: vi.fn(() => ['ninedeploy.bearer.test']),
 }));
 
 vi.mock('../src/lib/api.js', () => apiMock);

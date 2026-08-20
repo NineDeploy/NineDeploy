@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FakeWebSocket } from './web-utils.js';
 
 const apiMock = vi.hoisted(() => ({
-  deployLogsWsUrl: vi.fn(() => 'ws://localhost/v1/services/1/deploys/2/logs?token=t'),
+  deployLogsWsUrl: vi.fn(() => 'ws://localhost/v1/services/1/deploys/2/logs'),
+  websocketAuthProtocols: vi.fn(() => ['ninedeploy.bearer.t']),
 }));
 
 vi.mock('../src/lib/api.js', () => apiMock);
@@ -33,7 +34,8 @@ describe('useDeployLogs', () => {
     expect(FakeWebSocket.instances).toHaveLength(1);
     expect(apiMock.deployLogsWsUrl).toHaveBeenCalledWith(1, 2);
     const ws = FakeWebSocket.instances[0];
-    expect(ws?.url).toBe('ws://localhost/v1/services/1/deploys/2/logs?token=t');
+    expect(ws?.url).toBe('ws://localhost/v1/services/1/deploys/2/logs');
+    expect(ws?.protocols).toEqual(['ninedeploy.bearer.t']);
     expect(result.current.open).toBe(false);
 
     act(() => ws?.open());

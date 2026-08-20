@@ -9,6 +9,7 @@ import { logBus } from '../engine/logs.js';
 import { resolveUser } from '../lib/auth.js';
 import { loadServiceForUser } from '../lib/serviceAccess.js';
 import { badRequest, notFound, parseId as num } from '../lib/errors.js';
+import { websocketBearerToken } from '../lib/websocketAuth.js';
 
 export const deploysRoutes: FastifyPluginAsync = async (app) => {
   // Trigger a new deployment (enqueues a `queued` row the worker picks up).
@@ -139,9 +140,9 @@ export const deploysRoutes: FastifyPluginAsync = async (app) => {
     };
   });
 
-  // Live log stream over WebSocket. Auth via ?token= (ws can't set headers easily).
+  // Live log stream over WebSocket. Browser auth travels in a subprotocol header.
   app.get('/:id/deploys/:depId/logs', { websocket: true }, async (socket, req) => {
-    const token = (req.query as { token?: string }).token;
+    const token = websocketBearerToken(req.headers, req.query as { token?: string });
     const id = num((req.params as { id: string; depId: string }).id);
     const depId = num((req.params as { id: string; depId: string }).depId);
     const user = token ? await resolveUser(app.db, token) : null;
@@ -192,7 +193,7 @@ export const deploysRoutes: FastifyPluginAsync = async (app) => {
   };
 
   app.get('/:id/exec', { websocket: true }, async (socket, req) => {
-    const token = (req.query as { token?: string }).token;
+    const token = websocketBearerToken(req.headers, req.query as { token?: string });
     const id = num((req.params as { id: string }).id);
     const user = token ? await resolveUser(app.db, token) : null;
     if (!user) {

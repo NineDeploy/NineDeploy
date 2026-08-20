@@ -19,6 +19,8 @@ export interface CreateDbOptions {
 export interface CreateDbResult {
   db: DB;
   client: Client;
+  /** Connection PRAGMAs that must settle before the first application query. */
+  ready: Promise<void>;
 }
 
 /**
@@ -47,10 +49,10 @@ export function createDb(opts: CreateDbOptions): CreateDbResult {
   // drop it from those archives. If WAL is ever wanted, the export/import
   // handlers and install.sh backup must first wal_checkpoint(TRUNCATE) or
   // include the sidecar files.
-  void client
+  const ready = client
     .execute('PRAGMA foreign_keys = ON;')
     .then(() => client.execute('PRAGMA busy_timeout = 5000;'))
-    .catch(() => undefined);
+    .then(() => undefined);
   const db = drizzle(client, { schema });
-  return { db, client };
+  return { db, client, ready };
 }

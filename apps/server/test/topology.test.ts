@@ -66,6 +66,41 @@ describe('topology routes', () => {
     });
   });
 
+  it('hides other tenants resources and runtime inventory from members', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        select: {
+          services: [
+            svcRow({ id: 1, ownerUserId: 7, slug: 'mine', runtimeId: 'mine-1' }),
+            svcRow({ id: 2, ownerUserId: 9, slug: 'theirs', runtimeId: 'theirs-2' }),
+          ],
+          databases: [],
+          database_attachments: [],
+          domains: [
+            domainRow({ id: 1, serviceId: 1, hostname: 'mine.example.com' }),
+            domainRow({ id: 2, serviceId: 2, hostname: 'theirs.example.com' }),
+          ],
+        },
+      }),
+    });
+    await app.register(topologyRoutes);
+    execMocks.capture.mockImplementation((_cmd: string, args: string[]) => {
+      const joined = args.join(' ');
+      if (joined.startsWith('volume ls')) return 'nd-svc-mine-data\nnd-svc-theirs-data\nnd-svc-orphan-data\n';
+      if (joined.startsWith('network ls')) return 'ninedeploy\tbridge\nother-net\tbridge\n';
+      if (joined.startsWith('network inspect')) return 'mine-1 theirs-2 ninedeploy-traefik ';
+      return '';
+    });
+    const res = await app.inject({ method: 'GET', url: '/', headers: asUser({ id: 7, role: 'member' }) });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().services.map((service: { id: number }) => service.id)).toEqual([1]);
+    expect(res.json().domains.map((domain: { id: number }) => domain.id)).toEqual([1]);
+    expect(res.json().volumes).toEqual([
+      { name: 'nd-svc-mine-data', owner: { kind: 'service', refId: 1, name: 'web' } },
+    ]);
+    expect(res.json().networks).toEqual([{ name: 'ninedeploy', driver: 'bridge', containers: ['mine-1'] }]);
+  });
+
   it('layers volumes, networks and the gateway from docker probes', async () => {
     const app = await buildTestApp({
       db: createFakeDb({
