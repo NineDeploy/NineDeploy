@@ -38,7 +38,7 @@ export const demoRoutes: FastifyPluginAsync = async (app) => {
       void audit(app.db, userId, 'project.create', project.name);
     }
 
-    // 2. Create PostgreSQL 16 Managed Database
+    // 2. Create PostgreSQL 18 Managed Database
     let db = await app.db.query.databases.findFirst({
       where: eq(databases.slug, 'demo-postgres'),
     });
@@ -57,7 +57,7 @@ export const demoRoutes: FastifyPluginAsync = async (app) => {
           name: 'demo-postgres',
           slug: 'demo-postgres',
           engine: 'postgres',
-          version: '16',
+          version: '18',
           status: 'running',
           containerName: 'nd-db-demo-postgres',
           volumeName: 'nd-db-demo-postgres-data',

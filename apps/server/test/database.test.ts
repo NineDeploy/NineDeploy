@@ -89,16 +89,16 @@ const dbRow = (over: Record<string, unknown> = {}) =>
 
 describe('ENGINES metadata', () => {
   it('maps each engine to image, port, volume and env', () => {
-    expect(ENGINES.postgres.image()).toBe('postgres:16');
+    expect(ENGINES.postgres.image()).toBe('postgres:18');
     expect(ENGINES.postgres.image('17')).toBe('postgres:17');
-    expect(ENGINES.mysql.image()).toBe('mysql:8.4');
+    expect(ENGINES.mysql.image()).toBe('mysql:26');
     expect(ENGINES.mysql.image('9')).toBe('mysql:9');
-    expect(ENGINES.mariadb.image()).toBe('mariadb:11');
-    expect(ENGINES.mariadb.image('12')).toBe('mariadb:12');
-    expect(ENGINES.redis.image()).toBe('redis:7');
-    expect(ENGINES.redis.image('8')).toBe('redis:8');
-    expect(ENGINES.mongo.image()).toBe('mongo:7');
-    expect(ENGINES.mongo.image('8')).toBe('mongo:8');
+    expect(ENGINES.mariadb.image()).toBe('mariadb:12');
+    expect(ENGINES.mariadb.image('11')).toBe('mariadb:11');
+    expect(ENGINES.redis.image()).toBe('redis:8');
+    expect(ENGINES.redis.image('7')).toBe('redis:7');
+    expect(ENGINES.mongo.image()).toBe('mongo:8');
+    expect(ENGINES.mongo.image('7')).toBe('mongo:7');
 
     expect(ENGINES.postgres.port).toBe(5432);
     expect(ENGINES.mysql.port).toBe(3306);
@@ -694,17 +694,17 @@ describe('restoreDatabase', () => {
   });
 
   it('configures extended engines properly (valkey, clickhouse, meilisearch, rabbitmq, vector)', () => {
-    expect(ENGINES.postgres.image('vector')).toBe('pgvector/pgvector:pg16');
-    expect(ENGINES.postgres.image('pgvector')).toBe('pgvector/pgvector:pg16');
+    expect(ENGINES.postgres.image('vector')).toBe('pgvector/pgvector:pg18');
+    expect(ENGINES.postgres.image('pgvector')).toBe('pgvector/pgvector:pg18');
     expect(ENGINES.postgres.image('16')).toBe('postgres:16');
     expect(ENGINES.valkey.image('8')).toBe('valkey/valkey:8');
-    expect(ENGINES.valkey.image()).toBe('valkey/valkey:8');
+    expect(ENGINES.valkey.image()).toBe('valkey/valkey:9');
     expect(ENGINES.clickhouse.image('24')).toBe('clickhouse/clickhouse-server:24');
-    expect(ENGINES.clickhouse.image()).toBe('clickhouse/clickhouse-server:24');
+    expect(ENGINES.clickhouse.image()).toBe('clickhouse/clickhouse-server:26.7');
     expect(ENGINES.meilisearch.image('v1.12')).toBe('getmeili/meilisearch:v1.12');
-    expect(ENGINES.meilisearch.image()).toBe('getmeili/meilisearch:v1.12');
+    expect(ENGINES.meilisearch.image()).toBe('getmeili/meilisearch:v1.53');
     expect(ENGINES.rabbitmq.image('3-management')).toBe('rabbitmq:3-management');
-    expect(ENGINES.rabbitmq.image()).toBe('rabbitmq:3-management');
+    expect(ENGINES.rabbitmq.image()).toBe('rabbitmq:4-management');
 
     expect(ENGINES.valkey.env('p')).toEqual({});
     expect(ENGINES.valkey.username()).toBeUndefined();

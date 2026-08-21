@@ -159,7 +159,7 @@ function enc(segment: string): string {
 
 export const ENGINES: Record<string, EngineConfig> = {
   postgres: {
-    image: (v) => (v === 'vector' || v === 'pgvector' ? 'pgvector/pgvector:pg16' : `postgres:${v || '16'}`),
+    image: (v) => (v === 'vector' || v === 'pgvector' ? 'pgvector/pgvector:pg18' : `postgres:${v || '18'}`),
     port: 5432,
     volumePath: '/var/lib/postgresql/data',
     env: (p) => ({ POSTGRES_USER: 'nine', POSTGRES_PASSWORD: p, POSTGRES_DB: 'app' }),
@@ -168,7 +168,7 @@ export const ENGINES: Record<string, EngineConfig> = {
     connectionString: (h, prt, u, p, d) => `postgres://${enc(u)}:${enc(p)}@${h}:${prt}/${d}`,
   },
   mysql: {
-    image: (v) => `mysql:${v || '8.4'}`,
+    image: (v) => `mysql:${v || '26'}`,
     port: 3306,
     volumePath: '/var/lib/mysql',
     env: (p) => ({ MYSQL_ROOT_PASSWORD: p, MYSQL_DATABASE: 'app' }),
@@ -177,7 +177,7 @@ export const ENGINES: Record<string, EngineConfig> = {
     connectionString: (h, prt, u, p, d) => `mysql://${enc(u)}:${enc(p)}@${h}:${prt}/${d ?? 'app'}`,
   },
   mariadb: {
-    image: (v) => `mariadb:${v || '11'}`,
+    image: (v) => `mariadb:${v || '12'}`,
     port: 3306,
     volumePath: '/var/lib/mysql',
     env: (p) => ({ MARIADB_ROOT_PASSWORD: p, MARIADB_DATABASE: 'app' }),
@@ -186,7 +186,7 @@ export const ENGINES: Record<string, EngineConfig> = {
     connectionString: (h, prt, u, p, d) => `mariadb://${enc(u)}:${enc(p)}@${h}:${prt}/${d ?? 'app'}`,
   },
   redis: {
-    image: (v) => `redis:${v || '7'}`,
+    image: (v) => `redis:${v || '8'}`,
     port: 6379,
     volumePath: '/data',
     env: () => ({}),
@@ -196,7 +196,7 @@ export const ENGINES: Record<string, EngineConfig> = {
     connectionString: (h, prt, _u, p) => `redis://:${enc(p)}@${h}:${prt}`,
   },
   valkey: {
-    image: (v) => `valkey/valkey:${v || '8'}`,
+    image: (v) => `valkey/valkey:${v || '9'}`,
     port: 6379,
     volumePath: '/data',
     env: () => ({}),
@@ -206,7 +206,7 @@ export const ENGINES: Record<string, EngineConfig> = {
     connectionString: (h, prt, _u, p) => `valkey://:${enc(p)}@${h}:${prt}`,
   },
   mongo: {
-    image: (v) => `mongo:${v || '7'}`,
+    image: (v) => `mongo:${v || '8'}`,
     port: 27017,
     volumePath: '/data/db',
     env: (p) => ({ MONGO_INITDB_ROOT_USERNAME: 'nine', MONGO_INITDB_ROOT_PASSWORD: p }),
@@ -215,7 +215,7 @@ export const ENGINES: Record<string, EngineConfig> = {
     connectionString: (h, prt, u, p) => `mongodb://${enc(u)}:${enc(p)}@${h}:${prt}`,
   },
   clickhouse: {
-    image: (v) => `clickhouse/clickhouse-server:${v || '24'}`,
+    image: (v) => `clickhouse/clickhouse-server:${v || '26.7'}`,
     port: 8123,
     volumePath: '/var/lib/clickhouse',
     env: (p) => ({ CLICKHOUSE_USER: 'nine', CLICKHOUSE_PASSWORD: p, CLICKHOUSE_DB: 'app' }),
@@ -224,7 +224,7 @@ export const ENGINES: Record<string, EngineConfig> = {
     connectionString: (h, prt, u, p, d) => `clickhouse://${enc(u)}:${enc(p)}@${h}:${prt}/${d ?? 'default'}`,
   },
   meilisearch: {
-    image: (v) => `getmeili/meilisearch:${v || 'v1.12'}`,
+    image: (v) => `getmeili/meilisearch:${v || 'v1.53'}`,
     port: 7700,
     volumePath: '/meili_data',
     env: (p) => ({ MEILI_MASTER_KEY: p, MEILI_NO_ANALYTICS: 'true' }),
@@ -233,7 +233,7 @@ export const ENGINES: Record<string, EngineConfig> = {
     connectionString: (h, prt, _u, p) => `http://:${enc(p)}@${h}:${prt}`,
   },
   rabbitmq: {
-    image: (v) => `rabbitmq:${v || '3-management'}`,
+    image: (v) => `rabbitmq:${v || '4-management'}`,
     port: 5672,
     volumePath: '/var/lib/rabbitmq',
     env: (p) => ({ RABBITMQ_DEFAULT_USER: 'nine', RABBITMQ_DEFAULT_PASS: p }),

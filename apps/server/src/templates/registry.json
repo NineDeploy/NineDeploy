@@ -375,7 +375,7 @@
       "description": "Monitor HTTP(s), TCP, DNS, Docker and more with status pages, notifications and beautiful uptime charts.",
       "category": "Monitoring",
       "emoji": "📊",
-      "image": "louislam/uptime-kuma:1",
+      "image": "louislam/uptime-kuma:2",
       "port": 3001,
       "volumeMount": "/app/data",
       "website": "https://github.com/louislam/uptime-kuma",
@@ -942,7 +942,7 @@
       "description": "An open-source, lightning-fast, and hyper-relevant search engine designed to provide an out-of-the-box search experience in under 50ms.",
       "category": "Database",
       "emoji": "🔍",
-      "image": "getmeili/meilisearch:v1.8",
+      "image": "getmeili/meilisearch:v1.53",
       "port": 7700,
       "volumeMount": "/meili_data",
       "env": [
@@ -966,7 +966,7 @@
       "description": "An open-source, in-memory search engine built from the ground up for lightning-fast search-as-you-type experiences.",
       "category": "Database",
       "emoji": "⚡",
-      "image": "typesense/typesense:27.1",
+      "image": "typesense/typesense:30.2",
       "port": 8108,
       "volumeMount": "/data",
       "env": [
@@ -1352,7 +1352,7 @@
       "description": "Ghost is a powerful app for creators to publish, share and grow a business around their content. Modern editor, native memberships and subscriptions.",
       "category": "CMS",
       "emoji": "👻",
-      "image": "ghost:5-alpine",
+      "image": "ghost:6-alpine",
       "port": 2368,
       "volumeMount": "/var/lib/ghost/content",
       "env": [

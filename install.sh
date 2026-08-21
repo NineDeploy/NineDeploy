@@ -177,9 +177,9 @@ fi
 # pnpm
 if ! command -v pnpm &>/dev/null; then
   warn "pnpm not found. Installing pnpm…"
-  PNPM_VERSION="11.21.0"
+  PNPM_VERSION="11.22.0"
   if [ -f "$INSTALL_DIR/package.json" ]; then
-    PNPM_VERSION=$(node -p "require('${INSTALL_DIR}/package.json').packageManager.replace(/^pnpm@/, '').split('+')[0]" 2>/dev/null || echo "11.21.0")
+    PNPM_VERSION=$(node -p "require('${INSTALL_DIR}/package.json').packageManager.replace(/^pnpm@/, '').split('+')[0]" 2>/dev/null || echo "11.22.0")
   fi
   (corepack enable 2>/dev/null && corepack prepare "pnpm@${PNPM_VERSION}" --activate 2>/dev/null) || sudo npm install -g "pnpm@${PNPM_VERSION}" || npm install -g "pnpm@${PNPM_VERSION}"
 fi
@@ -188,16 +188,16 @@ ok "pnpm $(pnpm -v 2>/dev/null || echo 'installed')"
 # Nixpacks CLI — required for source repositories without a Dockerfile.
 # ghcr.io/railwayapp/nixpacks is a build base image, not a runnable CLI image,
 # so install the pinned upstream binary and verify it before exposing it.
-NIXPACKS_VERSION="1.37.0"
+NIXPACKS_VERSION="1.41.0"
 install_nixpacks() {
   case "$(uname -m)" in
     x86_64|amd64)
       NIXPACKS_TARGET="x86_64-unknown-linux-musl"
-      NIXPACKS_SHA256="76f2c9d77a233ec4b14bd6c410ed551e35dca5f1f3e451665af133f09b9c2447"
+      NIXPACKS_SHA256="0f55de7874507b9cf7502113120bd96f2ab6979f78d10eaf2eb2ade9207b3af6"
       ;;
     aarch64|arm64)
       NIXPACKS_TARGET="aarch64-unknown-linux-musl"
-      NIXPACKS_SHA256="6cce1d5fef567d4693054403c0ffaa08d196e0b44f90a58e2596553a72d50077"
+      NIXPACKS_SHA256="912bd02dd2bb6f9c3a9ed965fe8a68b4aa318dc7a2546e2eca6f2806a894ba39"
       ;;
     *) fail "Nixpacks ${NIXPACKS_VERSION} has no verified binary for architecture $(uname -m)" ;;
   esac
