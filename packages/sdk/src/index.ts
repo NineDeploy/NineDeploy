@@ -2,6 +2,7 @@ import type {
   ActiveSession,
   ActivityEntry,
   AlertRule,
+  AnalyzeRepoInput,
   CreateAlertRuleInput,
   ApiToken,
   PasskeyCredential,
@@ -46,6 +47,7 @@ import type {
   PublicUser,
   Refresh,
   Register,
+  RepoInsights,
   Service,
   Session,
   SetLimitsInput,
@@ -383,6 +385,14 @@ export interface NineDeployClient {
     remove: (id: number) => Promise<void>;
     repos: (id: number) => Promise<Array<{ name: string; fullName: string; url: string; defaultBranch: string; isPrivate: boolean }>>;
     branches: (id: number, repo: string) => Promise<string[]>;
+  };
+  insights: {
+    /** Pre-deploy repository inspection (DeployWizard): clone + framework detection. */
+    analyze: (input: AnalyzeRepoInput) => Promise<RepoInsights>;
+    /** Latest stored analysis for a service (null before the first deploy/refresh). */
+    get: (serviceId: number) => Promise<RepoInsights | null>;
+    /** Re-analyze the service's repository now and store the result. */
+    refresh: (serviceId: number) => Promise<RepoInsights>;
   };
   webhooks: {
     list: (serviceId: number) => Promise<Webhook[]>;
@@ -871,6 +881,11 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
       },
       repos: (id) => get<Array<{ name: string; fullName: string; url: string; defaultBranch: string; isPrivate: boolean }>>(`/v1/sources/${id}/repos`),
       branches: (id, repo) => get<string[]>(`/v1/sources/${id}/branches?repo=${encodeURIComponent(repo)}`),
+    },
+    insights: {
+      analyze: (input) => send<RepoInsights>('POST', '/v1/insights', input),
+      get: (serviceId) => get<RepoInsights | null>(`/v1/services/${serviceId}/insights`),
+      refresh: (serviceId) => send<RepoInsights>('POST', `/v1/services/${serviceId}/insights/refresh`),
     },
     webhooks: {
       list: (serviceId) => get<Webhook[]>(`/v1/services/${serviceId}/webhooks`),

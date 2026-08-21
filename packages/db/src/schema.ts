@@ -277,6 +277,28 @@ export const buildConfigs = sqliteTable('build_configs', {
   updatedAt: tsUpdatable('updated_at'),
 });
 
+// ─── repository insights ───────────────────────────────────────────────────
+// One row per repo-backed service: the latest framework analysis produced at
+// deploy time (pipeline PREPARE) or by an on-demand refresh. Powers the
+// "what's in this repo" card and the Framework tab. `data` stores the full
+// RepoInsights JSON (packages/schemas/src/insights.ts); `frameworkId` is
+// denormalized for cheap filtering.
+export const repoInsights = sqliteTable(
+  'repo_insights',
+  {
+    id: id(),
+    serviceId: integer('service_id')
+      .notNull()
+      .references(() => services.id, { onDelete: 'cascade' }),
+    frameworkId: text('framework_id').notNull(),
+    data: text('data', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
+    commitSha: text('commit_sha'),
+    createdAt: ts('created_at'),
+    updatedAt: tsUpdatable('updated_at'),
+  },
+  (t) => ({ serviceIdIdx: uniqueIndex('repo_insights_service_idx').on(t.serviceId) }),
+);
+
 // ─── deployments ──────────────────────────────────────────────────────────
 export const deployments = sqliteTable(
   'deployments',

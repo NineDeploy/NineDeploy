@@ -14,6 +14,7 @@ import { domainIndexRoutes } from './domainIndex.js';
 import { domainsRoutes } from './domains.js';
 import { envRoutes, envSearchRoutes, projectEnvRoutes } from './env.js';
 import { hookReceiveRoutes, webhookMgmtRoutes } from './hooks.js';
+import { insightsRoutes, serviceInsightsRoutes } from './insights.js';
 import { jobRoutes } from './jobs.js';
 import { serverRoutes } from './servers.js';
 import { projectRoutes } from './projects.js';
@@ -74,6 +75,7 @@ export const apiRoutes: FastifyPluginAsync = async (app) => {
   await app.register(dashboardRoutes, { prefix: '/dashboard' });
   await app.register(systemRoutes, { prefix: '/system' });
   await app.register(sourcesRoutes, { prefix: '/sources' });
+  await app.register(insightsRoutes, { prefix: '/insights' });
   await app.register(settingsRoutes, { prefix: '/settings' });
   await app.register(firewallRoutes, { prefix: '/firewall' });
   await app.register(configCenterRoutes, { prefix: '/config' });
@@ -88,6 +90,7 @@ export const apiRoutes: FastifyPluginAsync = async (app) => {
   await app.register(webhookMgmtRoutes, { prefix: '/services' });
   await app.register(attachmentRoutes, { prefix: '/services' });
   await app.register(envRoutes, { prefix: '/services' });
+  await app.register(serviceInsightsRoutes, { prefix: '/services' });
   await app.register(envSearchRoutes, { prefix: '/env' });
   await app.register(jobRoutes, { prefix: '/services' });
   await app.register(serverRoutes, { prefix: '/servers' });

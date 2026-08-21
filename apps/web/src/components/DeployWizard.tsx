@@ -1,8 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { type FormEvent, useEffect, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight, Check, Plus, Rocket, Sparkles, Terminal, X, Zap } from 'lucide-react';
+import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react';
+import { ArrowLeft, ArrowRight, Check, Download, GitBranch, Globe, Hammer, HeartPulse, Play, Plus, Rocket, Sparkles, Terminal, Wand2, X, Zap } from 'lucide-react';
 import { useNavigate } from 'react-router';
-import type { Template } from '@ninedeploy/sdk';
+import type { RepoInsights, Template } from '@ninedeploy/sdk';
 import { api } from '../lib/api.js';
 import { toInt } from '../lib/format.js';
 import { useAuth } from '../lib/auth.js';
@@ -83,6 +83,80 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
   const dbEngine = template?.dbEngine ?? null;
   const [provisionStatus, setProvisionStatus] = useState<string | null>(null);
 
+  // ── Repository analysis (framework detection) ─────────────────────────────
+  // Auto-runs (debounced) once a valid repo URL + branch are present, so the
+  // wizard can show a framework-aware deploy plan. Private repos need their
+  // Git credential selected first — a failed analysis degrades to a hint, it
+  // never blocks the deploy itself.
+  const [insights, setInsights] = useState<RepoInsights | null>(null);
+  // Root-level analysis is kept separately: switching the base directory to a
+  // sub-app re-analyzes `insights` for that package, while the monorepo
+  // package picker keeps rendering from the root result.
+  const [rootInsights, setRootInsights] = useState<RepoInsights | null>(null);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analyzeError, setAnalyzeError] = useState<string | null>(null);
+  const [suggestionsApplied, setSuggestionsApplied] = useState(false);
+  const [installCmd, setInstallCmd] = useState('');
+  const [buildCmd, setBuildCmd] = useState('');
+  const [startCmd, setStartCmd] = useState('');
+  // Monorepo flow: the same repo deployed N times, once per sub-app directory.
+  const [baseDir, setBaseDir] = useState('');
+  const lastAnalyzedRef = useRef('');
+
+  const trimmedBaseDir = baseDir.trim();
+  const isRootScope = trimmedBaseDir === '' || trimmedBaseDir === '/';
+
+  const runAnalyze = useCallback(async () => {
+    setAnalyzing(true);
+    setAnalyzeError(null);
+    try {
+      const result = await api.insights.analyze({
+        repoUrl,
+        branch,
+        ...(trimmedBaseDir ? { baseDir: trimmedBaseDir } : {}),
+        ...(sourceId && Number(sourceId) > 0 ? { sourceId: Number(sourceId) } : {}),
+      });
+      setInsights(result);
+      if (isRootScope) setRootInsights(result);
+      lastAnalyzedRef.current = `${repoUrl}|${branch}|${trimmedBaseDir}`;
+      setSuggestionsApplied(false);
+    } catch (err) {
+      setInsights(null);
+      setAnalyzeError(err instanceof Error ? err.message : 'Could not analyze the repository');
+    } finally {
+      setAnalyzing(false);
+    }
+  }, [repoUrl, branch, sourceId, trimmedBaseDir, isRootScope]);
+
+  useEffect(() => {
+    if (template || mode !== 'repo' || !repoUrl.trim() || !/^https?:\/\//i.test(repoUrl.trim())) return;
+    const key = `${repoUrl}|${branch}|${baseDir.trim()}`;
+    if (key === lastAnalyzedRef.current) return;
+    // Immediately drop stale results for a different repo/branch; the analysis
+    // itself fires after the user stops typing.
+    setInsights(null);
+    setAnalyzeError(null);
+    const t = setTimeout(() => void runAnalyze(), 900);
+    return () => clearTimeout(t);
+  }, [repoUrl, branch, baseDir, mode, template, runAnalyze]);
+
+  /** Copy the detected preset into the form: port, suggested env vars and the
+   * build commands that travel with the create-service request. */
+  const applySuggestions = () => {
+    if (!insights) return;
+    const f = insights.framework;
+    setPort(String(f.port));
+    if (f.installCmd) setInstallCmd(f.installCmd);
+    if (f.buildCmd) setBuildCmd(f.buildCmd);
+    if (f.startCmd) setStartCmd(f.startCmd);
+    setEnvRows((rows) => {
+      const existing = new Set(rows.map((r) => r.key));
+      const suggested = f.env.filter((e) => !existing.has(e.key)).map((e) => ({ key: e.key, value: e.value, secret: false }));
+      return suggested.length > 0 ? [...rows, ...suggested] : rows;
+    });
+    setSuggestionsApplied(true);
+  };
+
   const deploy = useMutation({
     onMutate: () => {
       // While the deploy mutation is in flight (service+env+db+trigger),
@@ -96,7 +170,7 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
     onSettled: () => {
       busyRef.current = false;
     },
-    mutationFn: async () => {
+    mutationFn: async (vars?: { quick?: boolean }) => {
       if (template) {
         const input = {
           name,
@@ -117,6 +191,24 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
         const prepared = await api.templates.prepare(template.id, input);
         return { serviceId: prepared.serviceId, deploymentId: prepared.deploymentId, canonical: true, background: false };
       }
+      // Quick Deploy with a successful analysis merges the detected preset
+      // directly into the request (the setState in applySuggestions cannot be
+      // observed by this closure in the same tick). Advanced flow relies on
+      // the form state filled by the Apply button.
+      const quick = vars?.quick === true && mode === 'repo' && insights != null;
+      const f = quick ? insights.framework : null;
+      const effectivePort = f ? f.port : toInt(port);
+      const effectiveEnvRows = f
+        ? [
+            ...envRows,
+            ...f.env
+              .filter((e) => !envRows.some((r) => r.key === e.key))
+              .map((e) => ({ key: e.key, value: e.value, secret: false })),
+          ]
+        : envRows;
+      const cmdSource = f
+        ? { install: f.installCmd, build: f.buildCmd, start: f.startCmd }
+        : { install: installCmd || null, build: buildCmd || null, start: startCmd || null };
       const svc = await api.services.create({
         name,
         type,
@@ -126,14 +218,24 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
         image: mode === 'image' ? image : undefined,
         branch,
         sourceId: toInt(sourceId),
-        port: toInt(port),
+        port: effectivePort,
         publishedPort: toInt(publishedPort),
         volumeMount: volumeMount || undefined,
         healthPath: healthPath || undefined,
         cpuShares: toInt(cpuShares),
         memLimitMb: toInt(memLimitMb),
+        ...(trimmedBaseDir || cmdSource.install || cmdSource.build || cmdSource.start
+          ? {
+              build: {
+                ...(trimmedBaseDir ? { baseDir: trimmedBaseDir } : {}),
+                ...(cmdSource.install ? { installCmd: cmdSource.install } : {}),
+                ...(cmdSource.build ? { buildCmd: cmdSource.build } : {}),
+                ...(cmdSource.start ? { startCmd: cmdSource.start } : {}),
+              },
+            }
+          : {}),
       });
-      for (const e of envRows) {
+      for (const e of effectiveEnvRows) {
         if (e.key.trim()) {
           await api.env.create(svc.id, {
             key: e.key,
@@ -173,7 +275,7 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
     if (step < STEPS.length - 1) next();
-    else deploy.mutate();
+    else deploy.mutate({});
   };
 
   const setEnv = (i: number, patch: Partial<EnvRow>) => setEnvRows((rows) => rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
@@ -329,6 +431,174 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
                       )}
                     </L>
                   )}
+
+                  {/* Framework detection + detailed deploy plan for this repo */}
+                  <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3.5 space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Repository analysis</span>
+                      {insights && !analyzing && (
+                        <button type="button" onClick={() => void runAnalyze()} className="text-[11px] text-indigo-300 hover:text-indigo-200 transition">
+                          Re-analyze
+                        </button>
+                      )}
+                    </div>
+
+                    {analyzing && (
+                      <div className="flex items-center gap-2.5 text-xs text-slate-400">
+                        <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-indigo-400/40 border-t-indigo-400" />
+                        Analyzing repository (clone + framework detection)…
+                      </div>
+                    )}
+
+                    {!analyzing && !insights && analyzeError && (
+                      <div className="space-y-1.5 text-xs leading-relaxed text-amber-200/90">
+                        <p>{analyzeError}</p>
+                        <p className="text-slate-500">Private repositories need a Git credential with access selected above — or continue without analysis.</p>
+                      </div>
+                    )}
+
+                    {!analyzing && !insights && !analyzeError && (
+                      <p className="text-xs text-slate-500">
+                        Framework detection runs automatically once a repository URL and branch are selected.
+                      </p>
+                    )}
+
+                    {!analyzing && insights && (
+                      <div className="space-y-3">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-lg leading-none">{insights.framework.emoji}</span>
+                          <span className="text-sm font-semibold text-slate-100">
+                            {insights.framework.name}
+                            {insights.frameworkVersion && <span className="ml-1 font-mono text-xs text-slate-400">{insights.frameworkVersion}</span>}
+                          </span>
+                          {!isRootScope && (
+                            <span className="rounded-full bg-amber-500/10 px-2 py-0.5 font-mono text-[10px] text-amber-300 ring-1 ring-inset ring-amber-500/25">
+                              {trimmedBaseDir}
+                            </span>
+                          )}
+                          <span className="rounded-full bg-indigo-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-indigo-300 ring-1 ring-inset ring-indigo-500/25">
+                            {insights.framework.category}
+                          </span>
+                          {insights.packageManager && (
+                            <span className="rounded-full bg-white/[0.05] px-2 py-0.5 font-mono text-[10px] text-slate-300">{insights.packageManager}</span>
+                          )}
+                          {insights.nodeVersion && (
+                            <span className="rounded-full bg-white/[0.05] px-2 py-0.5 font-mono text-[10px] text-slate-300">Node {insights.nodeVersion}</span>
+                          )}
+                          {insights.hasDockerfile && (
+                            <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-300 ring-1 ring-inset ring-emerald-500/20">Dockerfile</span>
+                          )}
+                          {insights.monorepo && (
+                            <span className="rounded-full bg-white/[0.05] px-2 py-0.5 text-[10px] text-slate-300">monorepo</span>
+                          )}
+                        </div>
+
+                        <div className="space-y-1.5 rounded-lg bg-black/25 p-2.5">
+                          <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-500">Deploy pipeline for this repository</div>
+                          <PlanStep icon={<GitBranch size={12} />} label="Clone & checkout" value={trimmedBaseDir ? `${branch} · ${trimmedBaseDir}` : branch} />
+                          <PlanStep icon={<Download size={12} />} label="Install dependencies" value={insights.framework.installCmd} mono />
+                          <PlanStep icon={<Hammer size={12} />} label="Build" value={insights.framework.buildCmd} mono />
+                          <PlanStep icon={<Play size={12} />} label="Start server" value={insights.framework.startCmd ? `${insights.framework.startCmd} · :${insights.framework.port}` : null} mono />
+                          <PlanStep icon={<HeartPulse size={12} />} label="Healthcheck" value={`GET ${healthPath}`} mono />
+                          <PlanStep icon={<Globe size={12} />} label="Route traffic" value="Traefik router + auto URL" />
+                        </div>
+
+                        {insights.framework.env.length > 0 && (
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="text-[10px] uppercase tracking-wider text-slate-500">Suggested env:</span>
+                            {insights.framework.env.map((e) => (
+                              <span key={e.key} className="rounded bg-white/[0.04] px-1.5 py-0.5 font-mono text-[10px] text-slate-300">{e.key}</span>
+                            ))}
+                          </div>
+                        )}
+
+                        <div className="flex items-center justify-between gap-2 pt-0.5">
+                          <span className="text-[11px] text-slate-500">
+                            {insights.dependencyCount + insights.devDependencyCount} packages
+                            {insights.detectedFiles.length > 0 && ` · ${insights.detectedFiles.slice(0, 4).join(', ')}${insights.detectedFiles.length > 4 ? '…' : ''}`}
+                          </span>
+                          {suggestionsApplied ? (
+                            <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-300">
+                              <Check size={12} /> Suggestions applied
+                            </span>
+                          ) : (
+                            <Button type="button" size="sm" variant="secondary" onClick={applySuggestions} className="h-7 text-xs">
+                              <Wand2 size={12} /> Apply suggestions
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Monorepo: pick which sub-app this service deploys. Each
+                        package becomes its own service (own port + domain),
+                        all from the same repository. */}
+                    {rootInsights?.monorepo && (
+                      <div className="space-y-1.5 border-t border-white/[0.06] pt-2.5">
+                        <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                          Monorepo packages — deploy each as its own service
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => setBaseDir('')}
+                            className={cn(
+                              'rounded-full px-2.5 py-1 font-mono text-[10px] transition ring-1 ring-inset',
+                              isRootScope
+                                ? 'bg-indigo-500/20 text-indigo-200 ring-indigo-400/40'
+                                : 'bg-white/[0.03] text-slate-400 ring-white/10 hover:text-slate-200',
+                            )}
+                          >
+                            / (repo root)
+                          </button>
+                          {(rootInsights.workspacePackages ?? []).map((p) => {
+                            const active = trimmedBaseDir === `/${p.dir}`;
+                            return (
+                              <button
+                                key={p.dir}
+                                type="button"
+                                title={p.name ?? p.dir}
+                                onClick={() => setBaseDir(`/${p.dir}`)}
+                                className={cn(
+                                  'rounded-full px-2.5 py-1 font-mono text-[10px] transition ring-1 ring-inset',
+                                  active
+                                    ? 'bg-indigo-500/20 text-indigo-200 ring-indigo-400/40'
+                                    : 'bg-white/[0.03] text-slate-400 ring-white/10 hover:text-slate-200',
+                                )}
+                              >
+                                /{p.dir}
+                                {p.framework && <span className="ml-1 font-sans text-slate-500">· {p.framework}</span>}
+                              </button>
+                            );
+                          })}
+                          {(rootInsights.workspacePackages ?? []).length === 0 && (
+                            <span className="text-[11px] text-slate-500">
+                              workspace config found — type a base directory below to scope this service
+                            </span>
+                          )}
+                        </div>
+                        {!isRootScope && (
+                          <p className="text-[11px] leading-relaxed text-indigo-200/80">
+                            This service builds <span className="font-mono">{trimmedBaseDir}</span> only. Create sibling
+                            services from the same repo with other directories, and give each an auto-deploy webhook with
+                            watch path <span className="font-mono">{trimmedBaseDir}/**</span>.
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Manual base-directory override (monorepo or not) */}
+                  {(isAdvanced || rootInsights?.monorepo) && (
+                    <L label="Base directory (build context)">
+                      <Input
+                        value={baseDir}
+                        onChange={(e) => setBaseDir(e.target.value)}
+                        placeholder="/ — repo root, or /apps/web for a monorepo sub-app"
+                        className="font-mono text-xs"
+                      />
+                    </L>
+                  )}
                 </>
               ) : (
                 <L label={template ? 'Registry-managed image' : 'Image'}><Input value={image} disabled={!!template} onChange={(e) => setImage(e.target.value)} placeholder="n8nio/n8n" className="font-mono text-xs" /></L>
@@ -349,7 +619,13 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
                     type="button"
                     size="sm"
                     disabled={!canNext || deploy.isPending || adminOnlyTemplate}
-                    onClick={() => deploy.mutate()}
+                    onClick={() => {
+                      // Quick mode with a successful analysis: prefill the form
+                      // for visibility AND let the mutation merge the preset
+                      // (state set in this tick is not visible to its closure).
+                      if (!template && mode === 'repo' && insights) applySuggestions();
+                      deploy.mutate({ quick: true });
+                    }}
                     className="bg-emerald-600 hover:bg-emerald-500 text-white"
                   >
                     {deploy.isPending ? 'Deploying…' : 'Quick Deploy'}
@@ -471,6 +747,16 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
               <Row label="Name" value={name} />
               <Row label="Type" value={type} />
               <Row label={mode === 'repo' ? 'Repository' : 'Image'} value={mode === 'repo' ? repoUrl : image} />
+              {trimmedBaseDir && mode === 'repo' && <Row label="Base directory" value={trimmedBaseDir} />}
+              {insights && mode === 'repo' && (
+                <Row
+                  label="Detected framework"
+                  value={`${insights.framework.emoji} ${insights.framework.name}${insights.frameworkVersion ? ` ${insights.frameworkVersion}` : ''}${insights.packageManager ? ` · ${insights.packageManager}` : ''}`}
+                />
+              )}
+              {(installCmd || buildCmd || startCmd) && (
+                <Row label="Build commands" value={[installCmd, buildCmd, startCmd].filter(Boolean).join('  →  ')} />
+              )}
               {port && <Row label="Port" value={`:${port}`} />}
               {publishedPort && <Row label="Host Port" value={`:${publishedPort}`} />}
               {volumeMount && <Row label="Volume" value={volumeMount} />}
@@ -502,4 +788,16 @@ function L({ label, children }: { label: string; children: React.ReactNode }) {
 }
 function Row({ label, value }: { label: string; value: string }) {
   return <div className="flex items-center justify-between rounded-lg bg-white/[0.02] px-3 py-2"><span className="text-xs text-slate-500">{label}</span><span className="max-w-[60%] truncate font-medium text-slate-200">{value}</span></div>;
+}
+/** One line of the framework-aware deploy pipeline preview. */
+function PlanStep({ icon, label, value, mono }: { icon: React.ReactNode; label: string; value: string | null; mono?: boolean }) {
+  return (
+    <div className="flex items-center gap-2 text-[11px]">
+      <span className="shrink-0 text-slate-500">{icon}</span>
+      <span className="w-32 shrink-0 text-slate-400">{label}</span>
+      <span className={cn('truncate text-slate-200', mono && 'font-mono text-[10px]')} title={value ?? undefined}>
+        {value ?? <span className="text-slate-600">—</span>}
+      </span>
+    </div>
+  );
 }

@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import {
   Background,
@@ -7,12 +7,18 @@ import {
   Controls,
   Handle,
   MiniMap,
+  Panel,
   Position,
   ReactFlow,
   type Edge,
   type Node,
   type NodeProps,
+  type NodeChange,
+  type EdgeChange,
   ReactFlowProvider,
+  applyEdgeChanges,
+  applyNodeChanges,
+  useReactFlow,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import {
@@ -22,11 +28,16 @@ import {
   Download,
   Globe,
   HardDrive,
+  Layers,
   Lock,
   RefreshCw,
   Server,
   ShieldCheck,
+  Wand2,
   Waypoints,
+  ZoomIn,
+  ZoomOut,
+  Maximize2,
 } from 'lucide-react';
 import { api } from '../lib/api.js';
 import type { TopologyGraph } from '@ninedeploy/sdk';
@@ -34,15 +45,33 @@ import { Button, ErrorCard, PageHeader, StatusBadge, cn } from '../components/ui
 import { downloadBlob, formatBytes } from '../lib/format.js';
 import { ServiceDomainLauncher } from '../components/ServiceDomainLauncher.js';
 
-// Layout Column Offsets
-const DOMAIN_X = 30;
-const GATEWAY_X = 280;
-const SERVICE_X = 560;
-const DB_X = 1000;
-const NETWORK_X = SERVICE_X;
-const GAP = 150;
-const NODE_H = 75;
-const STACK_GAP = 54;
+// ── Layout constants ──────────────────────────────────────────────────────
+// A deterministic 4-tier column layout: networks (top) → ingress/services
+// (middle) → attachments (same row as services) → storage (below owners).
+// Keeping the geometry in one place makes the layout reproducible and lets
+// the "Re-arrange" button restore it after the user has dragged nodes.
+const LAYOUT = {
+  // X columns (left to right)
+  DOMAIN_X: 30,
+  GATEWAY_X: 290,
+  SERVICE_X: 600,
+  DB_X: 1040,
+  NETWORK_X: 290, // networks share the gateway's x for a clean left column
+
+  // Y tiers (top to bottom)
+  NETWORK_Y: 0,
+  NETWORK_H: 60,
+  MAIN_Y_START: 170, // first service/row y
+  MAIN_ROW_SPACING: 165, // vertical gap between service rows
+  VOLUME_Y_OFFSET: 120, // distance from owner top to first volume
+  VOLUME_STACK_GAP: 60, // distance between stacked volumes of one owner
+  DOMAIN_STACK_GAP: 50, // distance between stacked domains of one service
+
+  // Sizing
+  NODE_H: 75,
+  EDGE_KIND: 'smoothstep' as const,
+  SNAP_GRID: [15, 15] as [number, number],
+};
 
 type ServiceData = {
   id: number;
@@ -105,6 +134,7 @@ function ServiceNode(props: NodeProps) {
         : 'border-slate-700/60 hover:border-slate-600',
     )}>
       <Handle type="target" position={Position.Left} style={{ background: '#6366f1', width: 8, height: 8 }} />
+      <Handle type="target" id="top" position={Position.Top} style={{ background: '#06b6d4', width: 8, height: 8 }} />
       <Handle type="source" position={Position.Right} style={{ background: '#10b981', width: 8, height: 8 }} />
       <Handle type="source" id="bottom" position={Position.Bottom} style={{ background: '#f59e0b', width: 8, height: 8 }} />
 
@@ -293,6 +323,330 @@ const nodeTypes = {
   gateway: GatewayNode,
 };
 
+// ── Pure layout function ──────────────────────────────────────────────────
+// Kept outside the component so it is reproducible and unit-testable.
+// Columns are X-bands; rows are aligned so a service and its attached db
+// share a Y, while domains/volume stacks sit just above/below.
+function computeTopologyLayout(
+  graph: TopologyGraph | null,
+  options: {
+    layerFilter: 'all' | 'compute' | 'storage' | 'network';
+    containerStats: Map<string, { cpuPct: number; memMb: number }>;
+    volumeSizes: Map<string, number>;
+  },
+): { nodes: Node[]; edges: Edge[] } {
+  const nodes: Node[] = [];
+  const edges: Edge[] = [];
+  if (!graph) return { nodes, edges };
+
+  const { layerFilter, containerStats, volumeSizes } = options;
+  const showNetwork = layerFilter === 'all' || layerFilter === 'network';
+  const showCompute = layerFilter === 'all' || layerFilter === 'compute';
+  const showStorage = layerFilter === 'all' || layerFilter === 'storage';
+
+  const services = graph.services ?? [];
+  const databases = graph.databases ?? [];
+  const domains = graph.domains ?? [];
+  const volumes = graph.volumes ?? [];
+  const networks = graph.networks ?? [];
+
+  // Index helpers
+  const domainsBySvc = new Map<number, typeof domains>();
+  for (const d of domains) {
+    if (d.serviceId == null) continue;
+    const list = domainsBySvc.get(d.serviceId) ?? [];
+    list.push(d);
+    domainsBySvc.set(d.serviceId, list);
+  }
+
+  // Build the main row positions: one Y per service, evenly spaced. We
+  // expand the row height when a service has many domains so its stack
+  // never overlaps the next row.
+  const serviceRowY = new Map<number, number>();
+  let cursorY = LAYOUT.MAIN_Y_START;
+  for (const s of services) {
+    serviceRowY.set(s.id, cursorY);
+    const stackH = Math.max(
+      LAYOUT.NODE_H,
+      (domainsBySvc.get(s.id)?.length ?? 0) * LAYOUT.DOMAIN_STACK_GAP,
+    );
+    cursorY += stackH + LAYOUT.MAIN_ROW_SPACING;
+  }
+  const mainTierEnd = cursorY;
+
+  // Networks — top band, spread horizontally
+  if (showNetwork) {
+    networks.forEach((n, i) => {
+      nodes.push({
+        id: `net-${n.name}`,
+        type: 'network',
+        position: { x: LAYOUT.NETWORK_X + i * 180, y: LAYOUT.NETWORK_Y },
+        data: { name: n.name, containers: n.containers.length },
+      });
+    });
+  }
+
+  // Domains — left column, stacked above each service's row start
+  if (showNetwork) {
+    for (const d of domains) {
+      if (d.serviceId == null) continue;
+      const sy = serviceRowY.get(d.serviceId);
+      if (sy == null) continue;
+      const siblings = domainsBySvc.get(d.serviceId)!;
+      const idx = siblings.findIndex((x) => x.id === d.id);
+      nodes.push({
+        id: `domain-${d.id}`,
+        type: 'domain',
+        position: { x: LAYOUT.DOMAIN_X, y: sy + idx * LAYOUT.DOMAIN_STACK_GAP },
+        data: { hostname: d.hostname, ssl: d.ssl, serviceId: d.serviceId },
+      });
+      edges.push({
+        id: `e-dom-${d.id}`,
+        source: `domain-${d.id}`,
+        target: 'gateway',
+        type: LAYOUT.EDGE_KIND,
+        animated: true,
+        style: { stroke: '#38bdf8', strokeWidth: 1.5 },
+      });
+    }
+  }
+
+  // Gateway — sits at the vertical center of the main tier
+  if (showNetwork) {
+    if (domains.length > 0 || services.length > 0) {
+      const gatewayY = LAYOUT.MAIN_Y_START + (mainTierEnd - LAYOUT.MAIN_Y_START) / 2 - 40;
+      nodes.push({
+        id: 'gateway',
+        type: 'gateway',
+        position: { x: LAYOUT.GATEWAY_X, y: Math.max(gatewayY, LAYOUT.MAIN_Y_START) },
+        data: {
+          running: graph.gateway?.running === true,
+          activeRoutes: domains.length,
+        },
+      });
+      for (const [sid] of domainsBySvc) {
+        if (!services.some((s) => s.id === sid)) continue;
+        edges.push({
+          id: `e-gw-${sid}`,
+          source: 'gateway',
+          target: `service-${sid}`,
+          type: LAYOUT.EDGE_KIND,
+          animated: true,
+          style: { stroke: '#0ea5e9', strokeWidth: 2 },
+        });
+      }
+    }
+  }
+
+  // Services — center column on their own row
+  if (showCompute || showStorage) {
+    for (const s of services) {
+      const sy = serviceRowY.get(s.id)!;
+      const cStat =
+        containerStats.get(s.runtimeId ?? '') ||
+        containerStats.get(`nd-svc-${s.slug}`) ||
+        containerStats.get(`nd-app-${s.slug}`);
+
+      nodes.push({
+        id: `service-${s.id}`,
+        type: 'service',
+        position: { x: LAYOUT.SERVICE_X, y: sy },
+        data: {
+          id: s.id,
+          name: s.name,
+          slug: s.slug,
+          status: s.status,
+          type: s.type,
+          image: s.image ?? null,
+          port: s.port ?? null,
+          runtimeId: s.runtimeId,
+          cpuPct: cStat?.cpuPct,
+          memMb: cStat?.memMb,
+        },
+      });
+
+      // Stacked volumes below the service
+      if (showStorage) {
+        const sVols = volumes.filter((v) => v.owner?.kind === 'service' && v.owner.refId === s.id);
+        sVols.forEach((v, i) => {
+          const vid = `vol-${v.name}`;
+          nodes.push({
+            id: vid,
+            type: 'volume',
+            position: { x: LAYOUT.SERVICE_X, y: sy + LAYOUT.NODE_H + LAYOUT.VOLUME_Y_OFFSET + i * LAYOUT.VOLUME_STACK_GAP },
+            data: { name: v.name, sizeBytes: volumeSizes.get(v.name), ownerKind: 'service', ownerName: s.name },
+          });
+          edges.push({
+            id: `e-${vid}-service`,
+            source: `service-${s.id}`,
+            sourceHandle: 'bottom',
+            target: vid,
+            type: LAYOUT.EDGE_KIND,
+            style: { stroke: '#f59e0b', strokeWidth: 1.5, strokeDasharray: '4 4' },
+          });
+        });
+      }
+    }
+  }
+
+  // Databases — right column, aligned with their attached service(s)
+  if (showCompute || showStorage) {
+    const dbRowY = new Map<number, number>();
+    let dbCursor = LAYOUT.MAIN_Y_START;
+    for (const d of databases) {
+      const atts = (graph.attachments ?? []).filter((a) => a.databaseId === d.id);
+      const attachedYs = atts
+        .map((a) => serviceRowY.get(a.serviceId))
+        .filter((v): v is number => v != null);
+      // Align to the earliest attached service (top-most row).
+      const targetY = attachedYs.length ? Math.min(...attachedYs) : dbCursor;
+      const dy = Math.max(targetY, dbCursor);
+      dbRowY.set(d.id, dy);
+      dbCursor = dy + LAYOUT.MAIN_ROW_SPACING;
+
+      const cStat = containerStats.get(`nd-db-${d.name}`) || containerStats.get(d.name);
+      const defaultPort =
+        d.engine === 'postgres' ? 5432
+        : d.engine === 'redis' || d.engine === 'valkey' ? 6379
+        : d.engine === 'mysql' || d.engine === 'mariadb' ? 3306
+        : d.engine === 'mongo' || d.engine === 'mongodb' ? 27017
+        : d.engine === 'clickhouse' ? 8123
+        : d.engine === 'meilisearch' ? 7700
+        : d.engine === 'rabbitmq' ? 5672
+        : null;
+
+      nodes.push({
+        id: `database-${d.id}`,
+        type: 'database',
+        position: { x: LAYOUT.DB_X, y: dy },
+        data: {
+          id: d.id,
+          name: d.name,
+          status: d.status,
+          engine: d.engine,
+          port: defaultPort,
+          cpuPct: cStat?.cpuPct,
+          memMb: cStat?.memMb,
+        },
+      });
+
+      if (showStorage) {
+        const dVols = volumes.filter((v) => v.owner?.kind === 'database' && v.owner.refId === d.id);
+        dVols.forEach((v, i) => {
+          const vid = `vol-${v.name}`;
+          nodes.push({
+            id: vid,
+            type: 'volume',
+            position: { x: LAYOUT.DB_X, y: dy + LAYOUT.NODE_H + LAYOUT.VOLUME_Y_OFFSET + i * LAYOUT.VOLUME_STACK_GAP },
+            data: { name: v.name, sizeBytes: volumeSizes.get(v.name), ownerKind: 'database', ownerName: d.name },
+          });
+          edges.push({
+            id: `e-${vid}-db`,
+            source: `database-${d.id}`,
+            sourceHandle: 'bottom',
+            target: vid,
+            type: LAYOUT.EDGE_KIND,
+            style: { stroke: '#f59e0b', strokeWidth: 1.5, strokeDasharray: '4 4' },
+          });
+        });
+      }
+    }
+
+    if (showCompute) {
+      for (const a of graph.attachments ?? []) {
+        edges.push({
+          id: `e-att-${a.id}`,
+          source: `service-${a.serviceId}`,
+          target: `database-${a.databaseId}`,
+          label: a.envAlias || 'ATTACHED_DB',
+          labelStyle: { fill: '#34d399', fontSize: 10, fontFamily: 'monospace', fontWeight: 600 },
+          labelBgStyle: { fill: '#064e3b', fillOpacity: 0.9, rx: 4, ry: 4 },
+          style: { stroke: '#10b981', strokeWidth: 2 },
+          type: LAYOUT.EDGE_KIND,
+          animated: true,
+        });
+      }
+    }
+  }
+
+  // Network → Service edges (only when network layer is visible)
+  if (showNetwork) {
+    for (const n of networks) {
+      for (const c of n.containers) {
+        const target = services.find((s) => s.runtimeId === c || `nd-svc-${s.slug}` === c);
+        if (!target) continue;
+        edges.push({
+          id: `e-net-${n.name}-${c}`,
+          source: `net-${n.name}`,
+          target: `service-${target.id}`,
+          targetHandle: 'top',
+          type: LAYOUT.EDGE_KIND,
+          style: { stroke: '#06b6d4', strokeWidth: 1.5, strokeDasharray: '3 3' },
+        });
+      }
+    }
+  }
+
+  // Orphan volumes — placed in a dedicated "Ghost Storage" column on the
+  // far right so they remain visible but clearly separate from the
+  // live topology. Volumes whose owner reference has disappeared (e.g.
+  // the service that owned them was deleted) end up here.
+  if (showStorage) {
+    const orphanVols = volumes.filter((v) => !v.owner);
+    const orphanX = LAYOUT.DB_X + 360;
+    orphanVols.forEach((v, i) => {
+      const vid = `vol-${v.name}`;
+      nodes.push({
+        id: vid,
+        type: 'volume',
+        position: { x: orphanX, y: mainTierEnd + 80 + i * LAYOUT.VOLUME_STACK_GAP },
+        data: { name: v.name, sizeBytes: volumeSizes.get(v.name), ownerKind: 'orphan' },
+      });
+    });
+  }
+
+  return { nodes, edges };
+}
+
+// ── Default styles for edges so a new edge follows the same look ──────────
+const defaultEdgeOptions = {
+  type: LAYOUT.EDGE_KIND,
+  style: { stroke: '#475569', strokeWidth: 1.5 },
+};
+
+// ── Legend (rendered inside the React Flow viewport) ──────────────────────
+function TopologyLegend() {
+  const items: Array<{ color: string; label: string; dashed?: boolean }> = [
+    { color: '#38bdf8', label: 'Domain → Gateway' },
+    { color: '#0ea5e9', label: 'Gateway → Service' },
+    { color: '#10b981', label: 'Service → Database' },
+    { color: '#f59e0b', label: 'Volume Mount', dashed: true },
+    { color: '#06b6d4', label: 'Network Bridge', dashed: true },
+  ];
+  return (
+    <div className="rounded-xl border border-white/10 bg-slate-950/85 px-3 py-2 shadow-xl backdrop-blur-md">
+      <div className="flex items-center gap-1.5 pb-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+        <Layers size={11} /> Edge Legend
+      </div>
+      <div className="space-y-1">
+        {items.map((it) => (
+          <div key={it.label} className="flex items-center gap-2 text-[10px] font-mono text-slate-300">
+            <span
+              className="h-0.5 w-6 rounded-full"
+              style={{
+                background: it.dashed
+                  ? `repeating-linear-gradient(to right, ${it.color} 0 4px, transparent 4px 7px)`
+                  : it.color,
+              }}
+            />
+            <span className="truncate">{it.label}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ── Main Topology Page Component ──────────────────────────────────────────
 
 export function Topology() {
@@ -347,245 +701,20 @@ export function Topology() {
     };
   }, [graph.data, focus]);
 
-  const { nodes, edges } = useMemo(() => {
-    const nodes: Node[] = [];
-    const edges: Edge[] = [];
-    const g = filtered;
-
-    const services = g?.services ?? [];
-    const databases = g?.databases ?? [];
-    const volumes = g?.volumes ?? [];
-
-    const domainsBySvc = new Map<number, TopologyGraph['domains']>();
-    (g?.domains ?? []).forEach((d) => {
-      const list = domainsBySvc.get(d.serviceId) ?? [];
-      list.push(d);
-      domainsBySvc.set(d.serviceId, list);
-    });
-
-    const volsByOwner = new Map<string, TopologyGraph['volumes']>();
-    volumes.forEach((v) => {
-      if (!v.owner) return;
-      const key = `${v.owner.kind}-${v.owner.refId}`;
-      const list = volsByOwner.get(key) ?? [];
-      list.push(v);
-      volsByOwner.set(key, list);
-    });
-
-    const svcY = new Map<number, number>();
-    let y = 0;
-    services.forEach((s) => {
-      svcY.set(s.id, y);
-      const domCount = domainsBySvc.get(s.id)?.length ?? 0;
-      const volCount = volsByOwner.get(`service-${s.id}`)?.length ?? 0;
-      y += Math.max(GAP, NODE_H + domCount * STACK_GAP, NODE_H + 30 + volCount * (STACK_GAP - 6));
-    });
-    const totalHeight = Math.max(y, databases.length * GAP, 300);
-
-    // 1. Domains (Left column)
-    if (layerFilter === 'all' || layerFilter === 'network') {
-      (g?.domains ?? []).forEach((d) => {
-        const sy = svcY.get(d.serviceId);
-        if (sy == null) return;
-        const idx = domainsBySvc.get(d.serviceId)!.findIndex((x) => x.id === d.id);
-        nodes.push({
-          id: `domain-${d.id}`,
-          type: 'domain',
-          position: { x: DOMAIN_X, y: sy + idx * STACK_GAP },
-          data: { hostname: d.hostname, ssl: d.ssl, serviceId: d.serviceId },
-        });
-        edges.push({
-          id: `e-dom-${d.id}`,
-          source: `domain-${d.id}`,
-          target: 'gateway',
-          type: 'smoothstep',
-          animated: true,
-          style: { stroke: '#38bdf8', strokeWidth: 1.5 },
-        });
-      });
-    }
-
-    // 2. Traefik Gateway
-    if (layerFilter === 'all' || layerFilter === 'network') {
-      if ((g?.domains ?? []).length > 0 || services.length > 0) {
-        nodes.push({
-          id: 'gateway',
-          type: 'gateway',
-          position: { x: GATEWAY_X, y: totalHeight / 2 - 40 },
-          data: { running: g?.gateway?.running === true, activeRoutes: (g?.domains ?? []).length },
-        });
-        for (const [sid] of domainsBySvc) {
-          if (!services.some((s) => s.id === sid)) continue;
-          edges.push({
-            id: `e-gw-${sid}`,
-            source: 'gateway',
-            target: `service-${sid}`,
-            type: 'smoothstep',
-            animated: true,
-            style: { stroke: '#0ea5e9', strokeWidth: 2 },
-          });
-        }
-      }
-    }
-
-    // 3. Services (Center column)
-    if (layerFilter === 'all' || layerFilter === 'compute' || layerFilter === 'storage' || layerFilter === 'network') {
-      services.forEach((s) => {
-        const sy = svcY.get(s.id)!;
-        const cStat = containerStatsMap.get(s.runtimeId ?? '') ||
-                      containerStatsMap.get(`nd-svc-${s.slug}`) ||
-                      containerStatsMap.get(`nd-app-${s.slug}`);
-
-        nodes.push({
-          id: `service-${s.id}`,
-          type: 'service',
-          position: { x: SERVICE_X, y: sy },
-          data: {
-            id: s.id,
-            name: s.name,
-            slug: s.slug,
-            status: s.status,
-            type: s.type,
-            image: s.image ?? null,
-            port: s.port ?? null,
-            runtimeId: s.runtimeId,
-            cpuPct: cStat?.cpuPct,
-            memMb: cStat?.memMb,
-          },
-        });
-
-        // Stacked Service Volumes
-        if (layerFilter === 'all' || layerFilter === 'storage') {
-          (volsByOwner.get(`service-${s.id}`) ?? []).forEach((v, i) => {
-            const vid = `vol-${v.name}`;
-            const sBytes = volumeSizeMap.get(v.name);
-            nodes.push({
-              id: vid,
-              type: 'volume',
-              position: { x: SERVICE_X + i * 150, y: sy + NODE_H + 30 },
-              data: { name: v.name, sizeBytes: sBytes, ownerKind: 'service', ownerName: s.name },
-            });
-            edges.push({
-              id: `e-${vid}`,
-              source: `service-${s.id}`,
-              sourceHandle: 'bottom',
-              target: vid,
-              type: 'smoothstep',
-              style: { stroke: '#f59e0b', strokeDasharray: '4 4' },
-            });
-          });
-        }
-      });
-    }
-
-    // 4. Databases (Right column)
-    if (layerFilter === 'all' || layerFilter === 'compute' || layerFilter === 'storage') {
-      const attsByDb = new Map<number, TopologyGraph['attachments']>();
-      (g?.attachments ?? []).forEach((a) => {
-        const list = attsByDb.get(a.databaseId) ?? [];
-        list.push(a);
-        attsByDb.set(a.databaseId, list);
-      });
-
-      let dbY = 0;
-      databases.forEach((d) => {
-        const attached = (attsByDb.get(d.id) ?? []).map((a) => svcY.get(a.serviceId)).filter((v): v is number => v != null);
-        const aligned = attached.length ? attached.reduce((a, b) => a + b, 0) / attached.length : null;
-        const volCount = volsByOwner.get(`database-${d.id}`)?.length ?? 0;
-        const dy = aligned != null ? Math.max(aligned - 20, dbY) : dbY;
-
-        const cStat = containerStatsMap.get(`nd-db-${d.name}`) || containerStatsMap.get(d.name);
-        const defaultPort = d.engine === 'postgres' ? 5432
-          : d.engine === 'redis' || d.engine === 'valkey' ? 6379
-          : d.engine === 'mysql' || d.engine === 'mariadb' ? 3306
-          : d.engine === 'mongo' || d.engine === 'mongodb' ? 27017
-          : d.engine === 'clickhouse' ? 8123
-          : d.engine === 'meilisearch' ? 7700
-          : d.engine === 'rabbitmq' ? 5672
-          : null;
-
-        nodes.push({
-          id: `database-${d.id}`,
-          type: 'database',
-          position: { x: DB_X, y: dy },
-          data: {
-            id: d.id,
-            name: d.name,
-            status: d.status,
-            engine: d.engine,
-            port: defaultPort,
-            cpuPct: cStat?.cpuPct,
-            memMb: cStat?.memMb,
-          },
-        });
-        dbY = dy + Math.max(GAP, NODE_H + 30 + volCount * (STACK_GAP - 6));
-
-        // Stacked Database Volumes
-        if (layerFilter === 'all' || layerFilter === 'storage') {
-          (volsByOwner.get(`database-${d.id}`) ?? []).forEach((v, i) => {
-            const vid = `vol-${v.name}`;
-            const sBytes = volumeSizeMap.get(v.name);
-            nodes.push({
-              id: vid,
-              type: 'volume',
-              position: { x: DB_X + i * 150, y: dy + NODE_H + 30 },
-              data: { name: v.name, sizeBytes: sBytes, ownerKind: 'database', ownerName: d.name },
-            });
-            edges.push({
-              id: `e-${vid}`,
-              source: `database-${d.id}`,
-              sourceHandle: 'bottom',
-              target: vid,
-              type: 'smoothstep',
-              style: { stroke: '#f59e0b', strokeDasharray: '4 4' },
-            });
-          });
-        }
-      });
-    }
-
-    // 5. Attachments Edges: Service → Database
-    if (layerFilter === 'all' || layerFilter === 'compute') {
-      (g?.attachments ?? []).forEach((a) => {
-        edges.push({
-          id: `e-att-${a.id}`,
-          source: `service-${a.serviceId}`,
-          target: `database-${a.databaseId}`,
-          label: a.envAlias || 'ATTACHED_DB',
-          labelStyle: { fill: '#34d399', fontSize: 10, fontFamily: 'monospace', fontWeight: 600 },
-          labelBgStyle: { fill: '#064e3b', fillOpacity: 0.9, rx: 4, ry: 4 },
-          style: { stroke: '#10b981', strokeWidth: 2 },
-          type: 'smoothstep',
-          animated: true,
-        });
-      });
-    }
-
-    // 6. Networks above Service Column
-    if (layerFilter === 'all' || layerFilter === 'network') {
-      for (const [i, n] of (g?.networks ?? []).entries()) {
-        nodes.push({
-          id: `net-${n.name}`,
-          type: 'network',
-          position: { x: NETWORK_X + i * 170, y: -110 },
-          data: { name: n.name, containers: n.containers.length },
-        });
-        for (const c of n.containers) {
-          const target = services.find((s) => s.runtimeId === c || `nd-svc-${s.slug}` === c);
-          if (!target) continue;
-          edges.push({
-            id: `e-net-${n.name}-${c}`,
-            source: `net-${n.name}`,
-            target: `service-${target.id}`,
-            type: 'smoothstep',
-            style: { stroke: '#06b6d4', strokeDasharray: '3 3' },
-          });
-        }
-      }
-    }
-
-    return { nodes, edges };
-  }, [filtered, containerStatsMap, volumeSizeMap, layerFilter]);
+  // `filtered` may be undefined or carry no components. We use it as a
+  // cheap empty-state signal here so the canvas isn't mounted for an
+  // empty graph (and to avoid a double layout computation).
+  const hasGraphComponents = useMemo(() => {
+    if (!filtered) return false;
+    return (
+      filtered.services.length > 0 ||
+      filtered.databases.length > 0 ||
+      filtered.domains.length > 0 ||
+      filtered.networks.length > 0 ||
+      filtered.attachments.length > 0 ||
+      filtered.volumes.length > 0
+    );
+  }, [filtered]);
 
   return (
     <div className="relative space-y-4 nd-fade">
@@ -708,7 +837,7 @@ export function Topology() {
           <div className="grid h-full place-items-center p-6">
             <ErrorCard title="Couldn't load infrastructure topology" error={graph.error} onRetry={() => graph.refetch()} />
           </div>
-        ) : nodes.length === 0 ? (
+        ) : !hasGraphComponents ? (
           <div className="grid h-full place-items-center text-sm text-slate-400 font-mono">
             <div className="text-center space-y-2">
               <Boxes size={32} className="mx-auto text-slate-600" />
@@ -718,31 +847,13 @@ export function Topology() {
           </div>
         ) : (
           <ReactFlowProvider>
-            <ReactFlow
-              nodes={nodes}
-              edges={edges}
-              nodeTypes={nodeTypes}
-              fitView
-              fitViewOptions={{ padding: 0.15 }}
-              proOptions={{ hideAttribution: true }}
-              defaultEdgeOptions={{ style: { stroke: '#475569' } }}
-              onNodeClick={(_, node) => setSelectedNode(node)}
-            >
-              <Background variant={BackgroundVariant.Dots} gap={20} size={1.2} color="#334155" />
-              <Controls className="!border-white/10 !bg-slate-900/90 !rounded-xl overflow-hidden shadow-xl" showInteractive={false} />
-              <MiniMap
-                nodeColor={(n) => {
-                  if (n.type === 'service') return '#6366f1';
-                  if (n.type === 'database') return '#10b981';
-                  if (n.type === 'gateway') return '#0ea5e9';
-                  if (n.type === 'volume') return '#f59e0b';
-                  if (n.type === 'domain') return '#38bdf8';
-                  return '#06b6d4';
-                }}
-                className="!bg-slate-950/80 !border-white/10 !rounded-2xl !overflow-hidden !shadow-2xl hidden md:block"
-                maskColor="rgba(15, 23, 42, 0.75)"
-              />
-            </ReactFlow>
+            <TopologyFlowGate
+              graph={filtered ?? null}
+              layerFilter={layerFilter}
+              containerStatsMap={containerStatsMap}
+              volumeSizeMap={volumeSizeMap}
+              onSelectNode={setSelectedNode}
+            />
           </ReactFlowProvider>
         )}
 
@@ -863,5 +974,185 @@ export function Topology() {
         )}
       </div>
     </div>
+  );
+}
+
+// ── Inner wrapper ─────────────────────────────────────────────────────────
+// Splits the React Flow canvas from the data layer so we can keep the
+// data hook in the parent and only re-mount the canvas (forcing a clean
+// fitView) when the underlying graph/filter changes via `key={layoutKey}`.
+function TopologyFlowGate(props: {
+  graph: TopologyGraph | null;
+  layerFilter: 'all' | 'compute' | 'storage' | 'network';
+  containerStatsMap: Map<string, { cpuPct: number; memMb: number }>;
+  volumeSizeMap: Map<string, number>;
+  onSelectNode: (node: { id: string; type?: string; data: any }) => void;
+}) {
+  const { graph, layerFilter, containerStatsMap, volumeSizeMap, onSelectNode } = props;
+  const { nodes, edges } = useMemo(
+    () => computeTopologyLayout(graph, { layerFilter, containerStats: containerStatsMap, volumeSizes: volumeSizeMap }),
+    [graph, layerFilter, containerStatsMap, volumeSizeMap],
+  );
+
+  return (
+    <TopologyCanvasWithClick
+      nodes={nodes}
+      edges={edges}
+      onSelectNode={onSelectNode}
+    />
+  );
+}
+
+function TopologyCanvasWithClick(props: {
+  nodes: Node[];
+  edges: Edge[];
+  onSelectNode: (node: { id: string; type?: string; data: any }) => void;
+}) {
+  const [nodes, setNodes] = useState<Node[]>(props.nodes);
+  const [edges, setEdges] = useState<Edge[]>(props.edges);
+  const [, setUserMoved] = useState(false);
+  const lastLayoutKey = useRef<string>('');
+
+  // Layout key derived from the props we received — re-apply positions
+  // when upstream data changes; preserve user-dragged positions otherwise.
+  const layoutKey = useMemo(
+    () =>
+      props.nodes.map((n) => `${n.id}:${n.position.x.toFixed(0)},${n.position.y.toFixed(0)}`).join('|') +
+      '|' +
+      props.edges.length.toString(),
+    [props.nodes, props.edges],
+  );
+
+  useEffect(() => {
+    if (lastLayoutKey.current === layoutKey) return;
+    lastLayoutKey.current = layoutKey;
+    setNodes(props.nodes);
+    setEdges(props.edges);
+    setUserMoved(false);
+  }, [layoutKey, props.nodes, props.edges]);
+
+  const onNodesChange = useCallback((changes: NodeChange[]) => {
+    setNodes((current) => {
+      const next = applyNodeChanges(changes, current);
+      const dropped = changes.some(
+        (c) => c.type === 'position' && (c as { dragging?: boolean }).dragging === false,
+      );
+      if (dropped) setUserMoved(true);
+      return next;
+    });
+  }, []);
+
+  const onEdgesChange = useCallback((changes: EdgeChange[]) => {
+    setEdges((current) => applyEdgeChanges(changes, current));
+  }, []);
+
+  const { fitView, zoomIn, zoomOut } = useReactFlow();
+  const handleFit = useCallback(() => {
+    setUserMoved(false);
+    requestAnimationFrame(() => {
+      fitView({ padding: 0.18, duration: 600, maxZoom: 1.0 });
+    });
+  }, [fitView]);
+  const handleRearrange = useCallback(() => {
+    setUserMoved(false);
+    setNodes(props.nodes);
+    setEdges(props.edges);
+    requestAnimationFrame(() => {
+      fitView({ padding: 0.18, duration: 600, maxZoom: 1.0 });
+    });
+  }, [fitView, props.nodes, props.edges]);
+  const handleZoomIn = useCallback(() => zoomIn({ duration: 250 }), [zoomIn]);
+  const handleZoomOut = useCallback(() => zoomOut({ duration: 250 }), [zoomOut]);
+
+  return (
+    <ReactFlow
+      nodes={nodes}
+      edges={edges}
+      nodeTypes={nodeTypes}
+      onNodesChange={onNodesChange}
+      onEdgesChange={onEdgesChange}
+      onNodeClick={(_, node) => props.onSelectNode({ id: node.id, type: node.type, data: node.data })}
+      fitView
+      fitViewOptions={{ padding: 0.18, duration: 600, maxZoom: 1.0 }}
+      proOptions={{ hideAttribution: true }}
+      defaultEdgeOptions={defaultEdgeOptions}
+      snapToGrid
+      snapGrid={LAYOUT.SNAP_GRID}
+      minZoom={0.2}
+      maxZoom={2}
+      connectionRadius={28}
+      elevateNodesOnSelect
+      selectionOnDrag={false}
+      panOnScrollSpeed={1.2}
+      zoomOnScroll
+      zoomOnPinch
+      panOnDrag
+      deleteKeyCode={null}
+    >
+      <Background variant={BackgroundVariant.Dots} gap={20} size={1.2} color="#334155" />
+
+      <Controls
+        className="!border-white/10 !bg-slate-900/90 !rounded-xl overflow-hidden shadow-xl"
+        showInteractive={false}
+      />
+
+      <Panel position="top-right" className="nodrag nopan mt-2 mr-2">
+        <div className="flex items-center gap-1 rounded-xl border border-white/10 bg-slate-900/90 p-1 shadow-xl backdrop-blur-md">
+          <button
+            type="button"
+            onClick={handleZoomIn}
+            title="Zoom in"
+            className="rounded-lg p-1.5 text-slate-300 transition hover:bg-white/10 hover:text-white"
+          >
+            <ZoomIn size={14} />
+          </button>
+          <button
+            type="button"
+            onClick={handleZoomOut}
+            title="Zoom out"
+            className="rounded-lg p-1.5 text-slate-300 transition hover:bg-white/10 hover:text-white"
+          >
+            <ZoomOut size={14} />
+          </button>
+          <span className="h-4 w-px bg-white/10" />
+          <button
+            type="button"
+            onClick={handleFit}
+            title="Fit to view"
+            className="rounded-lg p-1.5 text-slate-300 transition hover:bg-white/10 hover:text-white"
+          >
+            <Maximize2 size={14} />
+          </button>
+          <span className="h-4 w-px bg-white/10" />
+          <button
+            type="button"
+            onClick={handleRearrange}
+            title="Re-arrange layout"
+            className="flex items-center gap-1 rounded-lg px-2 py-1.5 text-[10px] font-mono font-semibold text-indigo-300 transition hover:bg-indigo-500/15"
+          >
+            <Wand2 size={12} /> Re-arrange
+          </button>
+        </div>
+      </Panel>
+
+      <Panel position="bottom-left" className="nodrag nopan mb-2 ml-2">
+        <TopologyLegend />
+      </Panel>
+
+      <MiniMap
+        nodeColor={(n) => {
+          if (n.type === 'service') return '#6366f1';
+          if (n.type === 'database') return '#10b981';
+          if (n.type === 'gateway') return '#0ea5e9';
+          if (n.type === 'volume') return '#f59e0b';
+          if (n.type === 'domain') return '#38bdf8';
+          return '#06b6d4';
+        }}
+        className="!bg-slate-950/80 !border-white/10 !rounded-2xl !overflow-hidden !shadow-2xl hidden md:block"
+        maskColor="rgba(15, 23, 42, 0.75)"
+        pannable
+        zoomable
+      />
+    </ReactFlow>
   );
 }

@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import {
-  Activity, ArrowLeft, Copy, Download, ExternalLink, FileCode2, FolderTree, GitBranch, Globe, HardDrive, KeyRound, LayoutDashboard, Network, Play, Rocket, RotateCcw, Settings, ShieldAlert, Square, Terminal,
+  Activity, ArrowLeft, Boxes, Copy, Download, ExternalLink, FileCode2, FolderTree, GitBranch, Globe, HardDrive, KeyRound, LayoutDashboard, Network, Play, Rocket, RotateCcw, Settings, ShieldAlert, Square, Terminal,
 } from 'lucide-react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { api, authedFetch } from '../../lib/api.js';
@@ -17,13 +17,14 @@ import { EnvironmentTab } from './EnvironmentTab.js';
 import { NetworkTab } from './NetworkTab.js';
 import { VolumesTab } from './VolumesTab.js';
 import { SettingsTab } from './SettingsTab.js';
+import { FrameworkTab } from './FrameworkTab.js';
 import { ActivityTab } from './ActivityTab.js';
 import { DangerZone } from './DangerZone.js';
 
 import { ContainerFileBrowser } from '../../components/ContainerFileBrowser.js';
 import { ServiceDomainLauncher } from '../../components/ServiceDomainLauncher.js';
 
-type TabId = 'overview' | 'terminal' | 'architecture' | 'manifest' | 'deploys' | 'environment' | 'network' | 'volumes' | 'files' | 'settings' | 'activity' | 'danger';
+type TabId = 'overview' | 'terminal' | 'architecture' | 'manifest' | 'deploys' | 'environment' | 'network' | 'volumes' | 'files' | 'framework' | 'settings' | 'activity' | 'danger';
 
 const SERVICE_TABS: Array<{ id: TabId; label: string; icon: typeof LayoutDashboard }> = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
@@ -35,6 +36,7 @@ const SERVICE_TABS: Array<{ id: TabId; label: string; icon: typeof LayoutDashboa
   { id: 'network', label: 'Network & Domains', icon: Globe },
   { id: 'volumes', label: 'Volumes & Storage', icon: HardDrive },
   { id: 'files', label: 'File Browser', icon: FolderTree },
+  { id: 'framework', label: 'Framework', icon: Boxes },
   { id: 'settings', label: 'Settings', icon: Settings },
   { id: 'activity', label: 'Activity Logs', icon: Activity },
   { id: 'danger', label: 'Danger Zone', icon: ShieldAlert },
@@ -348,6 +350,7 @@ export function ServiceDetail() {
             </div>
           )}
           {tab === 'settings' && <SettingsTab serviceId={id} svc={svc} />}
+          {tab === 'framework' && <FrameworkTab serviceId={id} svc={svc} />}
           {tab === 'activity' && <ActivityTab serviceId={id} name={svc.name} />}
           {tab === 'danger' && (
             <DangerZone

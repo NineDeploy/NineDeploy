@@ -4,6 +4,8 @@ import { buildConfigs, databaseAttachments, databases, type DB, deployments, dom
 import { config } from '../config.js';
 import { decrypt } from '../lib/crypto.js';
 import { checkoutCommit, type CloneCreds } from '../lib/git.js';
+import { analyzeRepo, summarizeInsights } from '../lib/frameworks.js';
+import { upsertInsights } from './repoInsights.js';
 import { connectionString, ENGINES } from './database.js';
 import { dockerBuilder } from './builders/docker.js';
 import { composeBuilder } from './builders/compose.js';
@@ -259,6 +261,17 @@ export async function runDeployment(db: DB, deploymentId: number): Promise<void>
       }
       sha = await checkoutCommit(service.repoUrl ?? '', service.branch, dep.commitSha ?? undefined, workDir, log, creds);
       await db.update(deployments).set({ commitSha: sha }).where(eq(deployments.id, deploymentId));
+
+      // Framework analysis powers the service-detail cards and gives the deploy
+      // log a human-readable "what is this repo" line. Best-effort by design —
+      // a detection hiccup must never fail the deploy itself.
+      try {
+        const insights = analyzeRepo(workDir, buildConfig?.baseDir, sha);
+        await upsertInsights(db, service.id, insights);
+        log(summarizeInsights(insights));
+      } catch (err) {
+        log(`warning: repository analysis failed: ${msg(err)}`);
+      }
     }
     log('##[stage:PREPARE:success]');
 

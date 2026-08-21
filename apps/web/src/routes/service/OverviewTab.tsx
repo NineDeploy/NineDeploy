@@ -1,10 +1,11 @@
-import { useQuery } from '@tanstack/react-query';
-import { Activity, Cpu, HardDrive, MemoryStick, Terminal } from 'lucide-react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Activity, Cpu, FileCode2, GitBranch, HardDrive, MemoryStick, RefreshCw, Terminal } from 'lucide-react';
 import { Link } from 'react-router';
 import type { Service } from '@ninedeploy/sdk';
 import { api } from '../../lib/api.js';
 import { Sparkline } from '../../components/Sparkline.js';
-import { Card, CardBody, StatusBadge } from '../../components/ui.js';
+import { useToast } from '../../components/Toast.js';
+import { Button, Card, CardBody, StatusBadge } from '../../components/ui.js';
 
 /** Health, metrics and runtime metadata for one service. */
 export function OverviewTab({ serviceId, svc }: { serviceId: number; svc: Service }) {
@@ -16,8 +17,124 @@ export function OverviewTab({ serviceId, svc }: { serviceId: number; svc: Servic
         <RuntimeInfoCard svc={svc} />
       </div>
 
+      {/* What's inside the repository (framework analysis) */}
+      {svc.repoUrl && <RepoInsightsCard serviceId={serviceId} />}
+
       {/* Deployment & Logs Quick Access Card */}
       <DeploymentQuickCard serviceId={serviceId} />
+    </div>
+  );
+}
+
+// ── Repository contents (framework analysis) ──────────────────────────────
+function RepoInsightsCard({ serviceId }: { serviceId: number }) {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+
+  const insights = useQuery({
+    queryKey: ['service-insights', serviceId],
+    queryFn: () => api.insights.get(serviceId),
+  });
+
+  const refresh = useMutation({
+    mutationFn: () => api.insights.refresh(serviceId),
+    onSuccess: (data) => {
+      qc.setQueryData(['service-insights', serviceId], data);
+      toast('Repository analysis updated', 'success');
+    },
+    onError: (err) => toast(err instanceof Error ? err.message : 'Analysis failed', 'error'),
+  });
+
+  const data = insights.data;
+  const f = data?.framework;
+  const analyzedAt = data ? new Date(data.analyzedAt).toLocaleString() : null;
+
+  return (
+    <Card>
+      <CardBody className="space-y-3">
+        <div className="flex items-center justify-between border-b border-white/[0.06] pb-3">
+          <div className="flex items-center gap-2">
+            <GitBranch size={16} className="text-indigo-400" />
+            <span className="text-sm font-semibold text-slate-100">Repository Contents</span>
+          </div>
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => refresh.mutate()}
+            disabled={refresh.isPending}
+            className="h-7 text-xs"
+          >
+            <RefreshCw size={12} className={refresh.isPending ? 'animate-spin' : undefined} />
+            {refresh.isPending ? 'Analyzing…' : data ? 'Re-analyze' : 'Analyze now'}
+          </Button>
+        </div>
+
+        {!data && !insights.isLoading && (
+          <p className="py-1 text-xs leading-relaxed text-slate-500">
+            No analysis yet. Run an analysis to detect the framework, package manager and suggested deploy
+            settings — it also happens automatically on every deploy.
+          </p>
+        )}
+        {!data && insights.isLoading && <p className="py-1 text-xs text-slate-500">Loading analysis…</p>}
+
+        {data && f && (
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xl leading-none">{f.emoji}</span>
+              <span className="text-sm font-semibold text-slate-100">
+                {f.name}
+                {data.frameworkVersion && <span className="ml-1 font-mono text-xs text-slate-400">{data.frameworkVersion}</span>}
+              </span>
+              <span className="rounded-full bg-indigo-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-indigo-300 ring-1 ring-inset ring-indigo-500/25">
+                {f.category}
+              </span>
+              {data.hasDockerfile && (
+                <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-300 ring-1 ring-inset ring-emerald-500/20">Dockerfile</span>
+              )}
+              {data.hasComposeFile && (
+                <span className="rounded-full bg-white/[0.05] px-2 py-0.5 text-[10px] text-slate-300">compose</span>
+              )}
+              {data.monorepo && (
+                <span className="rounded-full bg-white/[0.05] px-2 py-0.5 text-[10px] text-slate-300">monorepo</span>
+              )}
+            </div>
+
+            <dl className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+              <Fact label="Package manager" value={data.packageManager ?? '—'} />
+              <Fact label="Node engine" value={data.nodeVersion ?? '—'} />
+              <Fact label="Packages" value={`${data.dependencyCount} prod · ${data.devDependencyCount} dev`} />
+              <Fact label="Analyzed commit" value={data.commitSha ? data.commitSha.slice(0, 12) : '—'} />
+            </dl>
+
+            {data.scripts && Object.keys(data.scripts).length > 0 && (
+              <div className="rounded-lg border border-white/[0.06] bg-black/25 p-2.5">
+                <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                  <FileCode2 size={11} /> package.json scripts
+                </div>
+                <div className="max-h-28 space-y-1 overflow-y-auto font-mono text-[11px]">
+                  {Object.entries(data.scripts).slice(0, 8).map(([name, cmd]) => (
+                    <div key={name} className="flex gap-2">
+                      <span className="shrink-0 text-indigo-300">{name}</span>
+                      <span className="truncate text-slate-400" title={cmd}>{cmd}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <p className="text-[11px] text-slate-600">Analyzed {analyzedAt} · manage presets in the Framework tab</p>
+          </div>
+        )}
+      </CardBody>
+    </Card>
+  );
+}
+
+function Fact({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg bg-white/[0.02] border border-white/[0.04] p-2">
+      <dt className="text-[10px] font-medium uppercase tracking-wide text-slate-500">{label}</dt>
+      <dd className="truncate font-mono text-[11px] text-slate-200" title={value}>{value}</dd>
     </div>
   );
 }

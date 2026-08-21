@@ -24,8 +24,18 @@ vi.mock('@xyflow/react', () => ({
   Background: () => <div data-testid="background" />,
   Controls: () => <div data-testid="controls" />,
   Handle: () => <div data-testid="handle" />,
+  MiniMap: () => <div data-testid="minimap" />,
+  Panel: ({ children }: { children: React.ReactNode }) => <div data-testid="panel">{children}</div>,
   BackgroundVariant: { Dots: 'dots' },
   Position: { Left: 'left', Right: 'right', Top: 'top', Bottom: 'bottom' },
+  applyNodeChanges: (changes: unknown[], nodes: unknown[]) => nodes,
+  applyEdgeChanges: (changes: unknown[], edges: unknown[]) => edges,
+  useReactFlow: () => ({
+    fitView: () => Promise.resolve(true),
+    zoomIn: () => undefined,
+    zoomOut: () => undefined,
+    setViewport: () => undefined,
+  }),
 }));
 
 const graph = {
@@ -63,7 +73,7 @@ describe('Topology', () => {
 it('shows an error state with retry when the graph query fails', async () => {
     mockOf(api.topology.get).mockRejectedValue(new Error('boom'));
     renderWithProviders(<Topology />);
-    expect(await screen.findByText(/Couldn't load the topology/)).toBeInTheDocument();
+    expect(await screen.findByText(/Couldn't load infrastructure topology/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
     expect(api.topology.get).toHaveBeenCalledTimes(2);
   });
@@ -71,13 +81,13 @@ it('shows an error state with retry when the graph query fails', async () => {
     it('shows loading state while fetching the graph', () => {
       mockOf(api.topology.get).mockReturnValue(new Promise(() => {}));
       renderWithProviders(<Topology />);
-      expect(screen.getByText('Loading graph…')).toBeInTheDocument();
+      expect(screen.getByText('Building topology mesh…')).toBeInTheDocument();
     });
 
     it('shows empty state when nothing is deployed', async () => {
       mockOf(api.topology.get).mockResolvedValue({ services: [], databases: [], domains: [], attachments: [], volumes: [], networks: [], gateway: { name: 'ninedeploy-traefik', network: 'ninedeploy', running: false } } as never);
       renderWithProviders(<Topology />);
-      await screen.findByText('Nothing deployed yet.');
+      await screen.findByText('No active topology components');
     });
 
     it('focuses a single service and resets back to the full graph', async () => {
@@ -100,7 +110,7 @@ it('shows an error state with retry when the graph query fails', async () => {
       });
 
       // reset restores the full graph (both the button and the '' option)
-      fireEvent.click(screen.getByRole('button', { name: 'reset' }));
+      fireEvent.click(screen.getByRole('button', { name: /reset/i }));
       await waitFor(() =>
         expect(Number(screen.getByTestId('react-flow').getAttribute('data-nodes'))).toBe(full),
       );
@@ -138,10 +148,17 @@ it('shows an error state with retry when the graph query fails', async () => {
         gateway: { name: 'ninedeploy-traefik', network: 'ninedeploy', running: false },
       } as never);
       renderWithProviders(<Topology />);
-      await screen.findByText('Traefik');
-      // gateway status badge falls back to 'stopped' when not running
-      // both the gateway badge and the stopped worker service render 'stopped'
-      expect(screen.getAllByText('stopped').length).toBeGreaterThanOrEqual(2);
+      // Wait for the canvas to actually render the graph (not the loading
+      // state) so the StatusBadges for the stopped gateway and the
+      // stopped worker service are in the DOM.
+      const flow = await screen.findByTestId('react-flow');
+      expect(flow).toBeInTheDocument();
+      // gateway status badge falls back to 'stopped' when not running;
+      // the stopped worker service also renders a 'stopped' badge.
+      // Use a function matcher so we don't depend on the StatusBadge's
+      // internal dot span (which splits the text across elements).
+      const stopped = screen.getAllByText((_, el) => el?.textContent?.trim() === 'stopped');
+      expect(stopped.length).toBeGreaterThanOrEqual(2);
     });
 
     it('renders nodes and edges computed from the graph', async () => {

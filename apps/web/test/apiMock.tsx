@@ -107,6 +107,7 @@ export function createFakeApiModule() {
       log: vi.fn(),
     },
     sources: { list: vi.fn().mockResolvedValue([]), create: vi.fn(), update: vi.fn(), remove: vi.fn() },
+    insights: { analyze: vi.fn(), get: vi.fn().mockResolvedValue(null), refresh: vi.fn() },
     projects: { list: vi.fn().mockResolvedValue([]), create: vi.fn(), update: vi.fn(), remove: vi.fn() },
     webhooks: { list: vi.fn(), create: vi.fn(), remove: vi.fn() },
     databases: {
