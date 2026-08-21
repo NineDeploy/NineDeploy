@@ -120,4 +120,24 @@ describe('ServicesList', () => {
     renderWithProviders(<ServicesList />);
     expect(await screen.findByText(':8080')).toBeInTheDocument();
   });
+
+  it('searches by slug, branch and type, and shows the volume badge', async () => {
+    mockOf(api.services.list).mockResolvedValue([
+      { id: 1, name: 'Frontend', slug: 'web-ui', type: 'docker', branch: 'release', port: 3000, status: 'running', volumeMount: '/app/data' },
+    ] as never);
+    renderWithProviders(<ServicesList />);
+    await screen.findByText('Frontend');
+
+    // Volume badge carries the mount path.
+    expect(screen.getByTitle('Volume mounted at /app/data')).toBeInTheDocument();
+
+    // Search matches slug, branch and type.
+    const searchInput = screen.getByPlaceholderText('Search services...');
+    for (const q of ['WEB-UI', 'release', 'docker']) {
+      fireEvent.change(searchInput, { target: { value: q } });
+      expect(screen.getByText('Frontend')).toBeInTheDocument();
+    }
+    fireEvent.change(searchInput, { target: { value: 'no-such-thing' } });
+    expect(screen.getByText('No matching services')).toBeInTheDocument();
+  });
 });

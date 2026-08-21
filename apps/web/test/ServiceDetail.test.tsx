@@ -58,7 +58,12 @@ vi.mock('@xyflow/react', () => ({
   Background: () => <div data-testid="background" />,
   Controls: () => <div data-testid="controls" />,
   Handle: () => <div data-testid="handle" />,
-  MiniMap: () => <div data-testid="minimap" />,
+  // Invoke the color callback for every node type so its branches are exercised.
+  MiniMap: ({ nodeColor }: { nodeColor?: (n: { type?: string }) => string }) => (
+    <div data-testid="minimap">
+      {['svcMain', 'svcDb', 'svcGateway', 'svcStorage', 'svcDomain', 'other'].map((t) => nodeColor?.({ type: t })).filter(Boolean).join(',')}
+    </div>
+  ),
   BackgroundVariant: { Dots: 'dots' },
   Position: { Left: 'left', Right: 'right', Top: 'top', Bottom: 'bottom' },
 }));
@@ -143,6 +148,152 @@ describe('ServiceDetail', () => {
     mockOf(api.services.get).mockReturnValue(new Promise(() => {}));
     renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
     expect(document.querySelector('.animate-pulse')).not.toBeNull();
+  });
+
+  it('renders the repository analysis card and refreshes it', async () => {
+    mockOf(api.insights.get).mockResolvedValue({
+      framework: {
+        id: 'next', name: 'Next.js', emoji: '▲', category: 'ssr', port: 3000,
+        installCmd: 'pnpm install', buildCmd: 'pnpm build', startCmd: 'pnpm start',
+        env: [{ key: 'NODE_ENV', value: 'production' }], notes: [],
+      },
+      language: 'TypeScript',
+      packageManager: 'pnpm',
+      nodeVersion: '22',
+      frameworkVersion: '15.1.0',
+      scripts: { build: 'next build' },
+      dependencyCount: 40,
+      devDependencyCount: 9,
+      hasDockerfile: true,
+      hasComposeFile: false,
+      monorepo: true,
+      detectedFiles: ['package.json'],
+      workspacePackages: [],
+      baseDir: '/',
+      commitSha: 'abcdef1234567890abcdef',
+      analyzedAt: '2026-01-02T03:04:05Z',
+    } as never);
+    mockOf(api.insights.refresh).mockResolvedValue({} as never);
+    renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+
+    // The overview card surfaces the analysis summary.
+    expect(await screen.findByText('Repository Contents')).toBeInTheDocument();
+    expect(screen.getByText('Next.js')).toBeInTheDocument();
+    expect(screen.getAllByText('ssr').length).toBeGreaterThan(0);
+    expect(screen.getByText('Dockerfile')).toBeInTheDocument();
+    expect(screen.getByText('monorepo')).toBeInTheDocument();
+    expect(screen.getByText('40 prod · 9 dev')).toBeInTheDocument();
+    expect(screen.getByText('next build')).toBeInTheDocument();
+    expect(screen.getByText('abcdef123456')).toBeInTheDocument();
+
+    // Re-analyze round-trips through the refresh endpoint.
+    fireEvent.click(screen.getByRole('button', { name: 'Re-analyze' }));
+    await waitFor(() => expect(api.insights.refresh).toHaveBeenCalledWith(1));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Repository analysis updated', 'success'));
+
+    // Failures surface the server message; a non-Error falls back.
+    mockOf(api.insights.refresh).mockRejectedValueOnce(new Error('clone failed') as never);
+    fireEvent.click(screen.getByRole('button', { name: 'Re-analyze' }));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('clone failed', 'error'));
+  });
+
+  it('jumps the log panel to a clicked pipeline stage', async () => {
+    mockOf((await import('../src/lib/useDeployLogs.js')).useDeployLogs).mockReturnValue({
+      lines: 'booting\n##[stage:BUILD:success] image built\nserving',
+      open: true,
+    });
+    renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+    await openTab('Deploys');
+
+    // Clicking a stage whose marker exists scrolls the <pre> to it.
+    const buildChip = await screen.findByRole('button', { name: /Build: image built/ });
+    fireEvent.click(buildChip);
+    // Clicking a stage without a marker is a no-op (no crash, no scroll).
+    fireEvent.click(screen.getByRole('button', { name: /^Cleanup/ }));
+    expect(screen.queryByText('Connecting…')).not.toBeInTheDocument();
+  });
+
+  it('clones the service and reports clone failures', async () => {
+    mockOf(api.services.clone).mockResolvedValueOnce({ id: 9, name: 'api-clone' } as never);
+    renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+    await screen.findByRole('heading', { name: 'api' });
+
+    fireEvent.click(screen.getByTitle('Clone service configuration and environment variables'));
+    await waitFor(() => expect(api.services.clone).toHaveBeenCalledWith(1));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Service cloned: api-clone', 'success'));
+
+    // Failure path toasts.
+    mockOf(api.services.clone).mockRejectedValueOnce(new Error('x') as never);
+    fireEvent.click(screen.getByTitle('Clone service configuration and environment variables'));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Clone failed', 'error'));
+  });
+
+  it('reports deploy trigger failures with and without a message', async () => {
+    mockOf(api.deploys.trigger).mockRejectedValueOnce(new Error('registry unreachable') as never);
+    renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+    fireEvent.click(await screen.findByRole('button', { name: 'Deploy' }));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Deploy failed: registry unreachable', 'error'));
+
+    mockOf(api.deploys.trigger).mockRejectedValueOnce('boom' as never);
+    fireEvent.click(screen.getByRole('button', { name: 'Deploy' }));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Deploy failed', 'error'));
+  });
+
+  it('lets an admin re-attach or clear the Git credential from settings', async () => {
+    const user = userEvent.setup();
+    mockOf(api.sources.list).mockResolvedValue([
+      { id: 3, name: 'github-app', type: 'github' },
+    ] as never);
+    mockOf(api.services.get).mockResolvedValue({ ...service, sourceId: 3, sourceName: 'github-app' } as never);
+    mockOf(api.services.update).mockResolvedValue({} as never);
+    renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+    await openTab('Settings');
+    await screen.findByText('Service settings');
+
+    // The attached credential is selected and visible in the dropdown.
+    const credSelect = await screen.findByDisplayValue('github-app (github)');
+    await user.selectOptions(credSelect, '');
+    await user.click(screen.getByRole('button', { name: /save settings/i }));
+    // Clearing sends an explicit null (not an omission).
+    await waitFor(() =>
+      expect(api.services.update).toHaveBeenCalledWith(1, expect.objectContaining({ sourceId: null })));
+  });
+
+  it('renders the manifest tab, refreshes it and switches subtabs', async () => {
+    mockOf(api.containers.compose).mockResolvedValue({ yaml: 'services:\n  api:\n    image: nginx' } as never);
+    mockOf(api.containers.inspect).mockResolvedValue({
+      state: { status: 'running' },
+      traefikTags: { 'traefik.enable': 'true' },
+      raw: { Id: 'abc' },
+    } as never);
+    renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+    await screen.findByRole('heading', { name: 'api' });
+
+    await openTab('Manifest');
+    expect(await screen.findByText(/image: nginx/)).toBeInTheDocument();
+    expect(screen.getByText('RUNNING')).toBeInTheDocument();
+
+    // Subtabs switch the rendered manifest.
+    fireEvent.click(screen.getByRole('button', { name: /traefik/i }));
+    expect(screen.getAllByText(/traefik/i).length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole('button', { name: /inspect/i }));
+    fireEvent.click(screen.getByRole('button', { name: /compose/i }));
+
+    // Refresh refetches both manifests.
+    fireEvent.click(await screen.findByRole('button', { name: 'Refresh' }));
+    await waitFor(() => expect(api.containers.compose).toHaveBeenCalledTimes(2));
+  });
+
+  it('shows the empty repository analysis state and its loading state', async () => {    mockOf(api.insights.get).mockResolvedValue(null as never);
+    renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+    expect(await screen.findByText('Repository Contents')).toBeInTheDocument();
+    expect(screen.getByText(/No analysis yet/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Analyze now' })).toBeInTheDocument();
+
+    // While loading, the card says so.
+    mockOf(api.insights.get).mockReturnValue(new Promise(() => {}) as never);
+    renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+    expect(await screen.findByText('Loading analysis…')).toBeInTheDocument();
   });
 
   it('renders service header with status, auto URL and deploy actions', async () => {

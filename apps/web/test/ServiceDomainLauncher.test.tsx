@@ -54,6 +54,11 @@ describe('ServiceDomainLauncher', () => {
     expect(screen.getByRole('link', { name: 'Open https://app.example.com in a new tab' })).toHaveAttribute('href', 'https://app.example.com');
     expect(screen.getByRole('link', { name: 'Open http://internal.example.com/admin in a new tab' })).toHaveAttribute('href', 'http://internal.example.com/admin');
     expect(screen.queryByText(/other\.example\.com/)).not.toBeInTheDocument();
+
+    // Following a link closes the modal behind it.
+    await user.click(screen.getByRole('link', { name: 'Open https://app.example.com in a new tab' }));
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'Open app' })).not.toBeInTheDocument());
   });
 });
 

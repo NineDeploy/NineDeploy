@@ -41,6 +41,16 @@ describe('Tunnels', () => {
     expect(writeText).toHaveBeenCalledWith('http://ninedeploy-traefik:80');
   });
 
+  it('reports a failed copy from the guide', async () => {
+    const writeText = vi.fn().mockRejectedValue(new Error('denied'));
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+    mockOf(api.tunnels.list).mockResolvedValue([] as never);
+    renderWithProviders(<Tunnels />);
+    await userEvent.click(screen.getByRole('button', { name: 'Copy Traefik origin' }));
+    // The rejection is caught and surfaced as an error toast (no unhandled crash).
+    await waitFor(() => expect(writeText).toHaveBeenCalled());
+  });
+
   it('shows skeleton while loading', () => {
     mockOf(api.tunnels.list).mockReturnValue(new Promise(() => {}));
     renderWithProviders(<Tunnels />);

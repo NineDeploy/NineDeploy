@@ -64,6 +64,30 @@ describe('AuthProvider', () => {
     apiMock.api.auth.setup.mockResolvedValue(SESSION);
   });
 
+  it('captures OAuth/OIDC session tokens from the URL hash and clears it', async () => {
+    window.location.hash = '#access_token=hash-at&refresh_token=hash-rt';
+    try {
+      renderAuth();
+      await waitFor(() =>
+        expect(apiMock.setSessionTokens).toHaveBeenCalledWith('hash-at', 'hash-rt'));
+      // The credentials must not linger in the visible URL.
+      expect(window.location.hash).toBe('');
+    } finally {
+      window.location.hash = '';
+    }
+  });
+
+  it('ignores a hash without an access token', async () => {
+    window.location.hash = '#section';
+    try {
+      renderAuth();
+      await waitFor(() => expect(screen.getByTestId('loading')).toHaveTextContent('false'));
+      expect(apiMock.setSessionTokens).not.toHaveBeenCalled();
+    } finally {
+      window.location.hash = '';
+    }
+  });
+
   it('finishes loading without calling me() when no token exists', () => {
     renderAuth();
     expect(screen.getByTestId('loading')).toHaveTextContent('false');

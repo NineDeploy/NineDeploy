@@ -25,7 +25,11 @@ vi.mock('@xyflow/react', () => ({
   Background: () => <div data-testid="background" />,
   Controls: () => <div data-testid="controls" />,
   Handle: () => <div data-testid="handle" />,
-  MiniMap: () => <div data-testid="minimap" />,
+  MiniMap: ({ nodeColor }: { nodeColor?: (n: { type?: string }) => string }) => (
+    <div data-testid="minimap">
+      {['dbCenter', 'dbConsumer', 'dbVolume', 'dbBackup', 'other'].map((t) => nodeColor?.({ type: t })).filter(Boolean).join(',')}
+    </div>
+  ),
   BackgroundVariant: { Dots: 'dots' },
   Position: { Left: 'left', Right: 'right', Top: 'top', Bottom: 'bottom' },
 }));

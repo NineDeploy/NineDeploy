@@ -66,6 +66,17 @@ describe('Monitoring', () => {
     expect(screen.getByText('2')).toBeInTheDocument(); // workloads
   });
 
+  it('selects the local node and resets the type filter from the cluster bar', async () => {
+    apiMock.api.servers.list.mockResolvedValue([
+      { id: 2, name: 'node-a', host: '10.0.0.2', port: 2375, status: 'online' },
+    ] as never);
+    renderWithProviders(<Monitoring />);
+    // The cluster bar only renders once a remote node exists.
+    fireEvent.click(await screen.findByRole('button', { name: /Local Host \(Primary\)/ }));
+    // The "All" filter restores the unfiltered container list.
+    fireEvent.click(screen.getAllByRole('button', { name: 'All' })[0]!);
+  });
+
   it('shows an error card with retry when the stats query fails', async () => {
     apiMock.api.stats.snapshot.mockRejectedValue(new Error('no stats') as never);
     renderWithProviders(<Monitoring />);

@@ -117,6 +117,53 @@ describe('Workspaces route', () => {
     expect(await screen.findByText('already a member')).toBeInTheDocument();
   });
 
+  it('cancels out of the invite, edit and delete dialogs without acting', async () => {
+    renderWithProviders(<Workspaces />);
+    await waitFor(() => expect(screen.getByText('Acme Corp')).toBeInTheDocument());
+
+    // Invite dialog: cancel discards the draft.
+    fireEvent.click(screen.getByText('Invite Member'));
+    fireEvent.change(screen.getByPlaceholderText('developer@acme.com'), {
+      target: { value: 'draft@acme.com' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByText('Invite Team Member')).not.toBeInTheDocument());
+    expect(api.workspaces.addMember).not.toHaveBeenCalled();
+
+    // Edit dialog: cancel keeps the current name.
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Details' }));
+    expect(await screen.findByText('Edit Workspace')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByText('Edit Workspace')).not.toBeInTheDocument());
+    expect(api.workspaces.update).not.toHaveBeenCalled();
+
+    // Delete dialog: cancel keeps the workspace.
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Workspace' }));
+    expect(await screen.findByText(/Are you sure you want to permanently delete/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() =>
+      expect(screen.queryByText(/Are you sure you want to permanently delete/)).not.toBeInTheDocument());
+    expect(api.workspaces.delete).not.toHaveBeenCalled();
+
+    // Each dialog also closes via its backdrop (✕).
+    fireEvent.click(screen.getByText('Invite Member'));
+    expect(await screen.findByText('Invite Team Member')).toBeInTheDocument();
+    fireEvent.click(screen.getAllByLabelText('Close dialog')[0]!);
+    await waitFor(() => expect(screen.queryByText('Invite Team Member')).not.toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Details' }));
+    expect(await screen.findByText('Edit Workspace')).toBeInTheDocument();
+    fireEvent.click(screen.getAllByLabelText('Close dialog')[0]!);
+    await waitFor(() => expect(screen.queryByText('Edit Workspace')).not.toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Workspace' }));
+    expect(await screen.findByText(/Are you sure you want to permanently delete/)).toBeInTheDocument();
+    fireEvent.click(screen.getAllByLabelText('Close dialog')[0]!);
+    await waitFor(() =>
+      expect(screen.queryByText(/Are you sure you want to permanently delete/)).not.toBeInTheDocument());
+    expect(api.workspaces.delete).not.toHaveBeenCalled();
+  });
+
   it('updates member role', async () => {
     mockOf(api.workspaces.updateMemberRole).mockResolvedValueOnce({
       id: 11,

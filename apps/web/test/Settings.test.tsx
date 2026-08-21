@@ -87,6 +87,27 @@ describe('Settings', () => {
     fireEvent.click(await screen.findByRole('tab', { name: new RegExp(`^${escaped}(\\s|$)`) }));
   };
 
+  it('filters the settings sections by search and clears the filter', async () => {
+    mockOf(api.settings.get).mockResolvedValue({ allowRegistration: true, wildcardApex: 'nd.local' } as never);
+    renderWithProviders(<Settings />);
+
+    const filter = screen.getByLabelText('Filter settings');
+    // Narrow to a single section by its description text.
+    fireEvent.change(filter, { target: { value: '2FA' } });
+    const tabs = screen.getAllByRole('tab');
+    expect(tabs.length).toBe(1);
+    expect(tabs[0]).toHaveTextContent('Security');
+
+    // A query that matches nothing shows the empty hint.
+    fireEvent.change(filter, { target: { value: 'zzz-no-match' } });
+    expect(screen.getByText(/No settings matching/)).toBeInTheDocument();
+
+    // The clear (✕) button resets the list.
+    fireEvent.change(filter, { target: { value: '2FA' } });
+    fireEvent.click(screen.getByRole('button', { name: /clear filter/i }));
+    expect(screen.getAllByRole('tab').length).toBeGreaterThan(5);
+  });
+
   it('renders system info, resources, theme controls and notification channels', async () => {
     mockOf(useTheme).mockReturnValue({
       theme: 'dark',

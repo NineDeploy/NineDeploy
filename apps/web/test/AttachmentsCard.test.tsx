@@ -10,7 +10,7 @@ const apiMock = vi.hoisted(() => ({
       create: vi.fn(),
       remove: vi.fn(),
     },
-    databases: { list: vi.fn() },
+    databases: { list: vi.fn(), logs: vi.fn() },
   },
 }));
 
@@ -137,6 +137,24 @@ describe('AttachmentsCard', () => {
     const row = screen.getByText('pg-main').closest('div')?.parentElement as HTMLElement;
     await user.click(row.querySelector('button[title="Detach"]') as HTMLButtonElement);
     await waitFor(() => expect(apiMock.api.attachments.remove).toHaveBeenCalledWith(5, 10));
+  });
+
+  it('probes attachment connectivity and reports both outcomes', async () => {
+    const user = userEvent.setup();
+    apiMock.api.databases.logs.mockResolvedValueOnce('log-line');
+    renderCard();
+    await waitFor(() => expect(screen.getByText('pg-main')).toBeInTheDocument());
+
+    // Two controls share the title (row probe + form button); the row one is first.
+    await user.click(screen.getAllByTitle('Test database connectivity')[0]!);
+    await waitFor(() =>
+      expect(apiMock.api.databases.logs).toHaveBeenCalledWith(1));
+
+    // A failing probe is caught (no unhandled rejection) and falls back.
+    apiMock.api.databases.logs.mockRejectedValueOnce('nope' as never);
+    await user.click(screen.getAllByTitle('Test database connectivity')[0]!);
+    await waitFor(() =>
+      expect(apiMock.api.databases.logs).toHaveBeenCalledTimes(2));
   });
 
   it('suggests the conventional env alias for every database engine', async () => {

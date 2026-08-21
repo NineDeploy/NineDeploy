@@ -21,6 +21,7 @@ import {
   authedFetch,
   clearTokens,
   deployLogsWsUrl,
+  execWsUrl,
   getToken,
   refreshAccessToken,
   setSessionTokens,
@@ -382,5 +383,25 @@ describe('deployLogsWsUrl', () => {
         'wss://panel.example.com/v1/services/3/deploys/9/logs',
       );
     });
+  });
+
+  it('builds the exec terminal URL from the current origin', () => {
+    expect(execWsUrl(1)).toBe('ws://localhost/v1/services/1/exec');
+    withWindowLocation({ protocol: 'https:', host: 'panel.example.com' }, () => {
+      expect(execWsUrl(2)).toBe('wss://panel.example.com/v1/services/2/exec');
+    });
+  });
+
+  it('derives WebSocket hosts from VITE_API_URL when configured', () => {
+    vi.stubEnv('VITE_API_URL', 'https://api.example.com');
+    try {
+      expect(deployLogsWsUrl(7, 42)).toBe('wss://api.example.com/v1/services/7/deploys/42/logs');
+      expect(execWsUrl(1)).toBe('wss://api.example.com/v1/services/1/exec');
+      // An http API URL downgrades to plain ws.
+      vi.stubEnv('VITE_API_URL', 'http://api.local:8080');
+      expect(deployLogsWsUrl(7, 42)).toBe('ws://api.local:8080/v1/services/7/deploys/42/logs');
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });

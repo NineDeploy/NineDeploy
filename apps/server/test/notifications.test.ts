@@ -1,9 +1,22 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { decrypt, encrypt } from '../src/lib/crypto.js';
 import { notificationRoutes } from '../src/modules/notifications.js';
 import { asUser, buildTestApp, channelRow, createFakeDb, notifLogRow } from './helpers.js';
 
 describe('notification routes', () => {
+  // These tests stub global fetch — no real outbound traffic happens. The
+  // egress guard cannot know that and DNS-resolves the fixture hostnames
+  // (h.example.com), which do not resolve; allow private egress for the
+  // stubbed calls.
+  const previousEgress = process.env['NINEDEPLOY_ALLOW_PRIVATE_EGRESS'];
+  beforeEach(() => {
+    process.env['NINEDEPLOY_ALLOW_PRIVATE_EGRESS'] = '1';
+  });
+  afterEach(() => {
+    if (previousEgress === undefined) delete process.env['NINEDEPLOY_ALLOW_PRIVATE_EGRESS'];
+    else process.env['NINEDEPLOY_ALLOW_PRIVATE_EGRESS'] = previousEgress;
+  });
+
   it('lists channels', async () => {
     const app = await buildTestApp({
       db: createFakeDb({

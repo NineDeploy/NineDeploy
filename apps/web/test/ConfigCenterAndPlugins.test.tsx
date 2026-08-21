@@ -160,7 +160,34 @@ describe('Config Center & Plugins Frontend Components', () => {
   });
 
   describe('ConfigCenterSection', () => {
-    it('renders config entries, handles reveal toggle, search and category filters', async () => {
+    it('groups entries for git, dns and custom plugin scopes', async () => {
+    mockOf(api.config.list).mockResolvedValue({
+      entries: [
+        { key: 'github.webhook_secret', pluginId: null, type: 'string', isSecret: true, label: 'Hook Secret', category: 'general', tags: [], value: '••••••••', isConfigured: true },
+        { key: 'dns.provider', pluginId: 'cloudflare', type: 'string', isSecret: false, label: 'Provider', category: 'general', tags: [], value: 'cloudflare', isConfigured: true },
+        { key: 'jwt.audience', pluginId: null, type: 'string', isSecret: false, label: 'Audience', category: 'general', tags: [], value: 'panel', isConfigured: true },
+        { key: 'payment.gateway', pluginId: 'payment', type: 'string', isSecret: false, label: 'Gateway', category: 'general', tags: [], value: 'stripe', isConfigured: true },
+        { key: 'metric.interval', pluginId: null, type: 'number', isSecret: false, label: 'Interval', category: 'general', tags: [], value: 30, isConfigured: true },
+        { key: 'backup.bucket', pluginId: null, type: 'string', isSecret: false, label: 'Bucket', category: 'general', tags: [], value: 'b', isConfigured: true },
+      ],
+    } as never);
+    renderWithProviders(<ConfigCenterSection />);
+
+    // One grouped section per detected plugin scope.
+    expect(await screen.findByText('Git & VCS Integration Plugin')).toBeInTheDocument();
+    expect(screen.getByText('DNS & Cloudflare Sync Plugin')).toBeInTheDocument();
+    // The auth vault group also has a matching filter pill.
+    expect(screen.getAllByText('Authentication & Security Vault').length).toBeGreaterThan(1);
+    // The group header and its filter pill share the name.
+    expect(screen.getAllByText('Plugin: PAYMENT').length).toBeGreaterThan(0);
+    expect(screen.getByText('Monitoring & Telemetry Plugin')).toBeInTheDocument();
+    expect(screen.getByText('Backups & Storage Provider Plugin')).toBeInTheDocument();
+    // Group headers are accordions: collapsing hides the rows.
+    fireEvent.click(screen.getByText('Git & VCS Integration Plugin'));
+    await waitFor(() => expect(screen.queryByText('github.webhook_secret')).not.toBeInTheDocument());
+  });
+
+  it('renders config entries, handles reveal toggle, search and category filters', async () => {
       const user = userEvent.setup();
       renderWithProviders(<ConfigCenterSection />);
 
@@ -355,6 +382,27 @@ describe('Config Center & Plugins Frontend Components', () => {
       await waitFor(() => {
         expect(mockOf(api.config.delete)).toHaveBeenCalledWith('system.site_name');
       });
+      confirmMock.mockRestore();
+    });
+
+    it('reports save and delete failures, and picks a target plugin on create', async () => {
+      renderWithProviders(<ConfigCenterSection />);
+      await waitFor(() => expect(screen.getByText('system.site_name')).toBeInTheDocument());
+
+      // Save failure surfaces the server message via the toast spy.
+      mockOf(api.config.set).mockRejectedValueOnce(new Error('vault sealed') as never);
+      fireEvent.click(screen.getByText('New Setting'));
+      fireEvent.change(screen.getByPlaceholderText('e.g. system.custom_timeout or plugin:traefik:idle_timeout'), { target: { value: 'k' } });
+      // Choose a non-core target plugin for the new key.
+      fireEvent.change(screen.getByDisplayValue('Core Platform (core)'), { target: { value: 'traefik' } });
+      fireEvent.click(screen.getByRole('button', { name: /create setting/i }));
+      await waitFor(() => expect(api.config.set).toHaveBeenCalledTimes(1));
+
+      // Delete failure is reported too.
+      const confirmMock = vi.spyOn(window, 'confirm').mockReturnValue(true);
+      mockOf(api.config.delete).mockRejectedValueOnce(new Error('locked') as never);
+      fireEvent.click(screen.getAllByTitle('Delete')[0]!);
+      await waitFor(() => expect(api.config.delete).toHaveBeenCalledTimes(1));
       confirmMock.mockRestore();
     });
   });

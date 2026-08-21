@@ -237,4 +237,28 @@ describe('ContainerTerminal', () => {
     expect(term.clear).toHaveBeenCalledOnce();
     expect(FakeWebSocket.instances).toHaveLength(socketCount);
   });
+
+  it('reconnects the shell session on demand', () => {
+    render(<ContainerTerminal serviceId={1} onClose={vi.fn()} />);
+    runEffect();
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    act(() => screen.getByText('Reconnect').click());
+    // The mocked useEffect never re-runs on its own — invoke the new one.
+    runEffect();
+    expect(FakeWebSocket.instances).toHaveLength(2);
+  });
+
+  it('expands to a fullscreen portal and Escape restores it', () => {
+    render(<ContainerTerminal serviceId={1} onClose={vi.fn()} />);
+    runEffect();
+
+    act(() => screen.getByTitle('Expand full screen').click());
+    expect(screen.getByTitle('Restore window size (Esc)')).toBeInTheDocument();
+
+    // The Escape key listener (registered by the boot effect) restores size.
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    });
+    expect(screen.getByTitle('Expand full screen')).toBeInTheDocument();
+  });
 });

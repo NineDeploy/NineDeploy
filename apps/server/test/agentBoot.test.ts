@@ -34,11 +34,16 @@ let _logSpy: ReturnType<typeof vi.spyOn>;
 let envAgent: string | undefined;
 let envToken: string | undefined;
 let envPort: string | undefined;
+let envEgress: string | undefined;
 
 beforeEach(() => {
   state.exitCalls = [];
   state.signalListeners = {};
   state.buildApp.mockReset();
+  // The announce call targets 127.0.0.1 with a stubbed fetch; the egress
+  // guard cannot see the stub and blocks the loopback address first.
+  envEgress = process.env['NINEDEPLOY_ALLOW_PRIVATE_EGRESS'];
+  process.env['NINEDEPLOY_ALLOW_PRIVATE_EGRESS'] = '1';
   _exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
     state.exitCalls.push(code ?? 0);
     return undefined as never;
@@ -63,6 +68,8 @@ afterEach(() => {
   else process.env['NINEDEPLOY_AGENT_TOKEN'] = envToken;
   if (envPort === undefined) delete process.env['NINEDEPLOY_AGENT_PORT'];
   else process.env['NINEDEPLOY_AGENT_PORT'] = envPort;
+  if (envEgress === undefined) delete process.env['NINEDEPLOY_ALLOW_PRIVATE_EGRESS'];
+  else process.env['NINEDEPLOY_ALLOW_PRIVATE_EGRESS'] = envEgress;
 });
 
 async function importAgent() {
@@ -134,7 +141,8 @@ describe('agent bootstrap', () => {
       'http://127.0.0.1:4000/v1/servers/announce',
       expect.objectContaining({
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        // The enrolment header and the abort-timeout signal ride along too.
+        headers: expect.objectContaining({ 'content-type': 'application/json' }),
       }),
     );
     const body = JSON.parse(fetchMock.mock.calls[0]![1].body as string);

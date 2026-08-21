@@ -70,6 +70,7 @@ export function createFakeApiModule() {
       create: vi.fn(),
       update: vi.fn(),
       remove: vi.fn(),
+      clone: vi.fn(),
       stop: vi.fn(),
       start: vi.fn(),
       restart: vi.fn(),

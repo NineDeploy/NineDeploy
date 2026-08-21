@@ -620,11 +620,16 @@ describe('DeployWizard — repository analysis & Git credential guidance', () =>
     apiMock.api.sources.repos.mockResolvedValue([
       { name: 'y', fullName: 'x/y', url: 'https://github.com/x/y', defaultBranch: 'main', isPrivate: true },
     ]);
+    apiMock.api.sources.branches.mockResolvedValue(['main', 'dev']);
     const sourceSelect = screen.getAllByRole('combobox')[1]!;
     await user.selectOptions(sourceSelect, '3');
     expect(await screen.findByText(/run with credential/)).toBeInTheDocument();
     expect(screen.getByText('github-app')).toBeInTheDocument();
     expect(screen.getByText(/this repository is/)).toBeInTheDocument();
+
+    // Known branches become a dropdown; picking one retargets the analysis.
+    const branchSelect = await screen.findByDisplayValue('main');
+    await user.selectOptions(branchSelect, 'dev');
   });
 
   it('auto-analyzes the repository and renders the deploy plan', async () => {
@@ -710,8 +715,33 @@ describe('DeployWizard — repository analysis & Git credential guidance', () =>
     await waitFor(() => expect(apiMock.api.deploys.trigger).toHaveBeenCalledWith(42));
   });
 
-  it('scopes a monorepo sub-app via the package picker and re-analyzes', async () => {
+  it('targets a remote server node when one is available', async () => {
     const user = userEvent.setup();
+    apiMock.api.servers.list.mockResolvedValue([
+      { id: 2, name: 'node-a', host: '10.0.0.2', port: 2375, status: 'online' },
+      // Pending nodes are not offered as deploy targets.
+      { id: 3, name: 'node-b', host: '10.0.0.3', port: 2375, status: 'pending' },
+    ]);
+    renderWizard();
+
+    await fillRepo(user);
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+
+    const serverSelect = (await screen.findByRole('option', { name: /node-a/ })).closest('select')!;
+    // The pending node is not offered as a deploy target.
+    expect(screen.queryByRole('option', { name: /node-b/ })).not.toBeInTheDocument();
+    await user.selectOptions(serverSelect, '2');
+    // Walk the remaining steps to the review + deploy.
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /deploy/i }));
+
+    await waitFor(() =>
+      expect(apiMock.api.services.create).toHaveBeenCalledWith(expect.objectContaining({ serverId: 2 })));
+  });
+
+  it('scopes a monorepo sub-app via the package picker and re-analyzes', async () => {    const user = userEvent.setup();
     apiMock.api.insights.analyze.mockResolvedValue(analysis);
     renderWizard();
 
@@ -730,11 +760,18 @@ describe('DeployWizard — repository analysis & Git credential guidance', () =>
     expect(await screen.findByText(/This service builds/)).toBeInTheDocument();
     expect(screen.getByText('/apps/web/**')).toBeInTheDocument();
 
-    // Deploying sends the base directory in the build config.
+    // The root pill resets the scope; the base-directory input overrides it manually.
+    await user.click(screen.getByRole('button', { name: '/ (repo root)' }));
+    await waitFor(() => expect(screen.queryByText(/This service builds/)).not.toBeInTheDocument());
+    const baseDirInput = screen.getByPlaceholderText('/ — repo root, or /apps/web for a monorepo sub-app');
+    await user.clear(baseDirInput);
+    await user.type(baseDirInput, '/apps/worker');
+
+    // Deploying sends the manually-typed base directory in the build config.
     await user.click(screen.getByRole('button', { name: /deploy/i }));
     await waitFor(() =>
       expect(apiMock.api.services.create).toHaveBeenCalledWith(expect.objectContaining({
-        build: expect.objectContaining({ baseDir: '/apps/web' }),
+        build: expect.objectContaining({ baseDir: '/apps/worker' }),
       })));
   });
 });

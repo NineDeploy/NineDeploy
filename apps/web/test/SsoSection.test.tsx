@@ -168,6 +168,8 @@ describe('SsoSection', () => {
     fireEvent.change(screen.getByPlaceholderText('••••••••••••'), { target: { value: 's3cret' } });
     fireEvent.click(screen.getByLabelText('Enable SSO on login page'));
     fireEvent.click(screen.getByLabelText('Auto-enroll new users on first login'));
+    // Field labels are spans, not <label>s: target the modal's only select.
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'admin' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create Provider' }));
 
     await waitFor(() => {
@@ -176,6 +178,7 @@ describe('SsoSection', () => {
         slug: 'myidp',
         enabled: false,
         autoEnroll: false,
+        defaultRole: 'admin',
       }));
     });
     // The modal closes after a successful save.
@@ -245,5 +248,16 @@ describe('SsoSection', () => {
     await waitFor(() =>
       expect(screen.queryByText('Configure SSO / OIDC Provider')).not.toBeInTheDocument());
     expect(api.auth.oidc.create).not.toHaveBeenCalled();
+  });
+
+  it('closes the create modal via the dialog backdrop', async () => {
+    renderWithProviders(<SsoSection />);
+    await waitFor(() => expect(screen.getByText('Google Workspace')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText('Add Provider'));
+    await screen.findByText('Configure SSO / OIDC Provider');
+    fireEvent.click(screen.getAllByLabelText('Close dialog')[0]!);
+    await waitFor(() =>
+      expect(screen.queryByText('Configure SSO / OIDC Provider')).not.toBeInTheDocument());
   });
 });

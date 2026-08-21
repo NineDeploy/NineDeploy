@@ -141,6 +141,10 @@ describe('DockerDashboard', () => {
     fireEvent.click(screen.getByRole('button', { name: /copy json/i }));
     expect(writeText).toHaveBeenCalledWith(JSON.stringify({ Id: 'c1' }, null, 2));
 
+    // Switch back to the compose subtab
+    fireEvent.click(screen.getByRole('button', { name: /compose/i }));
+    expect(await screen.findByText(/image: node:20/)).toBeInTheDocument();
+
     // Test Refresh button
     fireEvent.click(screen.getByRole('button', { name: /refresh/i }));
     await waitFor(() => {
@@ -187,5 +191,30 @@ describe('DockerDashboard', () => {
     expect(await screen.findByText('No images.')).toBeInTheDocument();
     expect(await screen.findByText('No recent events')).toBeInTheDocument();
     expect(await screen.findByText('No active containers found on host daemon.')).toBeInTheDocument();
+  });
+
+  it('shows the no-tags and no-raw fallbacks for a bare container', async () => {
+    // A container without traefik tags / raw inspect shows the fallbacks.
+    const bare = {
+      id: 'c1',
+      name: 'nd-web-1',
+      state: { status: 'running', running: true },
+      traefikTags: {},
+      raw: undefined,
+    };
+    apiMock.api.containers.inspect.mockResolvedValue(bare as never);
+    apiMock.api.containers.compose.mockResolvedValue({
+      yaml: 'services:\n  nd-web-1:\n    image: node:20',
+      inspect: bare,
+    } as never);
+    renderDashboard();
+    await screen.findByText('nd-web-1');
+    const allInspectBtns = screen.getAllByRole('button', { name: /inspect/i });
+    fireEvent.click(allInspectBtns[allInspectBtns.length - 1]!);
+    expect(await screen.findByText('docker-compose.runtime.yml')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /traefik tags/i }));
+    expect(await screen.findByText(/No Traefik tags discovered/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /docker inspect/i }));
+    expect(await screen.findByText('// Loading or unavailable')).toBeInTheDocument();
   });
 });

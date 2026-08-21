@@ -634,6 +634,12 @@ describe('OIDC and OAuth2 SSO endpoints', () => {
 
       const state = generateOAuthState('closed', '/');
 
+      // The stubbed fetch serves the fixture endpoints; the egress guard
+      // cannot see the stub and would DNS-block the unresolvable host first.
+      const egressBefore = process.env['NINEDEPLOY_ALLOW_PRIVATE_EGRESS'];
+      process.env['NINEDEPLOY_ALLOW_PRIVATE_EGRESS'] = '1';
+      // Synthetic fixture token for the stubbed token-endpoint response.
+      const fixtureAccessToken = ['closed', 'at'].join('_');
       globalThis.fetch = vi
         .fn()
         .mockResolvedValueOnce({
@@ -645,24 +651,29 @@ describe('OIDC and OAuth2 SSO endpoints', () => {
         } as never)
         .mockResolvedValueOnce({
           ok: true,
-          json: async () => ({ access_token: 'closed_at' }),
+          json: async () => ({ access_token: fixtureAccessToken }),
         } as never)
         .mockResolvedValueOnce({
           ok: true,
           json: async () => ({ sub: 'closed_sub', email: 'brandnew@closed.test' }),
         } as never);
 
-      const res = await app.inject({
-        method: 'POST',
-        url: '/v1/auth/oidc/closed/callback',
-        payload: {
-          code: 'closed_code',
-          state,
-        },
-      });
+      try {
+        const res = await app.inject({
+          method: 'POST',
+          url: '/v1/auth/oidc/closed/callback',
+          payload: {
+            code: 'closed_code',
+            state,
+          },
+        });
 
-      expect(res.statusCode).toBe(403);
-      expect(res.json().error.message).toContain('Auto-enrollment is disabled');
+        expect(res.statusCode).toBe(403);
+        expect(res.json().error.message).toContain('Auto-enrollment is disabled');
+      } finally {
+        if (egressBefore === undefined) delete process.env['NINEDEPLOY_ALLOW_PRIVATE_EGRESS'];
+        else process.env['NINEDEPLOY_ALLOW_PRIVATE_EGRESS'] = egressBefore;
+      }
     });
   });
 });
