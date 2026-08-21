@@ -8,6 +8,7 @@ import { audit } from '../lib/audit.js';
 import { logBus } from '../engine/logs.js';
 import { resolveUser } from '../lib/auth.js';
 import { loadServiceForUser } from '../lib/serviceAccess.js';
+import { assertMayDeployStoredService } from '../lib/hostPrivilege.js';
 import { badRequest, notFound, parseId as num } from '../lib/errors.js';
 import { websocketBearerToken } from '../lib/websocketAuth.js';
 
@@ -16,6 +17,9 @@ export const deploysRoutes: FastifyPluginAsync = async (app) => {
   app.post('/:id/deploys', { onRequest: [app.authenticate] }, async (req) => {
     const id = num((req.params as { id: string }).id);
     const svc = await loadServiceForUser(app.db, id, req.user!);
+    // Definitions created before this rule (or by an admin) must not become a
+    // back door: deploying them is what actually executes on the host.
+    await assertMayDeployStoredService(app.db, req.user!, svc);
     // In-progress dedup: a service with a queued/building deploy gets that
     // deployment returned instead of another queue entry (button-hammering
     // must not flood unbounded queued rows for one service).
@@ -65,7 +69,8 @@ export const deploysRoutes: FastifyPluginAsync = async (app) => {
   app.post('/:id/deploys/:depId/rollback', { onRequest: [app.authenticate] }, async (req) => {
     const id = num((req.params as { id: string }).id);
     const depId = num((req.params as { depId: string }).depId);
-    await loadServiceForUser(app.db, id, req.user!);
+    const svc = await loadServiceForUser(app.db, id, req.user!);
+    await assertMayDeployStoredService(app.db, req.user!, svc);
     const old = await app.db.query.deployments.findFirst({ where: eq(deployments.id, depId) });
     if (!old || old.serviceId !== id) throw notFound('Deployment not found');
     void audit(app.db, req.user!.id, 'deploy.rollback', `#${depId} → ${old.commitSha?.slice(0, 7) ?? old.imageDigest?.slice(0, 15) ?? '—'}`);
@@ -142,7 +147,7 @@ export const deploysRoutes: FastifyPluginAsync = async (app) => {
 
   // Live log stream over WebSocket. Browser auth travels in a subprotocol header.
   app.get('/:id/deploys/:depId/logs', { websocket: true }, async (socket, req) => {
-    const token = websocketBearerToken(req.headers, req.query as { token?: string });
+    const token = websocketBearerToken(req.headers);
     const id = num((req.params as { id: string; depId: string }).id);
     const depId = num((req.params as { id: string; depId: string }).depId);
     const user = token ? await resolveUser(app.db, token) : null;
@@ -193,7 +198,7 @@ export const deploysRoutes: FastifyPluginAsync = async (app) => {
   };
 
   app.get('/:id/exec', { websocket: true }, async (socket, req) => {
-    const token = websocketBearerToken(req.headers, req.query as { token?: string });
+    const token = websocketBearerToken(req.headers);
     const id = num((req.params as { id: string }).id);
     const user = token ? await resolveUser(app.db, token) : null;
     if (!user) {

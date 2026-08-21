@@ -7,13 +7,19 @@ import { api, getToken } from '../src/lib/api.js';
 import { renderRoute, renderWithProviders, mockOf } from './helpers.js';
 
 vi.mock('../src/lib/api.js', async () => {
-  const { createFakeApiModule } = await import('./helpers.js');
+  // Must be './apiMock.js', not './helpers.js' — see the note in apiMock.ts.
+  const { createFakeApiModule } = await import('./apiMock.js');
   return createFakeApiModule();
 });
 
 vi.mock('../src/lib/useDeployLogs.js', () => ({
   useDeployLogs: vi.fn(() => ({ lines: '', open: false })),
 }));
+
+// H-3: lifecycle hooks execute on the host, so the API admits admins only and
+// the settings form must not offer them to a member. Role is mutable per test.
+const authMock = vi.hoisted(() => ({ user: { id: 1, role: 'admin', email: 'a@test', name: 'A' } }));
+vi.mock('../src/lib/auth.js', () => ({ AuthProvider: ({ children }: { children?: React.ReactNode }) => children, useAuth: () => authMock }));
 
 const toastSpy = vi.hoisted(() => ({ toast: vi.fn() }));
 vi.mock('../src/components/Toast.js', () => ({
@@ -96,6 +102,7 @@ const webhooks = [
 describe('ServiceDetail', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    authMock.user = { id: 1, role: 'admin', email: 'a@test', name: 'A' };
     toastSpy.toast.mockClear();
     vi.stubGlobal('confirm', vi.fn(() => true));
     vi.stubGlobal('fetch', vi.fn());

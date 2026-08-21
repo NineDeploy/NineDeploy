@@ -67,15 +67,37 @@ function parseEnv(): Env {
   // placeholder copied from .env.example) would leave every stored secret
   // decryptable by anyone who knows it. Auto-generated master.key files are
   // fine — only an explicitly configured weak value is rejected.
-  if (parsed.success && parsed.data.NODE_ENV === 'production' && parsed.data.NINEDEPLOY_MASTER_KEY) {
-    const masterKey = parsed.data.NINEDEPLOY_MASTER_KEY;
-    const weak = masterKey.length < 32 || /^[0a-f]+$/i.test(masterKey) || /change[-_]?me/i.test(masterKey);
-    if (weak) {
-      // eslint-disable-next-line no-console
-      console.error(
-        '❌ NINEDEPLOY_MASTER_KEY must be a strong 32-byte hex secret (64 hex chars) in production. The configured value is too weak.',
-      );
-      process.exit(1);
+  if (parsed.success && parsed.data.NODE_ENV === 'production') {
+    // Both key sources are checked. NINEDEPLOY_MASTER_KEYS (the rotation
+    // key-ring, read straight from process.env by lib/crypto.ts) previously
+    // skipped this guard entirely, so an operator could rotate ONTO a weak key
+    // and get no warning.
+    const candidates: Array<[string, string]> = [];
+    if (parsed.data.NINEDEPLOY_MASTER_KEY) {
+      candidates.push(['NINEDEPLOY_MASTER_KEY', parsed.data.NINEDEPLOY_MASTER_KEY]);
+    }
+    for (const pair of (process.env['NINEDEPLOY_MASTER_KEYS'] ?? '').split(',')) {
+      const sep = pair.indexOf(':');
+      if (sep < 0) continue;
+      candidates.push([`NINEDEPLOY_MASTER_KEYS version ${pair.slice(0, sep).trim()}`, pair.slice(sep + 1).trim()]);
+    }
+    for (const [label, key] of candidates) {
+      // A real 32-byte hex key is 64 chars; `0`-only and placeholder values are
+      // the failure modes actually seen in the wild. (The previous regex here
+      // was `/^[0a-f]+$/i`, which reads as "all hex" but matches only the
+      // characters 0 and a-f — a random key containing 1-9 slipped past it.)
+      const weak =
+        key.length < 64 ||
+        !/^[0-9a-f]+$/i.test(key) ||
+        /^0+$/.test(key) ||
+        /change[-_]?me/i.test(key);
+      if (weak) {
+        // eslint-disable-next-line no-console
+        console.error(
+          `❌ ${label} must be a strong 32-byte hex secret (64 hex chars) in production. The configured value is too weak.`,
+        );
+        process.exit(1);
+      }
     }
   }
   return parsed.data;

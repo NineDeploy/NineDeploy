@@ -2,6 +2,7 @@ import { type DB, notificationLog, type NotificationChannel } from '@ninedeploy/
 import { decrypt } from './crypto.js';
 import type { AppEvent } from './events.js';
 import { encrypt } from './crypto.js';
+import { guardedFetch } from './egressGuard.js';
 
 /** Check if an event matches a channel's filter (comma-separated prefixes). */
 function matchesFilter(eventAction: string, filter: string): boolean {
@@ -65,7 +66,7 @@ async function sendTelegram(botToken: string, chatId: string, message: string): 
 
 /** Send to a generic webhook (POST JSON). */
 async function sendWebhook(url: string, payload: unknown): Promise<void> {
-  const res = await fetch(url, {
+  const res = await guardedFetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -76,7 +77,7 @@ async function sendWebhook(url: string, payload: unknown): Promise<void> {
 
 /** Send to a Discord webhook. */
 async function sendDiscord(webhookUrl: string, message: string): Promise<void> {
-  const res = await fetch(webhookUrl, {
+  const res = await guardedFetch(webhookUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ content: message }),
@@ -87,7 +88,7 @@ async function sendDiscord(webhookUrl: string, message: string): Promise<void> {
 
 /** Send to a Slack incoming webhook. */
 async function sendSlack(webhookUrl: string, message: string): Promise<void> {
-  const res = await fetch(webhookUrl, {
+  const res = await guardedFetch(webhookUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ text: message }),
@@ -98,7 +99,7 @@ async function sendSlack(webhookUrl: string, message: string): Promise<void> {
 
 /** Publish to an ntfy topic (target = topic URL, e.g. https://ntfy.sh/my-topic). */
 async function sendNtfy(topicUrl: string, message: string): Promise<void> {
-  const res = await fetch(topicUrl, {
+  const res = await guardedFetch(topicUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain' },
     body: message,

@@ -8,6 +8,16 @@ export interface CloneCreds {
   deployKey?: string; // SSH private key
 }
 
+/**
+ * A commit-ish we are willing to hand to `git checkout` as an argv element.
+ *
+ * The value originates in a provider webhook payload, and git reads a
+ * leading-dash operand as an option. The schema layer constrains the branch
+ * (see `gitBranch`) but nothing validated the SHA, so the sink defends itself
+ * — same pattern as `lib/probeUrl.ts`.
+ */
+const COMMIT_SHA_RE = /^[0-9a-fA-F]{7,64}$/;
+
 function isSshUrl(url: string): boolean {
   return url.startsWith('git@') || url.startsWith('ssh://') || url.startsWith('ssh+git://');
 }
@@ -43,6 +53,9 @@ export async function checkoutCommit(
   sink: (line: string) => void,
   creds?: CloneCreds,
 ): Promise<string> {
+  if (sha !== undefined && !COMMIT_SHA_RE.test(sha)) {
+    throw new Error(`Refusing to check out an invalid commit sha: ${sha.slice(0, 40)}`);
+  }
   const useKey = !!creds?.deployKey && (isSshUrl(repoUrl) || !creds?.token);
   // simple-git refuses `core.sshCommand` unless the caller opts in, because the
   // value is normally attacker-reachable. Here it is not: `keyFile` is derived

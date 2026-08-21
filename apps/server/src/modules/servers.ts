@@ -6,6 +6,7 @@ import { audit } from '../lib/audit.js';
 import { decrypt, encrypt, secretEquals } from '../lib/crypto.js';
 import { badRequest, notFound, parseId, unauthorized } from '../lib/errors.js';
 import { agentPing, generateAgentToken } from '../lib/agentClient.js';
+import { ENROLMENT_HEADER, assertEnrolmentAllowed } from '../lib/enrolment.js';
 import { bootstrapServer, getBootstrapLogs, testSshConnection } from '../engine/serverProvisioner.js';
 
 function serialize(s: ServerRow) {
@@ -29,6 +30,11 @@ export const serverRoutes: FastifyPluginAsync = async (app) => {
   // When an agent starts with NINEDEPLOY_MASTER_URL, it announces its presence.
   // It is placed in 'pending' status until the admin clicks "Approve & Connect".
   app.post('/announce', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (req) => {
+    // M-6: the one unauthenticated write in the product. It now requires the
+    // admin-issued enrolment secret, checked BEFORE the body is parsed so an
+    // anonymous caller learns nothing about the schema, and before any row is
+    // read so it is not an existence oracle for host:port either.
+    await assertEnrolmentAllowed(app.db, req.headers[ENROLMENT_HEADER] as string | undefined);
     const { name, host: providedHost, port, token } = serverAnnounce.parse(req.body ?? {});
     const host = providedHost || (req.ip === '::1' || req.ip === '127.0.0.1' ? '127.0.0.1' : req.ip.replace(/^::ffff:/, ''));
 

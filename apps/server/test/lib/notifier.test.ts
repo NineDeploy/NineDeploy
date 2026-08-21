@@ -9,6 +9,14 @@ const fetchMock = vi.hoisted(() => vi.fn());
 
 vi.stubGlobal('fetch', fetchMock);
 
+// L-11 wiring lives in `test/egressGuard.test.ts`, which exercises the REAL
+// guard against these same call sites. Here the guard is stubbed so these
+// tests stay about delivery logic and need no DNS.
+vi.mock('../../src/lib/egressGuard.js', async () => {
+  const actual = await vi.importActual<typeof import('../../src/lib/egressGuard.js')>('../../src/lib/egressGuard.js');
+  return { ...actual, guardedFetch: (url: string, init?: RequestInit) => fetch(url, init) };
+});
+
 interface FakeDb {
   db: never;
   insert: ReturnType<typeof vi.fn>;

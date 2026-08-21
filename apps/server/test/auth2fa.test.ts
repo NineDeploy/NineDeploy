@@ -30,9 +30,15 @@ const notifierMocks = vi.hoisted(() => ({
 }));
 vi.mock('../src/lib/notifier.js', () => notifierMocks);
 
+// L-10: the routes no longer call verifyTotp directly — they go through
+// `consumeTotpCode`, which needs the matched STEP so it can refuse a replay.
+// A fresh step per call keeps these tests about the routes; the single-use
+// rule itself is proved in test/lib/totpReplay.test.ts.
+let nextStep = 1_000_000;
 const totpMocks = vi.hoisted(() => ({
   generateSecret: vi.fn(() => 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ'),
   otpauthUri: vi.fn(() => 'otpauth://totp/x'),
+  verifyTotpStep: vi.fn(() => 1_000_000),
   verifyTotp: vi.fn(() => true),
 }));
 vi.mock('../src/lib/totp.js', () => totpMocks);
@@ -65,11 +71,12 @@ describe('auth two-factor routes', () => {
     expect(res.statusCode).toBe(200);
     expect(res.json().user.id).toBe(1);
     expect(cryptoMocks.decrypt).toHaveBeenCalledWith('enc:sec');
-    expect(totpMocks.verifyTotp).toHaveBeenCalledWith('sec', '123456');
+    // consumeTotpCode passes an explicit timestamp so the step is deterministic.
+    expect(totpMocks.verifyTotpStep).toHaveBeenCalledWith('sec', '123456', expect.any(Number));
   });
 
   it('a wrong 2FA code counts as a failed login', async () => {
-    totpMocks.verifyTotp.mockReturnValueOnce(false);
+    totpMocks.verifyTotpStep.mockReturnValueOnce(null as unknown as number);
     const app = await buildTestApp({
       db: createFakeDb({ findFirst: { users: twoFactorUser({ email: 'twofa@example.com' }) } }),
     });
@@ -135,7 +142,7 @@ describe('auth two-factor routes', () => {
   });
 
   it('enable rejects an invalid code', async () => {
-    totpMocks.verifyTotp.mockReturnValueOnce(false);
+    totpMocks.verifyTotpStep.mockReturnValueOnce(null as unknown as number);
     const app = await buildTestApp({
       db: createFakeDb({ findFirst: { users: twoFactorUser({ totpEnabled: false }) } }),
     });
@@ -172,7 +179,7 @@ describe('auth two-factor routes', () => {
   });
 
   it('disable rejects a wrong code', async () => {
-    totpMocks.verifyTotp.mockReturnValueOnce(false);
+    totpMocks.verifyTotpStep.mockReturnValueOnce(null as unknown as number);
     const app = await buildTestApp({ db: createFakeDb({ findFirst: { users: twoFactorUser() } }) });
     await app.register(authRoutes);
     const res = await app.inject({
@@ -183,7 +190,7 @@ describe('auth two-factor routes', () => {
   });
 
   it('locks the account when five 2FA codes are wrong', async () => {
-    totpMocks.verifyTotp.mockReturnValue(false);
+    totpMocks.verifyTotpStep.mockReturnValue(null as unknown as number);
     const app = await buildTestApp({
       db: createFakeDb({ findFirst: { users: twoFactorUser({ email: 'lock2fa@example.com' }) } }),
     });
@@ -197,7 +204,7 @@ describe('auth two-factor routes', () => {
     }
     // The 5th wrong code triggers the lockout audit + locks the account: even
     // a VALID code is now rejected with the generic message.
-    totpMocks.verifyTotp.mockReturnValue(true);
+    totpMocks.verifyTotpStep.mockReturnValue(++nextStep);
     const locked = await app.inject({
       method: 'POST', url: '/login',
       payload: { email: 'lock2fa@example.com', password: GOOD, totpCode: '123456' },
@@ -231,7 +238,7 @@ describe('auth two-factor routes', () => {
       payload: { password: GOOD, code: '123456' },
     });
     expect(res.statusCode).toBe(200);
-    expect(totpMocks.verifyTotp).not.toHaveBeenCalled();
+    expect(totpMocks.verifyTotpStep).not.toHaveBeenCalled();
   });
 
   it('requires auth for the 2fa routes', async () => {

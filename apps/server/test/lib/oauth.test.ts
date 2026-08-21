@@ -10,6 +10,14 @@ import {
   verifyOAuthState,
 } from '../../src/lib/oauth.js';
 
+// L-11 wiring lives in `test/egressGuard.test.ts`, which exercises the REAL
+// guard against these same call sites. Here the guard is stubbed so these
+// tests stay about delivery logic and need no DNS.
+vi.mock('../../src/lib/egressGuard.js', async () => {
+  const actual = await vi.importActual<typeof import('../../src/lib/egressGuard.js')>('../../src/lib/egressGuard.js');
+  return { ...actual, guardedFetch: (url: string, init?: RequestInit) => fetch(url, init) };
+});
+
 describe('oauth library', () => {
   const originalFetch = globalThis.fetch;
 

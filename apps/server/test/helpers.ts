@@ -1,7 +1,7 @@
 import { once } from 'node:events';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import websocket from '@fastify/websocket';
-import { vi } from 'vitest';
+import { afterEach, vi } from 'vitest';
 import { ZodError } from 'zod';
 import type { DB } from '@ninedeploy/db';
 import { forbidden, unauthorized } from '../src/lib/errors.js';
@@ -272,8 +272,27 @@ export async function buildTestApp(opts: TestAppOpts = {}): Promise<FastifyInsta
     });
   });
 
+  openApps.add(app);
   return app;
 }
+
+/**
+ * Every app `buildTestApp` hands out, closed after the test that made it.
+ *
+ * Files that build one Fastify instance per test used to leave all of them
+ * open — 50+ live servers, each with its own kernel, plugin state and (in the
+ * websocket tests) sockets, all still attached to the worker's event loop and
+ * still able to emit through its IPC channel. On Windows that reliably wedged
+ * the fork partway through a large file: the run reported N of M tests and
+ * then stopped for good, at a different N each time.
+ */
+const openApps = new Set<FastifyInstance>();
+
+afterEach(async () => {
+  const apps = [...openApps];
+  openApps.clear();
+  await Promise.all(apps.map((a) => a.close().catch(() => undefined)));
+});
 
 // ── Request/WS helpers ────────────────────────────────────────────────────
 

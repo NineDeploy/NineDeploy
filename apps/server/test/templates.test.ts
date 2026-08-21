@@ -520,8 +520,48 @@ describe('template routes', () => {
 
     const res = await app.inject({ method: 'POST', url: '/grafana/deploy', headers: asUser(), payload: { name: 'Grafana' } });
 
+    // The caller here is an ADMIN, who can see the colliding service — so the
+    // explicit, actionable error stays.
     expect(res.statusCode).toBe(400);
     expect(res.json()).toMatchObject({ error: { code: 'slug_taken' } });
+  });
+
+  it('L-12: a member never learns that another tenant owns the slug', async () => {
+    // Only the FIRST lookup finds the other tenant's service; the retried slug
+    // is free, which is what a real database would report.
+    let lookups = 0;
+    const inserted: Record<string, unknown>[] = [];
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: {
+          services: () => (++lookups === 1
+            ? svcRow({ id: 61, ownerUserId: 2, slug: 'grafana', image: 'grafana/grafana', port: 3000, volumeMount: '/var/lib/grafana' })
+            : undefined),
+        },
+        insert: {
+          services: (v: Record<string, unknown>) => {
+            inserted.push(v);
+            return [svcRow({ id: 77, ownerUserId: 5, slug: String(v['slug']) })];
+          },
+        },
+      }),
+    });
+    await app.register(templateRoutes);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/grafana/deploy',
+      headers: asUser({ id: 5, role: 'member' }),
+      payload: { name: 'Grafana' },
+    });
+
+    // No 'slug_taken', no mention of the other service: the member simply gets
+    // a service on a free slug derived from the one they asked for.
+    expect(res.statusCode).toBe(200);
+    expect(JSON.stringify(res.json())).not.toContain('slug_taken');
+    expect(inserted).toHaveLength(1);
+    expect(String(inserted[0]!['slug'])).toMatch(/^grafana-[a-z0-9]+$/i);
+    expect(String(inserted[0]!['slug'])).not.toBe('grafana');
   });
 
   it('returns 404 when deploying an unknown template', async () => {

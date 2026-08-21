@@ -30,7 +30,15 @@ describe('Kernel Drivers', () => {
       // 1. pullImage
       const logCb = vi.fn();
       await driver.pullImage('redis:alpine', logCb);
-      expect(runSpy).toHaveBeenCalledWith('docker', ['pull', 'redis:alpine'], {}, expect.any(Function));
+      // pullImage delegates to lib/dockerPull, which arms a progress heartbeat
+      // so a slow registry pull does not read as a frozen deploy. The assertion
+      // predated that and still expected a bare `{}`.
+      expect(runSpy).toHaveBeenCalledWith(
+        'docker',
+        ['pull', 'redis:alpine'],
+        { heartbeatMs: 20_000, heartbeatLabel: 'Pulling application image redis:alpine' },
+        expect.any(Function),
+      );
 
       // 2. runContainer with all options
       await driver.runContainer({

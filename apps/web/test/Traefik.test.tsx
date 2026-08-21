@@ -11,7 +11,7 @@ vi.mock('../src/components/Toast.js', async () => {
 
 const userState = { user: { id: 1, email: 'admin@nine.local', role: 'admin' } };
 vi.mock('../src/lib/auth.js', () => ({
-  useAuth: () => userState,
+  AuthProvider: ({ children }: { children?: React.ReactNode }) => children, useAuth: () => userState,
 }));
 
 const authedFetchMock = vi.fn();

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { envVarName, gitBranch, gitRepoUrl, httpPath, slug } from './common.js';
+import { envVarName, gitBranch, gitRepoUrl, httpPath, repoBaseDir, repoRelativePath, slug } from './common.js';
 
 export const serviceType = z.enum(['pm2', 'docker', 'compose']);
 export const buildPack = z.enum(['auto', 'nixpacks', 'dockerfile']);
@@ -36,11 +36,11 @@ export const createService = z.object({
   build: z
     .object({
       buildPack: buildPack.default('auto'),
-      baseDir: z.string().default('/'),
+      baseDir: repoBaseDir.default('/'),
       installCmd: z.string().optional(),
       buildCmd: z.string().optional(),
       startCmd: z.string().optional(),
-      dockerfilePath: z.string().optional(),
+      dockerfilePath: repoRelativePath.optional(),
       preDeployCmd: z.string().nullable().optional(),
       postDeployCmd: z.string().nullable().optional(),
       preStopCmd: z.string().nullable().optional(),
@@ -81,11 +81,11 @@ export const updateService = z.object({
   build: z
     .object({
       buildPack: buildPack.optional(),
-      baseDir: z.string().optional(),
+      baseDir: repoBaseDir.optional(),
       installCmd: z.string().optional(),
       buildCmd: z.string().optional(),
       startCmd: z.string().optional(),
-      dockerfilePath: z.string().optional(),
+      dockerfilePath: repoRelativePath.optional(),
       preDeployCmd: z.string().nullable().optional(),
       postDeployCmd: z.string().nullable().optional(),
       preStopCmd: z.string().nullable().optional(),

@@ -1,5 +1,6 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { config } from '../config.js';
+import { guardedFetch } from './egressGuard.js';
 
 export interface OidcTokenResponse {
   access_token: string;
@@ -45,7 +46,7 @@ export function verifyOAuthState(state: string): { slug: string; returnTo: strin
 /** Fetch OIDC discovery document */
 export async function fetchOidcConfiguration(issuerUrl: string): Promise<{ authorization_endpoint: string; token_endpoint: string; userinfo_endpoint?: string }> {
   const cleanIssuer = issuerUrl.replace(/\/+$/, '');
-  const res = await fetch(`${cleanIssuer}/.well-known/openid-configuration`);
+  const res = await guardedFetch(`${cleanIssuer}/.well-known/openid-configuration`);
   if (!res.ok) {
     throw new Error(`Failed to fetch OIDC discovery configuration from ${cleanIssuer}: ${res.statusText}`);
   }
@@ -68,7 +69,7 @@ export async function exchangeOidcCode(
     redirect_uri: redirectUri,
   });
 
-  const res = await fetch(tokenEndpoint, {
+  const res = await guardedFetch(tokenEndpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
     body: body.toString(),
@@ -84,7 +85,7 @@ export async function exchangeOidcCode(
 
 /** Fetch user profile info from OIDC userinfo endpoint */
 export async function fetchOidcUserInfo(userinfoEndpoint: string, accessToken: string): Promise<OidcUserInfo> {
-  const res = await fetch(userinfoEndpoint, {
+  const res = await guardedFetch(userinfoEndpoint, {
     headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' },
   });
 

@@ -1,5 +1,4 @@
 import { existsSync } from 'node:fs';
-import path from 'node:path';
 import type { Builder } from '../types.js';
 import type { BuildConfig } from '@ninedeploy/db';
 import { buildEnv, capture, run, sleep } from '../../lib/exec.js';
@@ -7,6 +6,7 @@ import { ensureDockerImage, pullDockerImage } from '../../lib/dockerPull.js';
 import { NETWORK } from '../proxy.js';
 import { buildProbeUrl, safeProbePath } from '../../lib/probeUrl.js';
 import { writeSecretFile, type SecretFile } from '../../lib/secretFile.js';
+import { repoRelative, resolveInRepo } from '../../lib/repoPath.js';
 
 const swallow = () => {};
 const PROBE_IMAGE = 'busybox:1.36';
@@ -257,13 +257,17 @@ export const dockerBuilder: Builder = {
       }
     } else {
       target = `ninedeploy/${service.slug}:${commitSha.slice(0, 7) || 'latest'}`;
-      const baseDir = !buildConfig?.baseDir || buildConfig.baseDir === '/' ? '.' : buildConfig.baseDir;
-      const dockerfile = buildConfig?.dockerfilePath || 'Dockerfile';
+      // Both fields are user-supplied and use a leading slash to mean "repo
+      // root". `path.resolve` would read that as the FILESYSTEM root, so
+      // `baseDir: "/etc"` used to make the host's /etc the build context —
+      // re-anchor and containment-check them instead (lib/repoPath.ts).
+      const baseDir = repoRelative(workDir, buildConfig?.baseDir);
+      const dockerfile = repoRelative(workDir, buildConfig?.dockerfilePath || 'Dockerfile');
       const pack = buildConfig?.buildPack ?? 'auto';
       // 'auto' resolves per-repo: an existing Dockerfile wins, otherwise fall
       // through to Nixpacks so Dockerfile-less repos (plain Next.js etc.) build
       // without any repo-side changes.
-      const hasDockerfile = existsSync(path.resolve(workDir, baseDir, dockerfile));
+      const hasDockerfile = existsSync(resolveInRepo(workDir, buildConfig?.baseDir, buildConfig?.dockerfilePath || 'Dockerfile'));
       const useNixpacks = pack === 'nixpacks' || (pack === 'auto' && !hasDockerfile);
       log(`Building image ${target} …`);
       if (useNixpacks) {

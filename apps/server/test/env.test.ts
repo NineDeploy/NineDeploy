@@ -11,6 +11,7 @@ const ENV_KEYS = [
   'NINEDEPLOY_JWT_ACCESS_TTL',
   'NINEDEPLOY_JWT_REFRESH_TTL',
   'NINEDEPLOY_MASTER_KEY',
+  'NINEDEPLOY_MASTER_KEYS',
 ] as const;
 
 async function loadEnv() {
@@ -153,5 +154,44 @@ describe('env', () => {
     vi.stubEnv('NINEDEPLOY_MASTER_KEY', 'c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2');
     const env = await loadEnv();
     expect(env.NINEDEPLOY_MASTER_KEY).toBe('c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2');
+  });
+
+  // L-7: the rotation key-ring is read straight from process.env by
+  // lib/crypto.ts, so it used to skip this guard entirely — an operator could
+  // rotate ONTO a weak key with no warning.
+  it('refuses to boot in production with a weak key in NINEDEPLOY_MASTER_KEYS', async () => {
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('NINEDEPLOY_JWT_SECRET', 'a-strong-unique-production-secret');
+    vi.stubEnv(
+      'NINEDEPLOY_MASTER_KEYS',
+      '0:c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2,1:deadbeef',
+    );
+    await loadEnv();
+
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(errorSpy.mock.calls[0]?.[0]).toMatch(/NINEDEPLOY_MASTER_KEYS version 1/);
+  });
+
+  it('boots in production with a fully strong NINEDEPLOY_MASTER_KEYS ring', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('NINEDEPLOY_JWT_SECRET', 'a-strong-unique-production-secret');
+    vi.stubEnv(
+      'NINEDEPLOY_MASTER_KEYS',
+      '0:c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2,1:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+    );
+    const env = await loadEnv();
+    expect(env.NODE_ENV).toBe('production');
+  });
+
+  it('still rejects an all-zero key (the old regex only matched 0 and a-f)', async () => {
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('NINEDEPLOY_JWT_SECRET', 'a-strong-unique-production-secret');
+    vi.stubEnv('NINEDEPLOY_MASTER_KEY', '0'.repeat(64));
+    await loadEnv();
+    expect(exitSpy).toHaveBeenCalledWith(1);
   });
 });

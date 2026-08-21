@@ -7,13 +7,14 @@ import { api } from '../src/lib/api.js';
 import { mockOf } from './helpers.js';
 
 vi.mock('../src/lib/api.js', async () => {
-  const { createFakeApiModule } = await import('./helpers.js');
+  // Must be './apiMock.js', not './helpers.js' — see the note in apiMock.ts.
+  const { createFakeApiModule } = await import('./apiMock.js');
   return createFakeApiModule();
 });
 
 const fakeUser = { id: 1, email: 'admin@example.com', role: 'admin' as const, name: 'Admin', createdAt: '2026-01-01' };
 vi.mock('../src/lib/auth.js', () => ({
-  useAuth: () => ({ user: fakeUser }),
+  AuthProvider: ({ children }: { children?: React.ReactNode }) => children, useAuth: () => ({ user: fakeUser }),
 }));
 
 function createWrapper() {

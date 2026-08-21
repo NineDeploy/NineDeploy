@@ -49,6 +49,13 @@ const appWith = async (fixtures: Record<string, unknown>) => {
   return app;
 };
 
+// M-6: announce now demands the admin-issued enrolment secret. The fake db
+// serves it from the settings table; `cryptoMocks.decrypt` strips the `enc:`
+// envelope, so the stored value decrypts to ENROLMENT_SECRET.
+const ENROLMENT_SECRET = 'enrolment-secret-abc';
+const enrolmentSetting = { key: 'agent_enrolment_token', value: `enc:${ENROLMENT_SECRET}` };
+const enrolled = { 'x-ninedeploy-enrolment': ENROLMENT_SECRET };
+
 describe('servers routes', () => {
   beforeEach(() => vi.clearAllMocks());
 
@@ -224,7 +231,7 @@ describe('servers routes', () => {
   it('HIGH: a public announce with a wrong token can never take over an existing server', async () => {
     let updatedValues: Record<string, unknown> | null = null;
     const app = await appWith({
-      findFirst: { servers: serverRow({ id: 3, host: '10.0.0.5', port: 4600, status: 'online' }) },
+      findFirst: { servers: serverRow({ id: 3, host: '10.0.0.5', port: 4600, status: 'online' }), settings: enrolmentSetting },
       update: {
         servers: (v: Record<string, unknown>) => {
           updatedValues = v;
@@ -235,6 +242,7 @@ describe('servers routes', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/servers/announce',
+      headers: enrolled,
       payload: { name: 'attacker-node', host: '10.0.0.5', port: 4600, token: 'attacker-forged-token-1' },
     });
     expect(res.statusCode).toBe(401);
@@ -242,14 +250,57 @@ describe('servers routes', () => {
     expect(updatedValues).toBeNull();
   });
 
-  it('allows unauthenticated edge agent announcement to register as pending', async () => {
+  it('M-6: refuses an announce when no enrolment token is configured (fail closed)', async () => {
     const app = await appWith({
-      findFirst: { servers: undefined },
+      findFirst: { servers: undefined, settings: undefined },
       insert: { servers: [serverRow({ id: 5, status: 'pending' })] },
     });
     const res = await app.inject({
       method: 'POST',
       url: '/servers/announce',
+      payload: { name: 'rogue', host: '203.0.113.9', port: 4600, token: 'a'.repeat(32) },
+    });
+    expect(res.statusCode).toBe(401);
+    expect(res.json().error.code).toBe('enrolment_disabled');
+  });
+
+  it('M-6: refuses an announce with a missing or wrong enrolment token', async () => {
+    const fixtures = {
+      findFirst: { servers: undefined, settings: enrolmentSetting },
+      insert: { servers: [serverRow({ id: 5, status: 'pending' })] },
+    };
+    const payload = { name: 'rogue', host: '203.0.113.9', port: 4600, token: 'a'.repeat(32) };
+
+    const missing = await (await appWith(fixtures)).inject({ method: 'POST', url: '/servers/announce', payload });
+    expect(missing.statusCode).toBe(401);
+    expect(missing.json().error.code).toBe('enrolment_invalid');
+
+    const wrong = await (await appWith(fixtures)).inject({
+      method: 'POST',
+      url: '/servers/announce',
+      headers: { 'x-ninedeploy-enrolment': 'not-the-secret' },
+      payload,
+    });
+    expect(wrong.statusCode).toBe(401);
+    expect(wrong.json().error.code).toBe('enrolment_invalid');
+  });
+
+  it('M-6: the enrolment check runs before the body is parsed, so it is not a schema oracle', async () => {
+    const app = await appWith({ findFirst: { servers: undefined, settings: enrolmentSetting } });
+    // A body that would fail zod validation still gets 401, not 400.
+    const res = await app.inject({ method: 'POST', url: '/servers/announce', payload: { nonsense: true } });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('allows unauthenticated edge agent announcement to register as pending', async () => {
+    const app = await appWith({
+      findFirst: { servers: undefined, settings: enrolmentSetting },
+      insert: { servers: [serverRow({ id: 5, status: 'pending' })] },
+    });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/servers/announce',
+      headers: enrolled,
       payload: {
         name: 'auto-edge-1',
         host: '192.168.1.55',
@@ -263,12 +314,13 @@ describe('servers routes', () => {
 
     // Re-announce online server (with the MATCHING stored token)
     const appOnline = await appWith({
-      findFirst: { servers: serverRow({ id: 5, host: '192.168.1.55', port: 4600, status: 'online', tokenEncrypted: 'enc:edge-agent-token-12345' }) },
+      findFirst: { servers: serverRow({ id: 5, host: '192.168.1.55', port: 4600, status: 'online', tokenEncrypted: 'enc:edge-agent-token-12345' }), settings: enrolmentSetting },
       update: { servers: [serverRow({ id: 5 })] },
     });
     const resOnline = await appOnline.inject({
       method: 'POST',
       url: '/servers/announce',
+      headers: enrolled,
       payload: { name: 'auto-edge-1', host: '192.168.1.55', port: 4600, token: 'edge-agent-token-12345' },
     });
     expect(resOnline.statusCode).toBe(200);
@@ -276,12 +328,13 @@ describe('servers routes', () => {
 
     // Announce with host:port extracting port
     const appHostPort = await appWith({
-      findFirst: { servers: undefined },
+      findFirst: { servers: undefined, settings: enrolmentSetting },
       insert: { servers: [serverRow({ id: 6, host: '10.0.0.5', port: 4605, status: 'pending' })] },
     });
     const resHostPort = await appHostPort.inject({
       method: 'POST',
       url: '/servers/announce',
+      headers: enrolled,
       payload: { name: 'node-host-port', host: '10.0.0.5:4605', token: 'd'.repeat(32) },
     });
     expect(resHostPort.statusCode).toBe(200);
@@ -289,12 +342,13 @@ describe('servers routes', () => {
 
     // Announce with host without port falling back to 4600
     const appFallback = await appWith({
-      findFirst: { servers: undefined },
+      findFirst: { servers: undefined, settings: enrolmentSetting },
       insert: { servers: [serverRow({ id: 7, host: '10.0.0.7', port: 4600, status: 'pending' })] },
     });
     const resFallback = await appFallback.inject({
       method: 'POST',
       url: '/servers/announce',
+      headers: enrolled,
       payload: { name: 'node-fallback', host: '10.0.0.7', token: 'e'.repeat(32) },
     });
     expect(resFallback.statusCode).toBe(200);
@@ -302,12 +356,13 @@ describe('servers routes', () => {
 
     // Announce with empty host extracting IPv4 mapped in IPv6
     const appIpV6 = await appWith({
-      findFirst: { servers: undefined },
+      findFirst: { servers: undefined, settings: enrolmentSetting },
       insert: { servers: [serverRow({ id: 8, host: '192.168.1.88', port: 4600, status: 'pending' })] },
     });
     const resIpV6 = await appIpV6.inject({
       method: 'POST',
       url: '/servers/announce',
+      headers: enrolled,
       remoteAddress: '::ffff:192.168.1.88',
       payload: { name: 'node-ipv6', token: 'f'.repeat(32) },
     });
@@ -315,12 +370,13 @@ describe('servers routes', () => {
 
     // Announce with loopback ::1
     const appLoopback = await appWith({
-      findFirst: { servers: undefined },
+      findFirst: { servers: undefined, settings: enrolmentSetting },
       insert: { servers: [serverRow({ id: 9, host: '127.0.0.1', port: 4600, status: 'pending' })] },
     });
     const resLoopback = await appLoopback.inject({
       method: 'POST',
       url: '/servers/announce',
+      headers: enrolled,
       remoteAddress: '::1',
       payload: { name: 'node-loopback', token: 'g'.repeat(32) },
     });
@@ -328,12 +384,13 @@ describe('servers routes', () => {
 
     // Announce with regular IP
     const appIp = await appWith({
-      findFirst: { servers: undefined },
+      findFirst: { servers: undefined, settings: enrolmentSetting },
       insert: { servers: [serverRow({ id: 10, host: '10.0.0.99', port: 4600, status: 'pending' })] },
     });
     const resIp = await appIp.inject({
       method: 'POST',
       url: '/servers/announce',
+      headers: enrolled,
       remoteAddress: '10.0.0.99',
       payload: { name: 'node-ip', token: 'h'.repeat(32) },
     });
@@ -341,12 +398,13 @@ describe('servers routes', () => {
 
     // Re-announce pending server (matching stored token)
     const appPending = await appWith({
-      findFirst: { servers: serverRow({ id: 5, host: '192.168.1.55', port: 4600, status: 'pending', tokenEncrypted: 'enc:pending-agent-token-1' }) },
+      findFirst: { servers: serverRow({ id: 5, host: '192.168.1.55', port: 4600, status: 'pending', tokenEncrypted: 'enc:pending-agent-token-1' }), settings: enrolmentSetting },
       update: { servers: [serverRow({ id: 5 })] },
     });
     const resPending = await appPending.inject({
       method: 'POST',
       url: '/servers/announce',
+      headers: enrolled,
       payload: { name: 'auto-edge-1', host: '192.168.1.55', port: 4600, token: 'pending-agent-token-1' },
     });
     expect(resPending.statusCode).toBe(200);
@@ -425,12 +483,13 @@ describe('servers routes', () => {
 
   it('throws 400 when announce insert fails to return a row or when body is empty', async () => {
     const app = await appWith({
-      findFirst: { servers: undefined },
+      findFirst: { servers: undefined, settings: enrolmentSetting },
       insert: { servers: [] },
     });
     const res = await app.inject({
       method: 'POST',
       url: '/servers/announce',
+      headers: enrolled,
       payload: { name: 'failed-node', host: '10.0.0.1', port: 4600, token: 'c'.repeat(32) },
     });
     expect(res.statusCode).toBe(400);
@@ -439,6 +498,7 @@ describe('servers routes', () => {
     const resEmpty = await app.inject({
       method: 'POST',
       url: '/servers/announce',
+      headers: enrolled,
     });
     expect(resEmpty.statusCode).toBe(400);
   });

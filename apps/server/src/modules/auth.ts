@@ -10,7 +10,8 @@ import { verifyJwt, type AppJwtPayload } from '../lib/jwt.js';
 import { isLocked, recordFailure, recordSuccess } from '../lib/loginLockout.js';
 import { consumeResetToken, issueResetToken } from '../lib/passwordReset.js';
 import { sendSystemEmail } from '../lib/notifier.js';
-import { generateSecret, otpauthUri, verifyTotp } from '../lib/totp.js';
+import { generateSecret, otpauthUri } from '../lib/totp.js';
+import { consumeTotpCode } from '../lib/totpReplay.js';
 import { audit } from '../lib/audit.js';
 import { getSetting } from '../lib/settings.js';
 import { findLiveSession, issueSessionTokens, refreshSessionTokens, revokeAllSessions } from '../lib/sessions.js';
@@ -147,7 +148,9 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     // code counts as a failed login for lockout purposes.
     if (user.totpEnabled && user.totpSecretEncrypted) {
       if (!input.totpCode) throw unauthorized('Two-factor code required', 'totp_required');
-      if (!verifyTotp(decrypt(user.totpSecretEncrypted), input.totpCode)) {
+      // L-10: consume, don't just verify — a replayed code is refused even
+      // though it is still inside its drift window.
+      if (!(await consumeTotpCode(app.db, user, input.totpCode))) {
         const locked = recordFailure(input.email);
         if (locked) void audit(app.db, null, 'auth.lockout', input.email);
         throw unauthorized('Invalid two-factor code', 'totp_invalid');
@@ -219,10 +222,10 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
   // Authentication ceremony (public — the credential IS the proof of identity;
   // discoverable credentials let the user pick an account in the browser prompt).
   app.post('/passkey/login/options', { config: { rateLimit: AUTH_LIMIT } }, async () => {
-    const credentials = await app.db
-      .select({ credentialId: webauthnCredentials.credentialId, transports: webauthnCredentials.transports })
-      .from(webauthnCredentials);
-    return { options: await beginAuthentication(credentials) };
+    // L-5: no database read at all. This used to return every credentialId on
+    // the instance to an anonymous caller; the discoverable-credential flow
+    // needs none of them.
+    return { options: await beginAuthentication() };
   });
 
   app.post('/passkey/login/verify', { config: { rateLimit: AUTH_LIMIT } }, async (req) => {
@@ -317,7 +320,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     const input = twoFactorCode.parse(req.body);
     const user = await app.db.query.users.findFirst({ where: eq(users.id, req.user!.id) });
     if (!user?.totpSecretEncrypted) throw badRequest('Start 2FA setup first');
-    if (!verifyTotp(decrypt(user.totpSecretEncrypted), input.code)) throw badRequest('Invalid two-factor code');
+    if (!(await consumeTotpCode(app.db, user, input.code))) throw badRequest('Invalid two-factor code');
     await app.db.update(users).set({ totpEnabled: true }).where(eq(users.id, user.id));
     void audit(app.db, user.id, 'auth.2fa_enabled', user.email);
     return { ok: true, totpEnabled: true };
@@ -329,7 +332,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     if (!user) throw unauthorized();
     if (!(await verifyPassword(user.passwordHash, input.password))) throw unauthorized('Invalid password');
     if (user.totpEnabled && user.totpSecretEncrypted) {
-      if (!verifyTotp(decrypt(user.totpSecretEncrypted), input.code)) {
+      if (!(await consumeTotpCode(app.db, user, input.code))) {
         throw badRequest('Invalid two-factor code');
       }
     }

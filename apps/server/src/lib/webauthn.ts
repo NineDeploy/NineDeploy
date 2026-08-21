@@ -55,7 +55,10 @@ export async function beginRegistration(
     userDisplayName: user.name ?? user.email,
     attestationType: 'none',
     excludeCredentials: existing.map((c) => ({ id: c.credentialId, transports: asTransports(c.transports) })),
-    authenticatorSelection: { residentKey: 'preferred', userVerification: 'preferred' },
+    // 'required' (not 'preferred'): the login ceremony sends an empty
+    // allowCredentials list (see beginAuthentication), so a non-discoverable
+    // credential would register successfully and then never be offered.
+    authenticatorSelection: { residentKey: 'required', userVerification: 'preferred' },
   });
   remember(`reg:${user.id}`, options.challenge);
   return JSON.stringify(options);
@@ -91,14 +94,26 @@ export async function finishRegistration(
 // ── authentication ─────────────────────────────────────────────────────────
 const LOGIN_KEY = 'login';
 
-export async function beginAuthentication(
-  credentials: Pick<WebauthnCredential, 'credentialId' | 'transports'>[],
-): Promise<string> {
+/**
+ * L-5: `allowCredentials` is deliberately EMPTY.
+ *
+ * The login route is unauthenticated, so filling the allow-list meant handing
+ * every `credentialId` registered on the instance to any anonymous caller —
+ * a stable per-passkey identifier, and a live count of how many accounts have
+ * enrolled one. An empty list is the discoverable-credential ("passkey")
+ * flow this route already documents: the authenticator itself offers the user
+ * the accounts it holds for this RP, and the server learns which one only
+ * from the signed assertion.
+ *
+ * The cost is that a NON-discoverable credential cannot be offered by the
+ * browser, which is why registration now asks for `residentKey: 'required'`.
+ */
+export async function beginAuthentication(): Promise<string> {
   const { rpID } = rpIdentity();
   const options = await generateAuthenticationOptions({
     rpID,
     userVerification: 'preferred',
-    allowCredentials: credentials.map((c) => ({ id: c.credentialId, transports: asTransports(c.transports) })),
+    allowCredentials: [],
   });
   remember(LOGIN_KEY, options.challenge);
   return JSON.stringify(options);

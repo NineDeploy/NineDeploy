@@ -69,6 +69,34 @@ export const gitBranch = z
   .regex(/^[A-Za-z0-9._][A-Za-z0-9._/-]*$/, 'invalid branch name')
   .refine((v) => !v.includes('..') && !v.endsWith('.lock'), { message: 'invalid branch name' });
 
+/**
+ * A path interpreted relative to the checked-out repository.
+ *
+ * A LEADING SLASH IS ALLOWED and means "from the repo root" — that is the
+ * existing convention for `baseDir` (`/`, `/app`), so rejecting it here would
+ * break real configurations. What is rejected is anything that could climb out
+ * of the checkout once resolved: `..` segments, NUL, and Windows drive
+ * letters.
+ *
+ * This is a usability guard, not the security boundary. The sinks
+ * (`docker build -f` / its build context, `docker compose -f`) resolve these
+ * values against the work dir, so they re-anchor the path themselves — see
+ * `lib/repoPath.ts`.
+ */
+const insideRepo = (value: string): boolean =>
+  !/^[A-Za-z]:/.test(value) &&
+  !value.includes('\0') &&
+  !value.split(/[\\/]/).includes('..');
+
+export const repoRelativePath = z
+  .string()
+  .trim()
+  .max(400)
+  .refine(insideRepo, { message: 'must be a path inside the repository (no "..")' });
+
+/** Same rules as {@link repoRelativePath}; named for the build-context field. */
+export const repoBaseDir = repoRelativePath;
+
 /** Cursor-style pagination params. */
 export const pagination = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(25),

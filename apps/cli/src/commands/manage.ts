@@ -338,8 +338,10 @@ export async function deploysWatch(serviceIdStr: string, deployIdStr: string, ti
   const cfg = loadConfig();
   const { WebSocket } = await import('ws');
   const url = new URL(`/v1/services/${serviceId}/deploys/${deployId}/logs`, cfg.baseUrl.replace(/^http/, 'ws'));
-  url.searchParams.set('token', cfg.token ?? '');
-  const ws = new WebSocket(url);
+  // L-3: the token travels as a WebSocket subprotocol, not `?token=`. A query
+  // string lands in Traefik's access log (`accessLog: {}` is on by default)
+  // and in any intermediate proxy's log; a subprotocol is a header.
+  const ws = new WebSocket(url, [`ninedeploy.bearer.${cfg.token ?? ''}`]);
   let closed = false;
   ws.on('message', (data) => process.stdout.write(String(data)));
   ws.on('close', () => {

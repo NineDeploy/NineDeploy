@@ -9,12 +9,13 @@ import { useAuth } from '../src/lib/auth.js';
 import { renderWithProviders, mockOf } from './helpers.js';
 
 vi.mock('../src/lib/api.js', async () => {
-  const { createFakeApiModule } = await import('./helpers.js');
+  // Must be './apiMock.js', not './helpers.js' — see the note in apiMock.ts.
+  const { createFakeApiModule } = await import('./apiMock.js');
   return createFakeApiModule();
 });
 
 vi.mock('../src/lib/auth.js', async () => {
-  const { createAuthMock } = await import('./helpers.js');
+  const { createAuthMock } = await import('./apiMock.js');
   return createAuthMock();
 });
 

@@ -23,7 +23,7 @@ vi.mock('../src/lib/api.js', () => apiMock);
 
 // The inspector section is admin-gated; tests render as an admin.
 vi.mock('../src/lib/auth.js', () => ({
-  useAuth: () => ({ user: { id: 1, role: 'admin' as const, email: 'admin@test', name: 'Admin' } }),
+  AuthProvider: ({ children }: { children?: React.ReactNode }) => children, useAuth: () => ({ user: { id: 1, role: 'admin' as const, email: 'admin@test', name: 'Admin' } }),
 }));
 
 const resources = {

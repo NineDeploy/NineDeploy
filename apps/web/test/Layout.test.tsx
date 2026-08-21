@@ -29,7 +29,7 @@ const apiMock = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('../src/lib/auth.js', () => ({ useAuth: authMock.useAuth }));
+vi.mock('../src/lib/auth.js', () => ({ AuthProvider: ({ children }: { children?: React.ReactNode }) => children, useAuth: authMock.useAuth }));
 vi.mock('../src/lib/theme.js', () => ({ useTheme: themeMock.useTheme }));
 vi.mock('../src/lib/workspace.js', () => ({ useWorkspace: workspaceMock.useWorkspace }));
 vi.mock('../src/lib/api.js', () => apiMock);

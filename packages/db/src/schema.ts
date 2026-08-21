@@ -62,6 +62,10 @@ export const users = sqliteTable('users', {
   // TOTP (2FA): secret encrypted at rest; null = never set up.
   totpSecretEncrypted: text('totp_secret_encrypted'),
   totpEnabled: integer('totp_enabled', { mode: 'boolean' }).notNull().default(false),
+  // Highest TOTP step already accepted for this user. A code is single-use:
+  // replaying one inside the +/-1-step (90 s) drift window is refused because
+  // its step is no longer strictly greater than this. Null = none used yet.
+  totpLastStep: integer('totp_last_step'),
   createdAt: ts('created_at'),
   updatedAt: tsUpdatable('updated_at'),
 });
@@ -373,6 +377,11 @@ export const domains = sqliteTable(
     // Rate limit: burst peak requests allowed (0 or null = disabled)
     rateLimitBurst: integer('rate_limit_burst'),
     status: text('status', { enum: domainStatus }).notNull().default('pending'),
+    // H-2 layer 2: proof that the claimant controls the DNS zone. A hostname
+    // outside this instance's own zone stays `pending` — and unrouted — until
+    // a TXT record at _ninedeploy-challenge.<hostname> matches this token.
+    verificationToken: text('verification_token'),
+    verifiedAt: integer('verified_at', { mode: 'timestamp' }),
     // External DNS record id (e.g. Cloudflare) when the provider integration
     // created the record — null for provider-less/manual DNS.
     dnsRecordId: text('dns_record_id'),

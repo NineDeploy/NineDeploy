@@ -19,7 +19,10 @@ export const configCenterRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('onRequest', app.authenticate);
 
   // List all configuration entries & definitions
-  app.get('/', async (req) => {
+  // L-12: instance configuration is an operator concern. Secret values were
+  // already admin-only inside the handler; the non-secret ones still describe
+  // how the whole instance is wired.
+  app.get('/', { preHandler: [app.requireAdmin] }, async (req) => {
     const isAdmin = req.user!.role === 'admin';
     const query = req.query as { category?: string; pluginId?: string; reveal?: string };
     const definitions = req.kernel.configCenter.listDefinitions(query.category, query.pluginId);

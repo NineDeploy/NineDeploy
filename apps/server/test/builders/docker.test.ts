@@ -216,7 +216,10 @@ describe('dockerBuilder.buildAndRun', () => {
 
     expect(h.run).toHaveBeenCalledWith(
       'docker',
-      ['build', '-t', 'ninedeploy/web:latest', '-f', 'Dockerfile.prod', '/app'],
+      // `/app` is re-anchored to `app`: the command runs with cwd=workDir, and
+      // a leading slash means "repo root" here — not the filesystem root, which
+      // is how `path.resolve` would have read it (see lib/repoPath.ts, L-13).
+      ['build', '-t', 'ninedeploy/web:latest', '-f', 'Dockerfile.prod', 'app'],
       {
         cwd: '/work/web',
         env: { DOCKER_BUILDKIT: '1' },
@@ -225,6 +228,12 @@ describe('dockerBuilder.buildAndRun', () => {
       },
       ctx.log,
     );
+  });
+
+  it('L-13: refuses a build path that climbs out of the checkout', async () => {
+    h2.exists.mockReturnValue(true);
+    const ctx = makeCtx({ commitSha: '', buildConfig: { baseDir: '../../etc', dockerfilePath: 'Dockerfile' } });
+    await expect(dockerBuilder.buildAndRun(ctx as never)).rejects.toThrow(/outside the repository/);
   });
 
   it('omits port/cpu/memory/volume/env flags when unset', async () => {
@@ -459,7 +468,8 @@ describe('dockerBuilder.buildAndRun', () => {
 
     const nix = h.run.mock.calls.find((c) => c[0] === 'nixpacks');
     expect(nix![1].join(' ')).toBe(
-      'build /app --name ninedeploy/web:abcdef1 --install-cmd pnpm install --frozen-lockfile --build-cmd pnpm build --start-cmd pnpm start',
+      // baseDir '/app' is re-anchored to 'app' (repo-root convention, L-13).
+      'build app --name ninedeploy/web:abcdef1 --install-cmd pnpm install --frozen-lockfile --build-cmd pnpm build --start-cmd pnpm start',
     );
   });
 

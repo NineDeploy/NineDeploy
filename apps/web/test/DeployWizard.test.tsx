@@ -22,6 +22,11 @@ const apiMock = vi.hoisted(() => ({
 
 vi.mock('../src/lib/api.js', () => apiMock);
 
+// H-3: Compose and PM2 run on the host, so the API admits admins only and the
+// wizard must not offer them to a member. Role is mutable per test.
+const authMock = vi.hoisted(() => ({ user: { id: 1, role: 'admin', email: 'a@test', name: 'A' } }));
+vi.mock('../src/lib/auth.js', () => ({ AuthProvider: ({ children }: { children?: React.ReactNode }) => children, useAuth: () => authMock }));
+
 import { DeployWizard } from '../src/components/DeployWizard.js';
 
 const TEMPLATE = {
@@ -45,7 +50,7 @@ function LocationProbe() {
   return <div data-testid="location">{location.pathname}{location.search}</div>;
 }
 
-function renderWizard(props: { template?: typeof TEMPLATE; onClose?: () => void } = {}) {
+function renderWizard(props: { template?: typeof TEMPLATE & { dockerSocket?: boolean }; onClose?: () => void } = {}) {
   const onClose = props.onClose ?? vi.fn();
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const utils = renderTree(
@@ -75,6 +80,7 @@ function renderTree(ui: React.ReactElement, queryClient: QueryClient) {
 describe('DeployWizard', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    authMock.user = { id: 1, role: 'admin', email: 'a@test', name: 'A' };
     localStorage.setItem('ninedeploy:experience_mode', 'advanced');
     apiMock.api.sources.list.mockResolvedValue([
       { id: 3, name: 'github-app', type: 'github' },
@@ -104,6 +110,33 @@ describe('DeployWizard', () => {
       stages: [],
       alreadyInProgress: false,
     });
+  });
+
+  it('offers Compose and PM2 to an admin', () => {
+    renderWizard();
+    expect(screen.getByRole('option', { name: 'Compose' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'PM2' })).toBeInTheDocument();
+  });
+
+  it('hides Compose and PM2 from a member — the API returns 403 for both', () => {
+    authMock.user = { id: 5, role: 'member', email: 'm@test', name: 'M' };
+    renderWizard();
+    expect(screen.queryByRole('option', { name: 'Compose' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: 'PM2' })).not.toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Docker / Nixpacks' })).toBeInTheDocument();
+  });
+
+  it('blocks a member from deploying a Docker-socket template, with the reason', () => {
+    authMock.user = { id: 5, role: 'member', email: 'm@test', name: 'M' };
+    renderWizard({ template: { ...TEMPLATE, dockerSocket: true } });
+    expect(screen.getByText(/mounts the Docker socket/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Continue/ })).toBeDisabled();
+  });
+
+  it('lets an admin deploy the same Docker-socket template', () => {
+    renderWizard({ template: { ...TEMPLATE, dockerSocket: true } });
+    expect(screen.queryByText(/mounts the Docker socket/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Continue/ })).not.toBeDisabled();
   });
 
   it('renders the repo flow by default with a "New service" title', async () => {

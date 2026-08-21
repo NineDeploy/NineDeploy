@@ -217,12 +217,16 @@ export async function runOp(op: string, params: Params, onLine: (l: string) => v
 export async function announceToMaster(
   masterUrl: string,
   payload: { name: string; host?: string; port: number; token: string },
+  enrolmentToken = process.env['NINEDEPLOY_ENROLMENT_TOKEN'] ?? '',
 ): Promise<void> {
   try {
     const endpoint = `${masterUrl.replace(/\/+$/, '')}/v1/servers/announce`;
     const res = await fetch(endpoint, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      // M-6: the master refuses an announce without the admin-issued enrolment
+      // secret. Generate it in Settings -> Nodes and set
+      // NINEDEPLOY_ENROLMENT_TOKEN in this agent's environment.
+      headers: { 'content-type': 'application/json', 'x-ninedeploy-enrolment': enrolmentToken },
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(10_000),
     });

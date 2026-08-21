@@ -23,6 +23,96 @@ ok()    { echo -e "${GREEN}✓${NC}  $*"; }
 warn()  { echo -e "${YELLOW}⚠${NC}  $*"; }
 fail()  { echo -e "${RED}✗${NC}  $*"; exit 1; }
 
+# ── Remote code policy (L-15) ──────────────────────────────────────────────
+#
+# This script installs Nixpacks and Traefik by downloading a pinned artifact
+# and checking its SHA-256 before use. Docker and Node.js used to be different:
+# both were fetched with `curl … | sudo sh`, i.e. whatever bytes the endpoint
+# returned were executed as root, unverified, with no record of what ran. A
+# compromised CDN, a hijacked domain or an attacker on the path between the
+# host and the endpoint got root on the machine that holds every deployment
+# secret on this instance.
+#
+# Those two now install from their vendors' APT repositories, whose packages
+# are signed and verified by apt against a key pinned into
+# /etc/apt/keyrings — the vendors' own documented method, and the one that
+# gives the host a verifiable chain instead of a pipe.
+#
+# The setup script remains as a last-resort fallback, but it is no longer
+# silent: it downloads to a file, prints the URL and the digest of exactly
+# what it fetched, and refuses to run without consent.
+allow_unverified_scripts() { [ "${NINEDEPLOY_ALLOW_UNVERIFIED_INSTALL_SCRIPTS:-}" = "1" ]; }
+
+# Fetch a vendor GPG key into /etc/apt/keyrings and register its repository.
+# Args: <name> <key-url> <repo-line-without-signed-by>
+add_signed_apt_repo() {
+  local name="$1" key_url="$2" repo_line="$3"
+  local keyring="/etc/apt/keyrings/${name}.asc"
+  sudo install -m 0755 -d /etc/apt/keyrings || return 1
+  curl -fsSL "$key_url" | sudo tee "$keyring" >/dev/null || return 1
+  sudo chmod a+r "$keyring" || return 1
+  echo "deb [arch=$(dpkg --print-architecture) signed-by=${keyring}] ${repo_line}" \
+    | sudo tee "/etc/apt/sources.list.d/${name}.list" >/dev/null || return 1
+  sudo apt-get update -y >/dev/null 2>&1 || return 1
+}
+
+# Last resort: download a vendor setup script, show what it is, and run it
+# only with explicit consent.
+run_vendor_script() {
+  local url="$1" stage digest
+  stage=$(mktemp -d) || fail "Could not create a download workspace"
+  curl -fsSL "$url" -o "$stage/setup.sh" || { rm -rf "$stage"; return 1; }
+  digest=$(sha256sum "$stage/setup.sh" | awk '{print $1}')
+  warn "About to run an UNVERIFIED vendor script as root:"
+  warn "  url    : $url"
+  warn "  sha256 : $digest"
+  if ! allow_unverified_scripts; then
+    if [ -t 0 ]; then
+      read -r -p "Run it? [y/N] " _reply
+      case "$_reply" in [yY]*) ;; *) rm -rf "$stage"; return 1 ;; esac
+    else
+      warn "Refusing (non-interactive). Re-run with NINEDEPLOY_ALLOW_UNVERIFIED_INSTALL_SCRIPTS=1 to accept."
+      rm -rf "$stage"
+      return 1
+    fi
+  fi
+  sudo -E bash "$stage/setup.sh"
+  local rc=$?
+  rm -rf "$stage"
+  return $rc
+}
+
+# Node.js from NodeSource's signed APT repository.
+install_node_apt() {
+  local major="$1"
+  add_signed_apt_repo "nodesource" \
+    "https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key" \
+    "https://deb.nodesource.com/node_${major}.x nodistro main" || return 1
+  sudo apt-get install -y nodejs >/dev/null 2>&1
+}
+
+# Node.js: signed repo first, consented script second.
+install_node() {
+  install_node_apt 24 && return 0
+  install_node_apt 22 && return 0
+  warn "NodeSource APT repository unavailable — falling back to their setup script."
+  (run_vendor_script "https://deb.nodesource.com/setup_24.x" || run_vendor_script "https://deb.nodesource.com/setup_22.x") \
+    && sudo apt-get install -y nodejs
+}
+
+# Docker from Docker Inc.'s signed APT repository.
+install_docker_apt() {
+  local codename
+  codename=$( (. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}") 2>/dev/null ) || return 1
+  local id
+  id=$( (. /etc/os-release && echo "$ID") 2>/dev/null ) || return 1
+  case "$id" in ubuntu|debian) ;; *) return 1 ;; esac
+  add_signed_apt_repo "docker" \
+    "https://download.docker.com/linux/${id}/gpg" \
+    "https://download.docker.com/linux/${id} ${codename} stable" || return 1
+  sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin >/dev/null 2>&1
+}
+
 if [ -z "${NINEDEPLOY_INSTALL_DIR:-}" ]; then
   if [ -f "./package.json" ] && [ -d "./apps/server" ]; then
     INSTALL_DIR="$(pwd)"
@@ -66,8 +156,7 @@ if command -v node &>/dev/null; then
   else
     warn "Node.js $(node -v) is older than recommended (≥ 22.13). Upgrading to LTS via NodeSource…"
     if command -v apt-get &>/dev/null; then
-      (curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash - && sudo apt-get install -y nodejs) || \
-      (curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt-get install -y nodejs)
+      install_node || fail "Could not upgrade Node.js. Install >= 22.13 manually: https://nodejs.org/"
       ok "Upgraded Node.js to $(node -v)"
     else
       fail "Node.js $(node -v) — need ≥ 22.13. Upgrade: https://nodejs.org/"
@@ -76,8 +165,7 @@ if command -v node &>/dev/null; then
 else
   warn "Node.js not found. Installing Active LTS via NodeSource…"
   if command -v apt-get &>/dev/null; then
-    (curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash - && sudo apt-get install -y nodejs) || \
-    (curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt-get install -y nodejs)
+    install_node || fail "Could not install Node.js. Install >= 22.13 manually: https://nodejs.org/"
   elif command -v brew &>/dev/null; then
     brew install node@24 2>/dev/null || brew install node@22
   else
@@ -139,15 +227,19 @@ fi
 
 # Docker
 if ! command -v docker &>/dev/null; then
-  warn "Docker not found. Installing via official script (get.docker.com)…"
-  if command -v curl &>/dev/null; then
-    curl -fsSL https://get.docker.com | sudo sh
-    if command -v systemctl &>/dev/null; then
-      sudo systemctl enable --now docker || true
-    fi
-  else
+  if ! command -v curl &>/dev/null; then
     warn "Install Docker manually: https://docs.docker.com/engine/install/"
     fail "Docker is required."
+  fi
+  if command -v apt-get &>/dev/null && install_docker_apt; then
+    ok "Installed Docker from Docker Inc.'s signed APT repository"
+  else
+    warn "Docker APT repository unavailable — falling back to get.docker.com."
+    run_vendor_script "https://get.docker.com" \
+      || fail "Docker is required. Install it manually: https://docs.docker.com/engine/install/"
+  fi
+  if command -v systemctl &>/dev/null; then
+    sudo systemctl enable --now docker || true
   fi
 fi
 if ! docker info &>/dev/null 2>&1; then
@@ -457,6 +549,12 @@ fi
 
 if [ ! -f ".env" ]; then
   info "Creating .env from template…"
+  # Tighten the umask BEFORE the file exists: `cp` then `chmod 600` at the end
+  # leaves the generated JWT secret and master key world-readable (default
+  # umask 022) for the duration of the sed passes below. `sed -i` also creates
+  # its temp file under the same umask.
+  _nd_old_umask=$(umask)
+  umask 077
   cp .env.example .env
 
   # Set production mode
@@ -470,6 +568,7 @@ if [ ! -f ".env" ]; then
   sed -i.bak "s|^NINEDEPLOY_MASTER_KEY=.*|NINEDEPLOY_MASTER_KEY=${MASTER_KEY}|" .env && rm -f .env.bak
 
   chmod 600 .env
+  umask "$_nd_old_umask"
 
   ok ".env created with generated production secrets"
 else

@@ -27,6 +27,7 @@ import { getSettingString } from '../lib/settings.js';
 
 /** The bundled registry — ships with the app, guarantees an offline fallback. */
 import bundled from './registry.json' with { type: 'json' };
+import { guardedFetch } from '../lib/egressGuard.js';
 
 export type { Template };
 
@@ -83,11 +84,29 @@ export function invalidateTemplateCache(): void {
   memo.clear();
 }
 
-const readBundleFile = (file: string): Template[] => parseBundle(JSON.parse(readFileSync(file, 'utf8')));
+/**
+ * L-11 (second half): a local `templates_source` must live under the data dir.
+ *
+ * The setting accepts an absolute path, and the loader used to read whatever
+ * it named. A parse failure falls through to the bundled registry silently, so
+ * this was not a general file-read oracle — but a JSON file that happens to
+ * parse as a template bundle would have been served through the hub, and
+ * pointing the setting at, say, a mounted secrets file is not something the
+ * feature ever needed to allow. Registry bundles are operator data; the data
+ * dir is where operator data lives.
+ */
+function readBundleFile(file: string): Template[] {
+  const root = path.resolve(config.paths.dataDir);
+  const resolved = path.resolve(root, file);
+  if (resolved !== root && !resolved.startsWith(root + path.sep)) {
+    throw new Error(`Template source must be inside the data directory (${root}): ${file}`);
+  }
+  return parseBundle(JSON.parse(readFileSync(resolved, 'utf8')));
+}
 
 /** Fetch a remote bundle, cache it to the data dir, and return its templates. */
 async function fetchRemote(source: string): Promise<Template[]> {
-  const res = await fetch(source, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+  const res = await guardedFetch(source, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
   if (!res.ok) throw new Error(`Registry fetch failed (${res.status})`);
   const templates = parseBundle(await res.json());
   try {

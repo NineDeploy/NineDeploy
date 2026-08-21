@@ -145,8 +145,8 @@ describe('writeDynamicConfig', () => {
   it('generates routers and service blocks for domains pointing at running services', async () => {
     const db = makeDb(
       [
-        { id: 1, serviceId: 1, hostname: 'app.example.com', path: '/', ssl: true },
-        { id: 2, serviceId: 1, hostname: 'api.example.com', path: '/api', ssl: false },
+        { id: 1, serviceId: 1, hostname: 'app.example.com', path: '/', ssl: true, status: 'active' },
+        { id: 2, serviceId: 1, hostname: 'api.example.com', path: '/api', ssl: false, status: 'active' },
       ],
       [{ id: 1, slug: 'web', port: 3000, runtimeId: 'web-1' }],
     );
@@ -165,13 +165,33 @@ describe('writeDynamicConfig', () => {
     expect(db.select).toHaveBeenCalledTimes(2);
   });
 
+  it('H-2: never routes a domain still awaiting DNS ownership proof', async () => {
+    const db = makeDb(
+      [
+        { id: 1, serviceId: 1, hostname: 'unproven.victim.com', path: '/', ssl: true, status: 'pending' },
+        { id: 2, serviceId: 1, hostname: 'failed.victim.com', path: '/', ssl: true, status: 'error' },
+        { id: 3, serviceId: 1, hostname: 'proven.example.com', path: '/', ssl: true, status: 'active' },
+      ],
+      [{ id: 1, slug: 'web', port: 3000, runtimeId: 'web-1' }],
+    );
+
+    await writeDynamicConfig(db as never);
+
+    // This file IS the enforcement point: a pending row exists in the database
+    // and is simply never described to Traefik, so the claim serves nothing.
+    const yaml = readFileSync(path.join(traefikDir, 'dynamic.yml'), 'utf8');
+    expect(yaml).toContain('proven.example.com');
+    expect(yaml).not.toContain('unproven.victim.com');
+    expect(yaml).not.toContain('failed.victim.com');
+  });
+
   it('skips domains whose service is missing or not runnable', async () => {
     const db = makeDb(
       [
-        { id: 1, serviceId: 99, hostname: 'orphan.example.com', path: '/', ssl: false },
-        { id: 2, serviceId: 3, hostname: 'noport.example.com', path: '/', ssl: false },
-        { id: 3, serviceId: 2, hostname: 'noruntime.example.com', path: '/', ssl: false },
-        { id: 4, serviceId: 1, hostname: 'ok.example.com', path: '/', ssl: false },
+        { id: 1, serviceId: 99, hostname: 'orphan.example.com', path: '/', ssl: false, status: 'active' },
+        { id: 2, serviceId: 3, hostname: 'noport.example.com', path: '/', ssl: false, status: 'active' },
+        { id: 3, serviceId: 2, hostname: 'noruntime.example.com', path: '/', ssl: false, status: 'active' },
+        { id: 4, serviceId: 1, hostname: 'ok.example.com', path: '/', ssl: false, status: 'active' },
       ],
       [
         { id: 1, slug: 'web', port: 3000, runtimeId: 'web-1' },
@@ -206,8 +226,8 @@ describe('writeDynamicConfig', () => {
   it('dedupes identical service keys', async () => {
     const db = makeDb(
       [
-        { id: 1, serviceId: 1, hostname: 'dup.example.com', path: '/', ssl: false },
-        { id: 1, serviceId: 1, hostname: 'dup.example.com', path: '/', ssl: false },
+        { id: 1, serviceId: 1, hostname: 'dup.example.com', path: '/', ssl: false, status: 'active' },
+        { id: 1, serviceId: 1, hostname: 'dup.example.com', path: '/', ssl: false, status: 'active' },
       ],
       [{ id: 1, slug: 'web', port: 3000, runtimeId: 'web-1' }],
     );
@@ -221,7 +241,7 @@ describe('writeDynamicConfig', () => {
   it('propagates write failures', async () => {
     rmSync(traefikDir, { recursive: true, force: true });
     const db = makeDb(
-      [{ id: 1, serviceId: 1, hostname: 'a.example.com', path: '/', ssl: false }],
+      [{ id: 1, serviceId: 1, hostname: 'a.example.com', path: '/', ssl: false, status: 'active' }],
       [{ id: 1, slug: 'web', port: 3000, runtimeId: 'web-1' }],
     );
 
@@ -230,7 +250,7 @@ describe('writeDynamicConfig', () => {
 
   it('sanitizes hostile characters out of the hostname and path (rule/YAML injection)', async () => {
     const db = makeDb(
-      [{ id: 1, serviceId: 1, hostname: 'evil`.example.com)inject', path: '/api`)breakout', ssl: false }],
+      [{ id: 1, serviceId: 1, hostname: 'evil`.example.com)inject', path: '/api`)breakout', ssl: false, status: 'active' }],
       [{ id: 1, slug: 'web', port: 3000, runtimeId: 'web-1' }],
     );
 
@@ -245,8 +265,8 @@ describe('writeDynamicConfig', () => {
   it('skips a domain whose hostname is null or sanitizes to nothing', async () => {
     const db = makeDb(
       [
-        { id: 1, serviceId: 1, hostname: null, path: '/', ssl: false },
-        { id: 2, serviceId: 1, hostname: 'good.example.com', path: '/', ssl: false },
+        { id: 1, serviceId: 1, hostname: null, path: '/', ssl: false, status: 'active' },
+        { id: 2, serviceId: 1, hostname: 'good.example.com', path: '/', ssl: false, status: 'active' },
       ],
       [{ id: 1, slug: 'web', port: 3000, runtimeId: 'web-1' }],
     );
@@ -261,7 +281,7 @@ describe('writeDynamicConfig', () => {
 
   it('omits PathPrefix when the path is null', async () => {
     const db = makeDb(
-      [{ id: 1, serviceId: 1, hostname: 'app.example.com', path: null, ssl: false }],
+      [{ id: 1, serviceId: 1, hostname: 'app.example.com', path: null, ssl: false, status: 'active' }],
       [{ id: 1, slug: 'web', port: 3000, runtimeId: 'web-1' }],
     );
 
@@ -540,7 +560,7 @@ describe("ACME / Let's Encrypt", () => {
     h.config.acmeEmail = 'ops@example.com';
     try {
       const db = makeDb(
-        [{ id: 1, serviceId: 1, hostname: 'app.example.com', path: '/', ssl: true }],
+        [{ id: 1, serviceId: 1, hostname: 'app.example.com', path: '/', ssl: true, status: 'active' }],
         [{ id: 1, slug: 'web', port: 3000, runtimeId: 'web-1' }],
       );
 
@@ -556,7 +576,7 @@ describe("ACME / Let's Encrypt", () => {
 
   it('keeps tls: {} on ssl routers when ACME is not configured', async () => {
     const db = makeDb(
-      [{ id: 1, serviceId: 1, hostname: 'app.example.com', path: '/', ssl: true }],
+      [{ id: 1, serviceId: 1, hostname: 'app.example.com', path: '/', ssl: true, status: 'active' }],
       [{ id: 1, slug: 'web', port: 3000, runtimeId: 'web-1' }],
     );
 
@@ -715,8 +735,8 @@ describe('DNS-01 challenge (wildcard SSL)', () => {
 
     const db = makeDb(
       [
-        { id: 1, serviceId: 1, hostname: '*.example.com', path: '/', ssl: true },
-        { id: 2, serviceId: 1, hostname: 'plain.example.com', path: '/', ssl: true },
+        { id: 1, serviceId: 1, hostname: '*.example.com', path: '/', ssl: true, status: 'active' },
+        { id: 2, serviceId: 1, hostname: 'plain.example.com', path: '/', ssl: true, status: 'active' },
       ],
       [{ id: 1, slug: 'web', port: 3000, runtimeId: 'web-1' }],
     );
@@ -751,7 +771,7 @@ describe('DNS-01 challenge (wildcard SSL)', () => {
 
   it('emits a www→apex redirect middleware and wires it to the router', async () => {
     const db = makeDb(
-      [{ id: 1, serviceId: 1, hostname: 'www.example.com', path: '/', ssl: true, redirectWww: true }],
+      [{ id: 1, serviceId: 1, hostname: 'www.example.com', path: '/', ssl: true, redirectWww: true, status: 'active' }],
       [{ id: 1, slug: 'web', port: 3000, runtimeId: 'web-1' }],
     );
 
@@ -768,7 +788,7 @@ describe('DNS-01 challenge (wildcard SSL)', () => {
 
   it('skips the www redirect for wildcard hostnames', async () => {
     const db = makeDb(
-      [{ id: 1, serviceId: 1, hostname: '*.example.com', path: '/', ssl: true, redirectWww: true }],
+      [{ id: 1, serviceId: 1, hostname: '*.example.com', path: '/', ssl: true, redirectWww: true, status: 'active' }],
       [{ id: 1, slug: 'web', port: 3000, runtimeId: 'web-1' }],
     );
 
@@ -782,7 +802,7 @@ describe('DNS-01 challenge (wildcard SSL)', () => {
     const db = makeDb(
       [
         {
-          id: 1, serviceId: 1, hostname: 'app.example.com', path: '/', ssl: false,
+          id: 1, serviceId: 1, hostname: 'app.example.com', path: '/', ssl: false, status: 'active',
           headers: JSON.stringify([
             { name: 'X-Frame-Options', value: 'DENY' },
             { name: 'X-Evil-Name!"', value: 'va"lue\nbreak' },
@@ -807,7 +827,7 @@ describe('DNS-01 challenge (wildcard SSL)', () => {
 
   it('ignores malformed headers JSON entirely', async () => {
     const db = makeDb(
-      [{ id: 1, serviceId: 1, hostname: 'app.example.com', path: '/', ssl: false, headers: '{oops' }],
+      [{ id: 1, serviceId: 1, hostname: 'app.example.com', path: '/', ssl: false, headers: '{oops', status: 'active' }],
       [{ id: 1, slug: 'web', port: 3000, runtimeId: 'web-1' }],
     );
 
@@ -820,7 +840,7 @@ describe('DNS-01 challenge (wildcard SSL)', () => {
 
   it('ignores a non-array headers JSON document', async () => {
     const db = makeDb(
-      [{ id: 1, serviceId: 1, hostname: 'app.example.com', path: '/', ssl: false, headers: '{"name":"x"}' }],
+      [{ id: 1, serviceId: 1, hostname: 'app.example.com', path: '/', ssl: false, headers: '{"name":"x', status: 'active' }],
       [{ id: 1, slug: 'web', port: 3000, runtimeId: 'web-1' }],
     );
 
@@ -832,7 +852,7 @@ describe('DNS-01 challenge (wildcard SSL)', () => {
 
   it('omits the middlewares section when no domain needs one', async () => {
     const db = makeDb(
-      [{ id: 1, serviceId: 1, hostname: 'plain.example.com', path: '/', ssl: false }],
+      [{ id: 1, serviceId: 1, hostname: 'plain.example.com', path: '/', ssl: false, status: 'active' }],
       [{ id: 1, slug: 'web', port: 3000, runtimeId: 'web-1' }],
     );
 
@@ -848,7 +868,7 @@ describe('DNS-01 challenge (wildcard SSL)', () => {
         {
           id: 1,
           serviceId: 1,
-          hostname: 'secure.example.com',
+          hostname: 'secure.example.com', status: 'active',
           path: '/',
           ssl: false,
           basicAuth: JSON.stringify(['admin:$apr1$xyz', 'user:pass']),
@@ -887,7 +907,7 @@ describe('DNS-01 challenge (wildcard SSL)', () => {
         {
           id: 2,
           serviceId: 1,
-          hostname: 'rate.example.com',
+          hostname: 'rate.example.com', status: 'active',
           path: '/',
           ssl: false,
           rateLimitAverage: 20,
@@ -916,6 +936,26 @@ describe('DNS-01 challenge (wildcard SSL)', () => {
       expect(yaml).toContain('Host(`panel.example.com`)');
       expect(yaml).toContain('svc_ninedeploy_panel:');
       expect(yaml).toContain('http://host.docker.internal:');
+    } finally {
+      delete process.env['NINEDEPLOY_DOMAIN'];
+    }
+  });
+
+  it('H-2: the panel router carries an explicit priority no service rule can beat', async () => {
+    process.env['NINEDEPLOY_DOMAIN'] = 'panel.example.com';
+    try {
+      const db = makeDb([], []);
+      await writeDynamicConfig(db as never);
+      const yaml = readFileSync(path.join(traefikDir, 'dynamic.yml'), 'utf8');
+
+      // Traefik's default priority IS the rule length, so a service router with
+      // `Host(panel…) && PathPrefix(/v1)` would otherwise out-rank the panel and
+      // intercept admin bearer tokens.
+      const priority = /ninedeploy_panel:[\s\S]*?priority: (\d+)/.exec(yaml)?.[1];
+      expect(priority).toBeDefined();
+      // A hostname is at most 253 chars; a rule built from host + path cannot
+      // approach this, so the panel always wins.
+      expect(Number(priority)).toBeGreaterThan(1000);
     } finally {
       delete process.env['NINEDEPLOY_DOMAIN'];
     }

@@ -26,6 +26,16 @@ export const NETWORK = 'ninedeploy';
 const HOST_RE = /[^A-Za-z0-9.\-*]/g;
 const PATH_RE = /[^A-Za-z0-9.\-/_]/g;
 
+/**
+ * Explicit priority for the dashboard's own router.
+ *
+ * Traefik's default priority is the rule's length, so any service router with a
+ * longer rule on the panel hostname would silently win. Well above any rule a
+ * hostname + path could produce (a 253-char host plus a path is still far short
+ * of this), so the control plane always keeps its own domain.
+ */
+const PANEL_ROUTER_PRIORITY = 100_000;
+
 /** Atomically replace `file`'s contents: write to a sibling temp file then rename. */
 function writeAtomic(file: string, content: string): void {
   // Unique temp name per write: both writes are fully synchronous (no yield
@@ -413,6 +423,10 @@ export async function writeDynamicConfig(db: DB): Promise<void> {
   const seen = new Set<string>();
 
   for (const d of all) {
+    // H-2 layer 2: a domain awaiting DNS ownership proof must not route. This
+    // is the enforcement point — the create-time check only decides what gets
+    // written, this decides what Traefik is ever told about.
+    if (d.status !== 'active') continue;
     const svc = servicesById.get(d.serviceId);
     if (!svc?.port || !svc.runtimeId) continue; // need a running container to route to
     const key = `${svc.slug}_${d.id}`;
@@ -519,6 +533,14 @@ export async function writeDynamicConfig(db: DB): Promise<void> {
         '    ninedeploy_panel:\n' +
           `      rule: "${yamlDoubleQuoted(hostMatcher)}"\n` +
           '      service: svc_ninedeploy_panel\n' +
+          // Traefik ranks routers by RULE LENGTH when no priority is set, so a
+          // service router with a longer rule on the same host — `Host(x) &&
+          // PathPrefix(/v1)` against this bare `Host(x)` — would out-rank the
+          // control plane and receive its traffic, Authorization headers
+          // included. `modules/domains.ts` refuses to create such a domain, but
+          // the proxy states the precedence itself rather than depending on
+          // that check (and on rows that predate it).
+          `      priority: ${PANEL_ROUTER_PRIORITY}\n` +
           '      entryPoints:\n' +
           '        - websecure\n' +
           '        - web' +

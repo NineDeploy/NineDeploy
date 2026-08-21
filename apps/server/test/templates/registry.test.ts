@@ -17,6 +17,14 @@ const h = vi.hoisted(() => {
 vi.mock('../../src/config.js', () => ({ config: h.config }));
 vi.mock('../../src/lib/settings.js', () => ({ getSettingString: h.getSettingString }));
 
+// The L-11 egress guard resolves the source host before fetching it; these
+// tests are about the registry's cache/fallback logic and run offline. The
+// guard's own wiring into fetchRemote is asserted in test/egressGuard.test.ts.
+vi.mock('../../src/lib/egressGuard.js', async () => {
+  const actual = await vi.importActual<typeof import('../../src/lib/egressGuard.js')>('../../src/lib/egressGuard.js');
+  return { ...actual, guardedFetch: (url: string, init?: RequestInit) => fetch(url, init) };
+});
+
 import {
   BUNDLED_REGISTRY, getBundledTemplates, getTemplates, invalidateTemplateCache, parseBundle, parseTemplates,
 } from '../../src/templates/registry.js';

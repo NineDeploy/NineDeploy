@@ -121,16 +121,15 @@ describe('Config Center HTTP API', () => {
     });
     expect(setRes3.statusCode).toBe(200);
 
-    // 3. Member list (secrets must be masked)
+    // 3. L-12: the listing is admin-only now. Masking secrets was not enough —
+    // the non-secret entries still describe how the whole instance is wired,
+    // and a member has no operator role to use them for.
     const memberListRes = await app.inject({
       method: 'GET',
       url: '/',
       headers: asUser({ role: 'member' }),
     });
-    expect(memberListRes.statusCode).toBe(200);
-    const memberEntries = memberListRes.json().entries;
-    const smtpEntry = memberEntries.find((e: any) => e.key === 'plugin:smtp:password');
-    expect(smtpEntry.value).toBe('••••••••');
+    expect(memberListRes.statusCode).toBe(403);
 
     // 4. Admin list with reveal=true
     const adminRevealRes = await app.inject({

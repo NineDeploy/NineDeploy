@@ -8,6 +8,8 @@ import { audit } from '../lib/audit.js';
 import { config } from '../config.js';
 import { badRequest, notFound, parseId as num } from '../lib/errors.js';
 import { loadServiceForUser } from '../lib/serviceAccess.js';
+import { assertMayUseHostPrivilege } from '../lib/hostPrivilege.js';
+import { assertMayPublishPort } from '../lib/hostPort.js';
 import { slugify } from '../lib/slug.js';
 import { composeBuilder } from '../engine/builders/compose.js';
 import { dockerBuilder } from '../engine/builders/docker.js';
@@ -102,6 +104,15 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
       input.port !== template.port ||
       (input.volumeMount ?? null) !== (template.volumeMount ?? null)
     )) throw badRequest('Template image, port and volume are registry-controlled');
+    // Host-privilege gate: PM2/compose services, lifecycle hooks and
+    // docker-socket templates all give host-level execution, which is exactly
+    // what the admin-only exec/volume/container routes exist to withhold.
+    assertMayUseHostPrivilege(req.user!, {
+      type: input.type,
+      dockerSocket: template?.dockerSocket ?? false,
+      build: input.build,
+    });
+    assertMayPublishPort(req.user!, input.publishedPort);
     const slug = input.slug ?? slugify(input.name);
     // Explicit duplicate-slug check → a clean 409 instead of an uncaught
     // unique-index error (500). Covers the NULL-project case too, where
@@ -218,8 +229,25 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
 
   app.patch('/:id', async (req) => {
     const id = num((req.params as { id: string }).id);
-    await loadServiceForUser(app.db, id, req.user!);
+    const existing = await loadServiceForUser(app.db, id, req.user!);
     const { build, ...patch } = updateService.parse(req.body ?? {});
+    // The gate has to consider the MERGED result, not just the payload: a
+    // member could otherwise switch `type` to pm2 on its own, or add a single
+    // lifecycle hook, and reach host execution one field at a time.
+    const currentBuild = await app.db.query.buildConfigs.findFirst({ where: eq(buildConfigs.serviceId, id) });
+    const merged = (key: 'preDeployCmd' | 'postDeployCmd' | 'preStopCmd') =>
+      build?.[key] !== undefined ? build[key] : currentBuild?.[key];
+    assertMayUseHostPrivilege(req.user!, {
+      type: patch.type ?? existing.type,
+      dockerSocket: existing.dockerSocket ?? false,
+      build: {
+        preDeployCmd: merged('preDeployCmd'),
+        postDeployCmd: merged('postDeployCmd'),
+        preStopCmd: merged('preStopCmd'),
+      },
+    });
+    // Same merged-result reasoning for the host port.
+    assertMayPublishPort(req.user!, patch.publishedPort === undefined ? existing.publishedPort : patch.publishedPort);
     // Build-config keys are optional; null out omitted-but-cleared ones via `set` semantics.
     const [svc] = await app.db.update(services).set(patch).where(eq(services.id, id)).returning();
     if (!svc) throw notFound('Service not found');
@@ -382,6 +410,14 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
     const id = num((req.params as { id: string }).id);
     const body = (req.body as { name?: string; slug?: string } | undefined) ?? {};
     const svc = await loadServiceForUser(app.db, id, req.user!);
+    // A clone inherits the source's type and build config — including its
+    // lifecycle hooks — so it inherits its host privilege too.
+    const sourceBuild = await app.db.query.buildConfigs.findFirst({ where: eq(buildConfigs.serviceId, id) });
+    assertMayUseHostPrivilege(req.user!, {
+      type: svc.type,
+      dockerSocket: svc.dockerSocket ?? false,
+      build: sourceBuild ?? null,
+    });
 
     const newName = body.name?.trim() || `${svc.name} (Copy)`;
     let newSlug = body.slug?.trim() ? slugify(body.slug) : slugify(newName);

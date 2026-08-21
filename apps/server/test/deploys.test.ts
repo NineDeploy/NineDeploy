@@ -293,7 +293,7 @@ describe('deploys routes', () => {
     const app = await buildTestApp({ websocket: true, db: createFakeDb({ findFirst: { services: svcRow({ id: 1 }) } }) });
     await app.register(deploysRoutes, { prefix: '/services' });
     const port = await listen(app);
-    const ws = await openWs(wsUrl(port, '/services/1/deploys/5/logs?token=valid'));
+    const ws = await openWs(wsUrl(port, '/services/1/deploys/5/logs'), 'ninedeploy.bearer.valid');
     sockets.push(ws);
     const messages = collectMessages(ws);
     await waitFor(() => messages.length > 0);
@@ -309,7 +309,7 @@ describe('deploys routes', () => {
     const app = await buildTestApp({ websocket: true, db: createFakeDb() });
     await app.register(deploysRoutes, { prefix: '/services' });
     const port = await listen(app);
-    const ws = await openWs(wsUrl(port, '/services/1/deploys/5/logs?token=bad'));
+    const ws = await openWs(wsUrl(port, '/services/1/deploys/5/logs'), 'ninedeploy.bearer.bad');
     sockets.push(ws);
     const closed = new Promise<number>((resolve) => ws.addEventListener('close', (ev) => resolve(ev.code)));
     expect(await closed).toBe(1008);
@@ -320,7 +320,7 @@ describe('deploys routes', () => {
     const app = await buildTestApp({ websocket: true, db: createFakeDb() });
     await app.register(deploysRoutes, { prefix: '/services' });
     const port = await listen(app);
-    const ws = await openWs(wsUrl(port, '/services/9/deploys/99/logs?token=valid'));
+    const ws = await openWs(wsUrl(port, '/services/9/deploys/99/logs'), 'ninedeploy.bearer.valid');
     sockets.push(ws);
     const messages = collectMessages(ws);
     // No log file exists for deployment 99 → no backlog replay.
@@ -339,7 +339,7 @@ describe('deploys routes', () => {
     });
     await app.register(deploysRoutes, { prefix: '/services' });
     const port = await listen(app);
-    const ws = await openWs(wsUrl(port, '/services/1/exec?token=valid'));
+    const ws = await openWs(wsUrl(port, '/services/1/exec'), 'ninedeploy.bearer.valid');
     sockets.push(ws);
     const messages = collectMessages(ws);
     await waitFor(() => childProc.children.length === 1);
@@ -375,7 +375,7 @@ describe('deploys routes', () => {
     });
     await app.register(deploysRoutes, { prefix: '/services' });
     const port = await listen(app);
-    const ws = await openWs(wsUrl(port, '/services/1/exec?token=valid'));
+    const ws = await openWs(wsUrl(port, '/services/1/exec'), 'ninedeploy.bearer.valid');
     sockets.push(ws);
     await waitFor(() => childProc.children.length === 1);
     const [cmd, args, opts] = childProc.spawn.mock.calls[0] as unknown as [string, string[], { env: Record<string, string> }];
@@ -396,7 +396,7 @@ describe('deploys routes', () => {
     });
     await app.register(deploysRoutes, { prefix: '/services' });
     const port = await listen(app);
-    const ws = await openWs(wsUrl(port, '/services/1/exec?token=member'));
+    const ws = await openWs(wsUrl(port, '/services/1/exec'), 'ninedeploy.bearer.member');
     sockets.push(ws);
     const closed = new Promise<void>((resolve) => ws.addEventListener('close', (_ev) => resolve()));
     await closed;
@@ -412,7 +412,7 @@ describe('deploys routes', () => {
     });
     await app.register(deploysRoutes, { prefix: '/services' });
     const port = await listen(app);
-    const ws = await openWs(wsUrl(port, '/services/1/exec?token=valid'));
+    const ws = await openWs(wsUrl(port, '/services/1/exec'), 'ninedeploy.bearer.valid');
     sockets.push(ws);
     await waitFor(() => childProc.children.length === 1);
     const child = childProc.children[0]!;
@@ -433,7 +433,7 @@ describe('deploys routes', () => {
     });
     await app.register(deploysRoutes, { prefix: '/services' });
     const port = await listen(app);
-    const ws = await openWs(wsUrl(port, '/services/1/exec?token=valid'));
+    const ws = await openWs(wsUrl(port, '/services/1/exec'), 'ninedeploy.bearer.valid');
     sockets.push(ws);
     const closed = new Promise<number>((resolve) => ws.addEventListener('close', (ev) => resolve(ev.code)));
     expect(await closed).toBe(1008);
@@ -458,7 +458,7 @@ describe('deploys routes', () => {
     });
     await app.register(deploysRoutes, { prefix: '/services' });
     const port = await listen(app);
-    const ws = new WsClient(wsUrl(port, '/services/1/exec?token=valid'));
+    const ws = new WsClient(wsUrl(port, '/services/1/exec'), ['ninedeploy.bearer.valid']);
     await new Promise<void>((resolve, reject) => {
       ws.on('open', () => resolve());
       ws.on('error', reject);
@@ -481,7 +481,7 @@ describe('deploys routes', () => {
     });
     await app.register(deploysRoutes, { prefix: '/services' });
     const port = await listen(app);
-    const ws = await openWs(wsUrl(port, '/services/1/exec?token=valid'));
+    const ws = await openWs(wsUrl(port, '/services/1/exec'), 'ninedeploy.bearer.valid');
     sockets.push(ws);
     await waitFor(() => childProc.children.length === 1);
     const child = childProc.children[0]!;

@@ -14,7 +14,10 @@ import { audit } from '../lib/audit.js';
 export const demoRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('onRequest', app.authenticate);
 
-  app.post('/seed', async (req) => {
+  // L-2: the seeded project/services/databases are created with a NULL owner,
+  // which `resourceAccess` treats as admin-only. A member could therefore
+  // populate instance-global rows they could not then see or clean up.
+  app.post('/seed', { preHandler: [app.requireAdmin] }, async (req) => {
     const userId = req.user!.id;
 
     // 1. Create or retrieve Demo Project

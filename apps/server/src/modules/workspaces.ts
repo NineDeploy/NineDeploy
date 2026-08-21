@@ -290,13 +290,20 @@ export const workspaceRoutes: FastifyPluginAsync = async (app) => {
     const canInvite = req.user!.role === 'admin' || callerMembership?.role === 'owner' || callerMembership?.role === 'admin';
     if (!canInvite) throw forbidden('Admin or Owner role required to invite workspace members');
 
+    // L-12: this route used to answer "no such user" for an unregistered
+    // address and "already a member" for a registered one, which let any
+    // workspace owner test arbitrary email addresses for an account on this
+    // instance. Both outcomes now return the SAME error: the caller can read
+    // the member list to see who is already in, so nothing actionable is lost,
+    // and a non-member address reveals nothing about whether it is registered.
+    const UNADDABLE = 'That email address cannot be added to this workspace';
     const targetUser = await app.db.query.users.findFirst({ where: eq(users.email, input.email) });
-    if (!targetUser) throw notFound(`User with email "${input.email}" not found`);
+    if (!targetUser) throw notFound(UNADDABLE);
 
     const existingMember = await app.db.query.workspaceMembers.findFirst({
       where: and(eq(workspaceMembers.workspaceId, id), eq(workspaceMembers.userId, targetUser.id)),
     });
-    if (existingMember) throw conflict('User is already a member of this workspace');
+    if (existingMember) throw notFound(UNADDABLE);
 
     const [created] = await app.db
       .insert(workspaceMembers)

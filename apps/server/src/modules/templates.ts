@@ -12,6 +12,9 @@ import type { FastifyInstance, FastifyPluginAsync, FastifyRequest } from 'fastif
 import { getTemplates, type Template } from '../templates/registry.js';
 import { encrypt, randomToken } from '../lib/crypto.js';
 import { badRequest, notFound } from '../lib/errors.js';
+import { assertMayUseHostPrivilege } from '../lib/hostPrivilege.js';
+import { isAdmin, type AuthedUser } from '../lib/resourceAccess.js';
+import { assertMayPublishPort } from '../lib/hostPort.js';
 import { slugify } from '../lib/slug.js';
 
 const summary = (t: Template) => ({
@@ -85,14 +88,30 @@ async function prepareTemplateService(
   app: FastifyInstance,
   template: Template,
   input: DeployTemplate,
-  ownerUserId: number,
+  user: AuthedUser,
 ): Promise<{ service: Service; generatedSecrets: Array<{ key: string; value: string }>; stages: ProvisionStage[] }> {
+  const ownerUserId = user.id;
   const projectId = input.projectId ?? null;
   const name = input.name ?? template.name;
-  const slug = input.name ? slugify(name) : `${slugify(template.name)}-${Date.now().toString(36).slice(-4)}`;
+  const requestedSlug = input.name ? slugify(name) : `${slugify(template.name)}-${Date.now().toString(36).slice(-4)}`;
   const stages: ProvisionStage[] = [];
 
+  let slug = requestedSlug;
   let service = await app.db.query.services.findFirst({ where: eq(services.slug, slug) });
+  // L-12: `slug_taken` used to answer for services the caller cannot see,
+  // turning template deploy into a probe for other tenants' service names.
+  // A collision with someone else's service is now resolved by picking a free
+  // slug instead of reporting theirs — the caller gets a working service and
+  // learns nothing. A collision with a service they CAN see keeps the explicit
+  // error, because that one is actionable.
+  if (service && service.ownerUserId !== ownerUserId && !isAdmin(user)) {
+    let attempt = 0;
+    do {
+      slug = `${requestedSlug}-${randomToken(3).slice(0, 4)}`;
+      service = await app.db.query.services.findFirst({ where: eq(services.slug, slug) });
+    } while (service && ++attempt < 5);
+    if (service) throw badRequest('Could not allocate a free service slug — try a different name');
+  }
   if (service) {
     if (!input.reuseExisting || !sameTemplateService(service, template, ownerUserId, projectId)) {
       throw badRequest(`A service with slug '${slug}' already exists`, 'slug_taken');
@@ -160,7 +179,12 @@ export const templateRoutes: FastifyPluginAsync = async (app) => {
     const t = (await getTemplates(app.db)).find((x) => x.id === (req.params as { id: string }).id);
     if (!t) throw notFound('Template not found');
     const input = deployTemplate.parse(req.body ?? {});
-    const prepared = await prepareTemplateService(app, t, input, req.user!.id);
+    // Templates that mount the Docker socket (Portainer, Dockge, Dozzle,
+    // Homepage) hand the container control of every other container on the
+    // host — admin-only, like the exec terminal.
+    assertMayUseHostPrivilege(req.user!, { type: 'docker', dockerSocket: t.dockerSocket ?? false });
+    assertMayPublishPort(req.user!, input.publishedPort);
+    const prepared = await prepareTemplateService(app, t, input, req.user!);
     let deployment = await app.db.query.deployments.findFirst({
       where: and(
         eq(deployments.serviceId, prepared.service.id),

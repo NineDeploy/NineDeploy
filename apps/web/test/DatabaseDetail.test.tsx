@@ -5,7 +5,7 @@ import { api, authedFetch } from '../src/lib/api.js';
 import { mockOf, renderRoute } from './helpers.js';
 
 vi.mock('../src/lib/api.js', async () => {
-  const { createFakeApiModule } = await import('./helpers.js');
+  const { createFakeApiModule } = await import('./apiMock.js');
   return {
     ...createFakeApiModule(),
     authedFetch: vi.fn(),

@@ -35,7 +35,10 @@ export const signRefreshToken = (userId: number, ver?: number, jti?: string) =>
   sign(userId, 'refresh', config.jwt.refreshTtl, ver, jti);
 
 export async function verifyJwt(token: string): Promise<AppJwtPayload> {
-  const { payload } = await jwtVerify(token, secret);
+  // Pin the algorithm explicitly. jose already refuses a non-HMAC `alg` for a
+  // symmetric key, so this is defence in depth — but it makes the accepted set
+  // a property of THIS code rather than of the library's key-type inference.
+  const { payload } = await jwtVerify(token, secret, { algorithms: ['HS256'] });
   return payload as AppJwtPayload;
 }
 

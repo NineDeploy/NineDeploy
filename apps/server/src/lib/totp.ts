@@ -73,25 +73,46 @@ export function totpAt(secret: string, timestampMs: number): string {
 }
 
 /**
- * Verify a code against the secret with a ±1 step window (handles clock
- * drift between the phone and the server). Constant-time-ish: always compares
- * all three candidates.
+ * Which time step a code belongs to, or `null` if it matches none.
+ *
+ * Returning the step (rather than a bare boolean) is what makes single-use
+ * enforcement possible: the caller records the highest step it has accepted
+ * for the account and refuses anything not strictly newer, so a code observed
+ * over the shoulder or lifted by a phishing proxy cannot be replayed for the
+ * rest of its ±1-step (90 s) validity window. See `consumeTotpCode` in
+ * `lib/totpReplay.ts`.
+ *
+ * Constant-time-ish: always compares all three candidates and never
+ * short-circuits on the first match.
  */
-export function verifyTotp(secret: string, code: string, timestampMs = Date.now()): boolean {
+export function verifyTotpStep(secret: string, code: string, timestampMs = Date.now()): number | null {
   const normalized = code.replace(/\s/g, '');
-  if (!/^\d{6}$/.test(normalized)) return false;
+  if (!/^\d{6}$/.test(normalized)) return null;
   const counter = Math.floor(timestampMs / 1000 / PERIOD);
-  let ok = false;
+  let matched: number | null = null;
   for (const drift of [-1, 0, 1]) {
-    const expected = hotp(base32Decode(secret), counter + drift);
+    const step = counter + drift;
+    const expected = hotp(base32Decode(secret), step);
     // XOR-fold both strings so every candidate is always fully compared.
     let diff = normalized.length ^ expected.length;
     for (let i = 0; i < Math.min(normalized.length, expected.length); i++) {
       diff |= normalized.charCodeAt(i) ^ expected.charCodeAt(i);
     }
-    if (diff === 0) ok = true;
+    if (diff === 0) matched = step;
   }
-  return ok;
+  return matched;
+}
+
+/**
+ * Verify a code against the secret with a ±1 step window (handles clock
+ * drift between the phone and the server).
+ *
+ * NOTE: this answers "is this code currently valid", not "may this code be
+ * used". Anything that authenticates a user must go through `consumeTotpCode`
+ * so the code is spent.
+ */
+export function verifyTotp(secret: string, code: string, timestampMs = Date.now()): boolean {
+  return verifyTotpStep(secret, code, timestampMs) !== null;
 }
 
 /** otpauth:// URI for authenticator apps. */

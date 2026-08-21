@@ -2,6 +2,7 @@ import { unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { Builder, DeployRuntime } from '../types.js';
 import { capture, run } from '../../lib/exec.js';
+import { repoRelative } from '../../lib/repoPath.js';
 
 const DEPLOY_HEARTBEAT_MS = 20_000;
 
@@ -29,7 +30,9 @@ export const composeBuilder: Builder = {
   async buildAndRun(ctx): Promise<DeployRuntime> {
     const { service, buildConfig, workDir, env, log } = ctx;
     const composeService = service.composeService ?? service.slug;
-    const composeFile = buildConfig?.dockerfilePath || 'docker-compose.yml';
+    // Same re-anchoring as the docker builder: `-f` runs with cwd=workDir, so
+    // an absolute or climbing path would read a compose file off the host.
+    const composeFile = repoRelative(workDir, buildConfig?.dockerfilePath || 'docker-compose.yml');
     const project = composeProject(service.slug);
 
     log(`Bringing up compose project ${project} (${composeFile}) …`);

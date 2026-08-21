@@ -164,14 +164,40 @@ export type ServerAnnounce = z.infer<typeof serverAnnounce>;
 export const sshAuthType = z.enum(['key', 'password']);
 export type SshAuthType = z.infer<typeof sshAuthType>;
 
+/**
+ * SSH destination operands.
+ *
+ * These are joined as `${sshUser}@${host}` and handed to the `ssh` binary as a
+ * single argv element. OpenSSH parses any element that STARTS WITH `-` as an
+ * option, so an unconstrained `sshUser` of `-oProxyCommand=…` turns the
+ * destination into an option whose value runs through /bin/sh on the panel
+ * host. Constraining the charset (no leading dash, no whitespace, no `@`)
+ * keeps the element a destination.
+ */
+const sshUser = z
+  .string()
+  .trim()
+  .min(1)
+  .max(64)
+  .regex(/^[A-Za-z0-9_][A-Za-z0-9._-]*$/, 'invalid SSH username')
+  .default('root');
+
+/** A hostname, IPv4 or bare IPv6 address — same reasoning as `sshUser`. */
+const sshHost = z
+  .string()
+  .trim()
+  .min(1)
+  .max(255)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9.:_-]*$/, 'invalid SSH host');
+
 export const serverSshTest = z.object({
-  host: z.string().trim().min(1).max(255),
+  host: sshHost,
   sshPort: z
     .unknown()
     .optional()
     .transform((v) => Number(v ?? 22) || 22)
     .pipe(z.number().int().min(1).max(65535)),
-  sshUser: z.string().trim().min(1).max(100).default('root'),
+  sshUser,
   authType: sshAuthType.default('key'),
   sshKey: z.string().optional(),
   sshPassword: z.string().optional(),
@@ -180,13 +206,13 @@ export type ServerSshTest = z.infer<typeof serverSshTest>;
 
 export const serverSshBootstrap = z.object({
   name: z.string().trim().min(1).max(100),
-  host: z.string().trim().min(1).max(255),
+  host: sshHost,
   sshPort: z
     .unknown()
     .optional()
     .transform((v) => Number(v ?? 22) || 22)
     .pipe(z.number().int().min(1).max(65535)),
-  sshUser: z.string().trim().min(1).max(100).default('root'),
+  sshUser,
   authType: sshAuthType.default('key'),
   sshKey: z.string().optional(),
   sshPassword: z.string().optional(),

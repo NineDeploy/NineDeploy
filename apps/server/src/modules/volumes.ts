@@ -52,7 +52,10 @@ async function volumeSize(name: string): Promise<number> {
 export const volumeRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('onRequest', app.authenticate);
 
-  app.get('/', async () => {
+  // L-12: the instance-wide volume inventory (names, sizes, owning service)
+  // is infrastructure metadata about every tenant. Mutating volume routes were
+  // already admin-only; the listing had been left open.
+  app.get('/', { preHandler: [app.requireAdmin] }, async () => {
     let raw = '';
     try {
       raw = await capture('docker', ['volume', 'ls', '--format', '{{.Name}}']);

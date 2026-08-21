@@ -3,6 +3,7 @@ import { Cpu, GitPullRequest, Layers, Settings } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import type { Service } from '@ninedeploy/sdk';
 import { api } from '../../lib/api.js';
+import { useAuth } from '../../lib/auth.js';
 import { toInt } from '../../lib/format.js';
 import { useToast } from '../../components/Toast.js';
 import { Button, Card, CardBody, Field, Input, Select, Skeleton } from '../../components/ui.js';
@@ -22,6 +23,8 @@ export function SettingsTab({ serviceId, svc }: { serviceId: number; svc: Servic
 function SettingsCard({ serviceId }: { serviceId: number }) {
   const qc = useQueryClient();
   const { toast } = useToast();
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const service = useQuery({ queryKey: ['service', serviceId], queryFn: () => api.services.get(serviceId) });
   const svc = service.data;
 
@@ -76,9 +79,11 @@ function SettingsCard({ serviceId }: { serviceId: number }) {
           buildCmd: orUndef(f.buildCmd),
           startCmd: orUndef(f.startCmd),
           dockerfilePath: orUndef(f.dockerfilePath),
-          preDeployCmd: orUndef(f.preDeployCmd),
-          postDeployCmd: orUndef(f.postDeployCmd),
-          preStopCmd: orUndef(f.preStopCmd),
+          // Non-admins never see these fields, so they must not send them
+          // either: an omitted key leaves whatever an admin stored intact.
+          preDeployCmd: isAdmin ? orUndef(f.preDeployCmd) : undefined,
+          postDeployCmd: isAdmin ? orUndef(f.postDeployCmd) : undefined,
+          preStopCmd: isAdmin ? orUndef(f.preStopCmd) : undefined,
           restartPolicy: f.restartPolicy,
           stopGraceSeconds: toInt(f.stopGraceSeconds, 5)!,
         },
@@ -132,18 +137,25 @@ function SettingsCard({ serviceId }: { serviceId: number }) {
           <Field label="Start command"><Input value={form.startCmd} onChange={set('startCmd')} placeholder="npm start" className="h-9 font-mono text-xs" /></Field>
           <Field label="Dockerfile path"><Input value={form.dockerfilePath} onChange={set('dockerfilePath')} placeholder="./Dockerfile" className="h-9 font-mono text-xs" /></Field>
 
-          <div className="col-span-full mt-2 border-t border-white/5 pt-4 text-xs font-medium uppercase tracking-wide text-slate-500 flex items-center gap-1.5">
-            <Layers size={13} className="text-indigo-400" /> CI/CD Lifecycle Hooks
-          </div>
-          <Field label="Pre-deploy command (e.g. DB migrations)">
-            <Input value={form.preDeployCmd} onChange={set('preDeployCmd')} placeholder="npm run db:migrate" className="h-9 font-mono text-xs" />
-          </Field>
-          <Field label="Post-deploy command (e.g. cache warm-up)">
-            <Input value={form.postDeployCmd} onChange={set('postDeployCmd')} placeholder="curl -sSL http://localhost:3000/api/warmup" className="h-9 font-mono text-xs" />
-          </Field>
-          <Field label="Pre-stop command">
-            <Input value={form.preStopCmd} onChange={set('preStopCmd')} placeholder="npm run cleanup" className="h-9 font-mono text-xs" />
-          </Field>
+          {/* Lifecycle hooks execute binaries on the HOST (engine/pipeline.ts),
+              so the API restricts them to admins. Showing them to a member
+              would only produce a 403 on save. */}
+          {isAdmin && (
+            <>
+              <div className="col-span-full mt-2 border-t border-white/5 pt-4 text-xs font-medium uppercase tracking-wide text-slate-500 flex items-center gap-1.5">
+                <Layers size={13} className="text-indigo-400" /> CI/CD Lifecycle Hooks
+              </div>
+              <Field label="Pre-deploy command (e.g. DB migrations)">
+                <Input value={form.preDeployCmd} onChange={set('preDeployCmd')} placeholder="npm run db:migrate" className="h-9 font-mono text-xs" />
+              </Field>
+              <Field label="Post-deploy command (e.g. cache warm-up)">
+                <Input value={form.postDeployCmd} onChange={set('postDeployCmd')} placeholder="curl -sSL http://localhost:3000/api/warmup" className="h-9 font-mono text-xs" />
+              </Field>
+              <Field label="Pre-stop command">
+                <Input value={form.preStopCmd} onChange={set('preStopCmd')} placeholder="npm run cleanup" className="h-9 font-mono text-xs" />
+              </Field>
+            </>
+          )}
           <Field label="Restart policy">
             <Select value={form.restartPolicy} onChange={set('restartPolicy')} className="h-9">
               <option value="unless-stopped">unless-stopped</option>

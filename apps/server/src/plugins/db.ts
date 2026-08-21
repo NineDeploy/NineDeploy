@@ -35,6 +35,9 @@ async function ensureEssentialColumns(db: DB) {
     // Ownership for managed databases — mirrors services.owner_user_id so the
     // access rules in lib/resourceAccess.ts can scope database routes per user.
     'ALTER TABLE `databases` ADD COLUMN `owner_user_id` integer REFERENCES `users`(`id`) ON DELETE SET NULL;',
+    // Single-use TOTP: the highest step already spent for the account, so a
+    // code cannot be replayed inside its 90-second drift window (L-10).
+    'ALTER TABLE `users` ADD COLUMN `totp_last_step` integer;',
   ];
 
   for (const stmt of statements) {

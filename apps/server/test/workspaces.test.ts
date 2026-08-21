@@ -470,7 +470,7 @@ describe('workspaces routes', () => {
       expect(res.statusCode).toBe(404);
     });
 
-    it('rejects adding existing member (409)', async () => {
+    it('rejects adding an existing member with the same error as an unknown email (L-12)', async () => {
       let callCount = 0;
       const app = await buildTestApp({
         db: createFakeDb({
@@ -492,7 +492,11 @@ describe('workspaces routes', () => {
         headers: { ...asUser({ id: 2 }), 'content-type': 'application/json' },
         payload: { email: 'bob@example.com' },
       });
-      expect(res.statusCode).toBe(409);
+      // Was 409 "already a member" vs 404 "user not found" — two answers that
+      // together told a workspace owner whether any given email had an account
+      // on this instance. Both now return the same 404 with the same message.
+      expect(res.statusCode).toBe(404);
+      expect(res.json().error.message).toBe('That email address cannot be added to this workspace');
     });
 
     it('updates member role and transfers ownership', async () => {

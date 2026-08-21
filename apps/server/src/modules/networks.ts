@@ -35,7 +35,9 @@ export const networkRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('onRequest', app.authenticate);
 
   // List user-defined networks with their members.
-  app.get('/', async (req) => {
+  // L-12: network names plus their container members map out the whole
+  // instance for any member. Create/attach/detach were already admin-only.
+  app.get('/', { preHandler: [app.requireAdmin] }, async (req) => {
     const serverId = Number((req.query as { serverId?: string }).serverId);
     if (Number.isInteger(serverId) && serverId > 0) {
       // Remote hosts: the agent's typed op table currently has no network-list

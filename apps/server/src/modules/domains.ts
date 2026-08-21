@@ -8,6 +8,8 @@ import { createDnsRecord, deleteDnsRecord, detectPublicIp, getDnsRecordsConfig }
 import { loadServiceForUser } from '../lib/serviceAccess.js';
 import { conflict, notFound, parseId as num } from '../lib/errors.js';
 import { getSettingString } from '../lib/settings.js';
+import { isAdmin } from '../lib/resourceAccess.js';
+import { challengeRecordName, checkOwnershipRecord, newChallengeToken, requiresOwnershipProof } from '../lib/domainVerification.js';
 
 /** Normalise a hostname for comparison: DNS is case-insensitive and the
  *  trailing root dot is not significant. */
@@ -93,9 +95,17 @@ function serialize(d: Domain) {
     rateLimitAverage: d.rateLimitAverage ?? null,
     rateLimitBurst: d.rateLimitBurst ?? null,
     status: d.status,
+    verifiedAt: d.verifiedAt ? d.verifiedAt.toISOString() : null,
     createdAt: d.createdAt.toISOString(),
     updatedAt: d.updatedAt.toISOString(),
   };
+}
+
+/** What the caller has to publish in DNS for a domain still awaiting proof. */
+function challengeFor(d: Domain): { recordName: string; recordType: 'TXT'; recordValue: string } | null {
+  return d.status === 'pending' && d.verificationToken
+    ? { recordName: challengeRecordName(d.hostname), recordType: 'TXT', recordValue: d.verificationToken }
+    : null;
 }
 
 /** Domain (Traefik routing) management for a service. Mounted under /services. */
@@ -119,6 +129,13 @@ export const domainsRoutes: FastifyPluginAsync = async (app) => {
     const hostname = normalizeHost(input.hostname);
     await assertHostnameClaimable(app, hostname, id, req.user!);
 
+    // H-2 layer 2: a hostname outside this instance's own zone is not routed
+    // until its owner proves control of the DNS zone. Until then the row is
+    // `pending`, and `writeDynamicConfig` skips it — so a first-come claim on
+    // someone else's domain never receives their traffic.
+    const needsProof = requiresOwnershipProof(hostname, isAdmin(req.user!));
+    const verificationToken = needsProof ? newChallengeToken() : null;
+
     const [d] = await app.db
       .insert(domains)
       .values({
@@ -132,7 +149,9 @@ export const domainsRoutes: FastifyPluginAsync = async (app) => {
         ipAllowlist: input.ipAllowlist ?? null,
         rateLimitAverage: input.rateLimitAverage ?? null,
         rateLimitBurst: input.rateLimitBurst ?? null,
-        status: 'active',
+        status: needsProof ? 'pending' : 'active',
+        verificationToken,
+        verifiedAt: needsProof ? null : new Date(),
       })
       .returning()
       .catch(() => [] as Domain[]);
@@ -143,7 +162,9 @@ export const domainsRoutes: FastifyPluginAsync = async (app) => {
     let dnsWarning: string | null = null;
     let dnsRecordId: string | null = null;
     const dnsCfg = await getDnsRecordsConfig(app.db);
-    if (dnsCfg.enabled && dnsCfg.token) {
+    // Only for a domain that is already live — there is nothing to point at a
+    // hostname whose ownership has not been established.
+    if (!needsProof && dnsCfg.enabled && dnsCfg.token) {
       try {
         const content = dnsCfg.content || (await detectPublicIp());
         dnsRecordId = await createDnsRecord(dnsCfg.token, hostname, content);
@@ -160,7 +181,60 @@ export const domainsRoutes: FastifyPluginAsync = async (app) => {
       hostname,
       dnsRecordId ? { dnsRecordId } : dnsWarning ? { dnsWarning } : undefined,
     );
-    return { ...serialize(d), dnsRecordId, dnsWarning };
+    return { ...serialize(d), dnsRecordId, dnsWarning, verification: challengeFor(d) };
+  });
+
+  /**
+   * Prove ownership of a pending domain and bring it live.
+   *
+   * Idempotent and safe to poll: DNS propagation takes minutes, so a failure
+   * explains what was found rather than consuming the challenge.
+   */
+  app.post('/:id/domains/:domainId/verify', async (req) => {
+    const id = num((req.params as { id: string }).id);
+    const domainId = num((req.params as { domainId: string }).domainId);
+    await loadServiceForUser(app.db, id, req.user!);
+    const d = await app.db.query.domains.findFirst({
+      where: and(eq(domains.id, domainId), eq(domains.serviceId, id)),
+    });
+    if (!d) throw notFound('Domain not found');
+    if (d.status === 'active') return { ...serialize(d), verified: true, verification: null };
+    if (!d.verificationToken) throw conflict('This domain has no pending verification challenge');
+
+    const result = await checkOwnershipRecord(d.hostname, d.verificationToken);
+    if (!result.ok) {
+      return {
+        ...serialize(d),
+        verified: false,
+        error: result.error,
+        found: result.found,
+        verification: challengeFor(d),
+      };
+    }
+
+    const [updated] = await app.db
+      .update(domains)
+      .set({ status: 'active', verifiedAt: new Date(), updatedAt: new Date() })
+      .where(and(eq(domains.id, domainId), eq(domains.serviceId, id)))
+      .returning();
+    if (!updated) throw notFound('Domain not found');
+
+    // Now that the hostname is ours to route, the provider record can be made.
+    let dnsWarning: string | null = null;
+    const dnsCfg = await getDnsRecordsConfig(app.db);
+    if (dnsCfg.enabled && dnsCfg.token) {
+      try {
+        const content = dnsCfg.content || (await detectPublicIp());
+        const dnsRecordId = await createDnsRecord(dnsCfg.token, updated.hostname, content);
+        await app.db.update(domains).set({ dnsRecordId }).where(eq(domains.id, updated.id));
+      } catch (err) {
+        dnsWarning = err instanceof Error ? err.message : String(err);
+      }
+    }
+
+    await writeDynamicConfig(app.db);
+    void audit(app.db, req.user!.id, 'domain.verified', updated.hostname);
+    return { ...serialize(updated), verified: true, verification: null, dnsWarning };
   });
 
   // Update routing extras: ssl, www→apex redirect, custom headers, basicAuth, ipAllowlist, rateLimit.

@@ -204,6 +204,13 @@
       "when": 1787221496105,
       "tag": "0029_durable_template_recovery",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "6",
+      "when": 1787307896105,
+      "tag": "0030_totp_replay_and_enrolment",
+      "breakpoints": true
     }
   ]
 }

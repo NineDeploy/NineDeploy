@@ -17,6 +17,9 @@ const apiMock = vi.hoisted(() => ({
 vi.mock('../src/lib/api.js', () => apiMock);
 
 const authMock = vi.hoisted(() => ({
+  // helpers.tsx wraps rendered routes in AuthProvider, so the mock has to
+  // export one — a passthrough is enough since useAuth is stubbed here.
+  AuthProvider: ({ children }: { children?: React.ReactNode }) => children,
   useAuth: vi.fn(() => ({ user: { id: 1, role: 'admin' } })),
 }));
 

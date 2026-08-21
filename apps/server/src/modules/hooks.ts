@@ -185,6 +185,11 @@ export const hookReceiveRoutes: FastifyPluginAsync = async (app) => {
             hostname,
             path: '/',
             ssl: false,
+            // Generated inside the instance's own wildcard zone, so there is
+            // no ownership question — but it must be explicit now that only
+            // `active` domains are written into the Traefik config.
+            status: 'active',
+            verifiedAt: new Date(),
           });
         }
       } else {

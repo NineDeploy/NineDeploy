@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router';
 import type { Template } from '@ninedeploy/sdk';
 import { api } from '../lib/api.js';
 import { toInt } from '../lib/format.js';
+import { useAuth } from '../lib/auth.js';
 import { useProjectScope } from '../lib/projects.js';
 import { useExperienceMode } from '../lib/mode.js';
 import { useToast } from './Toast.js';
@@ -19,6 +20,9 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
   const qc = useQueryClient();
   const { toast } = useToast();
   const { isAdvanced } = useExperienceMode();
+  const { user } = useAuth();
+  // Compose and PM2 both execute on the host, so the API admits admins only.
+  const isAdmin = user?.role === 'admin';
   const { selectedId: projectId } = useProjectScope();
   const sources = useQuery({ queryKey: ['sources'], queryFn: () => api.sources.list() });
   const servers = useQuery({ queryKey: ['servers'], queryFn: () => api.servers.list() });
@@ -159,6 +163,11 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
       ? !!name.trim() && (mode === 'image' ? !!image.trim() : !!repoUrl.trim())
       : true;
 
+  // H-3: a template that mounts the Docker socket is admin-only server-side.
+  // Say so on the first screen rather than letting a member fill in five steps
+  // and collect a 403 at the end.
+  const adminOnlyTemplate = !isAdmin && template?.dockerSocket === true;
+
   const next = () => setStep((s) => Math.min(s + 1, STEPS.length - 1));
   const back = () => setStep((s) => Math.max(s - 1, 0));
   const onSubmit = (e: FormEvent) => {
@@ -223,6 +232,11 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
               </div>
             </div>
           )}
+          {adminOnlyTemplate && (
+            <div className="mb-4 rounded-xl border border-rose-500/25 bg-rose-500/[0.08] p-3 text-xs leading-relaxed text-rose-200">
+              This template mounts the Docker socket, which grants control of every container on the host. Only an administrator can deploy it.
+            </div>
+          )}
           {template && !template.runtimeVerified && (
             <div className="mb-4 rounded-xl border border-amber-500/20 bg-amber-500/[0.08] p-3 text-xs leading-relaxed text-amber-200">
               Community template — registry-valid but not yet runtime-certified. Confirm its port, environment and storage settings before deployment.
@@ -236,8 +250,8 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
                 <L label="Type">
                   <Select value={type} disabled={!!template} onChange={(e) => setType(e.target.value as 'docker' | 'pm2' | 'compose')}>
                     <option value="docker">Docker / Nixpacks</option>
-                    <option value="compose">Compose</option>
-                    <option value="pm2">PM2</option>
+                    {isAdmin && <option value="compose">Compose</option>}
+                    {isAdmin && <option value="pm2">PM2</option>}
                   </Select>
                 </L>
                 <L label="Source type">
@@ -334,7 +348,7 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
                   <Button
                     type="button"
                     size="sm"
-                    disabled={!canNext || deploy.isPending}
+                    disabled={!canNext || deploy.isPending || adminOnlyTemplate}
                     onClick={() => deploy.mutate()}
                     className="bg-emerald-600 hover:bg-emerald-500 text-white"
                   >
@@ -472,7 +486,7 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
           <div className="flex items-center gap-3">
             {provisionStatus && <span className={cn('max-w-xs text-right text-xs', deploy.isError ? 'text-rose-300' : 'text-emerald-300')}>{provisionStatus}</span>}
             {deploy.isError && <span className="text-xs text-rose-400">Failed — try again</span>}
-            <Button type="submit" onClick={onSubmit} disabled={!canNext || deploy.isPending}>
+            <Button type="submit" onClick={onSubmit} disabled={!canNext || deploy.isPending || adminOnlyTemplate}>
               {step === STEPS.length - 1 ? (deploy.isPending ? 'Deploying…' : <><Rocket size={15} /> Deploy</>) : <>Continue <ArrowRight size={14} /></>}
             </Button>
           </div>

@@ -13,6 +13,7 @@ import {
   writeDynamicConfig,
 } from '../engine/proxy.js';
 import { getVaultConfig, setVaultConfig, testVault } from '../lib/vault.js';
+import { clearEnrolmentToken, getEnrolmentToken, rotateEnrolmentToken } from '../lib/enrolment.js';
 import { getDnsRecordsConfig, setDnsRecordsConfig, testCloudflareToken } from '../lib/cloudflare.js';
 import { config } from '../config.js';
 import { ALLOW_REGISTRATION_DEFAULT } from './auth.js';
@@ -195,5 +196,28 @@ export const settingsRoutes: FastifyPluginAsync = async (app) => {
     if (!cfg.token) return { ok: false, error: 'No Cloudflare token configured' };
     const status = await testCloudflareToken(cfg.token);
     return { ok: true, status };
+  });
+
+  // ── Node enrolment (M-6) ────────────────────────────────────────────────
+  // `POST /v1/servers/announce` is the only unauthenticated write in the
+  // product; it now demands this secret. These routes are admin-only (the
+  // whole plugin is), and the token is returned in clear because the operator
+  // has to paste it into the agent's NINEDEPLOY_ENROLMENT_TOKEN.
+  app.get('/enrolment', async () => {
+    const token = await getEnrolmentToken(app.db);
+    return { enabled: !!token, token };
+  });
+
+  app.post('/enrolment/rotate', async (req) => {
+    const token = await rotateEnrolmentToken(app.db);
+    // The value itself is never audited — only the fact that it changed.
+    void audit(app.db, req.user!.id, 'settings.enrolment_rotated');
+    return { ok: true, enabled: true, token };
+  });
+
+  app.delete('/enrolment', async (req) => {
+    await clearEnrolmentToken(app.db);
+    void audit(app.db, req.user!.id, 'settings.enrolment_disabled');
+    return { ok: true, enabled: false };
   });
 };
