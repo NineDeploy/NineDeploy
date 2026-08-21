@@ -145,16 +145,17 @@ describe('AttachmentsCard', () => {
     renderCard();
     await waitFor(() => expect(screen.getByText('pg-main')).toBeInTheDocument());
 
-    // Two controls share the title (row probe + form button); the row one is first.
+    // Each attachment row has a probe: the linked db and the dangling one.
     await user.click(screen.getAllByTitle('Test database connectivity')[0]!);
-    await waitFor(() =>
-      expect(apiMock.api.databases.logs).toHaveBeenCalledWith(1));
+    await waitFor(() => expect(apiMock.api.databases.logs).toHaveBeenCalledWith(1));
+    await user.click(screen.getAllByTitle('Test database connectivity')[1]!);
+    await waitFor(() => expect(apiMock.api.databases.logs).toHaveBeenCalledWith(4));
 
     // A failing probe is caught (no unhandled rejection) and falls back.
     apiMock.api.databases.logs.mockRejectedValueOnce('nope' as never);
     await user.click(screen.getAllByTitle('Test database connectivity')[0]!);
     await waitFor(() =>
-      expect(apiMock.api.databases.logs).toHaveBeenCalledTimes(2));
+      expect(apiMock.api.databases.logs).toHaveBeenCalledTimes(3));
   });
 
   it('suggests the conventional env alias for every database engine', async () => {

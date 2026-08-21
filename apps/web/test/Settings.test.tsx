@@ -17,6 +17,10 @@ vi.mock('../src/lib/theme.js', async () => {
   return createThemeMock();
 });
 
+// The 2FA QR is controllable so the render-failure fallback is testable.
+const qrMock = vi.hoisted(() => ({ toDataURL: vi.fn(async () => 'data:image/png;base64,qr') }));
+vi.mock('qrcode', () => ({ default: qrMock }));
+
 const toastSpy = vi.hoisted(() => ({ toast: vi.fn() }));
 vi.mock('../src/components/Toast.js', () => ({
   ToastProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
@@ -358,8 +362,46 @@ describe('Settings', () => {
     await waitFor(() => expect(api.notifications.testChannel).toHaveBeenCalledWith(1));
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Test sent!', 'success'));
 
+    // A failing test send surfaces a generic error toast.
+    mockOf(api.notifications.testChannel).mockRejectedValueOnce(new Error('relay down') as never);
+    fireEvent.click(testButtons[0]!);
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Test failed', 'error'));
+
     fireEvent.click(screen.getAllByTitle('Remove')[0]!);
     await waitFor(() => expect(api.notifications.removeChannel).toHaveBeenCalledWith(1));
+  });
+
+  it('manages the UFW firewall: quick profile, custom rule, refresh and failures', async () => {
+    // The mutations write the fresh status into the query cache.
+    const fwStatus = { installed: true, active: true, supported: true, rules: [], defaultIncoming: 'deny', defaultOutgoing: 'allow' };
+    mockOf(api.firewall.applyRecommended).mockResolvedValue({ status: fwStatus } as never);
+    mockOf(api.firewall.addRule).mockResolvedValue({ status: fwStatus } as never);
+    renderWithProviders(<Settings />);
+    await openSection('Firewall');
+
+    // Quick-start profile…
+    fireEvent.click(await screen.findByRole('button', { name: 'Apply VPS Profile' }));
+    await waitFor(() =>
+      expect(toastSpy.toast).toHaveBeenCalledWith('Recommended VPS firewall profile applied (22, 80, 443 allowed)', 'success'));
+
+    // …and a custom port rule through the form.
+    fireEvent.change(screen.getByPlaceholderText('e.g. 8080, 25565'), { target: { value: '8080' } });
+    fireEvent.click(screen.getByRole('button', { name: /Open Port/i }));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Firewall port rule opened', 'success'));
+
+    // Manual refresh refetches the firewall state.
+    fireEvent.click(screen.getByTitle('Refresh firewall state'));
+    await waitFor(() => expect(api.firewall.status).toHaveBeenCalledTimes(2));
+
+    // Failures surface their messages.
+    mockOf(api.firewall.applyRecommended).mockRejectedValueOnce(new Error('not root') as never);
+    fireEvent.click(screen.getByRole('button', { name: 'Apply VPS Profile' }));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('not root', 'error'));
+
+    mockOf(api.firewall.addRule).mockRejectedValueOnce(new Error('bad port') as never);
+    fireEvent.change(screen.getByPlaceholderText('e.g. 8080, 25565'), { target: { value: '9090' } });
+    fireEvent.click(screen.getByRole('button', { name: /Open Port/i }));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('bad port', 'error'));
   });
 
   it('pauses and resumes a channel via the active toggle', async () => {
@@ -804,6 +846,21 @@ describe('Settings', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Enable 2FA' }));
     await waitFor(() => expect(api.auth.twoFactor.enable).toHaveBeenCalledWith('123456'));
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Two-factor authentication enabled', 'success'));
+  });
+
+  it('keeps the QR placeholder when QR rendering fails', async () => {
+    mockOf(api.auth.twoFactor.setup).mockResolvedValue({
+      secret: 'S',
+      otpauthUri: 'otpauth://totp/x',
+    } as never);
+    qrMock.toDataURL.mockRejectedValueOnce(new Error('canvas unavailable') as never);
+    renderWithProviders(<Settings />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Set up 2FA' }));
+    fireEvent.change(await screen.findByPlaceholderText('Password'), { target: { value: PW } });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    // The QR fallback box stays in its generating state instead of crashing.
+    expect(await screen.findByText('Generating QR…')).toBeInTheDocument();
   });
 
   it('reports an invalid code on enable', async () => {

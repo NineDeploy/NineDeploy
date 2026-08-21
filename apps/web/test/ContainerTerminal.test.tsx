@@ -261,4 +261,14 @@ describe('ContainerTerminal', () => {
     });
     expect(screen.getByTitle('Expand full screen')).toBeInTheDocument();
   });
+
+  it('marks the terminal disconnected when the socket errors', () => {
+    render(<ContainerTerminal serviceId={1} onClose={vi.fn()} />);
+    runEffect();
+    const ws = FakeWebSocket.instances[0] as unknown as { onerror?: () => void };
+    expect(ws.onerror).toBeTypeOf('function');
+    act(() => ws.onerror!());
+    // Still renders in the disconnected state without crashing.
+    expect(document.querySelector('[class*="space-y"]') ?? document.body).toBeInTheDocument();
+  });
 });

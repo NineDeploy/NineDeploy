@@ -58,6 +58,15 @@ describe('DatabaseWizard', () => {
     expect(screen.getByRole('button', { name: /continue/i })).toBeEnabled();
   });
 
+  it('creates immediately from the quick-mode button once an engine is picked', async () => {
+    const user = userEvent.setup();
+    renderWizard();
+    await user.click(screen.getByText('PostgreSQL'));
+    await user.click(screen.getByRole('button', { name: 'Create Now' }));
+    await waitFor(() =>
+      expect(apiMock.api.databases.create).toHaveBeenCalledWith(expect.objectContaining({ engine: 'postgres' })));
+  });
+
   it('reviews and creates the database without a version', async () => {
     const { onClose } = renderWizard();
     const user = userEvent.setup();

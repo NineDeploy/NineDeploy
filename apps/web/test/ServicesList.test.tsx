@@ -121,13 +121,22 @@ describe('ServicesList', () => {
     expect(await screen.findByText(':8080')).toBeInTheDocument();
   });
 
-  it('searches by slug, branch and type, and shows the volume badge', async () => {
+  it('searches by slug, branch and type, and shows live usage plus the volume badge', async () => {
     mockOf(api.services.list).mockResolvedValue([
       { id: 1, name: 'Frontend', slug: 'web-ui', type: 'docker', branch: 'release', port: 3000, status: 'running', volumeMount: '/app/data' },
     ] as never);
+    // A live stat row for the running service powers the cpu/mem chips
+    // (7.25 rounds to a displayed 7.3%).
+    mockOf(api.stats.snapshot).mockResolvedValue({
+      host: null,
+      containers: [{ kind: 'service', refId: 1, refName: 'Frontend', name: 'nd-web', cpuPct: 7.25, memMb: 128.5, memLimitMb: 512 }],
+    } as never);
     renderWithProviders(<ServicesList />);
     await screen.findByText('Frontend');
 
+    // Live usage comes from the snapshot, not zeros.
+    await waitFor(() => expect(screen.getByText('7.3%')).toBeInTheDocument());
+    expect(screen.getByText('128.5 MiB')).toBeInTheDocument();
     // Volume badge carries the mount path.
     expect(screen.getByTitle('Volume mounted at /app/data')).toBeInTheDocument();
 

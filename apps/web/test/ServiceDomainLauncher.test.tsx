@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ServiceDomainLauncher } from '../src/components/ServiceDomainLauncher.js';
 import { api } from '../src/lib/api.js';
@@ -36,6 +36,11 @@ describe('ServiceDomainLauncher', () => {
     const link = screen.getByRole('link', { name: 'Open https://api.example.com/docs in a new tab' });
     expect(link).toHaveAttribute('href', 'https://api.example.com/docs');
     expect(link).toHaveAttribute('target', '_blank');
+
+    // The dialog backdrop closes the modal.
+    fireEvent.click(screen.getAllByLabelText('Close dialog')[0]!);
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'Open api' })).not.toBeInTheDocument());
   });
 
   it('lists every service domain and preserves HTTP routes', async () => {

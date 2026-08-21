@@ -169,6 +169,8 @@ describe('Config Center & Plugins Frontend Components', () => {
         { key: 'payment.gateway', pluginId: 'payment', type: 'string', isSecret: false, label: 'Gateway', category: 'general', tags: [], value: 'stripe', isConfigured: true },
         { key: 'metric.interval', pluginId: null, type: 'number', isSecret: false, label: 'Interval', category: 'general', tags: [], value: 30, isConfigured: true },
         { key: 'backup.bucket', pluginId: null, type: 'string', isSecret: false, label: 'Bucket', category: 'general', tags: [], value: 'b', isConfigured: true },
+        { key: 'traefik.entrypoint', pluginId: 'traefik', type: 'string', isSecret: false, label: 'Entrypoint', category: 'general', tags: [], value: 'web', isConfigured: true },
+        { key: 'docker.log_level', pluginId: null, type: 'string', isSecret: false, label: 'Log level', category: 'general', tags: [], value: 'info', isConfigured: true },
       ],
     } as never);
     renderWithProviders(<ConfigCenterSection />);
@@ -182,6 +184,8 @@ describe('Config Center & Plugins Frontend Components', () => {
     expect(screen.getAllByText('Plugin: PAYMENT').length).toBeGreaterThan(0);
     expect(screen.getByText('Monitoring & Telemetry Plugin')).toBeInTheDocument();
     expect(screen.getByText('Backups & Storage Provider Plugin')).toBeInTheDocument();
+    expect(screen.getByText('Traefik Proxy & HTTP/3 Engine')).toBeInTheDocument();
+    expect(screen.getByText('Docker Engine & Container Runtime')).toBeInTheDocument();
     // Group headers are accordions: collapsing hides the rows.
     fireEvent.click(screen.getByText('Git & VCS Integration Plugin'));
     await waitFor(() => expect(screen.queryByText('github.webhook_secret')).not.toBeInTheDocument());

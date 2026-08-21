@@ -616,9 +616,10 @@ describe('DeployWizard — repository analysis & Git credential guidance', () =>
     await fillRepo(user);
     expect(await screen.findByText(/No Git credential selected/)).toBeInTheDocument();
 
-    // Credential selected: name the credential and flag known-private repos.
+    // Credential selected: the source's repositories become a dropdown whose
+    // choice fills the URL, name and default branch automatically.
     apiMock.api.sources.repos.mockResolvedValue([
-      { name: 'y', fullName: 'x/y', url: 'https://github.com/x/y', defaultBranch: 'main', isPrivate: true },
+      { name: 'y', fullName: 'x/y', url: 'https://github.com/x/y', defaultBranch: 'dev', isPrivate: true },
     ]);
     apiMock.api.sources.branches.mockResolvedValue(['main', 'dev']);
     const sourceSelect = screen.getAllByRole('combobox')[1]!;
@@ -627,9 +628,17 @@ describe('DeployWizard — repository analysis & Git credential guidance', () =>
     expect(screen.getByText('github-app')).toBeInTheDocument();
     expect(screen.getByText(/this repository is/)).toBeInTheDocument();
 
-    // Known branches become a dropdown; picking one retargets the analysis.
-    const branchSelect = await screen.findByDisplayValue('main');
-    await user.selectOptions(branchSelect, 'dev');
+    // Pick the repo from the credential's list…
+    const repoDropdown = (await screen.findByRole('option', { name: /Choose a repo/ })).closest('select')!;
+    await user.selectOptions(repoDropdown, 'https://github.com/x/y');
+    // …the URL fills in and the empty name adopts the repo name.
+    await waitFor(() =>
+      expect((screen.getByPlaceholderText('https://github.com/you/repo') as HTMLInputElement).value)
+        .toBe('https://github.com/x/y'));
+
+    // The repo's default branch is preselected; switching retargets analysis.
+    const branchSelect = await screen.findByDisplayValue('dev');
+    await user.selectOptions(branchSelect, 'main');
   });
 
   it('auto-analyzes the repository and renders the deploy plan', async () => {
