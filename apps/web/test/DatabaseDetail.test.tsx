@@ -26,6 +26,7 @@ vi.mock('@xyflow/react', () => ({
   Background: () => <div data-testid="background" />,
   Controls: () => <div data-testid="controls" />,
   Handle: () => <div data-testid="handle" />,
+  MiniMap: () => <div data-testid="minimap" />,
   BackgroundVariant: { Dots: 'dots' },
   Position: { Left: 'left', Right: 'right', Top: 'top', Bottom: 'bottom' },
 }));
@@ -458,7 +459,6 @@ describe('DatabaseDetail', () => {
   });
 
   it('launches and stops Web Studio from the Overview tab', async () => {
-    const windowOpenSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
     mockOf(api.databases.get).mockResolvedValue({
       ...sampleDb,
       webGuiEnabled: false,
@@ -475,7 +475,12 @@ describe('DatabaseDetail', () => {
     const launchBtn = screen.getByRole('button', { name: /Launch Web Studio/i });
     fireEvent.click(launchBtn);
     await waitFor(() => expect(api.databases.startStudio).toHaveBeenCalledWith(1));
-    expect(windowOpenSpy).toHaveBeenCalledWith('http://localhost:18001', '_blank');
+    // The studio opens embedded in a modal iframe instead of a new tab.
+    const frame = await screen.findByTitle('Web Studio');
+    expect(frame).toHaveAttribute('src', 'http://localhost:18001');
+    expect(screen.getByRole('link', { name: /Open in new tab/i })).toHaveAttribute('href', 'http://localhost:18001');
+    fireEvent.click(screen.getByRole('button', { name: /✕ Close/i }));
+    await waitFor(() => expect(screen.queryByTitle('Web Studio')).not.toBeInTheDocument());
 
     // Error on launch
     mockOf(api.databases.startStudio).mockRejectedValueOnce(new Error('fail'));

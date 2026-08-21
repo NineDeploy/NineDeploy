@@ -64,7 +64,8 @@ export const updateService = z.object({
   type: serviceType.optional(),
   repoUrl: gitRepoUrl.optional(),
   branch: gitBranch.optional(),
-  sourceId: z.number().int().positive().optional(),
+  /** Attached Git credential (source) for private-repo cloning. null clears it. */
+  sourceId: z.number().int().positive().nullable().optional(),
   serverId: z.number().int().positive().nullable().optional(),
   image: z.string().optional(),
   volumeMount: z.string().optional(),
@@ -111,6 +112,8 @@ export const service = z.object({
   repoUrl: z.string().nullable(),
   branch: z.string(),
   sourceId: z.number().int().nullable(),
+  /** Display name of the attached Git credential (source), for the UI. */
+  sourceName: z.string().nullable().optional(),
   image: z.string().nullable(),
   volumeMount: z.string().nullable(),
   composeService: z.string().nullable(),

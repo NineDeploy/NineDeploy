@@ -58,7 +58,7 @@ describe('Networks', () => {
     // The confirm dialog is up; nothing deleted yet.
     expect(api.networks.remove).not.toHaveBeenCalled();
     // The dialog's confirm is the LAST Delete button in the DOM.
-    const confirm = screen.getAllByRole('button', { name: 'Delete', exact: true }).at(-1)!;
+    const confirm = screen.getAllByRole('button', { name: 'Delete' }).at(-1)!;
     fireEvent.click(confirm);
     await waitFor(() => expect(api.networks.remove).toHaveBeenCalledWith('back-tier'));
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Network deleted', 'success'));
@@ -88,7 +88,7 @@ describe('Networks', () => {
     renderWithProviders(<Networks />);
     await screen.findByText('back-tier');
     fireEvent.click(screen.getAllByRole('button', { name: /Delete/ })[0]!);
-    const confirm = screen.getAllByRole('button', { name: 'Delete', exact: true }).at(-1)!;
+    const confirm = screen.getAllByRole('button', { name: 'Delete' }).at(-1)!;
     fireEvent.click(confirm);
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('network in use', 'error'));
   });
@@ -128,7 +128,7 @@ describe('Networks', () => {
 
     // Delete failure (non-Error → generic).
     fireEvent.click(screen.getAllByRole('button', { name: /Delete/ })[0]!);
-    fireEvent.click(screen.getAllByRole('button', { name: 'Delete', exact: true }).at(-1)!);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Delete' }).at(-1)!);
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Delete failed', 'error'));
 
     // Attach in flight shows the pending label.

@@ -126,7 +126,15 @@ export function createFakeApiModule() {
     },
     attachments: { list: vi.fn(), create: vi.fn(), remove: vi.fn() },
     env: { list: vi.fn(), create: vi.fn(), update: vi.fn(), remove: vi.fn() },
-    stats: { snapshot: vi.fn(), metrics: vi.fn() },
+    stats: {
+      // Defaults keep react-query v5 happy ("query data cannot be undefined")
+      // for every page that renders live stats without an explicit mock.
+      snapshot: vi.fn().mockResolvedValue({
+        host: { cpuCores: 4, load1: 0.5, memUsedBytes: 1, memTotalBytes: 2, diskUsedBytes: 1, diskTotalBytes: 2 },
+        containers: [],
+      }),
+      metrics: vi.fn().mockResolvedValue({ points: [] }),
+    },
     dashboard: { get: vi.fn() },
     topology: { get: vi.fn() },
     templates: { list: vi.fn(), get: vi.fn(), deploy: vi.fn() },
@@ -187,7 +195,7 @@ export function createFakeApiModule() {
       applyRecommended: vi.fn(),
     },
   };
-  const getToken = vi.fn(() => 'test-token');
+  const getToken = vi.fn((): string | null => 'test-token');
   return {
     api,
     getToken,
@@ -256,9 +264,4 @@ export function createWorkspaceMock() {
       refreshWorkspaces: vi.fn(),
     })),
   };
-}
-
-interface RenderOptions {
-  route?: string;
-  initialEntries?: string[];
 }

@@ -76,6 +76,30 @@ describe('services routes', () => {
     expect(bad.statusCode).toBe(200);
   });
 
+  it('resolves the attached Git credential name per service (sourceName)', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findMany: {
+          services: [
+            svcRow({ id: 1, name: 'private-app', sourceId: 7 }),
+            svcRow({ id: 2, name: 'public-app', sourceId: null }),
+            svcRow({ id: 3, name: 'dangling', sourceId: 99 }),
+          ],
+          // One query feeds the whole list page — no per-row source lookups.
+          sources: [{ id: 7, name: 'github-app', type: 'github' }],
+        },
+      }),
+    });
+    await app.register(servicesRoutes);
+    const res = await app.inject({ method: 'GET', url: '/', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    const rows = res.json();
+    expect(rows[0]).toMatchObject({ name: 'private-app', sourceId: 7, sourceName: 'github-app' });
+    expect(rows[1]).toMatchObject({ name: 'public-app', sourceId: null, sourceName: null });
+    // A credential deleted after the service was linked degrades to null.
+    expect(rows[2]).toMatchObject({ name: 'dangling', sourceId: 99, sourceName: null });
+  });
+
   it('creates a service and its build config', async () => {
     const app = await buildTestApp({
       db: createFakeDb({

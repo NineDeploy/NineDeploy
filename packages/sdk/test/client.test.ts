@@ -897,6 +897,24 @@ describe('createClient', () => {
     });
   });
 
+  describe('insights', () => {
+    it('exercises analyze, get and refresh', async () => {
+      const { fetchMock, calls } = makeFetch(() => ok({}));
+      const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
+
+      await client.insights.analyze({ repoUrl: 'https://github.com/o/r', branch: 'main' });
+      expect(last(calls).url).toBe('/v1/insights');
+      expect(last(calls).init.method).toBe('POST');
+      expect(JSON.parse(last(calls).init.body ?? '{}')).toEqual({ repoUrl: 'https://github.com/o/r', branch: 'main' });
+
+      await client.insights.get(7);
+      expect(last(calls)).toMatchObject({ url: '/v1/services/7/insights', init: { method: 'GET' } });
+
+      await client.insights.refresh(7);
+      expect(last(calls)).toMatchObject({ url: '/v1/services/7/insights/refresh', init: { method: 'POST' } });
+    });
+  });
+
   describe('webhooks', () => {
     it('exercises list, create (with and without input) and remove', async () => {
       const { fetchMock, calls } = makeFetch(() => ok({}));

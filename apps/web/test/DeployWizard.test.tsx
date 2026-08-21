@@ -17,6 +17,7 @@ const apiMock = vi.hoisted(() => ({
     databases: { create: vi.fn(), get: vi.fn() },
     attachments: { create: vi.fn() },
     templates: { prepare: vi.fn(), deploy: vi.fn() },
+    insights: { analyze: vi.fn() },
   },
 }));
 
@@ -191,8 +192,8 @@ describe('DeployWizard', () => {
     // Environment
     expect(screen.getByText('No environment variables.')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /add variable/i }));
-    await user.type(screen.getAllByPlaceholderText('KEY')[0], 'FOO');
-    await user.type(screen.getAllByPlaceholderText('value')[0], 'bar');
+    await user.type(screen.getAllByPlaceholderText('KEY')[0]!, 'FOO');
+    await user.type(screen.getAllByPlaceholderText('value')[0]!, 'bar');
     await user.click(screen.getByRole('button', { name: /continue/i }));
 
     // Resources
@@ -457,7 +458,7 @@ describe('DeployWizard', () => {
     const user = userEvent.setup();
     renderWizard();
     await waitFor(() => expect(screen.getByText(/github-app/)).toBeInTheDocument());
-    await user.selectOptions(screen.getAllByRole('combobox')[1], '3');
+    await user.selectOptions(screen.getAllByRole('combobox')[1]!, '3');
     await user.type(screen.getByPlaceholderText('my-app'), 'app');
     await user.type(screen.getByPlaceholderText('https://github.com/you/repo'), 'https://github.com/x/y');
     await user.click(screen.getByRole('button', { name: /continue/i }));
@@ -476,7 +477,7 @@ describe('DeployWizard', () => {
     const user = userEvent.setup();
     renderWizard();
     // Type pm2 via the <Select> onChange handler.
-    await user.selectOptions(screen.getAllByRole('combobox')[0], 'pm2');
+    await user.selectOptions(screen.getAllByRole('combobox')[0]!, 'pm2');
     await user.type(screen.getByPlaceholderText('my-app'), 'app');
     await user.type(screen.getByPlaceholderText('https://github.com/you/repo'), 'https://github.com/x/y');
     // The branch input lives in the Source step (step 0); edit it before continuing.
@@ -544,5 +545,196 @@ describe('DeployWizard', () => {
         }),
       ),
     );
+  });
+});
+
+describe('DeployWizard — repository analysis & Git credential guidance', () => {
+  const analysis = {
+    framework: {
+      id: 'next',
+      name: 'Next.js',
+      emoji: '▲',
+      category: 'ssr',
+      port: 3000,
+      installCmd: 'pnpm install',
+      buildCmd: 'pnpm build',
+      startCmd: 'pnpm start',
+      env: [
+        { key: 'NODE_ENV', value: 'production' },
+        { key: 'PORT', value: '3000' },
+      ],
+      notes: [],
+    },
+    language: 'TypeScript',
+    packageManager: 'pnpm',
+    nodeVersion: '22',
+    frameworkVersion: '15.1.0',
+    scripts: {},
+    dependencyCount: 40,
+    devDependencyCount: 9,
+    hasDockerfile: true,
+    hasComposeFile: false,
+    monorepo: true,
+    detectedFiles: ['package.json'],
+    workspacePackages: [{ dir: 'apps/web', name: 'web', framework: 'Next.js', frameworkVersion: '15.1.0' }],
+    baseDir: '/',
+    commitSha: null,
+    analyzedAt: '2026-01-02T03:04:05Z',
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    authMock.user = { id: 1, role: 'admin', email: 'a@test', name: 'A' };
+    localStorage.setItem('ninedeploy:experience_mode', 'advanced');
+    apiMock.api.sources.list.mockResolvedValue([{ id: 3, name: 'github-app', type: 'github' }]);
+    apiMock.api.sources.repos.mockResolvedValue([]);
+    apiMock.api.servers.list.mockResolvedValue([]);
+    apiMock.api.services.create.mockResolvedValue({ id: 42, name: 'app' });
+    apiMock.api.env.create.mockResolvedValue({ id: 1, key: 'K', value: 'v', isSecret: false });
+    apiMock.api.deploys.trigger.mockResolvedValue({ deploymentId: 7 });
+  });
+
+  /** Fill step 0 in repo mode: name + repository URL (single change events). */
+  async function fillRepo(user: ReturnType<typeof userEvent.setup>, repoUrl = 'https://github.com/x/y') {
+    const name = screen.getByPlaceholderText('my-app');
+    await user.clear(name);
+    await user.type(name, 'app');
+    const repo = screen.getByPlaceholderText('https://github.com/you/repo');
+    await user.clear(repo);
+    await user.type(repo, repoUrl);
+  }
+
+  it('explains the Git credential situation before deploying', async () => {
+    const user = userEvent.setup();
+    renderWizard();
+
+    // No repo URL yet: generic hint pointing at System → Sources.
+    expect(screen.getByText(/Select a Git credential first/)).toBeInTheDocument();
+    expect(screen.getByText(/System → Sources/)).toBeInTheDocument();
+
+    // Repo URL without a credential: warn that private repos will fail.
+    await fillRepo(user);
+    expect(await screen.findByText(/No Git credential selected/)).toBeInTheDocument();
+
+    // Credential selected: name the credential and flag known-private repos.
+    apiMock.api.sources.repos.mockResolvedValue([
+      { name: 'y', fullName: 'x/y', url: 'https://github.com/x/y', defaultBranch: 'main', isPrivate: true },
+    ]);
+    const sourceSelect = screen.getAllByRole('combobox')[1]!;
+    await user.selectOptions(sourceSelect, '3');
+    expect(await screen.findByText(/run with credential/)).toBeInTheDocument();
+    expect(screen.getByText('github-app')).toBeInTheDocument();
+    expect(screen.getByText(/this repository is/)).toBeInTheDocument();
+  });
+
+  it('auto-analyzes the repository and renders the deploy plan', async () => {
+    const user = userEvent.setup();
+    apiMock.api.insights.analyze.mockResolvedValue(analysis);
+    renderWizard();
+
+    expect(screen.getByText(/Framework detection runs automatically/)).toBeInTheDocument();
+    await fillRepo(user);
+
+    // Debounced: fires ~900ms after the URL settles.
+    await waitFor(() => expect(apiMock.api.insights.analyze).toHaveBeenCalledWith({
+      repoUrl: 'https://github.com/x/y',
+      branch: 'main',
+    }), { timeout: 4000 });
+
+    expect(await screen.findByText('Next.js', {}, { timeout: 3000 })).toBeInTheDocument();
+    expect(screen.getByText('15.1.0')).toBeInTheDocument();
+    expect(screen.getByText('ssr')).toBeInTheDocument();
+    expect(screen.getByText('pnpm')).toBeInTheDocument();
+    expect(screen.getByText('Node 22')).toBeInTheDocument();
+    expect(screen.getByText('Dockerfile')).toBeInTheDocument();
+    expect(screen.getByText('monorepo')).toBeInTheDocument();
+    expect(screen.getByText('Deploy pipeline for this repository')).toBeInTheDocument();
+    expect(screen.getByText(/49 packages/)).toBeInTheDocument();
+    expect(screen.getByText('Suggested env:')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Re-analyze/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Apply suggestions/ })).toBeInTheDocument();
+    // Monorepo picker is powered by the root analysis.
+    expect(screen.getByText(/Monorepo packages — deploy each as its own service/)).toBeInTheDocument();
+    expect(screen.getByText('/ (repo root)')).toBeInTheDocument();
+  });
+
+  it('degrades to a hint when the analysis fails', async () => {
+    const user = userEvent.setup();
+    apiMock.api.insights.analyze.mockRejectedValue(new Error('needs credentials') as never);
+    renderWizard();
+
+    await fillRepo(user);
+    expect(await screen.findByText('needs credentials', {}, { timeout: 4000 })).toBeInTheDocument();
+    expect(screen.getByText(/Private repositories need a Git credential/)).toBeInTheDocument();
+  });
+
+  it('applies framework suggestions to the form', async () => {
+    const user = userEvent.setup();
+    apiMock.api.insights.analyze.mockResolvedValue(analysis);
+    renderWizard();
+
+    await fillRepo(user);
+    await screen.findByText('Next.js', {}, { timeout: 4000 });
+
+    await user.click(screen.getByRole('button', { name: /Apply suggestions/ }));
+    expect(await screen.findByText('Suggestions applied')).toBeInTheDocument();
+
+    // Port is prefilled from the preset on the runtime step.
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    expect((screen.getByPlaceholderText('3000') as HTMLInputElement).value).toBe('3000');
+
+    // Suggested env rows appear on the environment step.
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    expect(await screen.findByDisplayValue('NODE_ENV')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('PORT')).toBeInTheDocument();
+  });
+
+  it('quick deploy merges the detected preset into the request', async () => {
+    const user = userEvent.setup();
+    localStorage.setItem('ninedeploy:experience_mode', 'simple');
+    apiMock.api.insights.analyze.mockResolvedValue(analysis);
+    renderWizard();
+
+    await fillRepo(user);
+    await screen.findByText('Next.js', {}, { timeout: 4000 });
+
+    await user.click(screen.getByRole('button', { name: 'Quick Deploy' }));
+    await waitFor(() =>
+      expect(apiMock.api.services.create).toHaveBeenCalledWith(expect.objectContaining({
+        port: 3000,
+        build: { installCmd: 'pnpm install', buildCmd: 'pnpm build', startCmd: 'pnpm start' },
+      })));
+    // The suggested env vars are created and the deployment is triggered.
+    await waitFor(() => expect(apiMock.api.env.create).toHaveBeenCalledTimes(2));
+    expect(apiMock.api.env.create).toHaveBeenCalledWith(42, { key: 'NODE_ENV', value: 'production', isSecret: false });
+    await waitFor(() => expect(apiMock.api.deploys.trigger).toHaveBeenCalledWith(42));
+  });
+
+  it('scopes a monorepo sub-app via the package picker and re-analyzes', async () => {
+    const user = userEvent.setup();
+    apiMock.api.insights.analyze.mockResolvedValue(analysis);
+    renderWizard();
+
+    await fillRepo(user);
+    await screen.findByText('Next.js', {}, { timeout: 4000 });
+
+    // Pick the sub-app; the analysis re-runs scoped to that base directory.
+    await user.click(screen.getByRole('button', { name: /apps\/web/ }));
+    await waitFor(() =>
+      expect(apiMock.api.insights.analyze).toHaveBeenCalledWith({
+        repoUrl: 'https://github.com/x/y',
+        branch: 'main',
+        baseDir: '/apps/web',
+      }), { timeout: 4000 });
+
+    expect(await screen.findByText(/This service builds/)).toBeInTheDocument();
+    expect(screen.getByText('/apps/web/**')).toBeInTheDocument();
+
+    // Deploying sends the base directory in the build config.
+    await user.click(screen.getByRole('button', { name: /deploy/i }));
+    await waitFor(() =>
+      expect(apiMock.api.services.create).toHaveBeenCalledWith(expect.objectContaining({
+        build: expect.objectContaining({ baseDir: '/apps/web' }),
+      })));
   });
 });

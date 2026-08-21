@@ -131,7 +131,7 @@ describe('AuthProvider', () => {
     ).resolves.toBeUndefined();
     await waitFor(() => expect(apiMock.api.auth.login).toHaveBeenCalled());
     expect(apiMock.setSessionTokens).not.toHaveBeenCalled();
-    expect(captured?.user).toBeNull();
+    expect((captured as ReturnType<typeof useAuth> | null)?.user).toBeNull();
   });
 
   it('runs the initial setup with name', async () => {

@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { Settings } from '../src/routes/settings/index.js';
 import { ConfigCenterSection } from '../src/routes/settings/ConfigCenterSection.js';
 import { PluginsSection } from '../src/routes/settings/PluginsSection.js';
+import { ModeProvider } from '../src/lib/mode.js';
 import { api } from '../src/lib/api.js';
 import { useAuth } from '../src/lib/auth.js';
 import { renderWithProviders, mockOf } from './helpers.js';
@@ -170,20 +171,22 @@ describe('Config Center & Plugins Frontend Components', () => {
         expect(screen.getByText('••••••••')).toBeInTheDocument();
       });
 
-      // Filter by category
-      const resourcesPill = screen.getByRole('button', { name: 'resources' });
-      await user.click(resourcesPill);
+      // Filter by plugin group (entries are grouped per plugin module).
+      // The pill carries a trailing count; the group accordion header shares
+      // the name, so anchor on the count to target the pill.
+      const smtpPill = screen.getByRole('button', { name: /^Notifications & Alerting1$/ });
+      await user.click(smtpPill);
 
-      expect(screen.getByText('system.max_memory_mb')).toBeInTheDocument();
+      expect(screen.getByText('plugin:smtp:password')).toBeInTheDocument();
       expect(screen.queryByText('system.site_name')).not.toBeInTheDocument();
 
       // Reset to all
-      const allPill = screen.getByRole('button', { name: 'all' });
+      const allPill = screen.getByRole('button', { name: /All Plugins/i });
       await user.click(allPill);
       expect(screen.getByText('system.site_name')).toBeInTheDocument();
 
       // Search by tag
-      const searchInput = screen.getByPlaceholderText('Search keys, labels, tags...');
+      const searchInput = screen.getByPlaceholderText('Search keys, values, tags...');
       await user.type(searchInput, 'email');
       expect(screen.getByText('plugin:smtp:password')).toBeInTheDocument();
       expect(screen.queryByText('system.site_name')).not.toBeInTheDocument();
@@ -191,7 +194,7 @@ describe('Config Center & Plugins Frontend Components', () => {
       // Empty search state
       await user.clear(searchInput);
       await user.type(searchInput, 'nonexistent-query-12345');
-      expect(screen.getByText('No configuration entries found matching your filters.')).toBeInTheDocument();
+      expect(screen.getByText('No configuration entries found matching your search or plugin filter.')).toBeInTheDocument();
       await user.clear(searchInput);
 
       // Reveal secrets toggle
@@ -220,7 +223,7 @@ describe('Config Center & Plugins Frontend Components', () => {
       await user.click(screen.getByText('New Setting'));
       expect(screen.getByText('Create Configuration Key')).toBeInTheDocument();
 
-      fireEvent.change(screen.getByPlaceholderText('e.g. system.custom_timeout or plugin:my-plugin:api_key'), { target: { value: 'custom.my_key' } });
+      fireEvent.change(screen.getByPlaceholderText('e.g. system.custom_timeout or plugin:traefik:idle_timeout'), { target: { value: 'custom.my_key' } });
       fireEvent.change(screen.getByPlaceholderText('Setting value'), { target: { value: 'my-val' } });
       fireEvent.change(screen.getByPlaceholderText('Brief description of this setting'), { target: { value: 'My Description' } });
       fireEvent.change(screen.getByPlaceholderText('e.g. timeout, critical, cloudflare'), { target: { value: 'tag1, tag2' } });
@@ -320,14 +323,19 @@ describe('Config Center & Plugins Frontend Components', () => {
       });
       fireEvent.click(screen.getByRole('button', { name: /cancel/i }));
 
-      // 6. Edit secret while masked (revealSecrets is false)
+      // 6. Edit secret while masked (revealSecrets is false).
+      // Edit buttons follow the grouped rows: core entries first
+      // (site_name, max_memory_mb, json_meta, bool_flag, null_value,
+      // default_setting), then the smtp plugin group.
       await waitFor(() => expect(screen.queryByText('Edit Config: system.null_value')).not.toBeInTheDocument());
       editBtns = screen.getAllByTitle('Edit Value');
-      fireEvent.click(editBtns[5]!);
+      fireEvent.click(editBtns[6]!);
       await waitFor(() => {
         expect(screen.getByText('Edit Config: plugin:smtp:password')).toBeInTheDocument();
       });
-      const maskedInput = screen.getByPlaceholderText('Enter value');
+      // A masked secret starts blank; the placeholder says so and saving the
+      // blank keeps the stored value server-side.
+      const maskedInput = screen.getByPlaceholderText('Leave blank to keep the current value');
       expect(maskedInput).toHaveAttribute('type', 'password');
       fireEvent.click(screen.getByRole('button', { name: /cancel/i }));
     });
@@ -381,17 +389,28 @@ describe('Config Center & Plugins Frontend Components', () => {
       mockOf(api.plugins.uninstall).mockResolvedValue({ ok: true, id: 'smtp-notifier' });
     });
 
+    /** Render in advanced mode so built-in core plugins render as full cards
+     *  (simple mode collapses the core list into a summary row). */
+    const renderPlugins = () => {
+      localStorage.setItem('ninedeploy_experience_mode', 'advanced');
+      return renderWithProviders(
+        <ModeProvider>
+          <PluginsSection />
+        </ModeProvider>,
+      );
+    };
+
     it('renders plugin items, official/community badges, toggles enable/disable, and uninstalls', async () => {
       const user = userEvent.setup();
       const confirmMock = vi.spyOn(window, 'confirm').mockReturnValue(true);
 
-      renderWithProviders(<PluginsSection />);
+      renderPlugins();
 
       await waitFor(() => {
         expect(screen.getByText('Traefik Dynamic Proxy')).toBeInTheDocument();
         expect(screen.getByText('SMTP Email Delivery')).toBeInTheDocument();
         expect(screen.getByText('Broken Plugin')).toBeInTheDocument();
-        expect(screen.getByText(/Official/i)).toBeInTheDocument();
+        expect(screen.getByText(/Core Built-in/i)).toBeInTheDocument();
         expect(screen.getAllByText(/Community/i)).toHaveLength(2);
         expect(screen.getByText('Active')).toBeInTheDocument();
         expect(screen.getByText('Disabled')).toBeInTheDocument();
@@ -400,12 +419,10 @@ describe('Config Center & Plugins Frontend Components', () => {
         expect(screen.getByText('notifications-core')).toBeInTheDocument();
       });
 
-      // Disable active plugin
-      const disableBtn = screen.getByRole('button', { name: /disable/i });
-      await user.click(disableBtn);
-      expect(mockOf(api.plugins.disable)).toHaveBeenCalledWith('traefik-proxy');
+      // Official plugins are core built-ins: no enable/disable toggle on them.
+      expect(screen.queryByRole('button', { name: /disable/i })).not.toBeInTheDocument();
 
-      // Enable disabled plugin
+      // Enable the disabled community plugin
       const enableBtns = screen.getAllByRole('button', { name: /enable/i });
       await user.click(enableBtns[0]!);
       expect(mockOf(api.plugins.enable)).toHaveBeenCalledWith('smtp-notifier');
@@ -636,7 +653,11 @@ describe('Config Center & Plugins Frontend Components', () => {
         runtimeStats: { eventsHandled: 1, uptimeSeconds: 10 },
       });
 
-      renderWithProviders(<PluginsSection />);
+      renderWithProviders(
+        <ModeProvider>
+          <PluginsSection />
+        </ModeProvider>,
+      );
       await waitFor(() => {
         expect(screen.getByText('Traefik Dynamic Proxy')).toBeInTheDocument();
       });
@@ -644,7 +665,8 @@ describe('Config Center & Plugins Frontend Components', () => {
       expect(screen.queryByRole('button', { name: 'Install Plugin' })).not.toBeInTheDocument();
 
       const inspectBtns = screen.getAllByRole('button', { name: /inspect/i });
-      await user.click(inspectBtns[0]!);
+      // The core (official) plugin's card is last — extensions render first.
+      await user.click(inspectBtns.at(-1)!);
       await waitFor(() => {
         expect(screen.getByText('Plugin Details: traefik-proxy')).toBeInTheDocument();
       });
@@ -675,14 +697,18 @@ describe('Config Center & Plugins Frontend Components', () => {
       });
       mockOf(api.plugins.reload).mockResolvedValue({ ok: true, id: 'traefik-proxy', status: 'active' });
 
-      renderWithProviders(<PluginsSection />);
+      renderWithProviders(
+        <ModeProvider>
+          <PluginsSection />
+        </ModeProvider>,
+      );
       await waitFor(() => {
         expect(screen.getByText('Traefik Dynamic Proxy')).toBeInTheDocument();
       });
 
-      // Click Inspect
+      // Click Inspect on the core (official) plugin — its card is last.
       const inspectBtns = screen.getAllByRole('button', { name: /inspect/i });
-      await user.click(inspectBtns[0]!);
+      await user.click(inspectBtns.at(-1)!);
 
       await waitFor(() => {
         expect(screen.getByText('Plugin Details: traefik-proxy')).toBeInTheDocument();
@@ -722,13 +748,18 @@ describe('Config Center & Plugins Frontend Components', () => {
         runtimeStats: { eventsHandled: 0, uptimeSeconds: 0 },
       });
 
-      renderWithProviders(<PluginsSection />);
+      renderWithProviders(
+        <ModeProvider>
+          <PluginsSection />
+        </ModeProvider>,
+      );
       await waitFor(() => {
         expect(screen.getByText('Broken Plugin')).toBeInTheDocument();
       });
 
       const inspectBtns = screen.getAllByRole('button', { name: /inspect/i });
-      await user.click(inspectBtns[2]!);
+      // errored-plugin is the second extension card (extensions render first).
+      await user.click(inspectBtns[1]!);
 
       await waitFor(() => {
         expect(screen.getByText('Plugin Details: errored-plugin')).toBeInTheDocument();
@@ -822,9 +853,10 @@ describe('Config Center & Plugins Frontend Components', () => {
         expect(mockOf(api.config.list)).toHaveBeenCalledWith({ reveal: true });
       });
 
-      // Edit secret item (plugin:smtp:password) at index 5
+      // Edit secret item (plugin:smtp:password) — last row: core entries
+      // render first, so the smtp group's edit button comes after them.
       const editBtns = await screen.findAllByTitle('Edit Value');
-      fireEvent.click(editBtns[5]!);
+      fireEvent.click(editBtns[6]!);
       await waitFor(() => {
         expect(screen.getByText('Edit Config: plugin:smtp:password')).toBeInTheDocument();
       });
@@ -835,7 +867,7 @@ describe('Config Center & Plugins Frontend Components', () => {
       await waitFor(() => {
         expect(screen.getByText('Create Configuration Key')).toBeInTheDocument();
       });
-      fireEvent.change(screen.getByPlaceholderText('e.g. system.custom_timeout or plugin:my-plugin:api_key'), { target: { value: 'nodesc.key' } });
+      fireEvent.change(screen.getByPlaceholderText('e.g. system.custom_timeout or plugin:traefik:idle_timeout'), { target: { value: 'nodesc.key' } });
       fireEvent.change(screen.getByPlaceholderText('Setting value'), { target: { value: '123' } });
       fireEvent.click(screen.getByRole('button', { name: /create setting/i }));
 

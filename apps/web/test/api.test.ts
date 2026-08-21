@@ -2,7 +2,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import './web-utils.js';
 
 const sdkMock = vi.hoisted(() => ({
-  createClient: vi.fn(() => ({
+  createClient: vi.fn((_opts: {
+    baseUrl: string;
+    getToken?: () => string | undefined;
+    fetch?: typeof fetch;
+  }) => ({
     auth: {
       refresh: vi.fn(),
       logout: vi.fn(),
@@ -314,7 +318,7 @@ describe('authedFetch', () => {
 
   it('sends the stored access token as a bearer header', async () => {
     setToken('tok-9');
-    const fetchMock = vi.fn(async () => status(200));
+    const fetchMock = vi.fn(async (_url: unknown, _init?: RequestInit) => status(200));
     vi.stubGlobal('fetch', fetchMock);
     const res = await authedFetch('/v1/services/1/export');
     expect(res.status).toBe(200);
@@ -324,7 +328,7 @@ describe('authedFetch', () => {
   });
 
   it('omits the authorization header when no token is stored', async () => {
-    const fetchMock = vi.fn(async () => status(200));
+    const fetchMock = vi.fn(async (_url: unknown, _init?: RequestInit) => status(200));
     vi.stubGlobal('fetch', fetchMock);
     const res = await authedFetch('/v1/services/1/export', { headers: { Accept: 'application/json' } });
     expect(res.status).toBe(200);

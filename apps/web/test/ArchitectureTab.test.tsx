@@ -29,28 +29,33 @@ vi.mock('@xyflow/react', () => ({
   Background: () => <div data-testid="background" />,
   Controls: () => <div data-testid="controls" />,
   Handle: () => <div data-testid="handle" />,
+  MiniMap: () => <div data-testid="minimap" />,
   BackgroundVariant: { Dots: 'dots' },
   Position: { Left: 'left', Right: 'right', Top: 'top', Bottom: 'bottom' },
 }));
 
 const mockService: Service = {
   id: 1,
+  projectId: null,
   name: 'my-service',
   slug: 'my-service',
   type: 'docker',
   status: 'running',
   image: null,
   repoUrl: 'https://github.com/ninedeploy/demo',
+  branch: 'main',
+  sourceId: null,
+  composeService: null,
   commitSha: 'abcdef1234567890',
   port: 3000,
   publishedPort: 8080,
   runtimeId: 'my-service-rt',
   volumeMount: '/app/data',
   healthPath: '/api/health',
-  branch: 'main',
   autoUrl: 'my-service.local',
   cpuShares: 512,
   memLimitMb: 256,
+  build: null,
   createdAt: '2026-01-01T00:00:00Z',
   updatedAt: '2026-01-01T00:00:00Z',
 };
@@ -127,8 +132,8 @@ describe('ArchitectureTab', () => {
       publishedPort: null,
       runtimeId: null,
       volumeMount: null,
-      cpuShares: null,
-      memLimitMb: null,
+      cpuShares: null as unknown as number,
+      memLimitMb: null as unknown as number,
     };
 
     renderWithProviders(<ArchitectureTab service={imageService} />);
@@ -153,7 +158,7 @@ describe('ArchitectureTab', () => {
       branch: '',
       build: { buildPack: 'nixpacks' } as never,
       cpuShares: 1024,
-      memLimitMb: null,
+      memLimitMb: null as unknown as number,
     };
 
     const { unmount } = renderWithProviders(<ArchitectureTab service={cpuOnlyService} />);
@@ -162,7 +167,7 @@ describe('ArchitectureTab', () => {
 
     const memOnlyService: Service = {
       ...mockService,
-      cpuShares: null,
+      cpuShares: null as unknown as number,
       memLimitMb: 512,
     };
 

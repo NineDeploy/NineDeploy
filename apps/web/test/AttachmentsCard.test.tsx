@@ -138,4 +138,32 @@ describe('AttachmentsCard', () => {
     await user.click(row.querySelector('button[title="Detach"]') as HTMLButtonElement);
     await waitFor(() => expect(apiMock.api.attachments.remove).toHaveBeenCalledWith(5, 10));
   });
+
+  it('suggests the conventional env alias for every database engine', async () => {
+    const user = userEvent.setup();
+    apiMock.api.databases.list.mockResolvedValueOnce([
+      { id: 21, name: 'docs', engine: 'mongodb', status: 'running' },
+      { id: 22, name: 'maria', engine: 'mariadb', status: 'running' },
+      { id: 23, name: 'events', engine: 'clickhouse', status: 'running' },
+      { id: 24, name: 'search', engine: 'meilisearch', status: 'running' },
+      { id: 25, name: 'queue', engine: 'rabbitmq', status: 'running' },
+      { id: 26, name: 'weird', engine: 'cockroach', status: 'running' },
+    ]);
+    renderCard();
+    await waitFor(() => expect(screen.getByText('docs (mongodb)')).toBeInTheDocument());
+
+    const expected: Array<[string, string]> = [
+      ['21', 'MONGODB_URI'],
+      ['22', 'MYSQL_URL'],
+      ['23', 'CLICKHOUSE_URL'],
+      ['24', 'MEILISEARCH_URL'],
+      ['25', 'RABBITMQ_URL'],
+      // Unknown engines fall back to the generic DATABASE_URL placeholder.
+      ['26', 'DATABASE_URL'],
+    ];
+    for (const [value, alias] of expected) {
+      await user.selectOptions(screen.getByRole('combobox'), value);
+      expect(screen.getByPlaceholderText(alias)).toBeInTheDocument();
+    }
+  });
 });

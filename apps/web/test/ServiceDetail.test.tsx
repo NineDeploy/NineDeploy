@@ -58,6 +58,7 @@ vi.mock('@xyflow/react', () => ({
   Background: () => <div data-testid="background" />,
   Controls: () => <div data-testid="controls" />,
   Handle: () => <div data-testid="handle" />,
+  MiniMap: () => <div data-testid="minimap" />,
   BackgroundVariant: { Dots: 'dots' },
   Position: { Left: 'left', Right: 'right', Top: 'top', Bottom: 'bottom' },
 }));
@@ -68,6 +69,8 @@ const service = {
   slug: 'api',
   type: 'docker',
   branch: 'main',
+  sourceId: 3,
+  sourceName: 'github-app',
   port: 3000,
   repoUrl: 'https://github.com/x/y',
   autoUrl: 'api.nd.local',
@@ -130,7 +133,10 @@ describe('ServiceDetail', () => {
   });
 
   const openTab = async (label: string) => {
-    fireEvent.click(await screen.findByRole('tab', { name: label }));
+    // Tab labels carry suffixes ("Activity Logs", "Network & Domains",
+    // "Danger Zone", …) — match on the leading word the tests use.
+    const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    fireEvent.click(await screen.findByRole('tab', { name: new RegExp(`^${escaped}(\\s|$)`) }));
   };
 
   it('shows skeleton while the service loads', () => {
@@ -150,15 +156,18 @@ describe('ServiceDetail', () => {
     // running -> restart + stop buttons
     expect(screen.getByRole('button', { name: /Restart/ })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Stop/ })).toBeInTheDocument();
-    // runtimeId present -> logs and exec buttons
+    // runtimeId present -> logs and exec buttons (exact match: the sidebar
+    // "Terminal & Exec" tab would also match /Exec/)
     expect(screen.getByRole('button', { name: /Runtime logs/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Exec/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Exec' })).toBeInTheDocument();
     // metrics + runtime info on the overview tab
-    expect(await screen.findByText('Metrics · last 60 min')).toBeInTheDocument();
-    expect(screen.getAllByText('Runtime').length).toBeGreaterThan(0);
+    expect(await screen.findByText('Live Resource Telemetry')).toBeInTheDocument();
+    expect(screen.getByText('Runtime Container')).toBeInTheDocument();
+    // The attached Git credential is surfaced by name on the runtime info card.
+    expect(screen.getAllByText('github-app').length).toBeGreaterThan(0);
     // deployments + the live log live under the Deploys tab (active = latest)
     await openTab('Deploys');
-    expect(await screen.findByText(/deploy #5/)).toBeInTheDocument();
+    expect(await screen.findByText(/Deployment #5/)).toBeInTheDocument();
     // commitSha fallback: deploy #4 has null commitSha -> '—'
     expect(screen.getAllByText('—').length).toBeGreaterThan(0);
     // cards live under the Environment tab
@@ -170,14 +179,15 @@ describe('ServiceDetail', () => {
   it('triggers a deploy and shows pending state', async () => {
     mockOf(api.deploys.trigger).mockResolvedValue({ deploymentId: 9 } as never);
     renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
-    fireEvent.click(await screen.findByRole('button', { name: /Deploy/ }));
+    // Exact match: the sidebar "Deploys" tab would also match /Deploy/.
+    fireEvent.click(await screen.findByRole('button', { name: 'Deploy' }));
     await waitFor(() => expect(api.deploys.trigger).toHaveBeenCalledWith(1));
   });
 
   it('shows the pending label while a deploy is being triggered', async () => {
     mockOf(api.deploys.trigger).mockReturnValue(new Promise(() => {}) as never);
     renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
-    fireEvent.click(await screen.findByRole('button', { name: /Deploy/ }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Deploy' }));
     expect(await screen.findByText('Triggering…')).toBeInTheDocument();
   });
 
@@ -259,14 +269,14 @@ describe('ServiceDetail', () => {
     renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
     await openTab('Deploys');
     // open=true with empty lines renders '' instead of 'Connecting…'
-    await screen.findByText(/deploy #5/);
+    await screen.findByText(/Deployment #5/);
     expect(screen.queryByText('Connecting…')).not.toBeInTheDocument();
   });
 
   it('opens and closes the exec terminal', async () => {
     const user = userEvent.setup();
     renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
-    await user.click(await screen.findByRole('button', { name: /Exec/ }));
+    await user.click(await screen.findByRole('button', { name: 'Exec' }));
     expect(screen.getByTestId('terminal')).toHaveTextContent('terminal-1');
     await user.click(screen.getByRole('button', { name: 'close terminal' }));
     expect(screen.queryByTestId('terminal')).not.toBeInTheDocument();
@@ -695,7 +705,7 @@ describe('ServiceDetail', () => {
     const row4 = await screen.findByText('#4');
     fireEvent.click(row4.closest('button')!);
     // the log panel header now shows the selected deployment
-    await screen.findByText(/deploy #4/);
+    await screen.findByText(/Deployment #4/);
   });
 
   it('shows deployment metadata (message, author, trigger, duration)', async () => {
@@ -758,7 +768,7 @@ describe('ServiceDetail', () => {
     });
     // the transition effect invalidates the service query -> refetch
     // (initial fetch may be deduped across the header + runtime-info observers)
-    await waitFor(() => expect(api.services.get.mock.calls.length).toBeGreaterThanOrEqual(2));
+    await waitFor(() => expect(mockOf(api.services.get).mock.calls.length).toBeGreaterThanOrEqual(2));
   });
 
   it('saves service settings and build config from the settings tab', async () => {
@@ -892,7 +902,7 @@ describe('ServiceDetail', () => {
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('PR Preview settings saved', 'success'));
 
     // Toggle off and test error toast
-    const toggle = screen.getAllByRole('checkbox')[0];
+    const toggle = screen.getAllByRole('checkbox')[0]!;
     await user.click(toggle);
     mockOf(api.services.update).mockRejectedValueOnce(new Error('err'));
     await user.click(screen.getByRole('button', { name: /Save PR preview settings/ }));
@@ -955,17 +965,19 @@ describe('ServiceDetail', () => {
     expect(screen.getByDisplayValue('/')).toBeInTheDocument();
   });
 
-  it('sends zero limits when the inputs are cleared', async () => {
+  it('clears limits to unlimited (null) when the inputs are emptied', async () => {
     mockOf(api.limits.setService).mockResolvedValue({ cpuShares: 0, memLimitMb: 0 } as never);
     const user = userEvent.setup();
     renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
     await openTab('Settings');
     await screen.findByText('Resource limits');
-    const [cpuInput, memInput] = document.querySelectorAll<HTMLInputElement>('input.w-44');
+    const cpuInput = document.querySelectorAll<HTMLInputElement>('input.w-44')[0]!;
+    const memInput = document.querySelectorAll<HTMLInputElement>('input.w-44')[1]!;
     await user.clear(cpuInput);
     await user.clear(memInput);
     await user.click(screen.getByRole('button', { name: /Save limits/ }));
-    await waitFor(() => expect(api.limits.setService).toHaveBeenCalledWith(1, { cpuShares: 0, memLimitMb: 0 }));
+    // Empty inputs mean "no limit": the API receives null, not zero.
+    await waitFor(() => expect(api.limits.setService).toHaveBeenCalledWith(1, { cpuShares: null, memLimitMb: null }));
   });
 
   it('shows the settings saving label while in flight', async () => {
@@ -1280,7 +1292,7 @@ describe('ServiceDetail', () => {
     } as never);
 
     const { unmount } = renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
-    await openTab('Files');
+    await openTab('File Browser');
 
     expect(await screen.findByText('server.js')).toBeInTheDocument();
     expect(screen.getByText('nd-api')).toBeInTheDocument();
@@ -1289,7 +1301,7 @@ describe('ServiceDetail', () => {
     // Slug fallback when runtimeId is null
     mockOf(api.services.get).mockResolvedValueOnce({ ...service, runtimeId: null } as never);
     renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
-    await openTab('Files');
+    await openTab('File Browser');
     expect(await screen.findByText('nd-svc-api')).toBeInTheDocument();
   });
 });

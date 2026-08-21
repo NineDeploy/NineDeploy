@@ -18,7 +18,7 @@ const workspaceMock = vi.hoisted(() => ({
   })),
 }));
 const apiMock = vi.hoisted(() => ({
-  getToken: vi.fn(() => 'tok'),
+  getToken: vi.fn((): string | null => 'tok'),
   api: {
     services: { list: vi.fn() },
     databases: { list: vi.fn() },
@@ -258,7 +258,7 @@ describe('Layout', () => {
   });
 
   it('omits the token when none is stored', async () => {
-    apiMock.getToken.mockReturnValueOnce(undefined);
+    apiMock.getToken.mockReturnValueOnce(null);
     const user = userEvent.setup();
     renderLayout();
     await user.click(screen.getByTitle('Activity'));

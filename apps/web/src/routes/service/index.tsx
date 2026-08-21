@@ -292,6 +292,9 @@ export function ServiceDetail() {
                 <button
                   key={t.id}
                   type="button"
+                  role="tab"
+                  aria-selected={isActive}
+                  aria-controls="service-tab-panel"
                   onClick={() => setTab(t.id)}
                   className={cn(
                     'w-full flex items-center gap-3 rounded-xl px-3 py-2 text-xs font-medium transition-all text-left',
@@ -313,7 +316,7 @@ export function ServiceDetail() {
         </aside>
 
         {/* Right Content Pane */}
-        <main className="flex-1 min-w-0 w-full">
+        <main id="service-tab-panel" role="tabpanel" className="flex-1 min-w-0 w-full">
           {tab === 'overview' && <OverviewTab serviceId={id} svc={svc} />}
           {tab === 'terminal' && (
             <div className="space-y-4">

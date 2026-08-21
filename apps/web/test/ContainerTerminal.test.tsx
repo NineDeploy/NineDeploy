@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FakeWebSocket } from './web-utils.js';
 
 const apiMock = vi.hoisted(() => ({
-  getToken: vi.fn(() => 'tok-1'),
+  getToken: vi.fn((): string | null => 'tok-1'),
   execWsUrl: vi.fn((id: number) => `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/v1/services/${id}/exec`),
   websocketAuthProtocols: vi.fn(() => ['ninedeploy.bearer.tok-1']),
 }));

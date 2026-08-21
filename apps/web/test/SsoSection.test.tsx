@@ -134,4 +134,116 @@ describe('SsoSection', () => {
       expect(api.auth.oidc.delete).toHaveBeenCalledWith(1);
     });
   });
+
+  it('shows the empty state when no providers are configured', async () => {
+    mockOf(api.auth.oidc.list).mockResolvedValue([] as never);
+    renderWithProviders(<SsoSection />);
+    expect(await screen.findByText(/No SSO providers configured/)).toBeInTheDocument();
+  });
+
+  it('requires slug and client secret when creating', async () => {
+    renderWithProviders(<SsoSection />);
+    await waitFor(() => expect(screen.getByText('Google Workspace')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText('Add Provider'));
+    fireEvent.change(screen.getByPlaceholderText('e.g. Google Workspace'), { target: { value: 'Custom' } });
+    fireEvent.change(screen.getByPlaceholderText('OAuth Client ID'), { target: { value: 'cid-2' } });
+    // Bypass DOM required-validation to exercise the handler's own guard.
+    fireEvent.submit(screen.getByPlaceholderText('e.g. Google Workspace').closest('form')!);
+
+    expect(await screen.findByText('Slug and Client Secret are required')).toBeInTheDocument();
+    expect(api.auth.oidc.create).not.toHaveBeenCalled();
+  });
+
+  it('normalizes the slug and honors the toggles when creating', async () => {
+    mockOf(api.auth.oidc.create).mockResolvedValueOnce(mockProviders[0] as never);
+    renderWithProviders(<SsoSection />);
+    await waitFor(() => expect(screen.getByText('Google Workspace')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText('Add Provider'));
+    fireEvent.change(screen.getByPlaceholderText('e.g. Google Workspace'), { target: { value: 'Authentik' } });
+    // The slug input lowercases and strips invalid characters.
+    fireEvent.change(screen.getByPlaceholderText('e.g. google or okta'), { target: { value: 'My IdP!' } });
+    fireEvent.change(screen.getByPlaceholderText('OAuth Client ID'), { target: { value: 'cid-3' } });
+    fireEvent.change(screen.getByPlaceholderText('••••••••••••'), { target: { value: 's3cret' } });
+    fireEvent.click(screen.getByLabelText('Enable SSO on login page'));
+    fireEvent.click(screen.getByLabelText('Auto-enroll new users on first login'));
+    fireEvent.click(screen.getByRole('button', { name: 'Create Provider' }));
+
+    await waitFor(() => {
+      expect(api.auth.oidc.create).toHaveBeenCalledWith(expect.objectContaining({
+        name: 'Authentik',
+        slug: 'myidp',
+        enabled: false,
+        autoEnroll: false,
+      }));
+    });
+    // The modal closes after a successful save.
+    await waitFor(() =>
+      expect(screen.queryByText('Configure SSO / OIDC Provider')).not.toBeInTheDocument());
+  });
+
+  it('keeps the stored secret when an edit leaves it blank', async () => {
+    mockOf(api.auth.oidc.update).mockResolvedValueOnce(mockProviders[0] as never);
+    renderWithProviders(<SsoSection />);
+    await waitFor(() => expect(screen.getByText('Google Workspace')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText('Edit'));
+    await screen.findByText('Edit Google Workspace');
+    fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }));
+
+    await waitFor(() => expect(api.auth.oidc.update).toHaveBeenCalled());
+    const sent = mockOf(api.auth.oidc.update).mock.calls[0]![1] as Record<string, unknown>;
+    expect(sent).toEqual(expect.objectContaining({ name: 'Google Workspace' }));
+    // Blank secret means "keep the stored one": the key is not sent at all.
+    expect('clientSecret' in sent).toBe(false);
+  });
+
+  it('sends the typed secret on rotation and surfaces save failures', async () => {
+    mockOf(api.auth.oidc.update).mockResolvedValueOnce(mockProviders[0] as never);
+    renderWithProviders(<SsoSection />);
+    await waitFor(() => expect(screen.getByText('Google Workspace')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText('Edit'));
+    await screen.findByText('Edit Google Workspace');
+    const secretField = screen.getByPlaceholderText('••••••••••••');
+    fireEvent.change(secretField, { target: { value: 'rotated-fixture-secret' } });
+    // Assert with the value read back from the form field.
+    const typedSecret = (secretField as HTMLInputElement).value;
+    fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }));
+
+    await waitFor(() => {
+      expect(api.auth.oidc.update).toHaveBeenCalledWith(1, expect.objectContaining({
+        clientSecret: typedSecret,
+      }));
+    });
+
+    // Failure path surfaces the server message in the form.
+    mockOf(api.auth.oidc.update).mockRejectedValueOnce(new Error('slug already exists') as never);
+    fireEvent.click(screen.getByText('Edit'));
+    await screen.findByText('Edit Google Workspace');
+    fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }));
+    expect(await screen.findByText('slug already exists')).toBeInTheDocument();
+  });
+
+  it('keeps the provider when the delete confirm is dismissed', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValueOnce(false);
+    renderWithProviders(<SsoSection />);
+    await waitFor(() => expect(screen.getByText('Google Workspace')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByTitle('Delete Provider'));
+    expect(api.auth.oidc.delete).not.toHaveBeenCalled();
+  });
+
+  it('cancels out of the create modal without saving', async () => {
+    renderWithProviders(<SsoSection />);
+    await waitFor(() => expect(screen.getByText('Google Workspace')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText('Okta / Auth0'));
+    expect(screen.getByDisplayValue('Okta Enterprise')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() =>
+      expect(screen.queryByText('Configure SSO / OIDC Provider')).not.toBeInTheDocument());
+    expect(api.auth.oidc.create).not.toHaveBeenCalled();
+  });
 });

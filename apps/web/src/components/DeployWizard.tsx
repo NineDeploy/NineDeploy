@@ -409,6 +409,46 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
                     )}
                   </div>
 
+                  {/* Which credential private-repo cloning will use — say so
+                      before the deploy, not as a failed clone later. */}
+                  <div
+                    className={cn(
+                      'rounded-lg border px-3 py-2 text-[11px] leading-relaxed',
+                      sourceId
+                        ? 'border-emerald-500/20 bg-emerald-500/[0.05] text-slate-300'
+                        : repoUrl.trim()
+                          ? 'border-amber-500/25 bg-amber-500/[0.06] text-amber-200/90'
+                          : 'border-white/[0.06] bg-white/[0.02] text-slate-400',
+                    )}
+                  >
+                    {sourceId ? (
+                      <>
+                        Cloning, framework analysis and webhook auto-deploys run with credential{' '}
+                        <span className="font-medium text-emerald-300">
+                          {sources.data?.find((s) => String(s.id) === sourceId)?.name ?? `#${sourceId}`}
+                        </span>
+                        {remoteRepos.data?.some((r) => r.url === repoUrl && r.isPrivate) && (
+                          <> — this repository is <span className="font-medium">private</span></>
+                        )}
+                        .
+                      </>
+                    ) : repoUrl.trim() ? (
+                      <>
+                        No Git credential selected — public repositories deploy fine, but a{' '}
+                        <span className="font-medium">private</span> repository will fail to clone at deploy time. Select
+                        one above
+                        {!isAdmin && ' (ask an administrator if none is listed)'}.
+                      </>
+                    ) : (
+                      <>
+                        Private repository? Select a Git credential first — it is used for cloning, analysis and webhook
+                        auto-deploys. Credentials are created by admins under{' '}
+                        <span className="font-medium text-slate-300">System → Sources</span> and stored encrypted; the
+                        token itself is never shown again.
+                      </>
+                    )}
+                  </div>
+
                   <L label="Repository URL">
                     <Input
                       value={repoUrl}

@@ -11,12 +11,36 @@ vi.mock('../src/lib/api.js', async () => {
 });
 
 vi.mock('@xyflow/react', () => ({
-  ReactFlow: ({ nodes, edges, nodeTypes, children }: { nodes: Array<{ id: string; type: string; data: unknown }>; edges: unknown[]; nodeTypes?: Record<string, React.ComponentType<{ id: string; data: unknown }>>; children: React.ReactNode }) => (
+  ReactFlow: ({
+    nodes,
+    edges,
+    nodeTypes,
+    onNodesChange,
+    onEdgesChange,
+    onNodeClick,
+    children,
+  }: {
+    nodes: Array<{ id: string; type: string; data: unknown }>;
+    edges: unknown[];
+    nodeTypes?: Record<string, React.ComponentType<{ id: string; data: unknown }>>;
+    onNodesChange?: (changes: unknown[]) => void;
+    onEdgesChange?: (changes: unknown[]) => void;
+    onNodeClick?: (event: unknown, node: { id: string; type?: string; data: unknown }) => void;
+    children?: React.ReactNode;
+  }) => (
     <div data-testid="react-flow" data-nodes={nodes.length} data-edges={edges.length}>
       {nodes.map((n) => {
         const NodeComp = nodeTypes?.[n.type];
-        return NodeComp ? <NodeComp key={n.id} id={n.id} data={n.data} /> : null;
+        return NodeComp ? (
+          <div key={n.id} data-testid={`node-${n.id}`} onClick={(e) => onNodeClick?.(e, n)}>
+            <NodeComp id={n.id} data={n.data} />
+          </div>
+        ) : null;
       })}
+      {/* Triggers for the change handlers the real canvas fires. */}
+      <button type="button" data-testid="fire-node-drop" onClick={() => onNodesChange?.([{ type: 'position', dragging: false }])}>node-drop</button>
+      <button type="button" data-testid="fire-node-change" onClick={() => onNodesChange?.([{ type: 'select' }])}>node-change</button>
+      <button type="button" data-testid="fire-edge-change" onClick={() => onEdgesChange?.([{ type: 'select' }])}>edge-change</button>
       {children}
     </div>
   ),
@@ -24,12 +48,17 @@ vi.mock('@xyflow/react', () => ({
   Background: () => <div data-testid="background" />,
   Controls: () => <div data-testid="controls" />,
   Handle: () => <div data-testid="handle" />,
-  MiniMap: () => <div data-testid="minimap" />,
+  // Invoke the color callback for every node type so its branches are exercised.
+  MiniMap: ({ nodeColor }: { nodeColor?: (n: { type?: string }) => string }) => (
+    <div data-testid="minimap">
+      {['service', 'database', 'gateway', 'volume', 'domain', 'network'].map((t) => nodeColor?.({ type: t })).filter(Boolean).join(',')}
+    </div>
+  ),
   Panel: ({ children }: { children: React.ReactNode }) => <div data-testid="panel">{children}</div>,
   BackgroundVariant: { Dots: 'dots' },
   Position: { Left: 'left', Right: 'right', Top: 'top', Bottom: 'bottom' },
-  applyNodeChanges: (changes: unknown[], nodes: unknown[]) => nodes,
-  applyEdgeChanges: (changes: unknown[], edges: unknown[]) => edges,
+  applyNodeChanges: (_changes: unknown[], nodes: unknown[]) => nodes,
+  applyEdgeChanges: (_changes: unknown[], edges: unknown[]) => edges,
   useReactFlow: () => ({
     fitView: () => Promise.resolve(true),
     zoomIn: () => undefined,
@@ -185,5 +214,53 @@ it('shows an error state with retry when the graph query fails', async () => {
       expect(screen.getByTestId('react-flow')).toHaveTextContent('ghost-data');
       expect(screen.getAllByText('postgres').length).toBeGreaterThan(0);
       expect(screen.getAllByText('running').length).toBeGreaterThan(0);
+    });
+
+    it('wires the canvas interactions: zoom, fit, rearrange and change events', async () => {
+      mockOf(api.topology.get).mockResolvedValue(graph as never);
+      renderWithProviders(<Topology />);
+      await screen.findByTestId('react-flow');
+
+      // Toolbar controls.
+      fireEvent.click(screen.getByTitle('Zoom in'));
+      fireEvent.click(screen.getByTitle('Zoom out'));
+      fireEvent.click(screen.getByTitle('Fit to view'));
+      fireEvent.click(screen.getByRole('button', { name: /Re-arrange/ }));
+
+      // Change handlers the real canvas fires (drag end keeps user layout).
+      fireEvent.click(screen.getByTestId('fire-node-drop'));
+      fireEvent.click(screen.getByTestId('fire-node-change'));
+      fireEvent.click(screen.getByTestId('fire-edge-change'));
+
+      // Clicking a service node opens its focus view.
+      fireEvent.click(screen.getByTestId('node-service-1'));
+      await waitFor(() => expect(screen.getByTestId('react-flow')).toBeInTheDocument());
+    });
+
+    it('filters layers, exports the manifest, refreshes and inspects nodes', async () => {
+      mockOf(api.topology.get).mockResolvedValue(graph as never);
+      const createObjectURL = vi.fn(() => 'blob:topology');
+      Object.defineProperty(URL, 'createObjectURL', { value: createObjectURL, configurable: true });
+      renderWithProviders(<Topology />);
+      await screen.findByTestId('react-flow');
+
+      // Layer filters switch the visible bands.
+      fireEvent.click(screen.getByRole('button', { name: 'Compute & DBs' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Storage' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Network' }));
+      fireEvent.click(screen.getByRole('button', { name: 'All Layers' }));
+
+      // Export the architecture manifest as JSON.
+      fireEvent.click(screen.getByTitle('Export Architecture Manifest (JSON)'));
+      expect(createObjectURL).toHaveBeenCalled();
+
+      // Manual refresh refetches the graph.
+      fireEvent.click(screen.getByTitle('Refresh topology graph'));
+      await waitFor(() => expect(api.topology.get).toHaveBeenCalledTimes(2));
+
+      // The inspector opens on node click and closes via its ✕.
+      fireEvent.click(screen.getByTestId('node-service-1'));
+      fireEvent.click(screen.getByLabelText('Close Inspector'));
+      await waitFor(() => expect(screen.queryByLabelText('Close Inspector')).not.toBeInTheDocument());
     });
 });

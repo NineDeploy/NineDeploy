@@ -1,6 +1,6 @@
 import { and, eq } from 'drizzle-orm';
 import type { FastifyPluginAsync } from 'fastify';
-import { buildConfigs, envVars, services, type Service } from '@ninedeploy/db';
+import { buildConfigs, envVars, services, sources, type DB, type Service } from '@ninedeploy/db';
 import { createService, setLimits, updateService } from '@ninedeploy/schemas';
 import { getTemplates } from '../templates/registry.js';
 import { capture, run } from '../lib/exec.js';
@@ -17,7 +17,7 @@ import { pm2Builder, pm2Logs, pm2Restart, pm2Start, pm2Stop } from '../engine/bu
 import { writeDynamicConfig } from '../engine/proxy.js';
 
 /** Shape a DB row into the API representation (Date → ISO string). */
-function serialize(s: Service) {
+function serialize(s: Service, sourceName: string | null = null) {
   return {
     id: s.id,
     projectId: s.projectId,
@@ -28,6 +28,9 @@ function serialize(s: Service) {
     repoUrl: s.repoUrl,
     branch: s.branch,
     sourceId: s.sourceId,
+    // Which stored credential private-repo cloning runs with — surfaced so
+    // the UI can explain the link without exposing the token itself.
+    sourceName: s.sourceId ? sourceName : null,
     image: s.image,
     volumeMount: s.volumeMount,
     composeService: s.composeService,
@@ -69,6 +72,14 @@ function serializeBuild(b: typeof buildConfigs.$inferSelect) {
   };
 }
 
+/** Resolve a service's credential display name (null = public / none). */
+async function sourceNameFor(db: DB, sourceId: number | null): Promise<string | null> {
+  if (!sourceId) return null;
+  const src = await db.query.sources.findFirst({ where: eq(sources.id, sourceId) });
+  return src?.name ?? null;
+}
+
+
 export const servicesRoutes: FastifyPluginAsync = async (app) => {
   // Every route here requires authentication.
   app.addHook('onRequest', app.authenticate);
@@ -89,7 +100,8 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
       }),
     });
     // List view omits the build config (detail endpoint joins it); keep the shape stable.
-    return rows.map((s) => ({ ...serialize(s), build: null }));
+    const sourceNames = new Map((await app.db.query.sources.findMany()).map((s) => [s.id, s.name]));
+    return rows.map((s) => ({ ...serialize(s, s.sourceId ? (sourceNames.get(s.sourceId) ?? null) : null), build: null }));
   });
 
   app.post('/', async (req) => {
@@ -217,14 +229,14 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
         stopGraceSeconds: input.build.stopGraceSeconds ?? 5,
       });
     void audit(app.db, req.user!.id, 'service.create', input.name);
-    return serialize(svc);
+    return serialize(svc, await sourceNameFor(app.db, svc.sourceId));
   });
 
   app.get('/:id', async (req) => {
     const id = num((req.params as { id: string }).id);
     const svc = await loadServiceForUser(app.db, id, req.user!);
     const build = await app.db.query.buildConfigs.findFirst({ where: eq(buildConfigs.serviceId, id) });
-    return { ...serialize(svc), build: build ? serializeBuild(build) : null };
+    return { ...serialize(svc, await sourceNameFor(app.db, svc.sourceId)), build: build ? serializeBuild(build) : null };
   });
 
   app.patch('/:id', async (req) => {
@@ -279,7 +291,7 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
       }
     }
     void audit(app.db, req.user!.id, 'service.update', svc.name);
-    return serialize(svc);
+    return serialize(svc, await sourceNameFor(app.db, svc.sourceId));
   });
 
   app.delete('/:id', async (req, reply) => {
@@ -488,6 +500,6 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
     }
 
     void audit(app.db, req.user!.id, 'service.clone', `${svc.name} -> ${created!.name}`);
-    return serialize(created!);
+    return serialize(created!, await sourceNameFor(app.db, created!.sourceId));
   });
 };

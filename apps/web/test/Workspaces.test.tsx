@@ -99,6 +99,24 @@ describe('Workspaces route', () => {
     });
   });
 
+  it('reports invite failures inline', async () => {
+    mockOf(api.workspaces.addMember).mockRejectedValueOnce(new Error('already a member') as never);
+
+    renderWithProviders(<Workspaces />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Invite Member')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText('Invite Member'));
+    fireEvent.change(screen.getByPlaceholderText('developer@acme.com'), {
+      target: { value: 'dev@acme.com' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send Invite' }));
+
+    expect(await screen.findByText('already a member')).toBeInTheDocument();
+  });
+
   it('updates member role', async () => {
     mockOf(api.workspaces.updateMemberRole).mockResolvedValueOnce({
       id: 11,
@@ -181,11 +199,13 @@ describe('Workspaces route', () => {
 
     renderWithProviders(<Workspaces />);
 
+    // The danger zone has both a heading and a button labelled "Delete
+    // Workspace" — target the button by role.
     await waitFor(() => {
-      expect(screen.getByText('Delete Workspace')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Delete Workspace' })).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByText('Delete Workspace'));
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Workspace' }));
     expect(screen.getByText(/Are you sure you want to permanently delete/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Yes, Delete Workspace' }));

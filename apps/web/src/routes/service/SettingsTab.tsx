@@ -26,11 +26,18 @@ function SettingsCard({ serviceId }: { serviceId: number }) {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
   const service = useQuery({ queryKey: ['service', serviceId], queryFn: () => api.services.get(serviceId) });
+  // Credential list is admin-only server-side; members see the attached name
+  // read-only instead of a select that would 403 on load.
+  const sources = useQuery({
+    queryKey: ['sources'],
+    queryFn: () => api.sources.list(),
+    enabled: isAdmin,
+  });
   const svc = service.data;
 
   const [form, setForm] = useState<{
     name: string; branch: string; repoUrl: string; image: string; port: string;
-    healthPath: string; volumeMount: string;
+    healthPath: string; volumeMount: string; sourceId: string;
     buildPack: string; baseDir: string; installCmd: string; buildCmd: string; startCmd: string; dockerfilePath: string;
     preDeployCmd: string; postDeployCmd: string; preStopCmd: string;
     restartPolicy: string; stopGraceSeconds: string;
@@ -45,6 +52,7 @@ function SettingsCard({ serviceId }: { serviceId: number }) {
       port: svc.port ? String(svc.port) : '',
       healthPath: svc.healthPath ?? '',
       volumeMount: svc.volumeMount ?? '',
+      sourceId: svc.sourceId ? String(svc.sourceId) : '',
       buildPack: svc.build?.buildPack ?? 'auto',
       baseDir: svc.build?.baseDir ?? '/',
       installCmd: svc.build?.installCmd ?? '',
@@ -72,6 +80,9 @@ function SettingsCard({ serviceId }: { serviceId: number }) {
         port: orUndef(f.port) ? toInt(f.port) : undefined,
         healthPath: orUndef(f.healthPath),
         volumeMount: orUndef(f.volumeMount),
+        // Admins may attach or clear the credential; members keep the current
+        // one (an omitted key leaves it untouched server-side).
+        sourceId: isAdmin ? (f.sourceId ? toInt(f.sourceId) : null) : undefined,
         build: {
           buildPack: f.buildPack as 'auto' | 'nixpacks' | 'dockerfile',
           baseDir: f.baseDir,
@@ -116,6 +127,18 @@ function SettingsCard({ serviceId }: { serviceId: number }) {
           <Field label="Name"><Input value={form.name} onChange={set('name')} className="h-9" /></Field>
           <Field label="Branch"><Input value={form.branch} onChange={set('branch')} className="h-9" /></Field>
           <Field label="Repo URL"><Input value={form.repoUrl} onChange={set('repoUrl')} placeholder="https://github.com/…" className="h-9 font-mono text-xs" /></Field>
+          <Field label="Git credential (private repos)" hint="Used for cloning, analysis and webhook deploys">
+            {isAdmin ? (
+              <Select value={form.sourceId} onChange={set('sourceId')} className="h-9">
+                <option value="">Public / none</option>
+                {sources.data?.map((s) => (
+                  <option key={s.id} value={String(s.id)}>{s.name} ({s.type})</option>
+                ))}
+              </Select>
+            ) : (
+              <Input value={svc.sourceName ?? 'public / none'} disabled className="h-9" title="Credentials are managed by admins under System → Sources" />
+            )}
+          </Field>
           <Field label="Image (image deploys)"><Input value={form.image} onChange={set('image')} placeholder="nginx:latest" className="h-9 font-mono text-xs" /></Field>
           <Field label="Container port (Traefik target)"><Input value={form.port} onChange={set('port')} inputMode="numeric" autoComplete="off" placeholder="3000" className="h-9 font-mono text-xs" /></Field>
           <Field label="Health path"><Input value={form.healthPath} onChange={set('healthPath')} placeholder="/" className="h-9 font-mono text-xs" /></Field>

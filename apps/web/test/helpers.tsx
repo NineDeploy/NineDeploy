@@ -2,6 +2,7 @@ import { afterEach, vi } from 'vitest';
 import { cleanup, render } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router';
+import type { InitialEntry } from 'react-router';
 import type { ReactNode } from 'react';
 import { AuthProvider } from '../src/lib/auth.js';
 import { ToastProvider } from '../src/components/Toast.js';
@@ -36,6 +37,12 @@ export { createFakeApiModule } from './apiMock.js';
 
 export { createAuthMock, createThemeMock, createWorkspaceMock } from './apiMock.js';
 
+/** Options for the render helpers below. */
+interface RenderOptions {
+  route?: string;
+  /** MemoryRouter accepts plain paths and partial locations (with state). */
+  initialEntries?: InitialEntry[];
+}
 
 /**
  * Render a route element inside the providers every route needs:

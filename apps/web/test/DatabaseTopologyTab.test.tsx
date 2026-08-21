@@ -25,6 +25,7 @@ vi.mock('@xyflow/react', () => ({
   Background: () => <div data-testid="background" />,
   Controls: () => <div data-testid="controls" />,
   Handle: () => <div data-testid="handle" />,
+  MiniMap: () => <div data-testid="minimap" />,
   BackgroundVariant: { Dots: 'dots' },
   Position: { Left: 'left', Right: 'right', Top: 'top', Bottom: 'bottom' },
 }));

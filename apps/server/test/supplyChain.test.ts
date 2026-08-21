@@ -51,7 +51,9 @@ describe('L-15: the installer never pipes remote code into a root shell', () => 
     // apt verifies the packages against a key pinned into /etc/apt/keyrings
     expect(installer).toContain('/etc/apt/keyrings');
     expect(installer).toMatch(/signed-by=/);
-    expect(installer).toContain('https://download.docker.com/linux/${id}/gpg');
+    // install.sh interpolates the distro id at install time; the literal
+    // shell placeholder must survive into the pinned keyring URL.
+    expect(installer).toContain(`https://download.docker.com/linux/\${id}/gpg`);
     expect(installer).toContain('https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key');
   });
 

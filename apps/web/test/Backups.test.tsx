@@ -130,7 +130,7 @@ describe('Backups', () => {
     fetchMock.mockResolvedValueOnce(okResponse as Response);
     renderWithProviders(<Backups />);
     const downloadButtons = await screen.findAllByTitle('Download');
-    fireEvent.click(downloadButtons[0]);
+    fireEvent.click(downloadButtons[0]!);
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/v1/backups/1/download');
     expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get('Authorization')).toBe(`Bearer ${getToken()}`);
@@ -139,7 +139,7 @@ describe('Backups', () => {
 
     // failure path
     fetchMock.mockResolvedValueOnce({ ok: false } as Response);
-    fireEvent.click(downloadButtons[0]);
+    fireEvent.click(downloadButtons[0]!);
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(URL.createObjectURL).toHaveBeenCalledTimes(1);
   });
@@ -151,7 +151,7 @@ describe('Backups', () => {
     fetchMock.mockResolvedValueOnce({ ok: true, blob: async () => new Blob(['x']) } as Response);
     renderWithProviders(<Backups />);
     const downloadButtons = await screen.findAllByTitle('Download');
-    fireEvent.click(downloadButtons[0]);
+    fireEvent.click(downloadButtons[0]!);
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get('Authorization')).toBe(null);
   });
@@ -162,7 +162,7 @@ describe('Backups', () => {
     fetchMock.mockRejectedValueOnce(new Error('network down') as never);
     renderWithProviders(<Backups />);
     const downloadButtons = await screen.findAllByTitle('Download');
-    fireEvent.click(downloadButtons[0]);
+    fireEvent.click(downloadButtons[0]!);
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Download failed', 'error'));
     expect(URL.createObjectURL).not.toHaveBeenCalled();
   });

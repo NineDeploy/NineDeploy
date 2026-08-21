@@ -277,8 +277,8 @@ describe('VolumeBrowser', () => {
     // Click download button in header and card
     const downloadBtns = screen.getAllByRole('button', { name: /Download/ });
     expect(downloadBtns.length).toBe(2);
-    fireEvent.click(downloadBtns[0]);
-    fireEvent.click(downloadBtns[1]);
+    fireEvent.click(downloadBtns[0]!);
+    fireEvent.click(downloadBtns[1]!);
   });
 
   it('handles extensionless and custom files as text', async () => {

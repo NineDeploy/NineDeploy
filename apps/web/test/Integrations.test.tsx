@@ -43,7 +43,7 @@ describe('IntegrationsSection', () => {
     renderWithProviders(<IntegrationsSection />);
 
     await user.type(screen.getByPlaceholderText('Universal Auth / service token'), 'tok');
-    await user.type(screen.getByPlaceholderText('default', { selector: 'input' }), 'staging');
+    await user.type(document.querySelector<HTMLInputElement>('input[placeholder="default"]')!, 'staging');
     fireEvent.click(screen.getAllByRole('button', { name: 'Save' })[0]!);
     await waitFor(() =>
       expect(api.settings.vault.set).toHaveBeenCalledWith({

@@ -80,7 +80,11 @@ describe('Settings', () => {
   });
 
   const openSection = async (label: string) => {
-    fireEvent.click(await screen.findByRole('tab', { name: label }));
+    // Section tabs expose "label + description" as their accessible name
+    // (e.g. "Security 2FA, audit logs & sessions") — match on the leading
+    // label, escaping regex metacharacters in labels like "Firewall (UFW)".
+    const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    fireEvent.click(await screen.findByRole('tab', { name: new RegExp(`^${escaped}(\\s|$)`) }));
   };
 
   it('renders system info, resources, theme controls and notification channels', async () => {
@@ -774,11 +778,9 @@ describe('Settings', () => {
 
     fireEvent.click(screen.getByText('Copy'));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith('GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ'));
-    fireEvent.click(screen.getByText('Copy URI'));
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith('otpauth://totp/NineDeploy%3Aa%40b.c?secret=x'));
 
     await user.type(screen.getByPlaceholderText('123456'), '123456');
-    fireEvent.click(screen.getByRole('button', { name: 'Enable' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Enable 2FA' }));
     await waitFor(() => expect(api.auth.twoFactor.enable).toHaveBeenCalledWith('123456'));
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Two-factor authentication enabled', 'success'));
   });
@@ -794,7 +796,7 @@ describe('Settings', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
     const input = await screen.findByPlaceholderText('123456');
     fireEvent.change(input, { target: { value: '000000' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Enable' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Enable 2FA' }));
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Invalid or expired code', 'error'));
   });
 
@@ -805,11 +807,11 @@ describe('Settings', () => {
     // New flow: confirm the account password first (required when 2FA is enabled).
     fireEvent.change(await screen.findByPlaceholderText('Password'), { target: { value: PW } });
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
-    // Wait for the setup panel first — otherwise the password form's own
-    // Cancel is the one that gets clicked.
-    await screen.findByText('otpauth://totp/x');
-    fireEvent.click(screen.getByText('Cancel'));
-    await waitFor(() => expect(screen.queryByText('otpauth://totp/x')).not.toBeInTheDocument());
+    // Wait for the setup panel first — the QR-based panel no longer prints the
+    // otpauth URI as text, so anchor on the cancel affordance instead.
+    await screen.findByText('Cancel setup');
+    fireEvent.click(screen.getByText('Cancel setup'));
+    await waitFor(() => expect(screen.queryByText('Cancel setup')).not.toBeInTheDocument());
   });
 
   it('submits the setup form via form submit and shows the enable pending label', async () => {
@@ -851,7 +853,7 @@ describe('Settings', () => {
     expect(api.auth.twoFactor.enable).not.toHaveBeenCalled();
 
     // Disable with an empty password: no call.
-    fireEvent.click(screen.getByText('Cancel')); // close the setup panel first
+    fireEvent.click(screen.getByText('Cancel setup')); // close the setup panel first
     fireEvent.click(screen.getByRole('button', { name: 'Disable 2FA' }));
     const pwInput = await screen.findByPlaceholderText('Password');
     fireEvent.change(screen.getByPlaceholderText('6-digit code'), { target: { value: '123456' } });
@@ -880,7 +882,7 @@ describe('Settings', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
     const codeInput = await screen.findByPlaceholderText('123456');
     fireEvent.change(codeInput, { target: { value: '123456' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Enable' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Enable 2FA' }));
     expect(await screen.findByText('Verifying…')).toBeInTheDocument();
   });
 
@@ -912,20 +914,27 @@ describe('Settings', () => {
   it('disables 2FA with password + code and signs out', async () => {
     const user = userEvent.setup();
     const assign = vi.fn();
-    Object.defineProperty(window, 'location', { value: { assign }, writable: true });
-    mockOf(api.auth.twoFactor.disable).mockResolvedValue({ ok: true, totpEnabled: false } as never);
-    renderWithProviders(<Settings />);
+    // Swap in a redirect spy; keep `hash` (AuthProvider reads it on mount)
+    // and restore the real location afterwards so later tests keep working.
+    const original = window.location;
+    Object.defineProperty(window, 'location', { value: { assign, hash: '' }, writable: true, configurable: true });
+    try {
+      mockOf(api.auth.twoFactor.disable).mockResolvedValue({ ok: true, totpEnabled: false } as never);
+      renderWithProviders(<Settings />);
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Disable 2FA' }));
-    await user.type(await screen.findByPlaceholderText('Password'), PW);
-    const codeInputs = screen.getAllByPlaceholderText('6-digit code');
-    await user.type(codeInputs[0]!, '123456');
-    fireEvent.click(screen.getByRole('button', { name: 'Disable 2FA', hidden: false }));
-    await waitFor(() =>
-      expect(api.auth.twoFactor.disable).toHaveBeenCalledWith({ password: PW, code: '123456' }));
-    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith(expect.stringContaining('disabled'), 'info'));
-    // The redirect to /login fires after 1.5s.
-    await waitFor(() => expect(assign).toHaveBeenCalledWith('/login'), { timeout: 3000 });
+      fireEvent.click(await screen.findByRole('button', { name: 'Disable 2FA' }));
+      await user.type(await screen.findByPlaceholderText('Password'), PW);
+      const codeInputs = screen.getAllByPlaceholderText('6-digit code');
+      await user.type(codeInputs[0]!, '123456');
+      fireEvent.click(screen.getByRole('button', { name: 'Disable 2FA', hidden: false }));
+      await waitFor(() =>
+        expect(api.auth.twoFactor.disable).toHaveBeenCalledWith({ password: PW, code: '123456' }));
+      await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith(expect.stringContaining('disabled'), 'info'));
+      // The redirect to /login fires after 1.5s.
+      await waitFor(() => expect(assign).toHaveBeenCalledWith('/login'), { timeout: 3000 });
+    } finally {
+      Object.defineProperty(window, 'location', { value: original, configurable: true });
+    }
   });
 
   it('reports disable failures and cancels', async () => {

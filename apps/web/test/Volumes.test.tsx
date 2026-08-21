@@ -30,8 +30,8 @@ describe('Volumes', () => {
     ] as never);
     renderWithProviders(<Volumes />);
     fireEvent.click(await screen.findByTitle('Browse files in this volume'));
-    // name appears both on the card and inside the browser header
-    expect((await screen.findAllByText('nd-svc-api-data')).length).toBeGreaterThanOrEqual(2);
+    // Cards show the owner's name; the raw volume name appears in the browser header only.
+    expect(await screen.findAllByText('nd-svc-api-data')).toHaveLength(1);
     expect(api.volumes.listFiles).toHaveBeenCalledWith('nd-svc-api-data', '');
     // close via the X button
     fireEvent.click(screen.getByLabelText('Close volume browser'));

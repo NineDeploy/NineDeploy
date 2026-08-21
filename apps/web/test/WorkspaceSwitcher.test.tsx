@@ -32,8 +32,8 @@ describe('WorkspaceSwitcher', () => {
   });
 
   it('renders active workspace button and toggles dropdown', async () => {
-    const ws1 = { id: 1, name: 'Acme Prod', slug: 'acme-prod', myRole: 'owner' as const, memberCount: 2, createdAt: '2026-01-01', updatedAt: '2026-01-01' };
-    const ws2 = { id: 2, name: 'Dev Space', slug: 'dev-space', myRole: 'member' as const, memberCount: 1, createdAt: '2026-01-01', updatedAt: '2026-01-01' };
+    const ws1 = { id: 1, name: 'Acme Prod', slug: 'acme-prod', description: null, ownerId: 1, myRole: 'owner' as const, memberCount: 2, projectCount: 1, createdAt: '2026-01-01', updatedAt: '2026-01-01' };
+    const ws2 = { id: 2, name: 'Dev Space', slug: 'dev-space', description: null, ownerId: 2, myRole: 'member' as const, memberCount: 1, projectCount: 0, createdAt: '2026-01-01', updatedAt: '2026-01-01' };
 
     vi.mocked(useWorkspace).mockReturnValue({
       workspaces: [ws1, ws2],
@@ -65,7 +65,7 @@ describe('WorkspaceSwitcher', () => {
   });
 
   it('opens create workspace modal and creates workspace', async () => {
-    const ws1 = { id: 1, name: 'Acme Prod', slug: 'acme-prod', myRole: 'owner' as const, createdAt: '2026-01-01', updatedAt: '2026-01-01' };
+    const ws1 = { id: 1, name: 'Acme Prod', slug: 'acme-prod', description: null, ownerId: 1, myRole: 'owner' as const, memberCount: 2, projectCount: 1, createdAt: '2026-01-01', updatedAt: '2026-01-01' };
     createWorkspace.mockResolvedValueOnce({ id: 3, name: 'New Team', slug: 'new-team' });
 
     vi.mocked(useWorkspace).mockReturnValue({
