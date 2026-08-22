@@ -734,7 +734,10 @@ if [ "$(uname -s)" = "Linux" ] && command -v systemctl &>/dev/null; then
     fail "Unsafe effective systemd Type=$EFFECTIVE_TYPE (expected simple); inspect: systemctl cat ninedeploy"
   fi
   case "$EFFECTIVE_WATCHDOG" in
-    0|0us|0ms|0s) ;;
+    # Modern systemd (v240+) reports a DISABLED watchdog as "infinity", not
+    # "0" — most visibly on never-started units during fresh installs. Both
+    # spellings mean "will never fire": accept them, reject real intervals.
+    0|0us|0ms|0s|infinity|infinityus) ;;
     *) fail "Unsafe effective systemd watchdog $EFFECTIVE_WATCHDOG (expected disabled); inspect: systemctl cat ninedeploy" ;;
   esac
   ok "systemd runtime policy verified (Type=simple, watchdog disabled)"
