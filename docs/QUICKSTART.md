@@ -32,10 +32,19 @@ curl -fsSL https://raw.githubusercontent.com/NineDeploy/NineDeploy/main/install.
 
 ## 🐳 2. Docker Installation (Containerized)
 
-If you prefer running NineDeploy itself inside Docker, the standalone
-production compose file is the one-command path (it refuses to boot without a
-strong `NINEDEPLOY_JWT_SECRET`, adds a restart policy and the health-gated
-readiness check):
+The installer supports this mode directly — pass `--docker` (or set
+`NINEDEPLOY_INSTALL_MODE=docker`). It installs only Docker on the host, fetches
+the pinned compose file, generates the secrets into a 0600 `.env`, and runs the
+panel container; re-running the same command upgrades it (secrets and data
+volume are preserved, and an existing bare-metal install is never clobbered):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/NineDeploy/NineDeploy/main/install.sh | bash -s -- --docker
+```
+
+Without the installer, the standalone production compose file is the
+one-command path (it refuses to boot without a strong `NINEDEPLOY_JWT_SECRET`,
+adds a restart policy and the health-gated readiness check):
 
 ```bash
 echo "NINEDEPLOY_JWT_SECRET=$(openssl rand -hex 32)" >> .env

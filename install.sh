@@ -9,6 +9,16 @@
 # Or from a clone:
 #   ./install.sh
 #
+# Deployment modes (the installer follows what is already installed):
+#   --docker        panel runs as a Docker container (no Node.js/systemd/PM2
+#                   on the host; Docker/Compose deploys, managed databases,
+#                   Traefik ingress and S3 backups work identically)
+#   --bare-metal    hardened systemd service with direct PM2 access (default
+#                   for fresh non-interactive runs)
+#   NINEDEPLOY_INSTALL_MODE=docker|bare-metal works too. With no flag, an
+#   existing install decides the mode; on a fresh host with a terminal the
+#   installer asks. Upgrades are the same command re-run.
+#
 set -euo pipefail
 
 BOLD='\033[1m'
@@ -176,6 +186,106 @@ echo -e "${BOLD}║       Self-hosted PaaS                   ║${NC}"
 echo -e "${BOLD}╚══════════════════════════════════════════╝${NC}"
 echo ""
 
+# ── 0. Arguments & deployment mode ────────────────────────────────────────
+
+CHANNEL="${NINEDEPLOY_CHANNEL:-release}"
+PINNED_VERSION="${NINEDEPLOY_VERSION:-}"
+INSTALL_MODE_FLAG=""
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --docker)
+      INSTALL_MODE_FLAG="docker"
+      shift
+      ;;
+    --bare-metal)
+      INSTALL_MODE_FLAG="bare-metal"
+      shift
+      ;;
+    --version=*)
+      PINNED_VERSION="${1#--version=}"
+      shift
+      ;;
+    --version)
+      [ "$#" -ge 2 ] || fail "--version requires a vX.Y.Z value"
+      PINNED_VERSION="$2"
+      shift 2
+      ;;
+    --channel=*)
+      CHANNEL="${1#--channel=}"
+      shift
+      ;;
+    --channel)
+      [ "$#" -ge 2 ] || fail "--channel requires release or main"
+      CHANNEL="$2"
+      shift 2
+      ;;
+    v[0-9]*)
+      [ -z "$PINNED_VERSION" ] && PINNED_VERSION="$1"
+      shift
+      ;;
+    *)
+      fail "Unknown installer argument: $1"
+      ;;
+  esac
+done
+
+case "$CHANNEL" in
+  release|main) ;;
+  *) fail "Unsupported channel '$CHANNEL' (expected release or main)" ;;
+esac
+
+if [ -n "$PINNED_VERSION" ] && ! printf '%s' "$PINNED_VERSION" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+  fail "Invalid version '$PINNED_VERSION' (expected vX.Y.Z)"
+fi
+
+# Deployment mode: explicit flag > env > whatever is already installed. A
+# fresh host with a terminal gets asked; piped/non-interactive runs default
+# to bare-metal so the documented one-liner keeps its current behaviour.
+DOCKER_INSTALL_DIR="${NINEDEPLOY_DOCKER_INSTALL_DIR:-/opt/ninedeploy-docker}"
+BARE_METAL_UNIT_FILE="/etc/systemd/system/ninedeploy.service"
+
+bare_metal_present() {
+  [ -f "$BARE_METAL_UNIT_FILE" ] && return 0
+  # A repo checkout alone is not an install; the installer's own .env plus
+  # data directory are the footprint it leaves behind on this machine.
+  [ -f "$INSTALL_DIR/package.json" ] && [ -f "$INSTALL_DIR/.env" ] && [ -d "$INSTALL_DIR/.data" ] && return 0
+  return 1
+}
+
+docker_install_present() { [ -f "$DOCKER_INSTALL_DIR/docker-compose.yml" ]; }
+
+if [ -n "$INSTALL_MODE_FLAG" ]; then
+  INSTALL_MODE="$INSTALL_MODE_FLAG"
+elif [ -n "${NINEDEPLOY_INSTALL_MODE:-}" ]; then
+  INSTALL_MODE="$NINEDEPLOY_INSTALL_MODE"
+elif bare_metal_present; then
+  INSTALL_MODE="bare-metal"
+elif docker_install_present; then
+  INSTALL_MODE="docker"
+elif [ -t 0 ]; then
+  echo "Deployment mode:"
+  echo "  1) Docker container   — panel runs as a container; no Node.js/PM2/systemd on the host"
+  echo "  2) Bare-metal systemd — full feature set incl. PM2 services and UFW management"
+  read -r -p "Choose [1/2, Enter=2]: " _mode_reply
+  case "$_mode_reply" in
+    1) INSTALL_MODE="docker" ;;
+    *) INSTALL_MODE="bare-metal" ;;
+  esac
+else
+  INSTALL_MODE="bare-metal"
+fi
+
+case "$INSTALL_MODE" in
+  docker|bare-metal) ;;
+  *) fail "Unsupported install mode '$INSTALL_MODE' (expected docker or bare-metal)" ;;
+esac
+
+if [ "$INSTALL_MODE" = "docker" ] && bare_metal_present; then
+  fail "A bare-metal installation is already present. Upgrade it in place (re-run without --docker) or uninstall it first — running both would fight over the same ports and the Traefik ingress."
+fi
+ok "Deployment mode: $INSTALL_MODE"
+
 # ── 1. Prerequisites ───────────────────────────────────────────────────────
 
 # Base system packages on Debian/Ubuntu
@@ -186,6 +296,11 @@ if [ "$(uname -s)" = "Linux" ] && command -v apt-get &>/dev/null; then
     run_apt_step apt-get install -y curl git ca-certificates tar gzip coreutils || true
   fi
 fi
+
+# Node.js, pnpm and the host Nixpacks CLI drive bare-metal builds and PM2
+# services. In Docker mode the panel container bundles its own Node runtime
+# and Nixpacks, so none of these are needed on the host.
+if [ "$INSTALL_MODE" != "docker" ]; then
 
 # Node.js ≥ 22.13 (pnpm 11 requires node:sqlite)
 if command -v node &>/dev/null; then
@@ -265,6 +380,8 @@ else
   nixpacks --version 2>/dev/null | grep -q "${NIXPACKS_VERSION}" || fail "Nixpacks installation verification failed"
   ok "Nixpacks $(nixpacks --version 2>/dev/null)"
 fi
+
+fi # end bare-metal-only prerequisites (Node, pnpm, Nixpacks)
 
 # Docker
 if ! command -v docker &>/dev/null; then
@@ -493,48 +610,6 @@ ok "Docker network & ingress ready"
 #   main              — track the main branch (edge; previous behaviour)
 # A specific tag can be pinned with --version vX.Y.Z / NINEDEPLOY_VERSION.
 
-CHANNEL="${NINEDEPLOY_CHANNEL:-release}"
-PINNED_VERSION="${NINEDEPLOY_VERSION:-}"
-
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    --version=*)
-      PINNED_VERSION="${1#--version=}"
-      shift
-      ;;
-    --version)
-      [ "$#" -ge 2 ] || fail "--version requires a vX.Y.Z value"
-      PINNED_VERSION="$2"
-      shift 2
-      ;;
-    --channel=*)
-      CHANNEL="${1#--channel=}"
-      shift
-      ;;
-    --channel)
-      [ "$#" -ge 2 ] || fail "--channel requires release or main"
-      CHANNEL="$2"
-      shift 2
-      ;;
-    v[0-9]*)
-      [ -z "$PINNED_VERSION" ] && PINNED_VERSION="$1"
-      shift
-      ;;
-    *)
-      fail "Unknown installer argument: $1"
-      ;;
-  esac
-done
-
-case "$CHANNEL" in
-  release|main) ;;
-  *) fail "Unsupported channel '$CHANNEL' (expected release or main)" ;;
-esac
-
-if [ -n "$PINNED_VERSION" ] && ! printf '%s' "$PINNED_VERSION" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
-  fail "Invalid version '$PINNED_VERSION' (expected vX.Y.Z)"
-fi
-
 # Highest vX.Y.Z tag from the remote (no clone needed).
 latest_tag() {
   (git ls-remote --tags --refs "$REPO_URL" 2>/dev/null || true) \
@@ -557,6 +632,133 @@ else
   else
     info "Release channel: installing $REF (latest tag)"
   fi
+fi
+
+# ── 2b. Docker mode: deploy the panel as a container and finish ──────────
+#
+# Everything above is shared with bare-metal (Docker daemon, boot enablement,
+# swap, the ninedeploy network, the Traefik image, port and firewall prep).
+# From here the modes diverge: Docker mode never clones, builds or installs
+# systemd units — it fetches the pinned compose file, maintains a 0600 .env
+# next to it, and lets compose own the lifecycle. Re-running the installer
+# in this mode IS the upgrade path (same volume, same secrets).
+install_docker_mode() {
+  # Compose v2 ships with the signed Docker APT repo this installer uses,
+  # but a pre-existing Docker install may lack the plugin.
+  if ! docker_cmd compose version >/dev/null 2>&1; then
+    info "Docker Compose v2 plugin missing — installing docker-compose-plugin…"
+    run_apt_step apt-get install -y docker-compose-plugin \
+      || fail "Docker Compose v2 is required for the Docker install mode. Install 'docker-compose-plugin' and re-run."
+  fi
+
+  # Install dir owned by the invoking user, so .env and compose state stay
+  # manageable without sudo (root invocations keep root ownership).
+  if [ "$(id -u)" -ne 0 ]; then
+    sudo install -d -o "$(id -u)" -g "$(id -g)" -m 0755 "$DOCKER_INSTALL_DIR" \
+      || fail "Could not create $DOCKER_INSTALL_DIR"
+  else
+    install -d -m 0755 "$DOCKER_INSTALL_DIR" || fail "Could not create $DOCKER_INSTALL_DIR"
+  fi
+
+  # Compose file for $REF: prefer a checkout the installer was run from,
+  # otherwise fetch exactly this file from the same origin as install.sh.
+  if [ -f "./docker-compose.prod.yml" ] && [ -f "./package.json" ]; then
+    info "Using docker-compose.prod.yml from the current checkout"
+    cp ./docker-compose.prod.yml "$DOCKER_INSTALL_DIR/docker-compose.yml.new" \
+      || fail "Could not stage the compose file"
+  else
+    info "Fetching docker-compose.prod.yml for $REF…"
+    curl -fsSL "https://raw.githubusercontent.com/NineDeploy/NineDeploy/${REF}/docker-compose.prod.yml" \
+      -o "$DOCKER_INSTALL_DIR/docker-compose.yml.new" \
+      || fail "Could not fetch docker-compose.prod.yml for $REF"
+  fi
+  grep -q '^services:' "$DOCKER_INSTALL_DIR/docker-compose.yml.new" \
+    || fail "The fetched compose file does not look right (missing 'services:') — refusing to deploy it"
+  mv "$DOCKER_INSTALL_DIR/docker-compose.yml.new" "$DOCKER_INSTALL_DIR/docker-compose.yml"
+
+  cd "$DOCKER_INSTALL_DIR"
+
+  # .env: created 0600, then upserted per run. The JWT secret survives
+  # upgrades (rotating it would invalidate every session); DOCKER_GID is
+  # refreshed every run because the host's docker group id can change.
+  gen_secret() {
+    if command -v openssl &>/dev/null; then openssl rand -hex 32
+    else head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n'; fi
+  }
+  upsert_env() { # <key> <value>
+    if [ -f .env ] && grep -q "^$1=" .env; then
+      sed -i.bak "s|^$1=.*|$1=$2|" .env && rm -f .env.bak
+    else
+      printf '%s=%s\n' "$1" "$2" >> .env
+    fi
+  }
+  local old_umask jwt_secret docker_gid
+  old_umask=$(umask)
+  umask 077
+  [ -f .env ] || touch .env
+  jwt_secret="$(sed -n 's/^NINEDEPLOY_JWT_SECRET=//p' .env | tail -1)"
+  [ -n "${NINEDEPLOY_JWT_SECRET:-}" ] && jwt_secret="$NINEDEPLOY_JWT_SECRET"
+  [ -z "$jwt_secret" ] && jwt_secret="$(gen_secret)"
+  docker_gid="$(getent group docker | cut -d: -f3)"
+  [ -n "$docker_gid" ] || fail "Could not resolve the host docker group id (getent group docker)"
+  upsert_env NINEDEPLOY_JWT_SECRET "$jwt_secret"
+  upsert_env DOCKER_GID "$docker_gid"
+  upsert_env NINEDEPLOY_PORT "${NINEDEPLOY_PORT:-3000}"
+  # Optional integrations: written only when provided by the environment and
+  # never overwritten once present, so operator edits survive upgrades.
+  for _var in NINEDEPLOY_PUBLIC_URL NINEDEPLOY_ACME_EMAIL NINEDEPLOY_DNS_PROVIDER NINEDEPLOY_DNS_TOKEN; do
+    _val="${!_var:-}"
+    if [ -n "$_val" ] && ! grep -q "^${_var}=" .env; then
+      printf '%s=%s\n' "$_var" "$_val" >> .env
+    fi
+  done
+  grep -q '^NINEDEPLOY_PUBLIC_URL=' .env \
+    || upsert_env NINEDEPLOY_PUBLIC_URL "http://$(hostname 2>/dev/null || echo localhost):${NINEDEPLOY_PORT:-3000}"
+  chmod 600 .env
+  umask "$old_umask"
+
+  info "Pulling the NineDeploy panel image (a few hundred MB on first run)…"
+  docker_cmd compose pull \
+    || fail "Image pull failed — check registry connectivity and re-run the installer."
+  docker_cmd compose up -d \
+    || { docker_cmd compose logs --tail 50 2>/dev/null || true; fail "docker compose up failed"; }
+
+  HEALTH_PORT="$(sed -n 's/^NINEDEPLOY_PORT=//p' .env | tail -1)"
+  HEALTH_PORT="${HEALTH_PORT:-3000}"
+  info "Waiting for the panel to become healthy (up to 120s)…"
+  _healthy=false
+  for _i in $(seq 1 120); do
+    if curl -fsS -m 2 "http://127.0.0.1:${HEALTH_PORT}/health" >/dev/null 2>&1; then _healthy=true; break; fi
+    sleep 1
+  done
+  if [ "$_healthy" != "true" ]; then
+    docker_cmd compose logs --tail 50 2>/dev/null || true
+    fail "Panel did not become healthy in 120s — inspect: cd $DOCKER_INSTALL_DIR && docker compose logs -f"
+  fi
+  ok "NineDeploy panel is healthy (docker compose project 'ninedeploy')"
+
+  PUBLIC_URL="$(sed -n 's/^NINEDEPLOY_PUBLIC_URL=//p' .env | tail -1)"
+  echo ""
+  echo -e "${BOLD}╔══════════════════════════════════════════╗${NC}"
+  echo -e "${BOLD}║       ✓ Installation Complete            ║${NC}"
+  echo -e "${BOLD}╚══════════════════════════════════════════╝${NC}"
+  echo ""
+  echo -e "  ${CYAN}Dashboard:${NC}  ${PUBLIC_URL:-http://localhost:${HEALTH_PORT}}"
+  echo -e "  ${CYAN}Mode:${NC}       Docker container (compose project 'ninedeploy', restart: unless-stopped)"
+  echo -e "  ${CYAN}Directory:${NC}  $DOCKER_INSTALL_DIR (secrets in .env, mode 0600)"
+  echo ""
+  echo -e "  ${YELLOW}Manage:${NC}"
+  echo -e "    cd $DOCKER_INSTALL_DIR && docker compose logs -f"
+  echo -e "    docker compose restart"
+  echo -e "    docker compose down        # data volume survives"
+  echo -e "  ${YELLOW}Upgrade:${NC} re-run this installer (it auto-detects the Docker install), or"
+  echo -e "    cd $DOCKER_INSTALL_DIR && docker compose pull && docker compose up -d"
+  echo ""
+}
+
+if [ "$INSTALL_MODE" = "docker" ]; then
+  install_docker_mode
+  exit 0
 fi
 
 # ── 3. Get the code ────────────────────────────────────────────────────────

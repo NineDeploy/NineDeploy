@@ -30,9 +30,16 @@ curl -fsSL https://raw.githubusercontent.com/NineDeploy/NineDeploy/main/install.
 
 ### Or Run with Docker
 
+Add `--docker` to the installer one-liner above for a fully managed container
+install — no host Node.js, no systemd; the installer follows an existing
+install on re-runs, so upgrades are the same command:
+
 ```bash
-# Recommended: the standalone production compose (required secret + docker
-# GID, restart policy, health-gated readiness — see docker-compose.prod.yml)
+curl -fsSL https://raw.githubusercontent.com/NineDeploy/NineDeploy/main/install.sh | bash -s -- --docker
+```
+
+Or bring your own compose (required secret + docker GID, restart policy,
+health-gated readiness — see `docker-compose.prod.yml`):
 echo "NINEDEPLOY_JWT_SECRET=$(openssl rand -hex 32)" >> .env
 echo "DOCKER_GID=$(getent group docker | cut -d: -f3)" >> .env
 docker compose -f docker-compose.prod.yml up -d

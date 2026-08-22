@@ -1,8 +1,12 @@
 # ── NineDeploy standalone container deployment ────────────────────────────
 # Boots the production panel image with the host Docker socket mounted, so
 # deployed apps, managed databases and the Traefik ingress container are all
-# managed as host siblings through the socket. No install.sh, no systemd.
+# managed as host siblings through the socket. No systemd, no host Node.js.
 #
+# Easiest: let the installer manage this file and its .env for you —
+#   ./install.sh --docker        (or: curl … install.sh | bash -s -- --docker)
+#
+# Manually:
 #   echo "NINEDEPLOY_JWT_SECRET=$(openssl rand -hex 32)" >> .env
 #   echo "DOCKER_GID=$(getent group docker | cut -d: -f3)" >> .env
 #   docker compose -f docker-compose.prod.yml up -d
@@ -14,6 +18,15 @@
 #
 # The image runs as the non-root `ninedeploy` user; the host socket is
 # typically root:docker mode 0660, so the docker group's GID is required.
+#
+# Values are read from a .env file next to this compose file (docker compose
+# loads it automatically). The installer (install.sh --docker) maintains that
+# file for you; manually, create it with at least:
+#
+#   NINEDEPLOY_JWT_SECRET=<openssl rand -hex 32>
+#   DOCKER_GID=$(getent group docker | cut -d: -f3)
+
+name: ninedeploy
 
 services:
   ninedeploy:
@@ -24,20 +37,20 @@ services:
     #   dockerfile: Dockerfile
     restart: unless-stopped
     ports:
+      # Host-side port is variable; the container always listens on 3000.
       # Drop this mapping and route the panel through Traefik instead if you
       # don't want the API directly exposed (set the panel domain in settings).
-      - "3000:3000"
+      - "${NINEDEPLOY_PORT:-3000}:3000"
     environment:
       NODE_ENV: production
       # A strong secret is mandatory — production refuses to boot on the
       # known defaults (see apps/server/src/env.ts).
       NINEDEPLOY_JWT_SECRET: "${NINEDEPLOY_JWT_SECRET:?generate one: openssl rand -hex 32}"
       NINEDEPLOY_PUBLIC_URL: ${NINEDEPLOY_PUBLIC_URL:-http://localhost:3000}
-      # Automatic HTTPS via Let's Encrypt (optional):
-      # NINEDEPLOY_ACME_EMAIL: admin@example.com
-      # Wildcard certificates via DNS-01 (optional):
-      # NINEDEPLOY_DNS_PROVIDER: cloudflare
-      # NINEDEPLOY_DNS_TOKEN: <api-token>
+      # Optional integrations (set in .env; empty values are treated as unset):
+      NINEDEPLOY_ACME_EMAIL: ${NINEDEPLOY_ACME_EMAIL:-}
+      NINEDEPLOY_DNS_PROVIDER: ${NINEDEPLOY_DNS_PROVIDER:-}
+      NINEDEPLOY_DNS_TOKEN: ${NINEDEPLOY_DNS_TOKEN:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       # SQLite db, git checkouts, encrypted backups and master.key live here.
