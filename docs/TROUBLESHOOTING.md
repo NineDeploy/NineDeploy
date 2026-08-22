@@ -4,6 +4,33 @@ Common operational edge cases, recovery steps, and diagnostic procedures for Nin
 
 ---
 
+## 🔁 0. Nothing Comes Back After a Host Reboot
+
+**Symptoms**:
+- After rebooting the server, NineDeploy, Traefik and deployed containers are all down.
+
+**Resolution**:
+1. Check whether the Docker daemon is running and boot-enabled — every container's restart policy depends on it, and the `ninedeploy` unit requires it:
+   ```bash
+   systemctl status docker ninedeploy --no-pager
+   systemctl is-enabled docker ninedeploy
+   ```
+   If Docker is disabled, re-running the installer fixes it permanently (`sudo systemctl enable docker` is the immediate repair).
+2. Containers stopped manually before the reboot stay stopped (`unless-stopped` semantics). List and start them:
+   ```bash
+   docker ps -a
+   docker start <container>
+   ```
+3. Bare-metal (PM2) deployments are restored at boot by the `ninedeploy-pm2` systemd unit from the dump the panel refreshes after each start/stop. If the unit is missing or the dump is stale, re-run the installer or redeploy the service:
+   ```bash
+   systemctl status ninedeploy-pm2 --no-pager
+   ```
+
+**The panel says "running" but nothing is actually running**:
+The service status used to record the *last lifecycle result*, so a reboot or daemon outage left stale `running` rows. The panel now reconciles against the live runtime at startup and every 5 minutes: rows are downgraded to `stopped` (runtime exists but is not running) or `error` (runtime is gone — redeploy it). Lifecycle actions also report the truth: starting/restarting a runtime that no longer exists returns **409** (redeploy required), and a Docker daemon that cannot be reached returns **503** instead of a fake success.
+
+---
+
 ## 🛑 1. Docker Daemon / Socket Permission Denied
 
 **Symptoms**:

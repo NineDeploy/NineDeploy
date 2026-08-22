@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { pm2Builder, pm2Logs, pm2Restart, pm2Start, pm2Stop } from '../../src/engine/builders/pm2.js';
+import { pm2Builder, pm2Logs, pm2Restart, pm2Start, pm2Status, pm2Stop } from '../../src/engine/builders/pm2.js';
 
 const h = vi.hoisted(() => {
   const pm2 = {
@@ -13,6 +13,7 @@ const h = vi.hoisted(() => {
     delete: vi.fn((_name: string, cb: (err?: Error | null) => void) => cb(null)),
     stop: vi.fn((_name: string, cb: (err?: Error | null) => void) => cb(null)),
     restart: vi.fn((_name: string, cb: (err?: Error | null) => void) => cb(null)),
+    dump: vi.fn((cb: (err?: Error | null) => void) => cb(null)),
   };
   const run = vi.fn(async () => undefined);
   const sleep = vi.fn(async () => undefined);
@@ -247,6 +248,26 @@ describe('pm2Builder.stop', () => {
 });
 
 describe('pm2 lifecycle helpers', () => {
+  it('persists the process list after every lifecycle change (boot resurrect dump)', async () => {
+    await pm2Stop('api-1');
+    expect(h.pm2.dump).toHaveBeenCalledTimes(1);
+
+    await pm2Start('api-1');
+    expect(h.pm2.dump).toHaveBeenCalledTimes(2);
+
+    await pm2Restart('api-1');
+    expect(h.pm2.dump).toHaveBeenCalledTimes(3);
+  });
+
+  it('a failing dump never fails the lifecycle operation', async () => {
+    h.pm2.dump.mockImplementationOnce(() => {
+      throw new Error('dump unavailable');
+    });
+
+    await expect(pm2Stop('api-1')).resolves.toBeUndefined();
+    expect(h.pm2.stop).toHaveBeenCalledWith('api-1', expect.any(Function));
+  });
+
   it('serializes process-global PM2 connection sessions', async () => {
     let finishRestart!: () => void;
     h.pm2.restart.mockImplementationOnce((_name: string, cb: (err?: Error | null) => void) => {
@@ -272,6 +293,38 @@ describe('pm2 lifecycle helpers', () => {
     expect(h.pm2.stop).toHaveBeenCalledWith('api-1', expect.any(Function));
     expect(h.pm2.connect).toHaveBeenCalledTimes(1);
     expect(h.pm2.disconnect).toHaveBeenCalledTimes(1);
+  });
+
+  describe('pm2Status', () => {
+    const withProc = (status: string) => [
+      { name: 'api-1', pm2_env: { status } },
+    ];
+
+    it('reports online when the process is running', async () => {
+      h.pm2.describe.mockImplementationOnce(
+        (_n: string, cb: (err: Error | null, desc?: unknown[]) => void) => cb(null, withProc('online')),
+      );
+      await expect(pm2Status('api-1')).resolves.toBe('online');
+    });
+
+    it('reports stopped when the process exists but is not online', async () => {
+      h.pm2.describe.mockImplementationOnce(
+        (_n: string, cb: (err: Error | null, desc?: unknown[]) => void) => cb(null, withProc('stopped')),
+      );
+      await expect(pm2Status('api-1')).resolves.toBe('stopped');
+    });
+
+    it('reports gone when the daemon does not know the process', async () => {
+      h.pm2.describe.mockImplementationOnce(
+        (_n: string, cb: (err: Error | null, desc?: unknown[]) => void) => cb(null, []),
+      );
+      await expect(pm2Status('api-1')).resolves.toBe('gone');
+    });
+
+    it('reports gone when the daemon cannot be reached', async () => {
+      h.pm2.connect.mockImplementationOnce((cb: (err?: Error | null) => void) => cb(new Error('daemon down')));
+      await expect(pm2Status('api-1')).resolves.toBe('gone');
+    });
   });
 
   it('pm2Stop rejects when the daemon errors', async () => {

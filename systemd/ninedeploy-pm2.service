@@ -1,0 +1,38 @@
+# NineDeploy PM2 resurrection unit — rendered by install.sh with this
+# install's paths and written to /etc/systemd/system/ninedeploy-pm2.service.
+# Placeholders (filled by install.sh): @NODE@ @INSTALL_DIR@ @PM2_HOME@
+#
+# The PM2 daemon does not survive a reboot or a panel restart: bare-metal
+# (PM2) deployments die with it and nothing brought them back. The server now
+# dumps the process list after every lifecycle change (pm2.dump()); this unit
+# resurrects that dump at boot. ConditionPathExists keeps the unit a clean
+# no-op on hosts without PM2 deployments instead of failing on every boot.
+#
+# Manual use (adjust the placeholders yourself):
+#   sudo cp systemd/ninedeploy-pm2.service /etc/systemd/system/ninedeploy-pm2.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now ninedeploy-pm2
+#
+[Unit]
+Description=NineDeploy PM2 — restores bare-metal deployments at boot
+Documentation=https://github.com/ninedeploy/ninedeploy
+After=network.target ninedeploy.service
+ConditionPathExists=@PM2_HOME@/dump.pm2
+
+[Service]
+# `pm2 resurrect` is a one-shot restore, not a daemon this unit owns: when the
+# PM2 daemon is already running (panel-spawned), the CLI attaches over RPC,
+# restores, and exits — Type=forking would see no remaining process and fail
+# with Result=protocol. oneshot + RemainAfterExit handles both paths.
+Type=oneshot
+RemainAfterExit=yes
+User=root
+Group=root
+Environment=PM2_HOME=@PM2_HOME@
+LimitNOFILE=infinity:infinity
+LimitNPROC=infinity:infinity
+LimitCORE=infinity:infinity
+ExecStart=@NODE@ @INSTALL_DIR@/apps/server/node_modules/pm2/bin/pm2 resurrect
+
+[Install]
+WantedBy=multi-user.target

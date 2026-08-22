@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Runtime State Reconciliation**: Service status is reconciled against the live runtime at startup and every 5 minutes, so a reboot, daemon outage or external `docker stop` no longer leaves the panel claiming `running` for containers that do not exist. Stale rows are downgraded to `stopped` (runtime present) or `error` (runtime gone, redeploy required).
+- **Boot Resilience**: The installer unconditionally enables the Docker daemon at boot (previously only when it installed Docker itself), so pre-existing Docker installations no longer leave Traefik, deployed containers and the panel dead after a reboot. A new `ninedeploy-pm2` systemd unit resurrects bare-metal PM2 deployments at boot from a process dump the server refreshes after every lifecycle change, and Compose deployments apply the `unless-stopped` restart policy to their containers so they survive daemon restarts and reboots.
 - **Streaming Encrypted Backups**: Database dumps are encrypted and decrypted as AES-256-GCM streams, so large backups no longer need to be loaded into server memory for creation, download or restore. Existing encrypted envelopes and legacy plaintext backups remain readable.
 - **Read-Only MCP Mode**: Setting `NINEDEPLOY_MCP_READONLY=1` exposes a fail-closed allowlist of inspection tools and excludes mutations, secret-bearing configuration, container inspection, Compose and file operations.
 - **Dashboard Crash Recovery**: Unexpected React render failures now show a recoverable error screen instead of leaving the dashboard blank.
@@ -20,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Header-Based WebSocket Authentication**: Current dashboard clients carry bearer credentials in the WebSocket subprotocol header instead of query strings, reducing exposure through URLs and proxy history while preserving compatibility for older clients.
 
 ### Fixed
+- **Honest Service Lifecycle**: stop/start/restart no longer swallow Docker/PM2 failures while still writing a success status to the database. Starting or restarting a runtime that no longer exists now returns 409 and marks the service `error`, an unreachable Docker daemon returns 503, and stopping an already-gone runtime is treated as the idempotent success it is.
+- **Bounded Clone Slug Generation**: the clone slug-deduplication loop is now bounded, so a pathological collision run cannot spin forever.
 - **Tenant-Scoped Inventory Views**: Domain, metrics, topology, network and volume responses now exclude resources outside the authenticated non-admin user's ownership scope.
 - **Safer Preview Deployments**: Pull-request previews reject invalid refs and external fork repositories before they can inherit service environment variables or enter the build queue.
 - **Atomic Deployment Claims**: Competing worker slots can no longer claim two queued deployments for the same service at the same time.

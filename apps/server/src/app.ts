@@ -16,6 +16,7 @@ import jobSchedulerPlugin from './plugins/jobScheduler.js';
 import kernelPlugin from './plugins/kernel.js';
 import rateLimitPlugin from './plugins/rateLimit.js';
 import rawBodyPlugin from './plugins/rawBody.js';
+import runtimeStatePlugin from './plugins/runtimeState.js';
 import securityHeadersPlugin from './plugins/securityHeaders.js';
 import staticFilesPlugin from './plugins/staticFiles.js';
 import traefikPlugin from './plugins/traefik.js';
@@ -93,6 +94,8 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(workerPlugin);
   // Traefik reverse proxy + dynamic routing
   await app.register(traefikPlugin);
+  // Runtime-state reconciliation (panel status vs live containers/processes)
+  await app.register(runtimeStatePlugin);
   // Resource metrics collector
   await app.register(collectorPlugin);
   // Scheduled database backups

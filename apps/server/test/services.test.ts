@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { servicesRoutes } from '../src/modules/services.js';
+import { getBundledTemplates } from '../src/templates/registry.js';
 import { asUser, buildTestApp, createFakeDb, svcRow } from './helpers.js';
 
 const execMocks = vi.hoisted(() => ({
@@ -45,6 +46,25 @@ const validCreate = {
   port: 8080,
   build: { buildPack: 'auto', baseDir: '/' },
 };
+
+/** Record every payload written through db.update(...) in a test. */
+function trackStatusUpdates(db: ReturnType<typeof createFakeDb>) {
+  const updates: Array<Record<string, unknown>> = [];
+  const original = db.update.bind(db) as (table: unknown) => {
+    set: (payload: Record<string, unknown>) => unknown;
+  };
+  (
+    db as unknown as {
+      update: (table: unknown) => { set: (payload: Record<string, unknown>) => unknown };
+    }
+  ).update = (table: unknown) => ({
+    set: (payload: Record<string, unknown>) => {
+      updates.push(payload);
+      return original(table).set(payload);
+    },
+  });
+  return { updates };
+}
 
 describe('services routes', () => {
   beforeEach(() => {
@@ -189,6 +209,10 @@ describe('services routes', () => {
   });
 
   it('repairs an older failed Hub service with the current trusted template database contract', async () => {
+    // Registry-controlled fields must match the bundled registry — hardcoding
+    // them here drifts whenever the curated template images are bumped.
+    const ghost = getBundledTemplates().find((t) => t.id === 'ghost');
+    expect(ghost).toBeDefined();
     let updated: Record<string, unknown> | undefined;
     const existing = svcRow({
       id: 17,
@@ -198,9 +222,9 @@ describe('services routes', () => {
       status: 'error',
       type: 'docker',
       repoUrl: null,
-      image: 'ghost:5-alpine',
-      port: 2368,
-      volumeMount: '/var/lib/ghost/content',
+      image: ghost!.image,
+      port: ghost!.port,
+      volumeMount: ghost!.volumeMount,
       templateDatabaseEnv: null,
       serverId: null,
     });
@@ -220,14 +244,14 @@ describe('services routes', () => {
         reuseExisting: true,
         name: 'Ghost',
         type: 'docker',
-        image: 'ghost:5-alpine',
-        port: 2368,
-        volumeMount: '/var/lib/ghost/content',
+        image: ghost!.image,
+        port: ghost!.port,
+        volumeMount: ghost!.volumeMount,
         build: { buildPack: 'auto', baseDir: '/' },
       },
     });
 
-    expect(res.statusCode).toBe(200);
+    expect(res.statusCode, JSON.stringify(res.json())).toBe(200);
     expect(res.json()).toMatchObject({ id: 17, status: 'error' });
     expect(updated?.templateId).toBe('ghost');
     expect(updated?.templateDatabaseEnv).toMatchObject({
@@ -566,7 +590,7 @@ describe('services routes', () => {
     const res = await app.inject({ method: 'POST', url: '/1/stop', headers: asUser() });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ ok: true, status: 'stopped' });
-    expect(execMocks.run).toHaveBeenCalledWith('docker', ['stop', '-t', '5', 'c1'], {}, expect.any(Function));
+    expect(execMocks.capture).toHaveBeenCalledWith('docker', ['stop', '-t', '5', 'c1']);
   });
 
   it('starts a service', async () => {
@@ -610,34 +634,79 @@ describe('services routes', () => {
     expect(res.statusCode).toBe(404);
   });
 
-  it('tolerates docker failures during stop', async () => {
-    execMocks.run.mockRejectedValueOnce(new Error('docker down'));
+  it('treats stopping a missing container as success (idempotent)', async () => {
+    execMocks.capture.mockRejectedValueOnce(
+      new Error('`docker stop c1` exited 1: Error response from daemon: No such container: c1'),
+    );
     const app = await buildTestApp({
       db: createFakeDb({ findFirst: { services: svcRow({ id: 1, runtimeId: 'c1' }) } }),
     });
     await app.register(servicesRoutes);
     const res = await app.inject({ method: 'POST', url: '/1/stop', headers: asUser() });
     expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: true, status: 'stopped' });
   });
 
-  it('tolerates docker failures during start', async () => {
-    execMocks.run.mockRejectedValueOnce(new Error('docker down'));
+  it('reports 503 instead of a fake status when the docker daemon is unreachable during stop', async () => {
+    execMocks.capture.mockRejectedValueOnce(
+      new Error('`docker stop c1` exited 1: Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?'),
+    );
+    const app = await buildTestApp({
+      db: createFakeDb({ findFirst: { services: svcRow({ id: 1, runtimeId: 'c1' }) } }),
+    });
+    await app.register(servicesRoutes);
+    const res = await app.inject({ method: 'POST', url: '/1/stop', headers: asUser() });
+    expect(res.statusCode).toBe(503);
+  });
+
+  it('reports 503 when the docker daemon is unreachable during start', async () => {
+    execMocks.capture.mockRejectedValueOnce(
+      new Error('`docker start c1` exited 1: Cannot connect to the Docker daemon at unix:///var/run/docker.sock'),
+    );
     const app = await buildTestApp({
       db: createFakeDb({ findFirst: { services: svcRow({ id: 1, runtimeId: 'c1' }) } }),
     });
     await app.register(servicesRoutes);
     const res = await app.inject({ method: 'POST', url: '/1/start', headers: asUser() });
-    expect(res.statusCode).toBe(200);
+    expect(res.statusCode).toBe(503);
   });
 
-  it('tolerates docker failures during restart', async () => {
-    execMocks.run.mockRejectedValueOnce(new Error('docker down'));
+  it('reports 409 and marks the service errored when the container no longer exists at start', async () => {
+    execMocks.capture.mockRejectedValueOnce(
+      new Error('`docker start c1` exited 1: Error response from daemon: No such container: c1'),
+    );
+    const db = createFakeDb({ findFirst: { services: svcRow({ id: 1, runtimeId: 'c1' }) } });
+    const { updates } = trackStatusUpdates(db);
+    const app = await buildTestApp({ db });
+    await app.register(servicesRoutes);
+    const res = await app.inject({ method: 'POST', url: '/1/start', headers: asUser() });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.message).toMatch(/no longer exists/i);
+    expect(updates).toContainEqual({ status: 'error' });
+    // The lying "running" write must never happen after a failed start.
+    expect(updates).not.toContainEqual({ status: 'running' });
+  });
+
+  it('reports 409 when the container no longer exists at restart', async () => {
+    execMocks.capture.mockRejectedValueOnce(
+      new Error('`docker restart c1` exited 1: Error response from daemon: No such container: c1'),
+    );
     const app = await buildTestApp({
       db: createFakeDb({ findFirst: { services: svcRow({ id: 1, runtimeId: 'c1' }) } }),
     });
     await app.register(servicesRoutes);
     const res = await app.inject({ method: 'POST', url: '/1/restart', headers: asUser() });
-    expect(res.statusCode).toBe(200);
+    expect(res.statusCode).toBe(409);
+  });
+
+  it('propagates unexpected docker failures instead of claiming success', async () => {
+    execMocks.capture.mockRejectedValueOnce(new Error('`docker stop c1` exited 1: driver failure'));
+    const app = await buildTestApp({
+      db: createFakeDb({ findFirst: { services: svcRow({ id: 1, runtimeId: 'c1' }) } }),
+    });
+    await app.register(servicesRoutes);
+    const res = await app.inject({ method: 'POST', url: '/1/stop', headers: asUser() });
+    expect(res.statusCode).toBe(500);
   });
 
   it('returns container logs', async () => {
@@ -731,9 +800,9 @@ describe('services routes', () => {
     expect(pm2Mocks.restart).toHaveBeenCalledWith('api-1', expect.any(Function));
   });
 
-  it('tolerates pm2 daemon failures during stop', async () => {
+  it('treats stopping a missing pm2 process as success (idempotent)', async () => {
     pm2Mocks.stop.mockImplementationOnce((_n: string, cb: (err?: Error | null) => void) =>
-      cb(new Error('daemon down')));
+      cb(new Error('process api-1 not found')));
     const app = await buildTestApp({
       db: createFakeDb({
         findFirst: { services: svcRow({ id: 1, runtimeId: 'api-1', type: 'pm2' }) },
@@ -742,24 +811,40 @@ describe('services routes', () => {
     await app.register(servicesRoutes);
     const res = await app.inject({ method: 'POST', url: '/1/stop', headers: asUser() });
     expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: true, status: 'stopped' });
   });
 
-  it('tolerates pm2 daemon failures during start', async () => {
-    pm2Mocks.restart.mockImplementationOnce((_n: string, cb: (err?: Error | null) => void) =>
-      cb(new Error('daemon down')));
+  it('propagates unexpected pm2 daemon failures during stop instead of claiming success', async () => {
+    pm2Mocks.stop.mockImplementationOnce((_n: string, cb: (err?: Error | null) => void) =>
+      cb(new Error('RPC timeout')));
     const app = await buildTestApp({
       db: createFakeDb({
         findFirst: { services: svcRow({ id: 1, runtimeId: 'api-1', type: 'pm2' }) },
       }),
     });
     await app.register(servicesRoutes);
-    const res = await app.inject({ method: 'POST', url: '/1/start', headers: asUser() });
-    expect(res.statusCode).toBe(200);
+    const res = await app.inject({ method: 'POST', url: '/1/stop', headers: asUser() });
+    expect(res.statusCode).toBe(500);
   });
 
-  it('tolerates pm2 daemon failures during restart', async () => {
+  it('reports 409 and marks the service errored when the pm2 process no longer exists at start', async () => {
     pm2Mocks.restart.mockImplementationOnce((_n: string, cb: (err?: Error | null) => void) =>
-      cb(new Error('daemon down')));
+      cb(new Error('process api-1 not found')));
+    const db = createFakeDb({
+      findFirst: { services: svcRow({ id: 1, runtimeId: 'api-1', type: 'pm2' }) },
+    });
+    const { updates } = trackStatusUpdates(db);
+    const app = await buildTestApp({ db });
+    await app.register(servicesRoutes);
+    const res = await app.inject({ method: 'POST', url: '/1/start', headers: asUser() });
+    expect(res.statusCode).toBe(409);
+    expect(updates).toContainEqual({ status: 'error' });
+    expect(updates).not.toContainEqual({ status: 'running' });
+  });
+
+  it('propagates unexpected pm2 daemon failures during restart', async () => {
+    pm2Mocks.restart.mockImplementationOnce((_n: string, cb: (err?: Error | null) => void) =>
+      cb(new Error('RPC timeout')));
     const app = await buildTestApp({
       db: createFakeDb({
         findFirst: { services: svcRow({ id: 1, runtimeId: 'api-1', type: 'pm2' }) },
@@ -767,7 +852,7 @@ describe('services routes', () => {
     });
     await app.register(servicesRoutes);
     const res = await app.inject({ method: 'POST', url: '/1/restart', headers: asUser() });
-    expect(res.statusCode).toBe(200);
+    expect(res.statusCode).toBe(500);
   });
 
   it('rejects lifecycle ops for an unsupported service type', async () => {

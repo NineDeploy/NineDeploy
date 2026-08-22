@@ -3,10 +3,10 @@ import type { FastifyPluginAsync } from 'fastify';
 import { buildConfigs, envVars, services, sources, type DB, type Service } from '@ninedeploy/db';
 import { createService, setLimits, updateService } from '@ninedeploy/schemas';
 import { getTemplates } from '../templates/registry.js';
-import { capture, run } from '../lib/exec.js';
+import { capture } from '../lib/exec.js';
 import { audit } from '../lib/audit.js';
 import { config } from '../config.js';
-import { badRequest, notFound, parseId as num } from '../lib/errors.js';
+import { badRequest, conflict, HttpError, notFound, parseId as num } from '../lib/errors.js';
 import { loadServiceForUser } from '../lib/serviceAccess.js';
 import { assertMayUseHostPrivilege } from '../lib/hostPrivilege.js';
 import { assertMayPublishPort } from '../lib/hostPort.js';
@@ -344,17 +344,42 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
   // PM2 services run as host processes under the PM2 daemon and must be
   // managed through it — `docker stop/start/restart` would silently no-op on a
   // PM2 process name. Docker services are managed through the docker CLI.
+  //
+  // These endpoints must tell the truth about the runtime: swallowing a
+  // Docker/PM2 failure while still writing `running`/`stopped` to the database
+  // makes the panel report containers that do not exist (typically after a
+  // reboot or daemon outage). capture() rejections carry the CLI's stderr,
+  // which separates "the runtime is gone" (idempotent stop / needs redeploy)
+  // from "the daemon itself is unreachable".
+  const errText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+  const isMissingRuntime = (err: unknown): boolean =>
+    /no such container|no such object|no such process|process (name )?not found|not found/i.test(errText(err));
+  const isDaemonDown = (err: unknown): boolean =>
+    /cannot connect to the docker daemon|docker daemon is not running|error during connect|is the docker daemon running/i.test(
+      errText(err),
+    );
+  const daemonUnavailable = (err: unknown): HttpError =>
+    new HttpError(503, 'runtime_daemon_unavailable', `Docker daemon is unreachable: ${errText(err)}`);
+  const runtimeGone = (kind: string, runtimeId: string): HttpError =>
+    conflict(`${kind} "${runtimeId}" no longer exists — redeploy the service to recreate it`);
+
   app.post('/:id/stop', async (req) => {
     const svc = await loadServiceForUser(app.db, num((req.params as { id: string }).id), req.user!);
     if (!svc?.runtimeId) throw notFound('Service not found or not deployed');
     // PM2 and Docker have disjoint runtimes — an unknown type must not silently
     // misroute to the docker CLI (which would no-op on a PM2 process name).
     if (svc.type === 'pm2') {
-      await pm2Stop(svc.runtimeId).catch((err) =>
-        req.log.warn({ err, runtimeId: svc.runtimeId }, 'failed to stop pm2 process'));
+      // Stopping a process that is already gone is success, not failure.
+      await pm2Stop(svc.runtimeId).catch((err: unknown) => {
+        if (!isMissingRuntime(err)) throw err;
+        req.log.warn({ err, runtimeId: svc.runtimeId }, 'pm2 process already gone; stop is idempotent');
+      });
     } else if (svc.type === 'docker' || svc.type === 'compose') {
-      await run('docker', ['stop', '-t', '5', svc.runtimeId], {}, () => {}).catch((err) =>
-        req.log.warn({ err, runtimeId: svc.runtimeId }, 'failed to stop docker container'));
+      await capture('docker', ['stop', '-t', '5', svc.runtimeId]).catch((err: unknown) => {
+        if (isDaemonDown(err)) throw daemonUnavailable(err);
+        if (!isMissingRuntime(err)) throw err;
+        req.log.warn({ err, runtimeId: svc.runtimeId }, 'container already gone; stop is idempotent');
+      });
     } else {
       req.log.warn({ type: svc.type, runtimeId: svc.runtimeId }, 'unsupported service type — cannot stop runtime');
       throw badRequest('Unsupported service type');
@@ -368,11 +393,22 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
     const svc = await loadServiceForUser(app.db, num((req.params as { id: string }).id), req.user!);
     if (!svc?.runtimeId) throw notFound('Service not found or not deployed');
     if (svc.type === 'pm2') {
-      await pm2Start(svc.runtimeId).catch((err) =>
-        req.log.warn({ err, runtimeId: svc.runtimeId }, 'failed to start pm2 process'));
+      await pm2Start(svc.runtimeId).catch(async (err: unknown) => {
+        if (isMissingRuntime(err)) {
+          await app.db.update(services).set({ status: 'error' }).where(eq(services.id, svc.id));
+          throw runtimeGone('PM2 process', svc.runtimeId!);
+        }
+        throw err;
+      });
     } else if (svc.type === 'docker' || svc.type === 'compose') {
-      await run('docker', ['start', svc.runtimeId], {}, () => {}).catch((err) =>
-        req.log.warn({ err, runtimeId: svc.runtimeId }, 'failed to start docker container'));
+      await capture('docker', ['start', svc.runtimeId]).catch(async (err: unknown) => {
+        if (isDaemonDown(err)) throw daemonUnavailable(err);
+        if (isMissingRuntime(err)) {
+          await app.db.update(services).set({ status: 'error' }).where(eq(services.id, svc.id));
+          throw runtimeGone('Container', svc.runtimeId!);
+        }
+        throw err;
+      });
     } else {
       req.log.warn({ type: svc.type, runtimeId: svc.runtimeId }, 'unsupported service type — cannot start runtime');
       throw badRequest('Unsupported service type');
@@ -386,15 +422,29 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
     const svc = await loadServiceForUser(app.db, num((req.params as { id: string }).id), req.user!);
     if (!svc?.runtimeId) throw notFound('Service not found or not deployed');
     if (svc.type === 'pm2') {
-      await pm2Restart(svc.runtimeId).catch((err) =>
-        req.log.warn({ err, runtimeId: svc.runtimeId }, 'failed to restart pm2 process'));
+      await pm2Restart(svc.runtimeId).catch(async (err: unknown) => {
+        if (isMissingRuntime(err)) {
+          await app.db.update(services).set({ status: 'error' }).where(eq(services.id, svc.id));
+          throw runtimeGone('PM2 process', svc.runtimeId!);
+        }
+        throw err;
+      });
     } else if (svc.type === 'docker' || svc.type === 'compose') {
-      await run('docker', ['restart', svc.runtimeId], {}, () => {}).catch((err) =>
-        req.log.warn({ err, runtimeId: svc.runtimeId }, 'failed to restart docker container'));
+      await capture('docker', ['restart', svc.runtimeId]).catch(async (err: unknown) => {
+        if (isDaemonDown(err)) throw daemonUnavailable(err);
+        if (isMissingRuntime(err)) {
+          await app.db.update(services).set({ status: 'error' }).where(eq(services.id, svc.id));
+          throw runtimeGone('Container', svc.runtimeId!);
+        }
+        throw err;
+      });
     } else {
       req.log.warn({ type: svc.type, runtimeId: svc.runtimeId }, 'unsupported service type — cannot restart runtime');
       throw badRequest('Unsupported service type');
     }
+    // docker restart / pm2.restart bring a stopped runtime back up — persist
+    // the transition, or a stop → restart flow would forever show 'stopped'.
+    await app.db.update(services).set({ status: 'running' }).where(eq(services.id, svc.id));
     void audit(app.db, req.user!.id, 'service.restart', svc.name);
     return { ok: true, status: 'running' };
   });
@@ -434,9 +484,14 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
     const newName = body.name?.trim() || `${svc.name} (Copy)`;
     let newSlug = body.slug?.trim() ? slugify(body.slug) : slugify(newName);
 
-    // Ensure unique slug
+    // Ensure unique slug. Bounded: a pathological number of collisions (or a
+    // test/DB layer that answers every probe with a row) must not spin forever.
     let counter = 1;
     while (await app.db.query.services.findFirst({ where: eq(services.slug, newSlug) })) {
+      if (counter > 50) {
+        newSlug = `${slugify(newName)}-${Date.now().toString(36)}`;
+        break;
+      }
       newSlug = `${slugify(newName)}-${counter++}`;
     }
 

@@ -28,6 +28,21 @@ const withPm2 = async <T>(fn: () => Promise<T>): Promise<T> => {
 };
 
 /**
+ * Persist the PM2 process list to <PM2_HOME>/dump.pm2. Must run INSIDE a
+ * withPm2 session. The PM2 daemon dies with every reboot (and every panel
+ * restart), taking bare-metal deployments with it; the ninedeploy-pm2 systemd
+ * unit resurrects this dump at boot, so it must reflect every lifecycle
+ * change. Best-effort: a dump failure must not fail the lifecycle operation.
+ */
+const dumpProcessList = async (): Promise<void> => {
+  try {
+    await new Promise<void>((res) => pm2.dump(() => res()));
+  } catch {
+    /* best-effort: never fail the lifecycle operation over a dump */
+  }
+};
+
+/**
  * Split a start command into a PM2 script + args. PM2's `script` option is a
  * binary/file path, not a shell command — so `node dist/index.js` must become
  * `script: 'node', args: 'dist/index.js'`, and `npm start` must become
@@ -99,12 +114,12 @@ export const pm2Builder: Builder = {
     // Docker builder's --memory limit.
     if (service.memLimitMb > 0) startOpts.max_memory_restart = `${service.memLimitMb}M`;
 
-    await withPm2(
-      () =>
-        new Promise<void>((res, rej) =>
-          pm2.start(startOpts, (err) => (err ? rej(err) : res())),
-        ),
-    );
+    await withPm2(async () => {
+      await new Promise<void>((res, rej) =>
+        pm2.start(startOpts, (err) => (err ? rej(err) : res())),
+      );
+      await dumpProcessList();
+    });
     return { runtimeId: name, port: service.port ?? null, healthPath: service.healthPath ?? '/' };
   },
 
@@ -124,9 +139,10 @@ export const pm2Builder: Builder = {
   },
 
   async stop(runtimeId) {
-    await withPm2(() => new Promise<void>((res) => pm2.delete(runtimeId, () => res()))).catch(
-      () => undefined,
-    );
+    await withPm2(async () => {
+      await new Promise<void>((res) => pm2.delete(runtimeId, () => res()));
+      await dumpProcessList();
+    }).catch(() => undefined);
   },
 };
 
@@ -136,17 +152,46 @@ export const pm2Builder: Builder = {
  * preserves the process so `start` can resume it without a full redeploy.
  */
 export async function pm2Stop(runtimeId: string): Promise<void> {
-  await withPm2(() => new Promise<void>((res, rej) => pm2.stop(runtimeId, (err) => (err ? rej(err) : res()))));
+  await withPm2(async () => {
+    await new Promise<void>((res, rej) => pm2.stop(runtimeId, (err) => (err ? rej(err) : res())));
+    await dumpProcessList();
+  });
 }
 
 /** Start (resume) an existing PM2 process. Rejects when it was deleted. */
 export async function pm2Start(runtimeId: string): Promise<void> {
-  await withPm2(() => new Promise<void>((res, rej) => pm2.restart(runtimeId, (err) => (err ? rej(err) : res()))));
+  await withPm2(async () => {
+    await new Promise<void>((res, rej) => pm2.restart(runtimeId, (err) => (err ? rej(err) : res())));
+    await dumpProcessList();
+  });
 }
 
 /** Restart a PM2 process. */
 export async function pm2Restart(runtimeId: string): Promise<void> {
-  await withPm2(() => new Promise<void>((res, rej) => pm2.restart(runtimeId, (err) => (err ? rej(err) : res()))));
+  await withPm2(async () => {
+    await new Promise<void>((res, rej) => pm2.restart(runtimeId, (err) => (err ? rej(err) : res())));
+    await dumpProcessList();
+  });
+}
+
+/**
+ * Live process state for reconciliation: 'online', present-but-not-running
+ * ('stopped'), or absent from the daemon ('gone' — also returned when the
+ * daemon cannot be reached, in which case nothing is running by definition).
+ */
+export async function pm2Status(runtimeId: string): Promise<'online' | 'stopped' | 'gone'> {
+  try {
+    return await withPm2(async () => {
+      const procs = await new Promise<ProcessDescription[]>((res, rej) =>
+        pm2.describe(runtimeId, (err, desc) => (err ? rej(err) : res(desc ?? []))),
+      );
+      const proc = procs.find((p) => p?.name === runtimeId);
+      if (!proc) return 'gone';
+      return proc.pm2_env?.status === 'online' ? 'online' : 'stopped';
+    });
+  } catch {
+    return 'gone';
+  }
 }
 
 /** Tail the last 300 lines of a process's combined stdout+stderr log files. */

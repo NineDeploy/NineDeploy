@@ -26,6 +26,40 @@ function mainContainer(slug: string, composeService: string): string {
   return `${composeProject(slug)}-${composeService}-1`;
 }
 
+/**
+ * Compose files without an explicit `restart:` policy leave every container
+ * unrestartable — they stay dead across daemon restarts and host reboots.
+ * Compose `up` offers no policy override, so apply the platform default
+ * (unless-stopped, same as the docker builder) to the project's containers
+ * after each `up`. `docker update` persists the policy on the container.
+ */
+async function applyBootRestartPolicy(
+  project: string,
+  composeFile: string,
+  workDir: string,
+  log: (line: string) => void,
+): Promise<void> {
+  try {
+    const ids = (
+      await capture(
+        'docker',
+        ['compose', '-p', project, '-f', composeFile, 'ps', '-aq'],
+        { cwd: workDir },
+      )
+    )
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean);
+    if (ids.length === 0) return;
+    await run('docker', ['update', '--restart', 'unless-stopped', ...ids], {}, log);
+    log(`restart policy unless-stopped applied to ${ids.length} compose container(s)`);
+  } catch (err) {
+    // Best-effort: the deployment itself is up; only reboot persistence is at
+    // risk. The next deploy retries this automatically.
+    log(`warning: could not apply boot restart policy: ${err instanceof Error ? err.message : err}`);
+  }
+}
+
 export const composeBuilder: Builder = {
   async buildAndRun(ctx): Promise<DeployRuntime> {
     const { service, buildConfig, workDir, env, log } = ctx;
@@ -68,6 +102,7 @@ export const composeBuilder: Builder = {
         /* no .env written */
       }
     }
+    await applyBootRestartPolicy(project, composeFile, workDir, log);
 
     const runtimeId = mainContainer(service.slug, composeService);
     return {

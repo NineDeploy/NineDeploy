@@ -238,9 +238,6 @@ if ! command -v docker &>/dev/null; then
     run_vendor_script "https://get.docker.com" \
       || fail "Docker is required. Install it manually: https://docs.docker.com/engine/install/"
   fi
-  if command -v systemctl &>/dev/null; then
-    sudo systemctl enable --now docker || true
-  fi
 fi
 if ! docker info &>/dev/null 2>&1; then
   if command -v systemctl &>/dev/null; then
@@ -267,6 +264,27 @@ else
 fi
 docker_cmd() { "${DOCKER[@]}" "$@"; }
 ok "Docker $(docker_cmd --version 2>/dev/null | awk '{print $3}' | tr -d ',' || echo 'installed')"
+
+# Boot resilience: a Docker daemon that is merely running NOW but not enabled
+# in systemd silently stays down after the next reboot. Docker's restart
+# policies then never fire, so Traefik and every deployed container stay dead,
+# and the NineDeploy unit (Requires=docker.service) goes down with them. Ensure
+# boot enablement unconditionally — including when this installer did not
+# install Docker itself.
+if [ "$(uname -s)" = "Linux" ] && command -v systemctl &>/dev/null; then
+  sudo systemctl enable docker.service >/dev/null 2>&1 || true
+  sudo systemctl enable docker.socket >/dev/null 2>&1 || true
+  sudo systemctl enable containerd.service >/dev/null 2>&1 || true
+  if systemctl is-enabled --quiet docker.service 2>/dev/null \
+    || systemctl is-enabled --quiet docker.socket 2>/dev/null; then
+    ok "Docker is enabled at boot (systemd)"
+  else
+    # Not a hard failure: snap-managed or socket-activated Docker installs can
+    # be boot-persistent without these exact unit names. Warn loudly instead.
+    warn "Could not verify Docker boot enablement via systemd units."
+    warn "If Docker is not managed by snap, run: sudo systemctl enable docker.service"
+  fi
+fi
 
 # Swap space (Linux)
 # Low-memory VPS nodes (<= 4GB RAM) without swap risk OOM-kills when pulling
@@ -712,6 +730,41 @@ if [ "$(uname -s)" = "Linux" ] && command -v systemctl &>/dev/null; then
     *) docker_cmd logs --tail 50 ninedeploy-traefik 2>&1 || true; fail "Traefik is running but its HTTP entrypoint on :80 is not responding" ;;
   esac
   ok "Traefik ingress verified (network attached, :80 responding)"
+
+  # PM2 boot resurrection: bare-metal deployments live in a PM2 daemon that
+  # dies with every reboot — and with the panel restart above. The server
+  # keeps /root/.pm2/dump.pm2 fresh after each lifecycle change; this unit
+  # restores that dump at boot. It is a clean no-op until the first PM2
+  # deployment writes a dump (ConditionPathExists).
+  PM2_UNIT_TEMPLATE="$INSTALL_DIR/systemd/ninedeploy-pm2.service"
+  PM2_CLI="$INSTALL_DIR/apps/server/node_modules/pm2/bin/pm2"
+  if [ -f "$PM2_UNIT_TEMPLATE" ] && [ -f "$PM2_CLI" ]; then
+    PM2_STAGE_DIR=$(mktemp -d)
+    sed -e "s|@NODE@|$(which node)|g" \
+        -e "s|@INSTALL_DIR@|${INSTALL_DIR}|g" \
+        -e "s|@PM2_HOME@|/root/.pm2|g" \
+        "$PM2_UNIT_TEMPLATE" > "$PM2_STAGE_DIR/ninedeploy-pm2.service"
+    if ! command -v systemd-analyze &>/dev/null \
+      || systemd-analyze verify "$PM2_STAGE_DIR/ninedeploy-pm2.service" >/dev/null 2>&1; then
+      sudo install -m 0644 "$PM2_STAGE_DIR/ninedeploy-pm2.service" /etc/systemd/system/ninedeploy-pm2.service
+      sudo systemctl daemon-reload
+      sudo systemctl enable ninedeploy-pm2 >/dev/null 2>&1 || true
+      # Also runs right now: on upgrades the panel restart above killed the
+      # PM2 daemon's processes, and resurrect brings them straight back.
+      sudo systemctl start ninedeploy-pm2 >/dev/null 2>&1 || true
+      if systemctl is-failed --quiet ninedeploy-pm2 2>/dev/null; then
+        sudo systemctl reset-failed ninedeploy-pm2 >/dev/null 2>&1 || true
+        warn "PM2 resurrect unit failed to run; inspect: journalctl -u ninedeploy-pm2 -n 30"
+      else
+        ok "PM2 deployments are restored at boot (ninedeploy-pm2.service)"
+      fi
+    else
+      warn "Rendered ninedeploy-pm2 unit failed verification; PM2 deployments will not auto-restore at boot"
+    fi
+    rm -rf "$PM2_STAGE_DIR"
+  else
+    warn "PM2 CLI or unit template not found; bare-metal deployments will not auto-restore at boot"
+  fi
 else
   warn "systemd not available — starting in foreground…"
   info "For production, set up a process manager (systemd/pm2/launchd)."
