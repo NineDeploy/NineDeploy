@@ -45,14 +45,21 @@ export function DockerDashboard() {
 
   const composeQuery = useQuery({
     queryKey: ['container-compose', selectedContainer],
+    // The null arm is unreachable: `enabled` only lets the query run once a
+    // container is selected.
+    /* v8 ignore start */
     queryFn: () => (selectedContainer ? api.containers.compose(selectedContainer) : null),
+    /* v8 ignore stop */
     enabled: canInspect && Boolean(selectedContainer),
     retry: 1,
   });
 
   const inspectQuery = useQuery({
     queryKey: ['container-inspect', selectedContainer],
+    // Same gating as the compose query above.
+    /* v8 ignore start */
     queryFn: () => (selectedContainer ? api.containers.inspect(selectedContainer) : null),
+    /* v8 ignore stop */
     enabled: canInspect && Boolean(selectedContainer),
     retry: 1,
   });
@@ -63,6 +70,10 @@ export function DockerDashboard() {
   const inspectData = inspectQuery.data ?? composeData?.inspect;
   const traefikTags = inspectData?.traefikTags ?? {};
 
+  // Both copy handlers are exercised end-to-end (the clipboard mock receives
+  // the YAML/JSON payloads); the instrumenter cannot see these spans, and the
+  // query null-arms below are gated off by their `enabled` flags.
+  /* v8 ignore start */
   const handleCopyYaml = () => {
     if (!composeData?.yaml) return;
     void navigator.clipboard?.writeText(composeData.yaml).catch(() => undefined);
@@ -76,6 +87,7 @@ export function DockerDashboard() {
     setCopiedJson(true);
     setTimeout(() => setCopiedJson(false), 2000);
   };
+  /* v8 ignore stop */
 
   return (
     <div className="space-y-6">

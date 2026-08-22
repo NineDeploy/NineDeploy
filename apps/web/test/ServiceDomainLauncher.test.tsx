@@ -65,5 +65,27 @@ describe('ServiceDomainLauncher', () => {
     await waitFor(() =>
       expect(screen.queryByRole('dialog', { name: 'Open app' })).not.toBeInTheDocument());
   });
+
+  it('normalizes paths without a leading slash and marks wildcard hostnames', async () => {
+    const user = userEvent.setup();
+    mockOf(api.domains.all).mockResolvedValue([
+      { id: 13, serviceId: 3, hostname: '*.wild.example.com', path: 'app', ssl: true },
+      { id: 14, serviceId: 3, hostname: 'plain.example.com', path: 'app', ssl: true },
+    ] as never);
+    renderWithProviders(<ServiceDomainLauncher serviceId={3} serviceName="multi" label />);
+
+    // label=true renders the "Open site" caption next to the icon.
+    const trigger = await screen.findByRole('button', { name: 'Open multi domains' });
+    expect(trigger).toHaveTextContent('Open site');
+    await user.click(trigger);
+
+    // A path without a leading slash is normalized to '/app'.
+    const plain = screen.getByRole('link', { name: 'Open https://plain.example.com/app in a new tab' });
+    expect(plain).toHaveAttribute('href', 'https://plain.example.com/app');
+
+    // A wildcard hostname cannot be opened directly — it gets a hint instead.
+    expect(screen.getByTitle('Use a concrete hostname covered by this wildcard')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /wild\.example\.com/ })).not.toBeInTheDocument();
+  });
 });
 

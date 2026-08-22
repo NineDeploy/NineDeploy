@@ -127,4 +127,20 @@ describe('ManifestTab', () => {
     expect(await screen.findByText('nd-db-postgres-1')).toBeInTheDocument();
     expect(screen.getByText(/image: postgres:16/i)).toBeInTheDocument();
   });
+
+  it('shows the compose fallback when the container has no manifest', async () => {
+    apiMock.api.containers.compose.mockResolvedValue({
+      yaml: undefined,
+      inspect: { id: 'x', name: 'bare', state: { status: 'created', running: false }, traefikTags: {}, raw: undefined },
+    } as never);
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ManifestTab containerName="bare" />
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText('# No runtime compose manifest available for container.')).toBeInTheDocument();
+  });
 });

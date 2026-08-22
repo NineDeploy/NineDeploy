@@ -47,6 +47,29 @@ describe('panel autofill protection', () => {
     cleanup();
   });
 
+  it('keeps a non-text control untouched when it is itself the guard root', () => {
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    document.body.append(checkbox);
+
+    const cleanup = installPanelAutofillGuard(checkbox);
+    expect(checkbox).not.toHaveAttribute('autocomplete');
+    cleanup();
+  });
+
+  it('skips mutation records whose added nodes are not elements', async () => {
+    const root = document.createElement('div');
+    document.body.append(root);
+    const cleanup = installPanelAutofillGuard(root);
+
+    root.append(document.createTextNode('plain text'));
+    const dynamic = document.createElement('input');
+    root.append(dynamic);
+    // The text node is ignored without throwing; the real input is hardened.
+    await waitFor(() => expect(dynamic).toHaveAttribute('data-1p-ignore', 'true'));
+    cleanup();
+  });
+
   it('keeps critical filters locked until user interaction', () => {
     function Example() {
       const [value, setValue] = useState('');

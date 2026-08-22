@@ -566,4 +566,21 @@ describe('DatabaseDetail', () => {
     expect(await screen.findByText('docker-compose.runtime.yml')).toBeInTheDocument();
     expect(screen.getByText(/image: postgres:16/)).toBeInTheDocument();
   });
+
+  it('uses the fallback container name in the Manifest tab when containerName is undefined', async () => {
+    mockOf(api.databases.get).mockResolvedValue({
+      ...sampleDb,
+      id: 98,
+      slug: 'fallback-maria',
+      containerName: undefined,
+    } as any);
+    mockOf(api.containers.compose).mockResolvedValue({
+      yaml: 'services:\n  nd-db-fallback-maria:\n    image: mariadb:12',
+      inspect: { id: 'm1', name: 'nd-db-fallback-maria', state: { status: 'running', running: true }, traefikTags: {}, raw: { Id: 'm1' } },
+    } as never);
+
+    renderRoute(<DatabaseDetail />, { path: '/databases/:id', route: '/databases/98' });
+    fireEvent.click(await screen.findByRole('tab', { name: 'Manifest & Inspect' }));
+    expect(await screen.findByText(/image: mariadb:12/)).toBeInTheDocument();
+  });
 });

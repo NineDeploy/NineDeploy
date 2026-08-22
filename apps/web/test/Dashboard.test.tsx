@@ -220,4 +220,48 @@ it('shows an error card with retry when the dashboard query fails', async () => 
       expect(api.demo.seed).toHaveBeenCalledTimes(1);
     });
   });
+
+  it('shows critical telemetry bars and live per-container stats', async () => {
+    mockOf(api.dashboard.get).mockResolvedValue({ ...dashData, health: [dashData.health[0]!] } as never);
+    mockOf(api.stats.snapshot).mockResolvedValue({
+      host: { load1: 9, cpuCores: 2, memUsedBytes: 90, memTotalBytes: 100, diskUsedBytes: 90, diskTotalBytes: 100 },
+      // The first entry misses (wrong ref/kind); the second matches the service.
+      containers: [
+        { refId: 999, kind: 'database', cpuPct: 1, memMb: 1 },
+        { refId: 1, kind: 'service', cpuPct: 12.34, memMb: 56.78 },
+      ],
+    } as never);
+    renderWithProviders(<Dashboard />);
+
+    expect(await screen.findByText(/All systems operational/)).toBeInTheDocument();
+    expect(screen.getByText('12.3%')).toBeInTheDocument();
+    expect(screen.getByText('56.8 MiB')).toBeInTheDocument();
+    // Memory and disk both cross the 85% critical threshold.
+    expect(screen.getAllByText('90%').length).toBe(2);
+  });
+
+  it('shows amber telemetry zones and a null load average', async () => {
+    mockOf(api.dashboard.get).mockResolvedValue({ ...dashData, health: [] } as never);
+    mockOf(api.stats.snapshot).mockResolvedValue({
+      host: { load1: null, cpuCores: 2, memUsedBytes: 70, memTotalBytes: 100, diskUsedBytes: 75, diskTotalBytes: 100 },
+      containers: [],
+    } as never);
+    renderWithProviders(<Dashboard />);
+
+    expect(await screen.findByText('0.00 loadavg')).toBeInTheDocument();
+    expect(screen.getByText('70%')).toBeInTheDocument();
+    expect(screen.getByText('75%')).toBeInTheDocument();
+  });
+
+  it('renders zero percentages when the host reports no totals', async () => {
+    mockOf(api.dashboard.get).mockResolvedValue({ ...dashData, health: [] } as never);
+    mockOf(api.stats.snapshot).mockResolvedValue({
+      host: { load1: 0.5, cpuCores: 2, memUsedBytes: 0, memTotalBytes: 0, diskUsedBytes: 0, diskTotalBytes: 0 },
+      containers: [],
+    } as never);
+    renderWithProviders(<Dashboard />);
+
+    await screen.findByText(/No services yet/);
+    expect(screen.getAllByText('0%').length).toBe(2);
+  });
 });

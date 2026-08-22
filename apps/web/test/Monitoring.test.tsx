@@ -39,6 +39,10 @@ const snapshot = {
   containers: [
     { kind: 'service' as const, refId: 1, refName: 'api', name: 'nd-api', engine: null, cpuPct: 12.5, memMb: 256, memLimitMb: 512 },
     { kind: 'database' as const, refId: 2, refName: 'db', name: 'nd-db', engine: 'postgres', cpuPct: 0.25, memMb: 64, memLimitMb: 0 },
+    // 90% of its limit → the critical (rose) memory zone.
+    { kind: 'service' as const, refId: 3, refName: 'hot', name: 'nd-hot', engine: null, cpuPct: 5, memMb: 900, memLimitMb: 1000 },
+    // 70% of its limit → the warning (amber) memory zone.
+    { kind: 'service' as const, refId: 4, refName: 'warm', name: 'nd-warm', engine: null, cpuPct: 5, memMb: 700, memLimitMb: 1000 },
   ],
 };
 
@@ -63,7 +67,16 @@ describe('Monitoring', () => {
     // disk 100/200 = 50%
     expect(screen.getByText('50%')).toBeInTheDocument();
     expect(screen.getByText('4.3 GB / 17.2 GB')).toBeInTheDocument();
-    expect(screen.getByText('2')).toBeInTheDocument(); // workloads
+    expect(screen.getByText('4')).toBeInTheDocument(); // workloads
+
+    // The DevOps table view falls back to generic kinds for engine-less rows.
+    fireEvent.click(screen.getByTitle('DevOps Matrix Table View'));
+    expect(await screen.findAllByText('Service')).toHaveLength(3);
+    expect(screen.getAllByText('postgres').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('900 MB').length).toBeGreaterThan(0);
+    // The memory-limit column shows the configured ceiling (and '—' when unset).
+    expect(screen.getAllByText('1000 MB').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('—').length).toBeGreaterThan(0);
   });
 
   it('selects the local node and resets the type filter from the cluster bar', async () => {

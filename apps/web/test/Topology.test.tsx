@@ -69,8 +69,8 @@ vi.mock('@xyflow/react', () => ({
 
 const graph = {
   services: [
-    { id: 1, name: 'api', status: 'running', type: 'docker', image: null, port: 3000, runtimeId: 'api-1', volumeMount: null },
-    { id: 2, name: 'worker', status: 'stopped', type: 'pm2', image: null, port: null, runtimeId: null, volumeMount: null },
+    { id: 1, name: 'api', slug: 'api', status: 'running', type: 'docker', image: null, port: 3000, runtimeId: 'api-1', volumeMount: null },
+    { id: 2, name: 'worker', slug: 'worker', status: 'stopped', type: 'pm2', image: null, port: null, runtimeId: null, volumeMount: null },
   ],
   databases: [
     { id: 5, name: 'db-main', status: 'running', engine: 'postgres', host: 'nd-db-db-main' },
@@ -262,5 +262,95 @@ it('shows an error state with retry when the graph query fails', async () => {
       fireEvent.click(screen.getByTestId('node-service-1'));
       fireEvent.click(screen.getByLabelText('Close Inspector'));
       await waitFor(() => expect(screen.queryByLabelText('Close Inspector')).not.toBeInTheDocument());
+    });
+
+    it('maps every database engine to its conventional port', async () => {
+      mockOf(api.topology.get).mockResolvedValue({
+        ...graph,
+        databases: [
+          { id: 40, name: 'pg', status: 'running', engine: 'postgres', host: 'h' },
+          { id: 41, name: 'rds', status: 'running', engine: 'redis', host: 'h' },
+          { id: 42, name: 'vk', status: 'running', engine: 'valkey', host: 'h' },
+          { id: 43, name: 'my', status: 'running', engine: 'mysql', host: 'h' },
+          { id: 44, name: 'maria', status: 'running', engine: 'mariadb', host: 'h' },
+          { id: 45, name: 'mo', status: 'running', engine: 'mongo', host: 'h' },
+          { id: 46, name: 'modb', status: 'running', engine: 'mongodb', host: 'h' },
+          { id: 47, name: 'ch', status: 'running', engine: 'clickhouse', host: 'h' },
+          { id: 48, name: 'ms', status: 'running', engine: 'meilisearch', host: 'h' },
+          { id: 49, name: 'mq', status: 'running', engine: 'rabbitmq', host: 'h' },
+          { id: 50, name: 'weird', status: 'running', engine: 'cockroach', host: 'h' },
+        ],
+        attachments: [],
+      } as never);
+      renderWithProviders(<Topology />);
+      const flow = await screen.findByTestId('react-flow');
+      // Every engine renders its own database node (plus the service,
+      // domain, volume, network and gateway nodes from the fixture).
+      expect(Number(flow.getAttribute('data-nodes'))).toBeGreaterThanOrEqual(11);
+    });
+
+    it('tolerates a graph with missing optional collections', async () => {
+      // Only the required gateway and one service — every other collection is
+      // absent, exercising the ?? [] fallbacks.
+      mockOf(api.topology.get).mockResolvedValue({
+        services: [graph.services[0]],
+        gateway: graph.gateway,
+      } as never);
+      renderWithProviders(<Topology />);
+      await screen.findByTestId('react-flow');
+      expect(screen.getByTestId('node-service-1')).toBeInTheDocument();
+    });
+
+    it('shows live stats and volume sizes, and tours the inspector', async () => {
+      mockOf(api.topology.get).mockResolvedValue({
+        ...graph,
+        // A floating domain without a service is skipped by the builder.
+        domains: [...graph.domains, { id: 12, serviceId: null, hostname: 'floating.example.com', ssl: false }],
+        // An attachment without an explicit alias falls back to the default label.
+        attachments: [
+          ...graph.attachments,
+          { id: 21, serviceId: 1, databaseId: 5, envAlias: null },
+        ],
+      } as never);
+      mockOf(api.stats.snapshot).mockResolvedValue({
+        host: null,
+        containers: [
+          { kind: 'service', refId: 1, refName: 'api', name: 'nd-app-api', cpuPct: 3.5, memMb: 220, memLimitMb: 512 },
+        ],
+      } as never);
+      mockOf(api.volumes.list).mockResolvedValue([
+        { name: 'nd-svc-api-data', sizeBytes: 2048, owner: null, inUse: true },
+      ] as never);
+      renderWithProviders(<Topology />);
+      await screen.findByTestId('react-flow');
+
+      // The service node carries its live cpu/mem chips and the volume its size.
+      expect(await screen.findByText('3.5%')).toBeInTheDocument();
+      expect(screen.getByText('220M')).toBeInTheDocument();
+      expect(screen.getByText('2.0 KB')).toBeInTheDocument();
+
+      // The inspector opens for every node kind; the service node also
+      // exposes its live cpu/memory rows.
+      const ids = [
+        'node-service-1',
+        'node-database-5',
+        'node-vol-nd-svc-api-data',
+        'node-domain-10',
+        'node-net-ninedeploy',
+        'node-gateway',
+      ];
+      let first = true;
+      for (const id of ids) {
+        fireEvent.click(screen.getByTestId(id));
+        expect(screen.getByLabelText('Close Inspector')).toBeInTheDocument();
+        if (first) {
+          expect(screen.getByText('Live CPU Usage')).toBeInTheDocument();
+          expect(screen.getByText('Live Memory (RAM)')).toBeInTheDocument();
+          first = false;
+        }
+        fireEvent.click(screen.getByLabelText('Close Inspector'));
+        await waitFor(() =>
+          expect(screen.queryByLabelText('Close Inspector')).not.toBeInTheDocument());
+      }
     });
 });

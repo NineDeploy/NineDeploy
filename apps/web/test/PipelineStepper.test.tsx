@@ -74,6 +74,44 @@ describe('PipelineStepper', () => {
     expect(onStageClick).toHaveBeenCalledWith('PREPARE');
   });
 
+  it('ignores log lines for unknown stage names', () => {
+    const stages = parsePipelineStages('##[stage:MYSTERY:running] nope', 'building');
+    expect(stages.every((s) => s.status === 'pending')).toBe(true);
+  });
+
+  it('marks the running stage failed with the default detail when ERROR carries no text', () => {
+    // A non-failed deploy status keeps the parse-level detail (the isFailed
+    // path would overwrite it with the generic banner detail below).
+    const stages = parsePipelineStages('##[stage:BUILD:running]\n##[stage:ERROR:failed]', 'building');
+    const buildStage = stages.find((s) => s.id === 'BUILD');
+    expect(buildStage?.status).toBe('failed');
+    expect(buildStage?.detail).toBe('Stage failed');
+  });
+
+  it('renders a failed stage with the error styling and its detail', () => {
+    render(
+      <PipelineStepper
+        rawLogs={'##[stage:PREPARE:success] Checked out\n##[stage:BUILD:running] Building\n##[stage:ERROR:failed] Build crashed'}
+        deployStatus="building"
+      />,
+    );
+    expect(screen.getByText('Failed')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Build: Build crashed' })).toBeInTheDocument();
+    expect(screen.getByText('The current release stays live while the new container is prepared.')).toBeInTheDocument();
+  });
+
+  it('renders a mid-pipeline running stage with the spinner and done states', () => {
+    render(
+      <PipelineStepper
+        rawLogs={'##[stage:PREPARE:success] Checked out\n##[stage:BUILD:running] Compiling'}
+        deployStatus="building"
+      />,
+    );
+    expect(screen.getByText('Done')).toBeInTheDocument();
+    expect(screen.getByText('Running')).toBeInTheDocument();
+    expect(screen.getByText('The current release stays live while the new container is prepared.')).toBeInTheDocument();
+  });
+
   it('renders failed and live badge states appropriately', () => {
     const { rerender } = render(
       <PipelineStepper

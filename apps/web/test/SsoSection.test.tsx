@@ -42,6 +42,61 @@ describe('SsoSection', () => {
     });
   });
 
+  it('renders a disabled provider without the auto-enroll chip', async () => {
+    mockOf(api.auth.oidc.list).mockResolvedValue([
+      { ...mockProviders[0], enabled: false, autoEnroll: false },
+    ] as never);
+    renderWithProviders(<SsoSection />);
+    expect(await screen.findByText('Disabled')).toBeInTheDocument();
+    expect(screen.queryByText(/auto-enroll/i)).not.toBeInTheDocument();
+  });
+
+  it('preloads the Google preset, ignores empty submits and maps string failures', async () => {
+    renderWithProviders(<SsoSection />);
+    await screen.findByText('Google Workspace');
+
+    // The Google quick preset prefills the create form.
+    fireEvent.click(screen.getByRole('button', { name: /google oidc/i }));
+    expect(screen.getByText('Configure SSO / OIDC Provider')).toBeInTheDocument();
+    expect((screen.getByPlaceholderText('e.g. Google Workspace') as HTMLInputElement).value).toBe('Google Workspace');
+
+    // A raw submit with the client id missing is a no-op.
+    const form = screen.getByPlaceholderText('OAuth Client ID').closest('form')!;
+    fireEvent.submit(form);
+    expect(api.auth.oidc.create).not.toHaveBeenCalled();
+
+    // Typing the issuer/secret wires the form fields.
+    fireEvent.change(screen.getByPlaceholderText('https://accounts.google.com or https://your-tenant.okta.com'), {
+      target: { value: 'https://accounts.google.com' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('OAuth Client ID'), { target: { value: 'g-cid' } });
+    fireEvent.change(screen.getByPlaceholderText('••••••••••••'), { target: { value: 'g-sec' } });
+
+    // A non-Error rejection surfaces the generic message.
+    mockOf(api.auth.oidc.create).mockRejectedValueOnce('boom' as never);
+    fireEvent.click(screen.getByRole('button', { name: 'Create Provider' }));
+    expect(await screen.findByText('Failed to save SSO provider')).toBeInTheDocument();
+  });
+
+  it('edits a provider without an issuer URL', async () => {
+    mockOf(api.auth.oidc.list).mockResolvedValue([
+      { ...mockProviders[0], issuerUrl: null },
+    ] as never);
+    mockOf(api.auth.oidc.update).mockResolvedValueOnce({ ...mockProviders[0], name: 'Renamed' } as never);
+    renderWithProviders(<SsoSection />);
+    fireEvent.click(await screen.findByRole('button', { name: /edit/i }));
+    const form = screen.getByPlaceholderText('e.g. Google Workspace').closest('form')!;
+    // Leave the (empty) issuer blank → the update sends null.
+    const nameInput = screen.getByPlaceholderText('e.g. Google Workspace') as HTMLInputElement;
+    fireEvent.change(nameInput, { target: { value: 'Renamed' } });
+    fireEvent.submit(form);
+    await waitFor(() =>
+      expect(api.auth.oidc.update).toHaveBeenCalledWith(1, expect.objectContaining({
+        issuerUrl: null,
+        name: 'Renamed',
+      })));
+  });
+
   it('adds an SSO provider via quick preset', async () => {
     mockOf(api.auth.oidc.create).mockResolvedValueOnce({
       id: 2,

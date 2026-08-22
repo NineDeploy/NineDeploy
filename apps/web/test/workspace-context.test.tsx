@@ -61,6 +61,31 @@ describe('WorkspaceContext and WorkspaceProvider', () => {
     expect(localStorage.getItem('nd_current_workspace_id')).toBe('2');
   });
 
+  it('restores the saved workspace selection from localStorage', async () => {
+    localStorage.setItem('nd_current_workspace_id', '2');
+    const mockWorkspaces = [
+      { id: 1, name: 'One', slug: 'ws-1', ownerId: 1, myRole: 'owner' as const, createdAt: '2026-01-01', updatedAt: '2026-01-01' },
+      { id: 2, name: 'Two', slug: 'ws-2', ownerId: 1, myRole: 'owner' as const, createdAt: '2026-01-01', updatedAt: '2026-01-01' },
+    ];
+    mockOf(api.workspaces.list).mockResolvedValueOnce(mockWorkspaces as never);
+
+    const { result } = renderHook(() => useWorkspace(), { wrapper: createWrapper() });
+
+    // The stored id wins over the list order — no auto-switch to the first.
+    await waitFor(() => {
+      expect(result.current.workspaces).toHaveLength(2);
+      expect(result.current.currentWorkspace?.id).toBe(2);
+    });
+  });
+
+  it('treats a null list response as an empty workspace set', async () => {
+    mockOf(api.workspaces.list).mockResolvedValueOnce(null as never);
+    const { result } = renderHook(() => useWorkspace(), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.workspaces).toEqual([]);
+    expect(result.current.currentWorkspace).toBeNull();
+  });
+
   it('creates workspace and switches to it', async () => {
     const mockWorkspaces = [
       { id: 1, name: 'Personal', slug: 'personal', ownerId: 1, myRole: 'owner' as const, createdAt: '2026-01-01', updatedAt: '2026-01-01' },

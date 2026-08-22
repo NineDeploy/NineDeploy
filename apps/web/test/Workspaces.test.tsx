@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { screen, fireEvent, waitFor } from '@testing-library/react';
 import { Workspaces } from '../src/routes/Workspaces.js';
 import { api } from '../src/lib/api.js';
+import { useAuth } from '../src/lib/auth.js';
 import { useWorkspace } from '../src/lib/workspace.js';
 import { renderWithProviders, mockOf } from './helpers.js';
 
@@ -261,5 +262,234 @@ describe('Workspaces route', () => {
       expect(api.workspaces.delete).toHaveBeenCalledWith(1);
       expect(refreshWorkspaces).toHaveBeenCalled();
     });
+  });
+
+  it('switches workspaces from the header selector', async () => {
+    const second = { ...mockWs, id: 2, name: 'Second', slug: 'second' };
+    mockOf(useWorkspace).mockReturnValue({
+      workspaces: [mockWs, second],
+      currentWorkspace: mockWs,
+      isLoading: false,
+      switchWorkspace,
+      createWorkspace: vi.fn(),
+      refreshWorkspaces,
+    });
+    renderWithProviders(<Workspaces />);
+    const selector = await screen.findByDisplayValue(/Acme Corp/);
+    fireEvent.change(selector, { target: { value: '2' } });
+    expect(switchWorkspace).toHaveBeenCalledWith(2);
+  });
+
+  it('toggles the roles guide open and closed', async () => {
+    renderWithProviders(<Workspaces />);
+    fireEvent.click(await screen.findByRole('button', { name: /Roles Guide/ }));
+    expect(await screen.findByText(/Role & Permissions Matrix/)).toBeInTheDocument();
+    // The banner's ✕ button collapses it again.
+    fireEvent.click(screen.getByRole('button', { name: '✕' }));
+    await waitFor(() =>
+      expect(screen.queryByText(/Role & Permissions Matrix/)).not.toBeInTheDocument());
+  });
+
+  it('searches members by name and email, including name-less members', async () => {
+    mockOf(api.workspaces.get).mockResolvedValue({
+      ...mockWs,
+      members: [
+        ...mockWs.members,
+        { id: 12, userId: 3, role: 'viewer' as const, createdAt: '2026-01-01', email: 'ghost@acme.com', name: null },
+      ],
+    } as never);
+    renderWithProviders(<Workspaces />);
+    await screen.findByText('dev@acme.com');
+
+    const search = screen.getByPlaceholderText('Search member...');
+    fireEvent.change(search, { target: { value: 'Developer' } });
+    expect(screen.getByText('dev@acme.com')).toBeInTheDocument();
+    expect(screen.queryByText('admin@acme.com')).not.toBeInTheDocument();
+
+    // A name-less member is found by email (name?.includes falls back false).
+    fireEvent.change(search, { target: { value: 'ghost@' } });
+    // Its row renders the email everywhere the name would be.
+    expect(screen.getAllByText('ghost@acme.com').length).toBeGreaterThan(1);
+
+    fireEvent.change(search, { target: { value: 'zzz-no-match' } });
+    expect(screen.queryByText('dev@acme.com')).not.toBeInTheDocument();
+  });
+
+  it('invites with a chosen role and ignores empty raw submits', async () => {
+    mockOf(api.workspaces.addMember).mockResolvedValue({ ok: true } as never);
+    renderWithProviders(<Workspaces />);
+    fireEvent.click(await screen.findByText('Invite Member'));
+
+    // A raw form submit with no email is a no-op.
+    fireEvent.submit(document.querySelector('form')!);
+    expect(api.workspaces.addMember).not.toHaveBeenCalled();
+
+    // The role dropdown travels with the invite.
+    fireEvent.change(screen.getByPlaceholderText('developer@acme.com'), {
+      target: { value: 'viewer@acme.com' },
+    });
+    fireEvent.change(screen.getByDisplayValue(/Member — Can manage/), { target: { value: 'viewer' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send Invite' }));
+    await waitFor(() =>
+      expect(api.workspaces.addMember).toHaveBeenCalledWith(1, {
+        email: 'viewer@acme.com',
+        role: 'viewer',
+      }));
+  });
+
+  it('maps non-Error invite failures to the generic message', async () => {
+    mockOf(api.workspaces.addMember).mockRejectedValueOnce('boom' as never);
+    renderWithProviders(<Workspaces />);
+    fireEvent.click(await screen.findByText('Invite Member'));
+    fireEvent.change(screen.getByPlaceholderText('developer@acme.com'), {
+      target: { value: 'x@acme.com' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send Invite' }));
+    expect(await screen.findByText('Failed to invite member')).toBeInTheDocument();
+  });
+
+  it('edits without a description and maps non-Error update failures', async () => {
+    mockOf(api.workspaces.get).mockResolvedValue({
+      ...mockWs,
+      description: null,
+      memberCount: undefined,
+      projectCount: undefined,
+    } as never);
+    renderWithProviders(<Workspaces />);
+
+    // Without member/project counts the header falls back to the member list
+    // length and zero projects.
+    await screen.findByText('Acme Corp');
+    expect(screen.getByText('2')).toBeInTheDocument();
+    expect(screen.getByText('0')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Details' }));
+    expect(await screen.findByText('Edit Workspace')).toBeInTheDocument();
+
+    // Emptying the name and submitting raw does nothing.
+    const nameInput = screen.getByDisplayValue('Acme Corp');
+    fireEvent.change(nameInput, { target: { value: '' } });
+    fireEvent.submit(nameInput.closest('form')!);
+    expect(api.workspaces.update).not.toHaveBeenCalled();
+
+    // A name-only update sends description: null.
+    mockOf(api.workspaces.update).mockResolvedValueOnce(mockWs as never);
+    fireEvent.change(nameInput, { target: { value: 'Acme Bare' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }));
+    await waitFor(() =>
+      expect(api.workspaces.update).toHaveBeenCalledWith(1, {
+        name: 'Acme Bare',
+        description: null,
+      }));
+
+    // A non-Error rejection surfaces the generic message.
+    mockOf(api.workspaces.update).mockRejectedValueOnce('nope' as never);
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Details' }));
+    await screen.findByText('Edit Workspace');
+    fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }));
+    expect(await screen.findByText('Failed to update workspace')).toBeInTheDocument();
+
+    // An Error rejection surfaces its message.
+    mockOf(api.workspaces.update).mockRejectedValueOnce(new Error('name taken') as never);
+    fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }));
+    expect(await screen.findByText('name taken')).toBeInTheDocument();
+  });
+
+  it('leaves the workspace as a non-owner member and maps non-Error delete failures', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    mockOf(useAuth).mockReturnValue({
+      user: { id: 1, email: 'me@acme.com', name: 'Me', role: 'admin' as const },
+      loading: false,
+    });
+    mockOf(api.workspaces.get).mockResolvedValue({
+      ...mockWs,
+      myRole: 'admin' as const,
+      members: [
+        { id: 20, userId: 99, role: 'owner' as const, createdAt: '2026-01-01', email: 'boss@acme.com', name: 'Boss' },
+        { id: 21, userId: 1, role: 'admin' as const, createdAt: '2026-01-01', email: 'me@acme.com', name: 'Me' },
+      ],
+    } as never);
+    renderWithProviders(<Workspaces />);
+
+    // My own non-owner row offers Leave instead of Remove.
+    fireEvent.click(await screen.findByRole('button', { name: /^Leave$/ }));
+    await waitFor(() => expect(api.workspaces.removeMember).toHaveBeenCalledWith(1, 21));
+
+    // A non-Error workspace deletion failure surfaces the generic message.
+    mockOf(api.workspaces.delete).mockRejectedValueOnce('boom' as never);
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete Workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Yes, Delete Workspace' }));
+    expect(await screen.findByText('Failed to delete workspace')).toBeInTheDocument();
+
+    // An Error rejection surfaces its message instead.
+    mockOf(api.workspaces.delete).mockRejectedValueOnce(new Error('has projects') as never);
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete Workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Yes, Delete Workspace' }));
+    expect(await screen.findByText('has projects')).toBeInTheDocument();
+  });
+
+  it('renders static badges and no removal buttons for a viewer', async () => {
+    mockOf(useAuth).mockReturnValue({
+      user: { id: 3, email: 'view@acme.com', name: 'Viewer', role: 'member' as const },
+      loading: false,
+    });
+    mockOf(api.workspaces.get).mockResolvedValue({
+      ...mockWs,
+      myRole: 'viewer' as const,
+      memberCount: undefined,
+      members: [
+        { id: 30, userId: 9, role: 'owner' as const, createdAt: '2026-01-01', email: 'boss@acme.com', name: 'Boss' },
+        { id: 31, userId: 8, role: 'admin' as const, createdAt: '2026-01-01', email: 'ops@acme.com', name: 'Ops' },
+        { id: 32, userId: 3, role: 'viewer' as const, createdAt: '2026-01-01', email: 'view@acme.com', name: null },
+        // A pending/ghost member without name or email still renders a row.
+        { id: 33, userId: 4, role: 'viewer' as const, createdAt: '2026-01-01', email: null, name: null },
+      ],
+    } as never);
+
+    renderWithProviders(<Workspaces />);
+    // Every role renders as a static badge (owner indigo, admin emerald,
+    // viewer neutral) — no role dropdowns for a viewer.
+    await screen.findByText('Boss');
+    expect(screen.getAllByRole('combobox').length).toBe(1); // only the workspace switcher
+    // A viewer still sees Leave on their OWN row (isMe), but no Remove
+    // buttons for anyone else.
+    expect(screen.getByRole('button', { name: /^Leave$/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Remove$/ })).not.toBeInTheDocument();
+    // The name+email-less member falls back to the '?' avatar.
+    expect(screen.getByText('?')).toBeInTheDocument();
+  });
+
+  it('requires confirmation before removing and skips it when declined', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    renderWithProviders(<Workspaces />);
+    fireEvent.click(await screen.findByRole('button', { name: /^Remove$/ }));
+    expect(confirmSpy).toHaveBeenCalled();
+    expect(api.workspaces.removeMember).not.toHaveBeenCalled();
+  });
+
+  it('renders an empty selector when no workspace is current', async () => {
+    mockOf(useWorkspace).mockReturnValue({
+      workspaces: [],
+      currentWorkspace: null,
+      isLoading: false,
+      switchWorkspace,
+      createWorkspace: vi.fn(),
+      refreshWorkspaces,
+    });
+    renderWithProviders(<Workspaces />);
+    // The header selector holds the empty option; no detail renders.
+    const selector = await screen.findByRole('combobox');
+    expect((selector as HTMLSelectElement).value).toBe('');
+  });
+
+  it('falls back to one member when the detail carries no member list', async () => {
+    mockOf(api.workspaces.get).mockResolvedValue({
+      ...mockWs,
+      memberCount: undefined,
+      members: undefined,
+    } as never);
+    renderWithProviders(<Workspaces />);
+    // The stats grid falls all the way back to 1 without counts or a list.
+    await screen.findByText('1');
   });
 });

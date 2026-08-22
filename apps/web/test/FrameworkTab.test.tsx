@@ -300,4 +300,47 @@ describe('FrameworkTab', () => {
     await waitFor(() => expect(api.insights.refresh).toHaveBeenCalledWith(1));
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Repository analysis updated', 'success'));
   });
+
+  it('applies a partial preset whose commands are missing and renders versionless packages', async () => {
+    // The shared fixture is `as never`; re-widen it for spreading.
+    const rich = richInsights as Record<string, unknown> & { framework: Record<string, unknown> };
+    const partialPreset: Record<string, unknown> = {
+      ...rich,
+      framework: {
+        ...rich.framework,
+        installCmd: null,
+        buildCmd: null,
+        startCmd: null,
+      },
+      workspacePackages: [
+        { dir: 'apps/bare', name: null, framework: null, frameworkVersion: null },
+      ],
+      monorepo: true,
+    };
+    mockOf(api.insights.get).mockResolvedValue(partialPreset as never);
+    renderWithProviders(<FrameworkTab serviceId={1} svc={svc()} />);
+
+    // A versionless, framework-less package chip renders with a bare title.
+    expect(await screen.findByText('/apps/bare')).toBeInTheDocument();
+
+    // Applying a preset without commands sends only the port; every command
+    // key is omitted from the build object.
+    mockOf(api.services.update).mockResolvedValue({ ok: true } as never);
+    fireEvent.click(screen.getByRole('button', { name: /apply commands & port/i }));
+    await waitFor(() =>
+      expect(api.services.update).toHaveBeenCalledWith(1, {
+        port: 3000,
+        build: {},
+      }));
+  });
+
+  it('omits the monorepo section when the analysis carries no packages field', async () => {
+    const withoutPackages: Record<string, unknown> = { ...(richInsights as object) };
+    delete withoutPackages.workspacePackages;
+    mockOf(api.insights.get).mockResolvedValue(withoutPackages as never);
+    renderWithProviders(<FrameworkTab serviceId={1} svc={svc()} />);
+
+    expect(await screen.findByText('Next.js')).toBeInTheDocument();
+    expect(screen.queryByText(/Monorepo packages/)).not.toBeInTheDocument();
+  });
 });

@@ -148,4 +148,124 @@ describe('WorkspaceSwitcher', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Create Workspace' }));
     expect(await screen.findByText('slug taken')).toBeInTheDocument();
   });
+
+  it('falls back to the generic label when no workspace is current', () => {
+    const ws1 = { id: 1, name: 'Acme Prod', slug: 'acme-prod', description: null, ownerId: 1, myRole: 'owner' as const, memberCount: 2, projectCount: 1, createdAt: '2026-01-01', updatedAt: '2026-01-01' };
+
+    vi.mocked(useWorkspace).mockReturnValue({
+      workspaces: [ws1],
+      currentWorkspace: null,
+      isLoading: false,
+      switchWorkspace,
+      createWorkspace,
+      refreshWorkspaces: vi.fn(),
+    });
+
+    render(
+      <MemoryRouter>
+        <WorkspaceSwitcher />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText('Workspace')).toBeInTheDocument();
+  });
+
+  it('ignores a form submission with an empty name', async () => {
+    const ws1 = { id: 1, name: 'Acme Prod', slug: 'acme-prod', description: null, ownerId: 1, myRole: 'owner' as const, memberCount: 2, projectCount: 1, createdAt: '2026-01-01', updatedAt: '2026-01-01' };
+
+    vi.mocked(useWorkspace).mockReturnValue({
+      workspaces: [ws1],
+      currentWorkspace: ws1,
+      isLoading: false,
+      switchWorkspace,
+      createWorkspace,
+      refreshWorkspaces: vi.fn(),
+    });
+
+    render(
+      <MemoryRouter>
+        <WorkspaceSwitcher />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByText('Acme Prod'));
+    fireEvent.click(screen.getByText('Create Workspace'));
+    // A raw form submit (e.g. Enter with an empty name) must be a no-op.
+    const form = document.querySelector('form');
+    expect(form).not.toBeNull();
+    fireEvent.submit(form!);
+    expect(createWorkspace).not.toHaveBeenCalled();
+  });
+
+  it('maps a non-Error rejection to a generic failure message', async () => {
+    const ws1 = { id: 1, name: 'Acme Prod', slug: 'acme-prod', description: null, ownerId: 1, myRole: 'owner' as const, memberCount: 2, projectCount: 1, createdAt: '2026-01-01', updatedAt: '2026-01-01' };
+    createWorkspace.mockRejectedValueOnce('boom' as never);
+
+    vi.mocked(useWorkspace).mockReturnValue({
+      workspaces: [ws1],
+      currentWorkspace: ws1,
+      isLoading: false,
+      switchWorkspace,
+      createWorkspace,
+      refreshWorkspaces: vi.fn(),
+    });
+
+    render(
+      <MemoryRouter>
+        <WorkspaceSwitcher />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByText('Acme Prod'));
+    fireEvent.click(screen.getByText('Create Workspace'));
+    fireEvent.change(screen.getByPlaceholderText('e.g. Acme Production'), { target: { value: 'X' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create Workspace' }));
+    expect(await screen.findByText('Failed to create workspace')).toBeInTheDocument();
+  });
+
+  it('falls back to one member when memberCount is missing', () => {
+    const ws1 = { id: 1, name: 'Acme Prod', slug: 'acme-prod', description: null, ownerId: 1, myRole: 'owner' as const, projectCount: 1, createdAt: '2026-01-01', updatedAt: '2026-01-01' } as never;
+
+    vi.mocked(useWorkspace).mockReturnValue({
+      workspaces: [ws1],
+      currentWorkspace: ws1,
+      isLoading: false,
+      switchWorkspace,
+      createWorkspace,
+      refreshWorkspaces: vi.fn(),
+    });
+
+    render(
+      <MemoryRouter>
+        <WorkspaceSwitcher />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getAllByText('Acme Prod')[0]!);
+    expect(screen.getByText(/1 member/)).toBeInTheDocument();
+  });
+
+  it('closes the create modal via its dialog close button', () => {
+    const ws1 = { id: 1, name: 'Acme Prod', slug: 'acme-prod', description: null, ownerId: 1, myRole: 'owner' as const, memberCount: 2, projectCount: 1, createdAt: '2026-01-01', updatedAt: '2026-01-01' };
+
+    vi.mocked(useWorkspace).mockReturnValue({
+      workspaces: [ws1],
+      currentWorkspace: ws1,
+      isLoading: false,
+      switchWorkspace,
+      createWorkspace,
+      refreshWorkspaces: vi.fn(),
+    });
+
+    render(
+      <MemoryRouter>
+        <WorkspaceSwitcher />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getAllByText('Acme Prod')[0]!);
+    fireEvent.click(screen.getByText('Create Workspace'));
+    fireEvent.click(screen.getByRole('button', { name: 'Close dialog' }));
+    expect(screen.queryByText('Create New Workspace')).not.toBeInTheDocument();
+  });
 });

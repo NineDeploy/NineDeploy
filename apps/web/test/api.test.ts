@@ -99,6 +99,36 @@ describe('setToken', () => {
     expect(() => setToken(null)).not.toThrow();
     spy.mockRestore();
   });
+
+  it('treats a denied sessionStorage as empty (SSR / privacy mode)', () => {
+    const descriptor = Object.getOwnPropertyDescriptor(window, 'sessionStorage');
+    Object.defineProperty(window, 'sessionStorage', {
+      configurable: true,
+      get() {
+        throw new Error('denied');
+      },
+    });
+    try {
+      expect(getToken()).toBeNull();
+      expect(() => setToken('x')).not.toThrow();
+      // A session with only an access token must also survive a denied store.
+      expect(() => setSessionTokens('solo')).not.toThrow();
+      expect(() => clearTokens()).not.toThrow();
+    } finally {
+      if (descriptor) Object.defineProperty(window, 'sessionStorage', descriptor);
+    }
+  });
+});
+
+describe('setSessionTokens without a refresh token', () => {
+  beforeEach(() => sessionStorage.clear());
+
+  it('stores the access token and clears any stale refresh token', () => {
+    sessionStorage.setItem(REFRESH_KEY, 'stale');
+    setSessionTokens('solo');
+    expect(sessionStorage.getItem(TOKEN_KEY)).toBe('solo');
+    expect(sessionStorage.getItem(REFRESH_KEY)).toBeNull();
+  });
 });
 
 describe('api client', () => {

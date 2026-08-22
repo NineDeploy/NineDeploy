@@ -89,6 +89,20 @@ const marketplaceCatalog = [
     isInstalled: true,
     configSchema: [],
   },
+  // A catalog entry without a name/description/category still renders and
+  // filters without crashing. (isInstalled keeps the install-button count
+  // stable for the exact-match queries in the tests below.)
+  {
+    id: 'mystery-plugin',
+    name: null,
+    version: '0.1.0',
+    description: null,
+    author: 'Anonymous',
+    category: null,
+    isOfficial: false,
+    isInstalled: true,
+    configSchema: [],
+  },
 ];
 
 describe('Hub', () => {
@@ -311,8 +325,9 @@ describe('Hub', () => {
         expect(screen.getByText('S3 Sync')).toBeInTheDocument();
         expect(screen.getByText('Discord Bot')).toBeInTheDocument();
         expect(screen.getByText('Official')).toBeInTheDocument();
-        expect(screen.getByText('Community')).toBeInTheDocument();
-        expect(screen.getByText('Installed')).toBeInTheDocument();
+        // Two non-official cards (Discord Bot + the unnamed catalog entry).
+        expect(screen.getAllByText('Community').length).toBe(2);
+        expect(screen.getAllByText('Installed').length).toBe(2);
       });
 
       // Filter marketplace items

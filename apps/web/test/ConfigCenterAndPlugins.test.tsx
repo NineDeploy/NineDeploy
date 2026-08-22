@@ -409,6 +409,31 @@ describe('Config Center & Plugins Frontend Components', () => {
       await waitFor(() => expect(api.config.delete).toHaveBeenCalledTimes(1));
       confirmMock.mockRestore();
     });
+
+    it('falls back to generic messages for non-Error failures and sorts core first', async () => {
+      renderWithProviders(<ConfigCenterSection />);
+      await waitFor(() => expect(screen.getByText('system.site_name')).toBeInTheDocument());
+
+      // The core group renders ahead of alphabetically-later scopes.
+      const core = screen.getByText('system.site_name').closest('[class*="rounded"]') ?? screen.getByText('system.site_name');
+      expect(core).toBeInTheDocument();
+
+      // A string save rejection surfaces the generic message.
+      mockOf(api.config.set).mockRejectedValueOnce('boom' as never);
+      const editBtns = screen.getAllByTitle('Edit Value');
+      fireEvent.click(editBtns[0]!);
+      const input = await screen.findByDisplayValue('NineDeploy Production');
+      fireEvent.change(input, { target: { value: 'X' } });
+      fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+      await waitFor(() => expect(api.config.set).toHaveBeenCalledTimes(1));
+
+      // A string delete rejection surfaces its generic message.
+      const confirmMock = vi.spyOn(window, 'confirm').mockReturnValue(true);
+      mockOf(api.config.delete).mockRejectedValueOnce('nope' as never);
+      fireEvent.click(screen.getAllByTitle('Delete')[0]!);
+      await waitFor(() => expect(api.config.delete).toHaveBeenCalledTimes(1));
+      confirmMock.mockRestore();
+    });
   });
 
   describe('PluginsSection', () => {
@@ -497,6 +522,30 @@ describe('Config Center & Plugins Frontend Components', () => {
       expect(mockOf(api.plugins.uninstall)).toHaveBeenCalledTimes(1);
 
       confirmMock.mockRestore();
+    });
+
+    it('disables an enabled community plugin', async () => {
+      const user = userEvent.setup();
+      mockOf(api.plugins.list).mockResolvedValue({
+        plugins: [
+          ...samplePlugins,
+          {
+            id: 'uptime-agent',
+            name: 'Uptime Agent',
+            version: '2.0.0',
+            description: 'External uptime probing',
+            isOfficial: false,
+            enabled: true,
+            status: 'active' as const,
+            dependencies: [],
+          },
+        ],
+      });
+      renderPlugins();
+
+      const disableBtn = await screen.findByRole('button', { name: /disable/i });
+      await user.click(disableBtn);
+      expect(mockOf(api.plugins.disable)).toHaveBeenCalledWith('uptime-agent');
     });
 
     it('handles marketplace installation flow and modal tabs', async () => {
@@ -912,7 +961,14 @@ describe('Config Center & Plugins Frontend Components', () => {
       await waitFor(() => {
         expect(screen.getByText('Edit Config: plugin:smtp:password')).toBeInTheDocument();
       });
-      fireEvent.click(screen.getByRole('button', { name: /cancel/i }));
+      // Saving with the secret left blank keeps the stored value: the update
+      // carries no value key at all.
+      fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+      await waitFor(() => {
+        expect(mockOf(api.config.set)).toHaveBeenCalledWith('plugin:smtp:password', expect.not.objectContaining({
+          value: expect.anything(),
+        }));
+      });
 
       // Create setting with empty description
       fireEvent.click(screen.getByText('New Setting'));

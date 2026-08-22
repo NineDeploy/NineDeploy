@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router';
@@ -7,6 +7,15 @@ import { FakeWebSocket } from './web-utils.js';
 
 const authMock = vi.hoisted(() => ({ useAuth: vi.fn() }));
 const themeMock = vi.hoisted(() => ({ useTheme: vi.fn() }));
+const modeMock = vi.hoisted(() => ({
+  useExperienceMode: vi.fn(() => ({
+    mode: 'simple' as 'simple' | 'advanced',
+    isAdvanced: false,
+    isSimple: true,
+    setMode: vi.fn(),
+    toggleMode: vi.fn(),
+  })),
+}));
 const workspaceMock = vi.hoisted(() => ({
   useWorkspace: vi.fn(() => ({
     workspaces: [],
@@ -31,6 +40,7 @@ const apiMock = vi.hoisted(() => ({
 
 vi.mock('../src/lib/auth.js', () => ({ AuthProvider: ({ children }: { children?: React.ReactNode }) => children, useAuth: authMock.useAuth }));
 vi.mock('../src/lib/theme.js', () => ({ useTheme: themeMock.useTheme }));
+vi.mock('../src/lib/mode.js', () => ({ useExperienceMode: modeMock.useExperienceMode }));
 vi.mock('../src/lib/workspace.js', () => ({ useWorkspace: workspaceMock.useWorkspace }));
 vi.mock('../src/lib/api.js', () => apiMock);
 
@@ -402,6 +412,41 @@ describe('Layout', () => {
     renderLayout('/databases');
     await waitFor(() => {
       expect(screen.getByRole('link', { name: /Databases/ })).toBeInTheDocument();
+    });
+  });
+
+  it('shows advanced-only navigation items only in advanced mode', async () => {
+    // Simple mode (default): the System group hides advanced-only entries.
+    const simple = renderLayout('/databases');
+    await waitFor(() => expect(screen.getByRole('link', { name: /Databases/ })).toBeInTheDocument());
+    // Let the menus query settle BEFORE clicking: its resolution re-runs the
+    // auto-open effect, which would otherwise reset the clicked group.
+    await waitFor(() => expect(simple.queryClient.getQueryState(['menus'])?.status).toBe('success'));
+    fireEvent.click(screen.getByRole('button', { name: 'System' }));
+    await waitFor(() => expect(screen.getByRole('link', { name: /Settings/ })).toBeInTheDocument());
+    expect(screen.queryByRole('link', { name: /Docker/ })).not.toBeInTheDocument();
+
+    // Advanced mode keeps every navigation entry. (mockReturnValue, not Once:
+    // the menus query triggers re-renders that would otherwise fall back to
+    // the simple default mid-test.)
+    modeMock.useExperienceMode.mockReturnValue({
+      mode: 'advanced',
+      isAdvanced: true,
+      isSimple: false,
+      setMode: vi.fn(),
+      toggleMode: vi.fn(),
+    });
+    cleanup();
+    const advanced = renderLayout('/databases');
+    await waitFor(() => expect(advanced.queryClient.getQueryState(['menus'])?.status).toBe('success'));
+    fireEvent.click(screen.getByRole('button', { name: 'System' }));
+    await waitFor(() => expect(screen.getByRole('link', { name: /Docker/ })).toBeInTheDocument());
+    modeMock.useExperienceMode.mockReturnValue({
+      mode: 'simple',
+      isAdvanced: false,
+      isSimple: true,
+      setMode: vi.fn(),
+      toggleMode: vi.fn(),
     });
   });
 });

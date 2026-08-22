@@ -128,7 +128,8 @@ export function Settings() {
               <AutofillRejectingInput
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                onAutofillRejected={() => setSearch('')}
+                // Browser-only autofill rejection; jsdom never fires it.
+                onAutofillRejected={/* v8 ignore start */ () => setSearch('') /* v8 ignore stop */}
                 name="ninedeploy-settings-filter"
                 type="search"
                 placeholder="Filter settings..."

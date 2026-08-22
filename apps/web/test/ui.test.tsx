@@ -1,9 +1,11 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createRef } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import './web-utils.js';
+import { rejectPanelAutofill } from '../src/lib/autofill.js';
 import {
+  AutofillRejectingInput,
   Badge,
   BrandMark,
   Button,
@@ -167,6 +169,15 @@ describe('Field', () => {
     );
     expect(screen.getByText('Email')).toBeInTheDocument();
     expect(screen.getByLabelText('Email')).toBeInTheDocument();
+  });
+
+  it('renders the optional hint next to the label', () => {
+    render(
+      <Field label="Token" hint="Found under Settings → API">
+        <input aria-label="Token" />
+      </Field>,
+    );
+    expect(screen.getByText('Found under Settings → API')).toBeInTheDocument();
   });
 });
 
@@ -510,5 +521,30 @@ describe('Tooltip', () => {
     );
     expect(screen.getByRole('tooltip')).toHaveTextContent('Helpful text');
     expect(screen.getByRole('button', { name: 'hover me' })).toBeInTheDocument();
+  });
+});
+
+describe('AutofillRejectingInput', () => {
+  it('unlocks on keyboard interaction and forwards the onKeyDown prop', () => {
+    const onKeyDown = vi.fn();
+    render(<AutofillRejectingInput aria-label="kb" onKeyDown={onKeyDown} />);
+    const field = screen.getByLabelText<HTMLInputElement>('kb');
+    expect(field).toHaveAttribute('readonly');
+
+    fireEvent.keyDown(field, { key: 'a' });
+    expect(field).not.toHaveAttribute('readonly');
+    expect(onKeyDown).toHaveBeenCalledTimes(1);
+  });
+
+  it('clears values reported by a detected browser autofill', () => {
+    // The animation-event path itself cannot be delivered under jsdom (React
+    // skips animation delegation there), so exercise the rejection directly.
+    const onAutofillRejected = vi.fn();
+    render(<AutofillRejectingInput aria-label="af" onAutofillRejected={onAutofillRejected} />);
+    const field = screen.getByLabelText<HTMLInputElement>('af');
+    field.value = 'injected';
+    rejectPanelAutofill(field, onAutofillRejected);
+    expect(field).toHaveValue('');
+    expect(onAutofillRejected).toHaveBeenCalledTimes(1);
   });
 });

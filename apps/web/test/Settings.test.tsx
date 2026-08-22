@@ -559,6 +559,19 @@ describe('Settings', () => {
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Could not save the panel domain', 'error'));
   });
 
+  it('shows the saving label while a panel-domain update is in flight', async () => {
+    const user = userEvent.setup();
+    mockOf(api.settings.get).mockResolvedValue({ allowRegistration: true, panelDomain: null } as never);
+    mockOf(api.settings.setPanelDomain).mockReturnValue(new Promise(() => {}) as never);
+    renderWithProviders(<Settings />);
+    await openSection('Security');
+
+    const input = (await screen.findByLabelText('NineDeploy Panel domain')) as HTMLInputElement;
+    await user.type(input, 'busy.example.com');
+    await user.click(saveButtonNextTo('NineDeploy Panel domain'));
+    expect(await screen.findByText('Saving…')).toBeInTheDocument();
+  });
+
   it('shows and saves the template registry source', async () => {
     const user = userEvent.setup();
     mockOf(api.settings.get).mockResolvedValue({ allowRegistration: true, acmeEmail: null, templatesSource: null } as never);

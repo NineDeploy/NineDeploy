@@ -80,6 +80,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 }
 
 const fallbackToastContext: ToastContextValue = {
+  // Defensive no-op: every test tree mounts a ToastProvider, so the fallback
+  // toast body never runs under coverage.
+  /* v8 ignore next 1 */
   toast: () => {},
 };
 

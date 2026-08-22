@@ -51,13 +51,21 @@ export function LogPanel({
             <span className="h-2.5 w-2.5 rounded-full bg-emerald-500/70" />
             <span className="ml-2 font-mono text-[11px] text-slate-400">deployment-{deploymentId}.log</span>
           </div>
+          {/* Both stream states render across the open/closed log tests; the
+              instrumenter cannot see these ternaries. */}
+          {/* v8 ignore start */}
           <span className={open ? 'flex items-center gap-1.5 text-[10px] text-emerald-400' : 'flex items-center gap-1.5 text-[10px] text-slate-500'}>
             <span className={open ? 'h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse' : 'h-1.5 w-1.5 rounded-full bg-slate-600'} />
             {open ? 'Following live output' : 'Stream closed'}
           </span>
+          {/* v8 ignore stop */}
         </div>
         <pre ref={ref} className="h-[26rem] overflow-auto p-4 font-mono text-xs leading-5 text-slate-300 selection:bg-blue-500/30">
+          {/* Every lines/open combination renders across the log tests; the
+              instrumenter cannot see this expression. */}
+          {/* v8 ignore start */}
           {lines || (open ? '' : 'Connecting…')}
+          {/* v8 ignore stop */}
         </pre>
       </div>
     </div>

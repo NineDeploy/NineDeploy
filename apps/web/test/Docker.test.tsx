@@ -21,9 +21,13 @@ const apiMock = vi.hoisted(() => ({
 
 vi.mock('../src/lib/api.js', () => apiMock);
 
-// The inspector section is admin-gated; tests render as an admin.
+// The inspector section is admin-gated; the role is mutable per test.
+const authState = vi.hoisted(() => ({
+  user: { id: 1, role: 'admin' as string, email: 'admin@test', name: 'Admin' },
+}));
 vi.mock('../src/lib/auth.js', () => ({
-  AuthProvider: ({ children }: { children?: React.ReactNode }) => children, useAuth: () => ({ user: { id: 1, role: 'admin' as const, email: 'admin@test', name: 'Admin' } }),
+  AuthProvider: ({ children }: { children?: React.ReactNode }) => children,
+  useAuth: () => ({ user: authState.user }),
 }));
 
 const resources = {
@@ -74,6 +78,7 @@ describe('DockerDashboard', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    authState.user = { id: 1, role: 'admin', email: 'admin@test', name: 'Admin' };
     apiMock.api.system.resources.mockResolvedValue(resources as never);
     apiMock.api.system.dockerEvents.mockResolvedValue(events as never);
     apiMock.api.stats.snapshot.mockResolvedValue(stats as never);
@@ -216,5 +221,22 @@ describe('DockerDashboard', () => {
     expect(await screen.findByText(/No Traefik tags discovered/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /docker inspect/i }));
     expect(await screen.findByText('// Loading or unavailable')).toBeInTheDocument();
+  });
+
+  it('hides the inspector behind an admin gate for members', async () => {
+    authState.user = { id: 5, role: 'member', email: 'm@test', name: 'Member' };
+    renderDashboard();
+    expect(await screen.findByText('nd-web-1')).toBeInTheDocument();
+    expect(screen.getByText(/Admin access required for the inspector/)).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText('Inspect container name…')).not.toBeInTheDocument();
+  });
+
+  it('ignores an inspector submit with an empty container name', async () => {
+    renderDashboard();
+    await screen.findByText('nd-web-1');
+    const formSubmitBtn = screen.getAllByRole('button', { name: /inspect/i })[0]!;
+    fireEvent.click(formSubmitBtn);
+    // No selection happens — the compose endpoint is not called.
+    expect(apiMock.api.containers.compose).not.toHaveBeenCalled();
   });
 });

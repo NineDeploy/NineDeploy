@@ -316,4 +316,68 @@ describe('FirewallSection', () => {
       expect(toastSpy.toast).toHaveBeenCalledWith('Delete failed', 'error');
     });
   });
+
+  it('covers success/fallback arms for toggle, presets and rule form', async () => {
+    const statusPayload = {
+      installed: true,
+      active: true,
+      supported: true,
+      rules: [
+        { id: 1, to: '22/tcp', action: 'ALLOW IN', from: 'Anywhere' },
+        // Non-ALLOW and bare-port rules exercise the port-permission helper.
+        { id: 2, to: '53', action: 'DENY IN', from: 'Anywhere' },
+        { id: 3, to: '8080', action: 'ALLOW IN', from: 'Anywhere' },
+      ],
+      defaultIncoming: 'deny',
+      defaultOutgoing: 'allow',
+    };
+    apiMock.api.firewall.status.mockResolvedValue(statusPayload);
+
+    renderWithProviders(<FirewallSection />);
+    expect(await screen.findByText('22/tcp')).toBeInTheDocument();
+
+    // A successful disable toasts the disabled variant and flips the button.
+    apiMock.api.firewall.toggle.mockResolvedValueOnce({ status: { ...statusPayload, active: false } });
+    fireEvent.click(screen.getByRole('button', { name: 'Disable Firewall' }));
+    await waitFor(() =>
+      expect(toastSpy.toast).toHaveBeenCalledWith('Host firewall (UFW) disabled', 'success'));
+
+    // Non-Error rejections fall back to the generic messages.
+    apiMock.api.firewall.toggle.mockRejectedValueOnce(undefined as never);
+    fireEvent.click(screen.getByRole('button', { name: 'Enable Firewall' }));
+    await waitFor(() =>
+      expect(toastSpy.toast).toHaveBeenCalledWith('Could not toggle firewall', 'error'), { timeout: 3000 });
+
+    apiMock.api.firewall.applyRecommended.mockRejectedValueOnce('x' as never);
+    fireEvent.click(screen.getByRole('button', { name: /apply vps profile/i }));
+    await waitFor(() =>
+      expect(toastSpy.toast).toHaveBeenCalledWith('Failed to apply recommended profile', 'error'));
+
+    // The custom rule form submits a valid port.
+    apiMock.api.firewall.addRule.mockResolvedValueOnce({ status: statusPayload });
+    fireEvent.change(screen.getByPlaceholderText('e.g. 8080, 25565'), { target: { value: '8443' } });
+    fireEvent.submit(screen.getByPlaceholderText('e.g. 8080, 25565').closest('form')!);
+    await waitFor(() => expect(apiMock.api.firewall.addRule).toHaveBeenCalled());
+
+    // A failing preset close surfaces the generic preset message.
+    apiMock.api.firewall.deleteRule.mockRejectedValueOnce('nope' as never);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Close Ports' })[0]!);
+    await waitFor(() =>
+      expect(toastSpy.toast).toHaveBeenCalledWith('Failed to toggle port preset', 'error'));
+
+    // Direct rule deletion and custom-rule creation fall back to their
+    // generic messages for non-Error rejections.
+    const confirmMock = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    apiMock.api.firewall.deleteRule.mockRejectedValueOnce(undefined as never);
+    fireEvent.click(screen.getAllByTitle('Delete rule')[0]!);
+    await waitFor(() =>
+      expect(toastSpy.toast).toHaveBeenCalledWith('Failed to delete rule', 'error'));
+
+    apiMock.api.firewall.addRule.mockRejectedValueOnce('bad' as never);
+    fireEvent.change(screen.getByPlaceholderText('e.g. 8080, 25565'), { target: { value: '9000' } });
+    fireEvent.submit(screen.getByPlaceholderText('e.g. 8080, 25565').closest('form')!);
+    await waitFor(() =>
+      expect(toastSpy.toast).toHaveBeenCalledWith('Failed to add rule', 'error'));
+    confirmMock.mockRestore();
+  });
 });

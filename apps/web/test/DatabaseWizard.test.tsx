@@ -12,6 +12,17 @@ const apiMock = vi.hoisted(() => ({
 
 vi.mock('../src/lib/api.js', () => apiMock);
 
+const modeMock = vi.hoisted(() => ({
+  useExperienceMode: vi.fn(() => ({
+    mode: 'simple' as 'simple' | 'advanced',
+    isAdvanced: false,
+    isSimple: true,
+    setMode: vi.fn(),
+    toggleMode: vi.fn(),
+  })),
+}));
+vi.mock('../src/lib/mode.js', () => ({ useExperienceMode: modeMock.useExperienceMode }));
+
 import { DatabaseWizard } from '../src/components/DatabaseWizard.js';
 
 function renderWizard(onClose = vi.fn()) {
@@ -246,5 +257,46 @@ describe('DatabaseWizard', () => {
         version: undefined,
       }),
     );
+  });
+
+  it('derives the default name from the engine on quick create', async () => {
+    const user = userEvent.setup();
+    renderWizard();
+    await user.click(screen.getByText('PostgreSQL'));
+    await user.click(screen.getByRole('button', { name: 'Create Now' }));
+    await waitFor(() =>
+      expect(apiMock.api.databases.create).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'postgres-db', engine: 'postgres' }),
+      ),
+    );
+  });
+
+  it('shows the pending state on the quick-mode button', async () => {
+    const user = userEvent.setup();
+    const hold = deferred();
+    apiMock.api.databases.create.mockReturnValue(hold.promise);
+    renderWizard();
+    await user.click(screen.getByText('PostgreSQL'));
+    await user.click(screen.getByRole('button', { name: 'Create Now' }));
+    expect(screen.getByText('Creating…')).toBeInTheDocument();
+    hold.resolve({ id: 1 });
+    await waitFor(() =>
+      expect(screen.queryByText('Creating…')).not.toBeInTheDocument());
+  });
+
+  it('renders the DevOps Pro badge in advanced mode', async () => {
+    modeMock.useExperienceMode.mockReturnValue({
+      mode: 'advanced',
+      isAdvanced: true,
+      isSimple: false,
+      setMode: vi.fn(),
+      toggleMode: vi.fn(),
+    });
+    const user = userEvent.setup();
+    renderWizard();
+    expect(screen.getByText('DevOps Pro')).toBeInTheDocument();
+    // Advanced mode drops the 1-click quick-create block.
+    await user.click(screen.getByText('PostgreSQL'));
+    expect(screen.queryByRole('button', { name: 'Create Now' })).not.toBeInTheDocument();
   });
 });

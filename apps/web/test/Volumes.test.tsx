@@ -18,8 +18,8 @@ vi.mock('../src/components/Toast.js', async () => {
 });
 
 const volumes = [
-  { name: 'nd-data', sizeBytes: 512 * 1024 * 1024, owner: { kind: 'database', name: 'db', engine: 'postgres' }, inUse: false },
-  { name: 'nd-app', sizeBytes: 2 * 1024 ** 3, owner: { kind: 'service', name: 'api', engine: null }, inUse: false },
+  { name: 'nd-data', sizeBytes: 512 * 1024 * 1024, owner: { id: 5, kind: 'database', name: 'db', engine: 'postgres' }, inUse: false },
+  { name: 'nd-app', sizeBytes: 2 * 1024 ** 3, owner: { id: 7, kind: 'service', name: 'api', engine: null }, inUse: false },
   { name: 'nd-old', sizeBytes: 100, owner: null, inUse: false },
 ];
 
@@ -82,6 +82,9 @@ describe('Volumes', () => {
     expect(screen.getByText('no active owner')).toBeInTheDocument();
     expect(screen.getAllByText('attached · stopped').length).toBe(2);
     expect(screen.getByText('retained · reusable')).toBeInTheDocument();
+    // Owned volumes deep-link to their owner's detail page.
+    expect(screen.getByRole('link', { name: /DB/ })).toHaveAttribute('href', '/databases/5');
+    expect(screen.getByRole('link', { name: /Service/ })).toHaveAttribute('href', '/services/7');
     // retained count in subtitle
     expect(screen.getByText(/1 retained/)).toBeInTheDocument();
     // docker resources reclaimable rendered as a real element, not literal text

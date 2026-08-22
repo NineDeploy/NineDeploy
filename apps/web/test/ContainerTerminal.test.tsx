@@ -271,4 +271,41 @@ describe('ContainerTerminal', () => {
     // Still renders in the disconnected state without crashing.
     expect(document.querySelector('[class*="space-y"]') ?? document.body).toBeInTheDocument();
   });
+
+  it('ignores non-Escape keys in the fullscreen listener', () => {
+    render(<ContainerTerminal serviceId={1} onClose={vi.fn()} />);
+    runEffect();
+    act(() => screen.getByTitle('Expand full screen').click());
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'a' }));
+    });
+    // Still fullscreen — only Escape restores.
+    expect(screen.getByTitle('Restore window size (Esc)')).toBeInTheDocument();
+  });
+
+  it('shows the service name in the titlebar when provided', () => {
+    render(<ContainerTerminal serviceId={1} serviceName="api" onClose={vi.fn()} />);
+    runEffect();
+    expect(screen.getByText('api · sh')).toBeInTheDocument();
+  });
+
+  it('keeps the latest terminal registered when an older session cleans up', () => {
+    render(<ContainerTerminal serviceId={1} onClose={vi.fn()} />);
+    const first = runEffect();
+    act(() => screen.getByText('Reconnect').click());
+    runEffect(); // registers a newer terminal for the same container
+    // The stale session's cleanup must not unregister the live terminal.
+    expect(() => act(() => first())).not.toThrow();
+    act(() => screen.getByText('Clear').click());
+    const latest = xtermMock.terminals[xtermMock.terminals.length - 1] as { clear: ReturnType<typeof vi.fn> };
+    expect(latest.clear).toHaveBeenCalled();
+  });
+
+  it('clear is a no-op when no container is attached', () => {
+    render(<ContainerTerminal serviceId={1} onClose={vi.fn()} />);
+    runEffect();
+    reactMock.ref.current = null;
+    act(() => screen.getByText('Clear').click());
+    expect(xtermMock.terminals[xtermMock.terminals.length - 1]).toBeDefined();
+  });
 });

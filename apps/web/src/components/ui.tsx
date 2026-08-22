@@ -143,7 +143,10 @@ export const AutofillRejectingInput = forwardRef<HTMLInputElement, AutofillRejec
           unlock();
           onKeyDown?.(event);
         }}
-        onAnimationStart={(event) => {
+        // React only registers animation-event delegation when the host
+        // supports the event; jsdom does not, so this browser-only autofill
+        // guard cannot be exercised in unit tests.
+        onAnimationStart={/* v8 ignore next 10 */ (event) => {
           const animationName = event.animationName || (event.nativeEvent as AnimationEvent).animationName;
           if (animationName === 'nd-autofill-detected') {
             rejectPanelAutofill(event.currentTarget, onAutofillRejected);
@@ -420,11 +423,14 @@ export function Modal({
     </div>
   );
 
+  // SSR guard: document always exists in the browser (and in jsdom tests).
+  /* v8 ignore start */
   if (typeof document !== 'undefined') {
     return createPortal(modalContent, document.body);
   }
 
   return modalContent;
+  /* v8 ignore stop */
 }
 
 // ── Confirm dialog ────────────────────────────────────────────────────────

@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ToastProvider } from '../src/components/Toast.js';
 import { ModeProvider } from '../src/lib/mode.js';
 import { deferred } from './web-utils.js';
@@ -781,6 +781,316 @@ describe('DeployWizard — repository analysis & Git credential guidance', () =>
     await waitFor(() =>
       expect(apiMock.api.services.create).toHaveBeenCalledWith(expect.objectContaining({
         build: expect.objectContaining({ baseDir: '/apps/worker' }),
+      })));
+  });
+});
+
+describe('DeployWizard — advanced review and repository-picker variants', () => {
+  // The minimal-analysis preset: no build commands, no env, five detected
+  // files and a framework version — exercises every optional branch of the
+  // review step and apply-suggestions.
+  const bareAnalysis = {
+    framework: {
+      id: 'node',
+      name: 'Node.js',
+      emoji: '⬢',
+      category: 'runtime',
+      port: 4000,
+      installCmd: null,
+      buildCmd: null,
+      startCmd: null,
+      env: [],
+      notes: [],
+    },
+    language: 'JavaScript',
+    packageManager: null,
+    nodeVersion: null,
+    frameworkVersion: '22.1.0',
+    scripts: {},
+    dependencyCount: 3,
+    devDependencyCount: 1,
+    hasDockerfile: false,
+    hasComposeFile: false,
+    monorepo: false,
+    detectedFiles: ['a.txt', 'b.txt', 'c.txt', 'd.txt', 'e.txt'],
+    workspacePackages: [],
+    baseDir: '/',
+    commitSha: null,
+    analyzedAt: '2026-01-02T03:04:05Z',
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    authMock.user = { id: 1, role: 'admin', email: 'a@test', name: 'A' };
+    // The REAL storage key (mode.tsx) — renders the wizard in advanced mode.
+    localStorage.setItem('ninedeploy_experience_mode', 'advanced');
+    apiMock.api.sources.list.mockResolvedValue([{ id: 3, name: 'github-app', type: 'github' }]);
+    apiMock.api.sources.repos.mockResolvedValue([]);
+    apiMock.api.servers.list.mockResolvedValue([]);
+    apiMock.api.services.create.mockResolvedValue({ id: 42, name: 'app' });
+    apiMock.api.env.create.mockResolvedValue({ id: 1, key: 'K', value: 'v', isSecret: false });
+    apiMock.api.deploys.trigger.mockResolvedValue({ deploymentId: 7 });
+  });
+
+  afterEach(() => {
+    localStorage.removeItem('ninedeploy_experience_mode');
+  });
+
+  async function fillRepo(user: ReturnType<typeof userEvent.setup>, repoUrl = 'https://github.com/x/y') {
+    await user.type(screen.getByPlaceholderText('my-app'), 'app');
+    await user.type(screen.getByPlaceholderText('https://github.com/you/repo'), repoUrl);
+  }
+
+  it('renders the DevOps Pro badge and a complete review for a bare analysis', async () => {
+    const user = userEvent.setup();
+    apiMock.api.insights.analyze.mockResolvedValue(bareAnalysis);
+    renderWizard();
+
+    expect(screen.getByText('DevOps Pro')).toBeInTheDocument();
+    await fillRepo(user);
+    expect(await screen.findByText('Node.js', {}, { timeout: 4000 })).toBeInTheDocument();
+    // A start command is missing — the plan shows the em-dash placeholder.
+    expect(screen.getAllByText('—').length).toBeGreaterThan(0);
+    // Five detected files: the first four are listed, the rest elided.
+    expect(screen.getByText(/a\.txt, b\.txt, c\.txt, d\.txt…/)).toBeInTheDocument();
+    // No suggested env vars at all — the block is absent.
+    expect(screen.queryByText('Suggested env:')).not.toBeInTheDocument();
+
+    // Applying a preset without commands only takes the port.
+    await user.click(screen.getByRole('button', { name: /Apply suggestions/ }));
+    expect(await screen.findByText('Suggestions applied')).toBeInTheDocument();
+
+    // Walk to review with host port, volume, health path and both limits.
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.type(screen.getByPlaceholderText('/app/data'), '/data');
+    await user.clear(screen.getByPlaceholderText('/'));
+    await user.type(screen.getByPlaceholderText('/'), '/health');
+    await user.type(screen.getByPlaceholderText('e.g. 8080'), '8080');
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.type(screen.getByPlaceholderText('512'), '512');
+    await user.type(screen.getByPlaceholderText('256'), '256');
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+
+    // Review rows: detected framework (version, no package manager), host
+    // port, volume and both limits. No build-commands row (none set).
+    expect(screen.getByText('⬢ Node.js 22.1.0')).toBeInTheDocument();
+    expect(screen.getByText(':4000')).toBeInTheDocument();
+    expect(screen.getByText(':8080')).toBeInTheDocument();
+    expect(screen.getByText('/data')).toBeInTheDocument();
+    expect(screen.getByText('512 shares · 256 MB')).toBeInTheDocument();
+  });
+
+  it('hints at a typed base directory when a monorepo exposes no packages', async () => {
+    const user = userEvent.setup();
+    apiMock.api.insights.analyze.mockResolvedValue({
+      ...bareAnalysis,
+      monorepo: true,
+      workspacePackages: [{ dir: 'apps/web', name: null, framework: null }],
+    });
+    const first = renderWizard();
+
+    await fillRepo(user);
+    expect(await screen.findByText(/Monorepo packages/, {}, { timeout: 4000 })).toBeInTheDocument();
+    // A nameless package falls back to its directory; clicking it scopes the build.
+    await user.click(screen.getByRole('button', { name: /apps\/web/ }));
+    expect(await screen.findByText(/This service builds/, {}, { timeout: 4000 })).toBeInTheDocument();
+    first.unmount();
+
+    // A root analysis that finds no workspace packages shows the manual hint.
+    apiMock.api.insights.analyze.mockResolvedValue({
+      ...bareAnalysis,
+      monorepo: true,
+      // The field is entirely absent — the picker falls back to an empty list.
+      workspacePackages: undefined,
+    });
+    renderWizard();
+    await fillRepo(user);
+    expect(await screen.findByText(
+      /workspace config found — type a base directory below/,
+      {},
+      { timeout: 4000 },
+    )).toBeInTheDocument();
+  }, 15000);
+
+  it('lists whichever build commands the applied preset carried', async () => {
+    const user = userEvent.setup();
+    /** Walk from step 0 straight to the review after applying a preset. */
+    const walkToReview = async () => {
+      await fillRepo(user);
+      await screen.findByText('Node.js', {}, { timeout: 4000 });
+      await user.click(screen.getByRole('button', { name: /Apply suggestions/ }));
+      await user.click(screen.getByRole('button', { name: /continue/i }));
+      await user.click(screen.getByRole('button', { name: /continue/i }));
+      await user.click(screen.getByRole('button', { name: /continue/i }));
+      await user.click(screen.getByRole('button', { name: /continue/i }));
+    };
+
+    const withCmds = (cmd: Partial<{ installCmd: string; buildCmd: string; startCmd: string }>) => ({
+      ...bareAnalysis,
+      framework: {
+        ...bareAnalysis.framework,
+        installCmd: null,
+        buildCmd: null,
+        startCmd: null,
+        ...cmd,
+      },
+    });
+
+    // Install only.
+    apiMock.api.insights.analyze.mockResolvedValue(withCmds({ installCmd: 'npm i' }));
+    let view = renderWizard();
+    await walkToReview();
+    expect(screen.getByText('Build commands')).toBeInTheDocument();
+    expect(screen.getByText('npm i')).toBeInTheDocument();
+    view.unmount();
+
+    // Build only.
+    apiMock.api.insights.analyze.mockResolvedValue(withCmds({ buildCmd: 'vite build' }));
+    view = renderWizard();
+    await walkToReview();
+    expect(screen.getByText('vite build')).toBeInTheDocument();
+    view.unmount();
+
+    // Start only.
+    apiMock.api.insights.analyze.mockResolvedValue(withCmds({ startCmd: 'node server.js' }));
+    view = renderWizard();
+    await walkToReview();
+    expect(screen.getByText('node server.js')).toBeInTheDocument();
+  }, 30000);
+
+  it('offers branch dropdowns and manual branch entry in every repo-list state', async () => {
+    const user = userEvent.setup();
+    // State 1: no credential repos, but the credential knows branches → a
+    // plain branch Select appears next to the credential picker.
+    apiMock.api.sources.branches.mockResolvedValue(['main', 'dev']);
+    const first = renderWizard();
+
+    await fillRepo(user);
+    const sourceSelect = screen.getAllByRole('combobox')[1]!;
+    await user.selectOptions(sourceSelect, '3');
+    const branchSelect = await screen.findByDisplayValue('main');
+    await user.selectOptions(branchSelect, 'dev');
+    first.unmount();
+
+    // State 2: credential repos listed and NO branches → repo dropdown fills
+    // URL/branch, and branch entry degrades to a plain input.
+    apiMock.api.sources.repos.mockResolvedValue([
+      { name: 'y', fullName: 'x/y', url: 'https://github.com/x/y', defaultBranch: 'trunk', isPrivate: false },
+    ]);
+    apiMock.api.sources.branches.mockResolvedValue([]);
+    renderWizard();
+
+    await fillRepo(user);
+    const source = screen.getAllByRole('combobox')[1]!;
+    await user.selectOptions(source, '3');
+    const repoDropdown = (await screen.findByRole('option', { name: /Choose a repo/ })).closest('select')!;
+    await user.selectOptions(repoDropdown, 'https://github.com/x/y');
+    // The name is already filled, so the repo pick only retargets branch+URL.
+    expect((screen.getByPlaceholderText('https://github.com/you/repo') as HTMLInputElement).value)
+      .toBe('https://github.com/x/y');
+    expect(await screen.findByDisplayValue('trunk')).toBeInTheDocument();
+    const manualBranch = screen.getByPlaceholderText('main');
+    await user.clear(manualBranch);
+    await user.type(manualBranch, 'feature/x');
+  });
+
+  it('tells a member to ask an admin when no credential is available', async () => {
+    const user = userEvent.setup();
+    authMock.user = { id: 2, role: 'member', email: 'm@test', name: 'M' };
+    renderWizard();
+
+    await fillRepo(user);
+    expect(await screen.findByText(/No Git credential selected/)).toBeInTheDocument();
+    expect(screen.getByText(/\(ask an administrator if none is listed\)/)).toBeInTheDocument();
+  });
+
+  it('re-runs the analysis on demand and degrades non-Error failures', async () => {
+    const user = userEvent.setup();
+    apiMock.api.insights.analyze
+      .mockResolvedValueOnce(bareAnalysis)
+      .mockRejectedValueOnce('boom' as never);
+    renderWizard();
+
+    await fillRepo(user);
+    expect(await screen.findByText('Node.js', {}, { timeout: 4000 })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Re-analyze' }));
+    expect(await screen.findByText('Could not analyze the repository', {}, { timeout: 4000 })).toBeInTheDocument();
+  });
+
+  it('skips re-analysis when only the credential changed', async () => {
+    const user = userEvent.setup();
+    apiMock.api.insights.analyze.mockResolvedValue(bareAnalysis);
+    renderWizard();
+
+    await fillRepo(user);
+    expect(await screen.findByText('Node.js', {}, { timeout: 4000 })).toBeInTheDocument();
+    const calls = apiMock.api.insights.analyze.mock.calls.length;
+    // Changing the source re-runs the effect, but repo/branch/baseDir (the
+    // analysis key) are unchanged — no second request fires.
+    const sourceSelect = screen.getAllByRole('combobox')[1]!;
+    await user.selectOptions(sourceSelect, '3');
+    await new Promise((r) => setTimeout(r, 1200));
+    expect(apiMock.api.insights.analyze.mock.calls.length).toBe(calls);
+  });
+
+  it('handles repo picks with no name, no default branch and a cleared selection', async () => {
+    const user = userEvent.setup();
+    apiMock.api.sources.repos.mockResolvedValue([
+      { name: 'noname', fullName: 'x/noname', url: 'https://github.com/x/noname', defaultBranch: null, isPrivate: false },
+    ]);
+    apiMock.api.sources.branches.mockResolvedValue([]);
+    renderWizard();
+
+    // Leave the name empty: picking the repo adopts its name.
+    await user.type(screen.getByPlaceholderText('https://github.com/you/repo'), 'https://github.com/x/y');
+    const sourceSelect = screen.getAllByRole('combobox')[1]!;
+    await user.selectOptions(sourceSelect, '3');
+    const repoDropdown = (await screen.findByRole('option', { name: /Choose a repo/ })).closest('select')!;
+    await user.selectOptions(repoDropdown, 'https://github.com/x/noname');
+    // No defaultBranch in the listing → the branch falls back to main.
+    expect(await screen.findByDisplayValue('main')).toBeInTheDocument();
+    expect((screen.getByPlaceholderText('my-app') as HTMLInputElement).value).toBe('noname');
+    // Clearing the selection clears the URL with it.
+    await user.selectOptions(repoDropdown, '');
+    expect((screen.getByPlaceholderText('https://github.com/you/repo') as HTMLInputElement).value).toBe('');
+  });
+
+  it('edits the second env row without touching the first', async () => {
+    const user = userEvent.setup();
+    renderWizard();
+
+    await user.type(screen.getByPlaceholderText('my-app'), 'app');
+    await user.type(screen.getByPlaceholderText('https://github.com/you/repo'), 'https://github.com/x/y');
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /add variable/i }));
+    await user.click(screen.getByRole('button', { name: /add variable/i }));
+    await user.type(screen.getAllByPlaceholderText('KEY')[0]!, 'FIRST');
+    await user.type(screen.getAllByPlaceholderText('KEY')[1]!, 'SECOND');
+    expect((screen.getAllByPlaceholderText('KEY')[0]! as HTMLInputElement).value).toBe('FIRST');
+  });
+
+  it('deploys a template onto a remote server node without a health path', async () => {
+    const user = userEvent.setup();
+    apiMock.api.servers.list.mockResolvedValue([
+      { id: 2, name: 'node-a', host: '10.0.0.2', port: 2375, status: 'online' },
+    ]);
+    renderWizard({ template: TEMPLATE });
+
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    const serverSelect = (await screen.findByRole('option', { name: /node-a/ })).closest('select')!;
+    await user.selectOptions(serverSelect, '2');
+    // Drop the prefilled health path so the create request omits it.
+    await user.clear(screen.getByPlaceholderText('/'));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: /deploy/i }));
+    await waitFor(() =>
+      expect(apiMock.api.templates.prepare).toHaveBeenCalledWith('n8n', expect.objectContaining({
+        serverId: 2,
+        healthPath: undefined,
       })));
   });
 });

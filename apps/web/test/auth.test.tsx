@@ -77,6 +77,29 @@ describe('AuthProvider', () => {
     }
   });
 
+  it('ignores a hash whose access_token param is present but empty', async () => {
+    window.location.hash = '#access_token=';
+    try {
+      renderAuth();
+      await waitFor(() => expect(screen.getByTestId('loading')).toHaveTextContent('false'));
+      expect(apiMock.setSessionTokens).not.toHaveBeenCalled();
+    } finally {
+      window.location.hash = '';
+    }
+  });
+
+  it('accepts a hash that carries only an access token', async () => {
+    window.location.hash = '#access_token=solo-at';
+    try {
+      renderAuth();
+      await waitFor(() =>
+        expect(apiMock.setSessionTokens).toHaveBeenCalledWith('solo-at', undefined));
+      expect(window.location.hash).toBe('');
+    } finally {
+      window.location.hash = '';
+    }
+  });
+
   it('ignores a hash without an access token', async () => {
     window.location.hash = '#section';
     try {

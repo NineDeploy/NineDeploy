@@ -1455,4 +1455,195 @@ describe('ServiceDetail', () => {
     await openTab('File Browser');
     expect(await screen.findByText('nd-svc-api')).toBeInTheDocument();
   });
+
+  it('shows the live-following log header and ignores stage clicks without lines', async () => {
+    mockOf((await import('../src/lib/useDeployLogs.js')).useDeployLogs).mockReturnValue({
+      lines: '##[stage:BUILD:running] compiling\nlog line',
+      open: true,
+    });
+    renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+    await openTab('Deploys');
+    expect(await screen.findByText('Following live output')).toBeInTheDocument();
+    // Clicking a stage with no matching marker is a safe no-op.
+    const stage = await screen.findByRole('button', { name: /^Cleanup:/ });
+    fireEvent.click(stage);
+    expect(stage).toBeInTheDocument();
+  });
+
+  it('returns early from stage clicks when the log stream has no lines', async () => {
+    mockOf((await import('../src/lib/useDeployLogs.js')).useDeployLogs).mockReturnValue({
+      lines: '',
+      open: true,
+    });
+    renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+    await openTab('Deploys');
+    // A stage button exists (a deployment is selected) but there is nothing
+    // to scroll to yet.
+    const stage = await screen.findByRole('button', { name: /^Prepare:/ });
+    fireEvent.click(stage);
+    expect(stage).toBeInTheDocument();
+  });
+
+  it('renders live cpu/memory with the container limit from the snapshot', async () => {
+    mockOf(api.stats.snapshot).mockResolvedValue({
+      host: null,
+      containers: [
+        // A non-matching row first so the find callback checks both fields.
+        { kind: 'database', refId: 1, refName: 'db', name: 'nd-db-x', cpuPct: 9, memMb: 99, memLimitMb: 0 },
+        { kind: 'service', refId: 1, refName: 'api', name: 'nd-api', cpuPct: 17.25, memMb: 220, memLimitMb: 512 },
+      ],
+    } as never);
+    renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+    expect(await screen.findByText('17.3%')).toBeInTheDocument();
+    expect(screen.getByText('220.0 / 512 MiB')).toBeInTheDocument();
+  });
+
+  it('reports non-Error analysis refresh failures', async () => {
+    mockOf(api.insights.get).mockResolvedValue(null as never);
+    mockOf(api.insights.refresh).mockRejectedValueOnce('boom' as never);
+    renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+    fireEvent.click(await screen.findByRole('button', { name: 'Analyze now' }));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Analysis failed', 'error'));
+  });
+
+  it('renders sparse analysis facts with compose and no commit metadata', async () => {
+    mockOf(api.insights.get).mockResolvedValue({
+      framework: { id: 'node', name: 'Node.js', emoji: '⬢', category: 'runtime', port: 4000, installCmd: 'npm i', buildCmd: null, startCmd: 'node .', env: [], notes: [] },
+      language: 'JavaScript',
+      packageManager: null,
+      nodeVersion: null,
+      frameworkVersion: '24',
+      scripts: {},
+      dependencyCount: 1,
+      devDependencyCount: 0,
+      hasDockerfile: false,
+      hasComposeFile: true,
+      monorepo: false,
+      detectedFiles: [],
+      workspacePackages: undefined,
+      baseDir: '/',
+      commitSha: null,
+      analyzedAt: '2026-01-02T03:04:05Z',
+    } as never);
+    renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+    expect(await screen.findByText('Node.js')).toBeInTheDocument();
+    expect(screen.getByText('compose')).toBeInTheDocument();
+  });
+
+  it('shows the clone pending label while cloning', async () => {
+    const hold = { resolve: (_v: unknown) => {} } as { resolve: (v: unknown) => void };
+    mockOf(api.services.clone).mockImplementation(
+      () => new Promise((res) => { hold.resolve = res; }) as never,
+    );
+    renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+    await screen.findByRole('heading', { name: 'api' });
+    fireEvent.click(screen.getByTitle('Clone service configuration and environment variables'));
+    expect(await screen.findByText('Cloning…')).toBeInTheDocument();
+    hold.resolve({ id: 9, name: 'api-clone' });
+    await waitFor(() => expect(screen.queryByText('Cloning…')).not.toBeInTheDocument());
+  });
+
+  it('opens tabs from the URL query and gates the terminal on a runtime container', async () => {
+    // The terminal tab renders its fallback without a running container.
+    mockOf(api.services.get).mockResolvedValue({ ...service, runtimeId: null } as never);
+    renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1?tab=terminal' });
+    expect(await screen.findByText('Container is not deployed')).toBeInTheDocument();
+
+    // A deep link straight to the framework tab mounts it.
+    mockOf(api.services.get).mockResolvedValue(service as never);
+    mockOf(api.insights.get).mockResolvedValue(null as never);
+    renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1?tab=framework' });
+    expect(await screen.findByText('This repository has not been analyzed yet')).toBeInTheDocument();
+  });
+
+  it('saves the internal container port, shows pending and failure states', async () => {
+    const user = userEvent.setup();
+    mockOf(api.services.update).mockResolvedValue({ ok: true } as never);
+    renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+    await openTab('Network');
+
+    const port = screen.getByLabelText('Internal container port');
+    await user.clear(port);
+    await user.type(port, '8080');
+    fireEvent.click(screen.getByRole('button', { name: 'Save Port' }));
+    await waitFor(() =>
+      expect(api.services.update).toHaveBeenCalledWith(1, { port: 8080 }));
+    await waitFor(() =>
+      expect(toastSpy.toast).toHaveBeenCalledWith('Container port :8080 saved — Traefik routing updated', 'success'));
+
+    // An invalid port shows the inline hint and blocks submission.
+    await user.clear(port);
+    await user.type(port, '99999');
+    expect(screen.getByText('Enter a port from 1 to 65535.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save Port' })).toBeDisabled();
+
+    // A rejected save surfaces the failure toast.
+    await user.clear(port);
+    await user.type(port, '3001');
+    mockOf(api.services.update).mockRejectedValueOnce(new Error('conflict') as never);
+    fireEvent.click(screen.getByRole('button', { name: 'Save Port' }));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Could not update the container port', 'error'));
+  });
+
+  it('shows the saving label while a port update is in flight', async () => {
+    const user = userEvent.setup();
+    mockOf(api.services.update).mockReturnValue(new Promise(() => {}) as never);
+    renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+    await openTab('Network');
+
+    const port = screen.getByLabelText('Internal container port');
+    await user.clear(port);
+    await user.type(port, '8081');
+    fireEvent.click(screen.getByRole('button', { name: 'Save Port' }));
+    expect(await screen.findByText('Saving…')).toBeInTheDocument();
+  });
+
+  it('shows zero live usage for an online service without container stats', async () => {
+    mockOf(api.stats.snapshot).mockResolvedValue({ host: null, containers: [] } as never);
+    mockOf(api.stats.metrics).mockResolvedValue({ kind: 'cpu', points: [] } as never);
+    renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+    // Online but unmeasured: the live chips fall back to zeros (the memory
+    // chip pairs the zero with the configured limit).
+    expect(await screen.findByText('0.0%')).toBeInTheDocument();
+    expect(screen.getByText('0.0 / 512 MiB')).toBeInTheDocument();
+  });
+
+  it('mounts the volumes tab from the service page', async () => {
+    mockOf(api.volumes.list).mockResolvedValue([] as never);
+    renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+    await openTab('Volumes');
+    await waitFor(() => expect(api.volumes.list).toHaveBeenCalled());
+  });
+
+  it('renders overview facts for a committed repo without a named credential', async () => {
+    mockOf(api.services.get).mockResolvedValue({
+      ...service,
+      commitSha: 'fedcba9876543',
+      sourceName: null,
+    } as never);
+    mockOf(api.insights.get).mockResolvedValue(null as never);
+    mockOf(api.stats.snapshot).mockResolvedValue({ host: null, containers: [] } as never);
+    renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+    expect(await screen.findByText('fedcba987654')).toBeInTheDocument(); // 12-char commit
+    // A repo without a named credential shows the public fallback.
+    expect(screen.getAllByText('public / none').length).toBeGreaterThan(0);
+  });
+
+  it('shows offline memory and the analyzing label for a stopped service', async () => {
+    mockOf(api.services.get).mockResolvedValue({
+      ...service,
+      status: 'stopped',
+      memLimitMb: 0,
+    } as never);
+    mockOf(api.stats.snapshot).mockResolvedValue({ host: null, containers: [] } as never);
+    mockOf(api.stats.metrics).mockResolvedValue({ kind: 'cpu', points: [] } as never);
+    mockOf(api.insights.get).mockReturnValue(new Promise(() => {}) as never);
+    mockOf(api.insights.refresh).mockReturnValue(new Promise(() => {}) as never);
+    renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+    // No live stats for a stopped service: the overview shows the offline
+    // placeholders, and a held refresh shows the pending label.
+    expect((await screen.findAllByText('Offline')).length).toBeGreaterThanOrEqual(2);
+    fireEvent.click(screen.getByRole('button', { name: 'Analyze now' }));
+    expect(await screen.findByText('Analyzing…')).toBeInTheDocument();
+  });
 });

@@ -1,6 +1,7 @@
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { ToastProvider } from '../src/components/Toast.js';
 import { createQueryClient, renderWithProviders } from './web-utils.js';
 
 const apiMock = vi.hoisted(() => ({
@@ -37,6 +38,14 @@ const ATTACHMENTS = [
 function renderCard() {
   return renderWithProviders(<AttachmentsCard serviceId={5} />, {
     queryClient: createQueryClient(),
+  });
+}
+
+/** Renders with the toast outlet mounted so toast assertions can query text. */
+function renderCardWithToasts() {
+  return renderWithProviders(<AttachmentsCard serviceId={5} />, {
+    queryClient: createQueryClient(),
+    wrapper: (children) => <ToastProvider>{children}</ToastProvider>,
   });
 }
 
@@ -142,7 +151,7 @@ describe('AttachmentsCard', () => {
   it('probes attachment connectivity and reports both outcomes', async () => {
     const user = userEvent.setup();
     apiMock.api.databases.logs.mockResolvedValueOnce('log-line');
-    renderCard();
+    renderCardWithToasts();
     await waitFor(() => expect(screen.getByText('pg-main')).toBeInTheDocument());
 
     // Each attachment row has a probe: the linked db and the dangling one.
@@ -156,6 +165,23 @@ describe('AttachmentsCard', () => {
     await user.click(screen.getAllByTitle('Test database connectivity')[0]!);
     await waitFor(() =>
       expect(apiMock.api.databases.logs).toHaveBeenCalledTimes(3));
+
+    // An Error rejection surfaces the message inside the failure toast.
+    apiMock.api.databases.logs.mockRejectedValueOnce(new Error('container down'));
+    await user.click(screen.getAllByTitle('Test database connectivity')[0]!);
+    await waitFor(() =>
+      expect(screen.getByText(/Could not reach pg-main: container down/)).toBeInTheDocument());
+  });
+
+  it('falls back to DATABASE_URL when the selected database has no engine', async () => {
+    const user = userEvent.setup();
+    apiMock.api.databases.list.mockResolvedValueOnce([
+      { id: 7, name: 'mystery', status: 'running' },
+    ]);
+    renderCardWithToasts();
+    const option = await screen.findByRole('option', { name: /mystery/ });
+    await user.selectOptions(screen.getByRole('combobox'), option);
+    expect(screen.getByPlaceholderText('DATABASE_URL')).toBeInTheDocument();
   });
 
   it('suggests the conventional env alias for every database engine', async () => {
@@ -167,6 +193,9 @@ describe('AttachmentsCard', () => {
       { id: 24, name: 'search', engine: 'meilisearch', status: 'running' },
       { id: 25, name: 'queue', engine: 'rabbitmq', status: 'running' },
       { id: 26, name: 'weird', engine: 'cockroach', status: 'running' },
+      { id: 27, name: 'kv', engine: 'valkey', status: 'running' },
+      { id: 28, name: 'raw', engine: 'mongo', status: 'running' },
+      { id: 29, name: 'sql', engine: 'mysql', status: 'running' },
     ]);
     renderCard();
     await waitFor(() => expect(screen.getByText('docs (mongodb)')).toBeInTheDocument());
@@ -179,6 +208,9 @@ describe('AttachmentsCard', () => {
       ['25', 'RABBITMQ_URL'],
       // Unknown engines fall back to the generic DATABASE_URL placeholder.
       ['26', 'DATABASE_URL'],
+      ['27', 'REDIS_URL'],
+      ['28', 'MONGODB_URI'],
+      ['29', 'MYSQL_URL'],
     ];
     for (const [value, alias] of expected) {
       await user.selectOptions(screen.getByRole('combobox'), value);

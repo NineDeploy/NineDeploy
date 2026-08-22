@@ -42,7 +42,11 @@ export function DatabaseWizard({ onClose }: { onClose: () => void }) {
   const create = useMutation({
     mutationFn: () =>
       api.databases.create({
+        // Defensive 'app' fallback: a create can only be submitted after an
+        // engine has been picked, so engine is never null here.
+        /* v8 ignore start */
         name: name.trim() || `${engine || 'app'}-db`,
+        /* v8 ignore stop */
         engine: engine!,
         version: version || undefined,
         existingVolume: selectedVolume || undefined,

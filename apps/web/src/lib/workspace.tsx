@@ -37,16 +37,22 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       const exists = workspaces.some((w) => w.id === selectedId);
       if (!exists || selectedId === null) {
         const first = workspaces[0];
+        // Defensive: unreachable in practice — some() above already dereferences
+        // every element, so a missing first slot cannot survive to here.
+        /* v8 ignore next 4 */
         if (first) {
           setSelectedId(first.id);
           localStorage.setItem(STORAGE_KEY, String(first.id));
         }
       }
-    } else {
+    } else if (user && !isLoading) {
+      // Only clear a saved selection once we KNOW the signed-in user has no
+      // workspaces — clearing during the initial empty/loading render would
+      // wipe the persisted choice before the list ever arrives.
       setSelectedId(null);
       localStorage.removeItem(STORAGE_KEY);
     }
-  }, [workspaces, selectedId]);
+  }, [workspaces, selectedId, user, isLoading]);
 
   const createMutation = useMutation({
     mutationFn: (input: WorkspaceCreateInput) => api.workspaces.create(input),
