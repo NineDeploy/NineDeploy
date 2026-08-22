@@ -43,6 +43,46 @@ fail()  { echo -e "${RED}✗${NC}  $*"; exit 1; }
 # what it fetched, and refuses to run without consent.
 allow_unverified_scripts() { [ "${NINEDEPLOY_ALLOW_UNVERIFIED_INSTALL_SCRIPTS:-}" = "1" ]; }
 
+# ── Long-step visibility ─────────────────────────────────────────────────────
+#
+# Vendor installs (Node, Docker) push hundreds of MB through apt with their
+# output discarded — from the operator's chair that is indistinguishable from
+# a hung installer (a multi-minute "freeze" on a slow mirror). Stream apt's
+# own progress lines (Get:/Unpacking/Setting up) live, with a heartbeat when
+# nothing matched for a while. The exit code is the wrapped command's own.
+run_apt_step() {
+  local log offset new printed elapsed rc pid
+  log=$(mktemp) || return 1
+  offset=1
+  elapsed=0
+  printed=0
+  sudo "$@" >"$log" 2>&1 &
+  pid=$!
+  while kill -0 "$pid" 2>/dev/null; do
+    sleep 5
+    elapsed=$((elapsed + 5))
+    new=$(tail -c +"$offset" "$log" | grep -E '^(Get|Hit|Fetched|Unpacking|Setting up|Selecting|Preparing|Need to get)' || true)
+    if [ -n "$new" ]; then
+      printf '%s\n' "$new"
+      offset=$(( $(wc -c <"$log") + 1 ))
+      printed=$elapsed
+    elif [ $((elapsed - printed)) -ge 20 ]; then
+      printf '  … still working (%ss elapsed)\n' "$elapsed" >&2
+      printed=$elapsed
+    fi
+  done
+  wait "$pid"
+  rc=$?
+  new=$(tail -c +"$offset" "$log" | grep -E '^(Get|Hit|Fetched|Unpacking|Setting up|Selecting|Preparing)' || true)
+  [ -z "$new" ] || printf '%s\n' "$new"
+  if [ "$rc" -ne 0 ]; then
+    warn "Command failed: sudo $*"
+    tail -n 15 "$log" >&2
+  fi
+  rm -f "$log"
+  return "$rc"
+}
+
 # Fetch a vendor GPG key into /etc/apt/keyrings and register its repository.
 # Args: <name> <key-url> <repo-line-without-signed-by>
 add_signed_apt_repo() {
@@ -53,7 +93,7 @@ add_signed_apt_repo() {
   sudo chmod a+r "$keyring" || return 1
   echo "deb [arch=$(dpkg --print-architecture) signed-by=${keyring}] ${repo_line}" \
     | sudo tee "/etc/apt/sources.list.d/${name}.list" >/dev/null || return 1
-  sudo apt-get update -y >/dev/null 2>&1 || return 1
+  run_apt_step apt-get update -y || return 1
 }
 
 # Last resort: download a vendor setup script, show what it is, and run it
@@ -88,7 +128,7 @@ install_node_apt() {
   add_signed_apt_repo "nodesource" \
     "https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key" \
     "https://deb.nodesource.com/node_${major}.x nodistro main" || return 1
-  sudo apt-get install -y nodejs >/dev/null 2>&1
+  run_apt_step apt-get install -y nodejs
 }
 
 # Node.js: signed repo first, consented script second.
@@ -110,7 +150,7 @@ install_docker_apt() {
   add_signed_apt_repo "docker" \
     "https://download.docker.com/linux/${id}/gpg" \
     "https://download.docker.com/linux/${id} ${codename} stable" || return 1
-  sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin >/dev/null 2>&1
+  run_apt_step apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 }
 
 if [ -z "${NINEDEPLOY_INSTALL_DIR:-}" ]; then
@@ -142,8 +182,8 @@ echo ""
 if [ "$(uname -s)" = "Linux" ] && command -v apt-get &>/dev/null; then
   if ! command -v curl &>/dev/null || ! command -v git &>/dev/null || ! command -v tar &>/dev/null || ! command -v sha256sum &>/dev/null; then
     info "Installing base system packages (curl, git, ca-certificates, tar, coreutils)…"
-    sudo apt-get update -y >/dev/null 2>&1 || true
-    sudo apt-get install -y curl git ca-certificates tar gzip coreutils >/dev/null 2>&1 || true
+    run_apt_step apt-get update -y || true
+    run_apt_step apt-get install -y curl git ca-certificates tar gzip coreutils || true
   fi
 fi
 
@@ -164,6 +204,7 @@ if command -v node &>/dev/null; then
   fi
 else
   warn "Node.js not found. Installing Active LTS via NodeSource…"
+  info "This downloads the NodeSource repository and the Node.js package — a few minutes on slow mirrors. Progress lines follow."
   if command -v apt-get &>/dev/null; then
     install_node || fail "Could not install Node.js. Install >= 22.13 manually: https://nodejs.org/"
   elif command -v brew &>/dev/null; then
@@ -231,6 +272,8 @@ if ! command -v docker &>/dev/null; then
     warn "Install Docker manually: https://docs.docker.com/engine/install/"
     fail "Docker is required."
   fi
+  info "Docker not found. Installing Docker Engine + containerd from the signed APT repository…"
+  info "This is the largest download of the install (~150 MB) and can take several minutes. Progress lines follow."
   if command -v apt-get &>/dev/null && install_docker_apt; then
     ok "Installed Docker from Docker Inc.'s signed APT repository"
   else
@@ -404,6 +447,9 @@ build_traefik_fallback_image() {
 if traefik_image_usable; then
   ok "Existing Traefik v3 image verified; skipping registry pull"
 else
+  # The pull output is captured (printed after completion on success), so say
+  # what is happening during the silent ~100 MB download window.
+  info "Pulling the Traefik v3 image (~100 MB) — output follows when it finishes…"
   if PULL_OUTPUT=$(docker_cmd pull traefik:3 2>&1) && traefik_image_usable; then
     printf '%s\n' "$PULL_OUTPUT"
   else

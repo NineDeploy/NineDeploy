@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Dashboard Crash Recovery**: Unexpected React render failures now show a recoverable error screen instead of leaving the dashboard blank.
 
 ### Changed
+- **Visible Installer Progress**: The installer's long silent phases no longer look like a hang. Node.js, Docker and base-package APT installs stream apt's own progress lines (`Get:`/`Unpacking`/`Setting up`) live with a still-working heartbeat, expected durations are printed before the big downloads, and failed APT commands surface their error tail instead of failing silently.
 - **Reusable Health Probes**: Docker readiness checks reuse one supervised `ninedeploy-prober` container instead of creating an ephemeral container for every retry.
 - **Serialized Singleton Lifecycles**: PM2 sessions and Traefik recreation are serialized, preventing concurrent callers from disconnecting active PM2 work or racing to replace the shared proxy container.
 - **Header-Based WebSocket Authentication**: Current dashboard clients carry bearer credentials in the WebSocket subprotocol header instead of query strings, reducing exposure through URLs and proxy history while preserving compatibility for older clients.
