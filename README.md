@@ -31,6 +31,16 @@ curl -fsSL https://raw.githubusercontent.com/NineDeploy/NineDeploy/main/install.
 ### Or Run with Docker
 
 ```bash
+# Recommended: the standalone production compose (required secret + docker
+# GID, restart policy, health-gated readiness — see docker-compose.prod.yml)
+echo "NINEDEPLOY_JWT_SECRET=$(openssl rand -hex 32)" >> .env
+echo "DOCKER_GID=$(getent group docker | cut -d: -f3)" >> .env
+docker compose -f docker-compose.prod.yml up -d
+```
+
+Or run the image directly:
+
+```bash
 docker run -d --name ninedeploy \
   -v /var/run/docker.sock:/var/run/docker.sock \
   --group-add $(getent group docker | cut -d: -f3) \

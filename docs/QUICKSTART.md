@@ -32,7 +32,18 @@ curl -fsSL https://raw.githubusercontent.com/NineDeploy/NineDeploy/main/install.
 
 ## 🐳 2. Docker Installation (Containerized)
 
-If you prefer running NineDeploy itself inside Docker:
+If you prefer running NineDeploy itself inside Docker, the standalone
+production compose file is the one-command path (it refuses to boot without a
+strong `NINEDEPLOY_JWT_SECRET`, adds a restart policy and the health-gated
+readiness check):
+
+```bash
+echo "NINEDEPLOY_JWT_SECRET=$(openssl rand -hex 32)" >> .env
+echo "DOCKER_GID=$(getent group docker | cut -d: -f3)" >> .env
+docker compose -f docker-compose.prod.yml up -d
+```
+
+Or run the image directly:
 
 ```bash
 docker run -d --name ninedeploy \
@@ -48,6 +59,12 @@ docker run -d --name ninedeploy \
 ```
 
 > **Note on Permissions**: The `--group-add` argument is required so the non-root `ninedeploy` user inside the container can interact with the host's `/var/run/docker.sock`.
+
+> **What differs from bare-metal**: PM2-type services (host processes) and UFW
+> firewall management are only available via the bare-metal installer. Docker
+> and Compose deploys, managed databases, Traefik ingress and encrypted S3
+> backups work identically — the panel drives them as host sibling containers
+> through the mounted socket.
 
 ---
 

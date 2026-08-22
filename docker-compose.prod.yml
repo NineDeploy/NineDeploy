@@ -1,0 +1,48 @@
+# ── NineDeploy standalone container deployment ────────────────────────────
+# Boots the production panel image with the host Docker socket mounted, so
+# deployed apps, managed databases and the Traefik ingress container are all
+# managed as host siblings through the socket. No install.sh, no systemd.
+#
+#   echo "NINEDEPLOY_JWT_SECRET=$(openssl rand -hex 32)" >> .env
+#   echo "DOCKER_GID=$(getent group docker | cut -d: -f3)" >> .env
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# The panel answers on http://<host>:3000. Domains attached to services are
+# served by the ninedeploy-traefik sibling container on :80/:443 — keep those
+# ports free on the host. PM2-type services and UFW firewall management need
+# the bare-metal installer instead (see docs/QUICKSTART.md).
+#
+# The image runs as the non-root `ninedeploy` user; the host socket is
+# typically root:docker mode 0660, so the docker group's GID is required.
+
+services:
+  ninedeploy:
+    image: ghcr.io/ninedeploy/ninedeploy:latest
+    # Or build locally: docker compose -f docker-compose.prod.yml build --no-cache
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      # Drop this mapping and route the panel through Traefik instead if you
+      # don't want the API directly exposed (set the panel domain in settings).
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      # A strong secret is mandatory — production refuses to boot on the
+      # known defaults (see apps/server/src/env.ts).
+      NINEDEPLOY_JWT_SECRET: "${NINEDEPLOY_JWT_SECRET:?generate one: openssl rand -hex 32}"
+      NINEDEPLOY_PUBLIC_URL: ${NINEDEPLOY_PUBLIC_URL:-http://localhost:3000}
+      # Automatic HTTPS via Let's Encrypt (optional):
+      # NINEDEPLOY_ACME_EMAIL: admin@example.com
+      # Wildcard certificates via DNS-01 (optional):
+      # NINEDEPLOY_DNS_PROVIDER: cloudflare
+      # NINEDEPLOY_DNS_TOKEN: <api-token>
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      # SQLite db, git checkouts, encrypted backups and master.key live here.
+      - ninedeploy-data:/data
+    group_add:
+      - "${DOCKER_GID:?set it: getent group docker | cut -d: -f3}"
+volumes:
+  ninedeploy-data:

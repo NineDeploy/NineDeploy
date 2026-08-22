@@ -16,11 +16,13 @@ describe('health routes', () => {
     expect(typeof body.time).toBe('string');
   });
 
-  it('reports degraded when the db ping fails', async () => {
+  it('reports degraded as a 503 when the db ping fails', async () => {
     const app = await buildTestApp({ db: createFakeDb({ runError: true }) });
     await app.register(healthRoutes);
     const res = await app.inject({ method: 'GET', url: '/health' });
-    expect(res.statusCode).toBe(200);
+    // 503, not 200-with-"degraded": the Docker HEALTHCHECK and the installer's
+    // readiness gate check the status code, so a broken database must fail them.
+    expect(res.statusCode).toBe(503);
     expect(res.json().status).toBe('degraded');
     expect(res.json().db).toBe('error');
   });

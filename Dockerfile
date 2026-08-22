@@ -115,8 +115,9 @@ ENV NODE_ENV=production \
 EXPOSE 3000
 VOLUME /data
 
-# The API exposes /health (liveness + DB ping) — declare it so orchestrators
-# (compose, k8s, Portainer) can gate traffic on readiness without custom config.
+# The API exposes /health (liveness + DB readiness — a failed DB ping answers
+# 503, not 200), so the HEALTHCHECK gates on real readiness and orchestrators
+# (compose, k8s, Portainer) can use `depends_on: service_healthy` as-is.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
