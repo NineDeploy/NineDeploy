@@ -4,7 +4,7 @@ import path from 'node:path';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { servicesRoutes } from '../src/modules/services.js';
 import { getBundledTemplates } from '../src/templates/registry.js';
-import { asUser, buildTestApp, createFakeDb, svcRow } from './helpers.js';
+import { asUser, buildTestApp, createFakeDb, svcRow, trackStatusUpdates } from './helpers.js';
 
 const execMocks = vi.hoisted(() => ({
   capture: vi.fn(async () => 'line1\nline2'),
@@ -46,25 +46,6 @@ const validCreate = {
   port: 8080,
   build: { buildPack: 'auto', baseDir: '/' },
 };
-
-/** Record every payload written through db.update(...) in a test. */
-function trackStatusUpdates(db: ReturnType<typeof createFakeDb>) {
-  const updates: Array<Record<string, unknown>> = [];
-  const original = db.update.bind(db) as (table: unknown) => {
-    set: (payload: Record<string, unknown>) => unknown;
-  };
-  (
-    db as unknown as {
-      update: (table: unknown) => { set: (payload: Record<string, unknown>) => unknown };
-    }
-  ).update = (table: unknown) => ({
-    set: (payload: Record<string, unknown>) => {
-      updates.push(payload);
-      return original(table).set(payload);
-    },
-  });
-  return { updates };
-}
 
 describe('services routes', () => {
   beforeEach(() => {

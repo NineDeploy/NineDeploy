@@ -194,6 +194,22 @@ export async function pm2Status(runtimeId: string): Promise<'online' | 'stopped'
   }
 }
 
+/**
+ * Best-effort `pm2 resurrect`: restore the dumped process list after the
+ * daemon died (reboot, crash). Processes that were stopped when the dump was
+ * written are restored as stopped, so this is safe during reconciliation of
+ * services whose desired state is running. Declared typings miss resurrect,
+ * but the runtime API exposes it.
+ */
+export async function pm2Resurrect(): Promise<void> {
+  await withPm2(
+    () =>
+      new Promise<void>((res) =>
+        (pm2 as unknown as { resurrect: (cb: () => void) => void }).resurrect(() => res()),
+      ),
+  ).catch(() => undefined);
+}
+
 /** Tail the last 300 lines of a process's combined stdout+stderr log files. */
 export async function pm2Logs(runtimeId: string): Promise<string> {
   return withPm2(async () => {

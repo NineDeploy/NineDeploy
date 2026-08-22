@@ -374,6 +374,26 @@ export const sessionRow = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
+/** Record every payload written through db.update(...) — for asserting which
+ * statuses a code path actually persisted, independent of the fake's resolvers. */
+export function trackStatusUpdates(db: ReturnType<typeof createFakeDb>) {
+  const updates: Array<Record<string, unknown>> = [];
+  const original = db.update.bind(db) as (table: unknown) => {
+    set: (payload: Record<string, unknown>) => unknown;
+  };
+  (
+    db as unknown as {
+      update: (table: unknown) => { set: (payload: Record<string, unknown>) => unknown };
+    }
+  ).update = (table: unknown) => ({
+    set: (payload: Record<string, unknown>) => {
+      updates.push(payload);
+      return original(table).set(payload);
+    },
+  });
+  return { updates };
+}
+
 export const svcRow = (over: Record<string, unknown> = {}) => ({
   id: 1,
   projectId: null,

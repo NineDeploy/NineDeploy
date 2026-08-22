@@ -1,58 +1,115 @@
 import fp from 'fastify-plugin';
 import { and, eq, isNull } from 'drizzle-orm';
 import { services } from '@ninedeploy/db';
-import { pm2Status } from '../engine/builders/pm2.js';
+import { pm2Resurrect, pm2Start, pm2Status } from '../engine/builders/pm2.js';
 import { capture } from '../lib/exec.js';
 
-const RECONCILE_INTERVAL_MS = 5 * 60 * 1000;
+// A tight loop matters for the boot promise ("everything comes back on its
+// own"): the first pass runs at startup, and anything it cannot fix — e.g. a
+// Docker daemon still warming up — is retried a minute later, not five.
+const RECONCILE_INTERVAL_MS = 60_000;
 
 /**
- * Runtime-state reconciliation. `services.status` stores the last lifecycle
- * result, not live truth: after a reboot, a daemon outage, or an external
- * `docker stop`, rows still claim 'running' while nothing runs — exactly when
- * an operator most needs an accurate panel. This watchdog walks local services
- * whose DB status is 'running', asks the actual runtime, and DOWNS the row to
- * match reality ('stopped' when the runtime exists but is not running,
- * 'error' when the runtime is gone and only a redeploy can bring it back).
- * It never upgrades a status and never touches non-running rows (a deploy in
- * progress) or services owned by remote agents.
+ * Self-healing runtime reconciliation. `services.status` records desired
+ * lifecycle state (the lifecycle endpoints persist their real outcome), so a
+ * row claiming `running` while its runtime is down — after a reboot, a daemon
+ * crash, or an external `docker stop` — is drift to repair, not just to
+ * report:
+ *
+ *   - runtime running              → nothing to do
+ *   - runtime present but stopped  → START it (docker start / pm2 restart;
+ *     compose sidecars sharing the project label come along)
+ *   - PM2 process gone             → pm2 resurrect (the dump the server keeps
+ *     fresh restores it; panel-stopped processes stay stopped) then re-check
+ *   - runtime gone (deleted)       → only a redeploy can recreate it: mark
+ *     `error` so the panel says so
+ *
+ * Never touches non-running rows (a deploy in progress) or services owned by
+ * remote agents. Skips the round — without judging — when the Docker daemon
+ * is unreachable.
  */
 
 /** The daemon cannot be reached at all — reconciliation must skip, not judge. */
 class DaemonUnavailableError extends Error {}
 
-async function containerState(runtimeId: string): Promise<'running' | 'stopped' | 'gone'> {
+/** Run docker and surface daemon-outage distinctly from command failures. */
+async function execDocker(args: string[]): Promise<string> {
   try {
-    const state = (
-      await capture('docker', ['inspect', '--format', '{{.State.Status}}', runtimeId])
-    ).trim();
-    // 'restarting' is on its way back up — treat as running, not as a downgrade.
-    if (state === 'running' || state === 'restarting') return 'running';
-    // exited/created/paused/dead: the container exists but is not serving.
-    return 'stopped';
+    return await capture('docker', args);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (/cannot connect to the docker daemon|docker daemon is not running|error during connect/i.test(msg)) {
       throw new DaemonUnavailableError(msg);
     }
+    throw err;
+  }
+}
+
+async function containerState(runtimeId: string): Promise<'running' | 'stopped' | 'gone'> {
+  let state: string;
+  try {
+    state = (await execDocker(['inspect', '--format', '{{.State.Status}}', runtimeId])).trim();
+  } catch (err) {
+    if (err instanceof DaemonUnavailableError) throw err;
     // "No such container/object" — the runtime was destroyed.
     return 'gone';
+  }
+  // 'restarting' is on its way back up — treat as running, not as drift.
+  if (state === 'running' || state === 'restarting') return 'running';
+  // exited/created/paused/dead: the container exists but is not serving.
+  return 'stopped';
+}
+
+/** Start a stopped container; returns whether it ended up running. */
+async function reviveContainer(runtimeId: string): Promise<boolean> {
+  try {
+    await execDocker(['start', runtimeId]);
+    // Compose projects are multi-container: starting only the main container
+    // would leave sidecars (DBs, workers) dead. Starting already-running
+    // containers is a successful no-op, so start the whole project at once.
+    try {
+      const project = (
+        await execDocker([
+          'inspect',
+          '--format',
+          '{{ index .Config.Labels "com.docker.compose.project" }}',
+          runtimeId,
+        ])
+      ).trim();
+      if (project) {
+        const ids = (await execDocker(['ps', '-aq', '--filter', `label=com.docker.compose.project=${project}`]))
+          .trim()
+          .split(/\r?\n/)
+          .map((id) => id.trim())
+          .filter(Boolean);
+        if (ids.length > 0) await execDocker(['start', ...ids]);
+      }
+    } catch {
+      /* sibling discovery is best-effort */
+    }
+    const state = (await execDocker(['inspect', '--format', '{{.State.Status}}', runtimeId])).trim();
+    return state === 'running' || state === 'restarting';
+  } catch (err) {
+    if (err instanceof DaemonUnavailableError) throw err;
+    return false;
   }
 }
 
 export default fp(
   async (fastify) => {
-    const downgrade = async (
-      svc: { id: number; name: string; runtimeId: string | null },
+    const setStatus = async (
+      svc: { id: number; name: string; runtimeId: string },
       status: 'stopped' | 'error',
     ) => {
+      // Also match on runtimeId: if a deploy swapped the runtime between our
+      // read and this write, the stale reconcile must not clobber it.
       await fastify.db
         .update(services)
         .set({ status })
-        .where(eq(services.id, svc.id));
+        .where(and(eq(services.id, svc.id), eq(services.runtimeId, svc.runtimeId)));
       fastify.log.warn(
         { serviceId: svc.id, name: svc.name, runtimeId: svc.runtimeId, status },
-        'service runtime is not running; status reconciled from live state',
+        'service runtime is down and could not be revived — status reconciled from live state (a redeploy recreates it)',
       );
     };
 
@@ -62,18 +119,46 @@ export default fp(
           where: and(eq(services.status, 'running'), isNull(services.serverId)),
         });
         let daemonDown = false;
+        let pm2Resurrected = false;
         for (const svc of rows) {
-          if (!svc.runtimeId) continue;
+          const runtimeId = svc.runtimeId;
+          if (!runtimeId) continue;
           try {
             if (svc.type === 'pm2') {
-              const live = await pm2Status(svc.runtimeId);
+              let live = await pm2Status(runtimeId);
+              if (live === 'gone' && !pm2Resurrected) {
+                // The PM2 daemon died or rebooted: restore the dumped process
+                // list once per round, then look again.
+                pm2Resurrected = true;
+                await pm2Resurrect();
+                live = await pm2Status(runtimeId);
+              }
               if (live === 'online') continue;
-              await downgrade(svc, live === 'stopped' ? 'stopped' : 'error');
+              if (live === 'stopped') {
+                await pm2Start(runtimeId);
+                if ((await pm2Status(runtimeId)) === 'online') {
+                  fastify.log.warn(
+                    { serviceId: svc.id, name: svc.name, runtimeId },
+                    'revived stopped PM2 process',
+                  );
+                  continue;
+                }
+              }
+              await setStatus({ ...svc, runtimeId }, 'error');
             } else if (svc.type === 'docker' || svc.type === 'compose') {
               if (daemonDown) continue;
-              const live = await containerState(svc.runtimeId);
+              const live = await containerState(runtimeId);
               if (live === 'running') continue;
-              await downgrade(svc, live === 'stopped' ? 'stopped' : 'error');
+              if (live === 'stopped') {
+                if (await reviveContainer(runtimeId)) {
+                  fastify.log.warn(
+                    { serviceId: svc.id, name: svc.name, runtimeId },
+                    'revived stopped container',
+                  );
+                  continue;
+                }
+              }
+              await setStatus({ ...svc, runtimeId }, 'error');
             }
           } catch (err) {
             if (err instanceof DaemonUnavailableError) {

@@ -27,7 +27,7 @@ Common operational edge cases, recovery steps, and diagnostic procedures for Nin
    ```
 
 **The panel says "running" but nothing is actually running**:
-The service status used to record the *last lifecycle result*, so a reboot or daemon outage left stale `running` rows. The panel now reconciles against the live runtime at startup and every 5 minutes: rows are downgraded to `stopped` (runtime exists but is not running) or `error` (runtime is gone — redeploy it). Lifecycle actions also report the truth: starting/restarting a runtime that no longer exists returns **409** (redeploy required), and a Docker daemon that cannot be reached returns **503** instead of a fake success.
+The service status used to record the *last lifecycle result*, so a reboot or daemon outage left stale `running` rows. The panel now self-heals: at startup and every 60 seconds it compares each local service's desired state with the live runtime and **revives** anything the panel believes should be running — stopped containers are `docker start`ed (Compose sidecars come along), a dead PM2 daemon is resurrected from the dump and stopped processes restarted. Only a runtime that was deleted (needs a redeploy) is downgraded to `error`. Lifecycle actions also report the truth: starting/restarting a runtime that no longer exists returns **409** (redeploy required), and a Docker daemon that cannot be reached returns **503** instead of a fake success.
 
 ---
 
