@@ -333,9 +333,9 @@ fi
 # pnpm
 if ! command -v pnpm &>/dev/null; then
   warn "pnpm not found. Installing pnpm…"
-  PNPM_VERSION="11.22.0"
+  PNPM_VERSION="11.23.0"
   if [ -f "$INSTALL_DIR/package.json" ]; then
-    PNPM_VERSION=$(node -p "require('${INSTALL_DIR}/package.json').packageManager.replace(/^pnpm@/, '').split('+')[0]" 2>/dev/null || echo "11.22.0")
+    PNPM_VERSION=$(node -p "require('${INSTALL_DIR}/package.json').packageManager.replace(/^pnpm@/, '').split('+')[0]" 2>/dev/null || echo "11.23.0")
   fi
   (corepack enable 2>/dev/null && corepack prepare "pnpm@${PNPM_VERSION}" --activate 2>/dev/null) || sudo npm install -g "pnpm@${PNPM_VERSION}" || npm install -g "pnpm@${PNPM_VERSION}"
 fi

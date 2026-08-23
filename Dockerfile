@@ -23,7 +23,7 @@
 # host PID space); Docker-based services and templates work normally.
 
 # ── Stage 1: build the monorepo ──────────────────────────────────────────
-FROM node:24-slim AS build
+FROM node:26-slim AS build
 WORKDIR /app
 
 # Install pnpm via corepack (no network fetch of package managers).
@@ -48,7 +48,7 @@ COPY . .
 RUN pnpm build
 
 # ── Stage 2: runtime ─────────────────────────────────────────────────────
-FROM node:24-slim AS runtime
+FROM node:26-slim AS runtime
 WORKDIR /app
 
 ARG NIXPACKS_VERSION=1.41.0
