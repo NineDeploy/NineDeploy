@@ -1352,7 +1352,7 @@
       "description": "Ghost is a powerful app for creators to publish, share and grow a business around their content. Modern editor, native memberships and subscriptions.",
       "category": "CMS",
       "emoji": "👻",
-      "image": "ghost:6-alpine",
+      "image": "ghost:5-alpine",
       "port": 2368,
       "volumeMount": "/var/lib/ghost/content",
       "env": [

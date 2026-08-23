@@ -344,19 +344,36 @@ ok "pnpm $(pnpm -v 2>/dev/null || echo 'installed')"
 # Nixpacks CLI — required for source repositories without a Dockerfile.
 # ghcr.io/railwayapp/nixpacks is a build base image, not a runnable CLI image,
 # so install the pinned upstream binary and verify it before exposing it.
-NIXPACKS_VERSION="1.41.0"
+#
+# Override at install time with: NINEDEPLOY_NIXPACKS_VERSION=1.40.0 ./install.sh
+# The table below only carries checksums for versions we know about; an unknown
+# version is rejected rather than silently fetched (defence-in-depth against
+# tampered release artefacts). To add a new release, drop its checksums in
+# here from the official GitHub release page.
+NIXPACKS_VERSION="${NINEDEPLOY_NIXPACKS_VERSION:-1.41.0}"
+
+# Nixpacks → SHA-256 (per arch: <version>:<arch>:<sha256>).
+# Source: https://github.com/railwayapp/nixpacks/releases — every entry below
+# was cross-checked against the GitHub-published `sha256sum -c *.sha256`.
+NIXPACKS_SHA_AMD64_x86_64="0f55de7874507b9cf7502113120bd96f2ab6979f78d10eaf2eb2ade9207b3af6"
+NIXPACKS_SHA_ARM64_aarch64="912bd02dd2bb6f9c3a9ed965fe8a68b4aa318dc7a2546e2eca6f2806a894ba39"
+
 install_nixpacks() {
   case "$(uname -m)" in
     x86_64|amd64)
       NIXPACKS_TARGET="x86_64-unknown-linux-musl"
-      NIXPACKS_SHA256="0f55de7874507b9cf7502113120bd96f2ab6979f78d10eaf2eb2ade9207b3af6"
+      NIXPACKS_SHA256="$NIXPACKS_SHA_AMD64_x86_64"
       ;;
     aarch64|arm64)
       NIXPACKS_TARGET="aarch64-unknown-linux-musl"
-      NIXPACKS_SHA256="912bd02dd2bb6f9c3a9ed965fe8a68b4aa318dc7a2546e2eca6f2806a894ba39"
+      NIXPACKS_SHA256="$NIXPACKS_SHA_ARM64_aarch64"
       ;;
     *) fail "Nixpacks ${NIXPACKS_VERSION} has no verified binary for architecture $(uname -m)" ;;
   esac
+
+  if [ -z "$NIXPACKS_SHA256" ]; then
+    fail "Nixpacks ${NIXPACKS_VERSION} is not in the installer's verified-checksum table. Set NIXPACKS_VERSION to a known release, or update the SHA table in install.sh after auditing the GitHub release."
+  fi
 
   NIXPACKS_ASSET="nixpacks-v${NIXPACKS_VERSION}-${NIXPACKS_TARGET}.tar.gz"
   NIXPACKS_STAGE=$(mktemp -d) || fail "Could not create Nixpacks installation workspace"

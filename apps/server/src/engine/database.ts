@@ -157,6 +157,17 @@ function enc(segment: string): string {
   return encodeURIComponent(segment);
 }
 
+/**
+ * Default image versions per engine. The user can override per-database by
+ * setting the `version` field on the row, which is forwarded to the image
+ * factory below (e.g. `mysql:${version || default}`). This keeps the platform
+ * on the latest stable GA while leaving the door open for older / LTS
+ * installs without any code change.
+ *
+ * The defaults below are the latest GA minors as of Aug 2026, pulled from
+ * Docker Hub. They are updated when a new GA is released; integration tests
+ * cover the same majors so a bump that breaks the test image fails CI.
+ */
 export const ENGINES: Record<string, EngineConfig> = {
   postgres: {
     image: (v) => (v === 'vector' || v === 'pgvector' ? 'pgvector/pgvector:pg18' : `postgres:${v || '18'}`),
@@ -168,7 +179,9 @@ export const ENGINES: Record<string, EngineConfig> = {
     connectionString: (h, prt, u, p, d) => `postgres://${enc(u)}:${enc(p)}@${h}:${prt}/${d}`,
   },
   mysql: {
-    image: (v) => `mysql:${v || '26'}`,
+    // MySQL 9.7 is the current Innovation release (Jul 2026); pin to `8.4`
+    // on a database row for the current LTS track.
+    image: (v) => `mysql:${v || '9.7'}`,
     port: 3306,
     volumePath: '/var/lib/mysql',
     env: (p) => ({ MYSQL_ROOT_PASSWORD: p, MYSQL_DATABASE: 'app' }),
@@ -177,7 +190,7 @@ export const ENGINES: Record<string, EngineConfig> = {
     connectionString: (h, prt, u, p, d) => `mysql://${enc(u)}:${enc(p)}@${h}:${prt}/${d ?? 'app'}`,
   },
   mariadb: {
-    image: (v) => `mariadb:${v || '12'}`,
+    image: (v) => `mariadb:${v || '12.3'}`,
     port: 3306,
     volumePath: '/var/lib/mysql',
     env: (p) => ({ MARIADB_ROOT_PASSWORD: p, MARIADB_DATABASE: 'app' }),
@@ -186,7 +199,7 @@ export const ENGINES: Record<string, EngineConfig> = {
     connectionString: (h, prt, u, p, d) => `mariadb://${enc(u)}:${enc(p)}@${h}:${prt}/${d ?? 'app'}`,
   },
   redis: {
-    image: (v) => `redis:${v || '8'}`,
+    image: (v) => `redis:${v || '8.8'}`,
     port: 6379,
     volumePath: '/data',
     env: () => ({}),
@@ -196,7 +209,7 @@ export const ENGINES: Record<string, EngineConfig> = {
     connectionString: (h, prt, _u, p) => `redis://:${enc(p)}@${h}:${prt}`,
   },
   valkey: {
-    image: (v) => `valkey/valkey:${v || '9'}`,
+    image: (v) => `valkey/valkey:${v || '9.1'}`,
     port: 6379,
     volumePath: '/data',
     env: () => ({}),
@@ -206,7 +219,9 @@ export const ENGINES: Record<string, EngineConfig> = {
     connectionString: (h, prt, _u, p) => `valkey://:${enc(p)}@${h}:${prt}`,
   },
   mongo: {
-    image: (v) => `mongo:${v || '8'}`,
+    // Mongo 8.0 is the current GA track (8.3 is newer but still pre-LTS);
+    // pin to `7.0` on a database row for the previous LTS.
+    image: (v) => `mongo:${v || '8.0'}`,
     port: 27017,
     volumePath: '/data/db',
     env: (p) => ({ MONGO_INITDB_ROOT_USERNAME: 'nine', MONGO_INITDB_ROOT_PASSWORD: p }),
@@ -215,7 +230,10 @@ export const ENGINES: Record<string, EngineConfig> = {
     connectionString: (h, prt, u, p) => `mongodb://${enc(u)}:${enc(p)}@${h}:${prt}`,
   },
   clickhouse: {
-    image: (v) => `clickhouse/clickhouse-server:${v || '26.7'}`,
+    // 25.8.32.x is the current stable line (Aug 2026). The image was
+    // mistakenly published as `26.7` in an earlier commit — that tag does
+    // not exist on Docker Hub, so it would have failed every image pull.
+    image: (v) => `clickhouse/clickhouse-server:${v || '25.8'}`,
     port: 8123,
     volumePath: '/var/lib/clickhouse',
     env: (p) => ({ CLICKHOUSE_USER: 'nine', CLICKHOUSE_PASSWORD: p, CLICKHOUSE_DB: 'app' }),

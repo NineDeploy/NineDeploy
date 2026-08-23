@@ -63,11 +63,20 @@ describe('bare-metal systemd installation policy', () => {
     const installer = rootFile('install.sh');
     const containerfile = rootFile('Dockerfile');
 
-    expect(installer).toContain('NIXPACKS_VERSION="1.37.0"');
+    // The installer accepts an override (NINEDEPLOY_NIXPACKS_VERSION) but defaults to the latest verified release.
+    expect(installer).toContain('NIXPACKS_VERSION="${NINEDEPLOY_NIXPACKS_VERSION:-1.41.0}"');
     expect(installer).toContain('NIXPACKS_ACTUAL_SHA=$(sha256sum');
     expect(installer).toContain('sudo install -m 0755 "$NIXPACKS_STAGE/nixpacks" /usr/local/bin/nixpacks');
-    expect(containerfile).toContain('ARG NIXPACKS_VERSION=1.37.0');
+    expect(containerfile).toContain('ARG NIXPACKS_VERSION=1.41.0');
     expect(containerfile).toContain('echo "$' + '{NIXPACKS_SHA256}  /tmp/$' + '{NIXPACKS_ASSET}" | sha256sum -c -');
     expect(rootFile('apps/server/src/engine/builders/docker.ts')).not.toContain('ghcr.io/railwayapp/nixpacks:latest');
+  });
+
+  it('rejects an unknown Nixpacks version (defence-in-depth against tampered releases)', () => {
+    const installer = rootFile('install.sh');
+    // The installer must not silently download a release whose SHA-256 isn't
+    // in its verified-checksum table — it has to fail with a clear message
+    // so the operator knows to update the table after auditing GitHub.
+    expect(installer).toContain('is not in the installer');
   });
 });

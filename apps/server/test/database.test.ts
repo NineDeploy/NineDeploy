@@ -91,14 +91,14 @@ describe('ENGINES metadata', () => {
   it('maps each engine to image, port, volume and env', () => {
     expect(ENGINES.postgres.image()).toBe('postgres:18');
     expect(ENGINES.postgres.image('17')).toBe('postgres:17');
-    expect(ENGINES.mysql.image()).toBe('mysql:26');
-    expect(ENGINES.mysql.image('9')).toBe('mysql:9');
-    expect(ENGINES.mariadb.image()).toBe('mariadb:12');
+    expect(ENGINES.mysql.image()).toBe('mysql:9.7');
+    expect(ENGINES.mysql.image('8.4')).toBe('mysql:8.4');
+    expect(ENGINES.mariadb.image()).toBe('mariadb:12.3');
     expect(ENGINES.mariadb.image('11')).toBe('mariadb:11');
-    expect(ENGINES.redis.image()).toBe('redis:8');
+    expect(ENGINES.redis.image()).toBe('redis:8.8');
     expect(ENGINES.redis.image('7')).toBe('redis:7');
-    expect(ENGINES.mongo.image()).toBe('mongo:8');
-    expect(ENGINES.mongo.image('7')).toBe('mongo:7');
+    expect(ENGINES.mongo.image()).toBe('mongo:8.0');
+    expect(ENGINES.mongo.image('7.0')).toBe('mongo:7.0');
 
     expect(ENGINES.postgres.port).toBe(5432);
     expect(ENGINES.mysql.port).toBe(3306);
@@ -180,7 +180,7 @@ describe('startDatabase', () => {
 
     await expect(startDatabase(dbRow({ engine: 'mysql' }), vi.fn())).rejects.toThrow('snapshot recovery failed');
 
-    expect(h.pullDockerImage).toHaveBeenCalledWith('mysql:8.4', expect.any(Function));
+    expect(h.pullDockerImage).toHaveBeenCalledWith('mysql:9.7', expect.any(Function));
     expect(h.run).not.toHaveBeenCalled();
   });
 
@@ -239,7 +239,7 @@ describe('startDatabase', () => {
     );
 
     expect(log).not.toHaveBeenCalledWith(expect.stringContaining('Reusing retained volume'));
-    expect(h.pullDockerImage).toHaveBeenCalledWith('mysql:8.4', log);
+    expect(h.pullDockerImage).toHaveBeenCalledWith('mysql:9.7', log);
     expect(h.run).toHaveBeenCalledWith(
       'docker',
       [
@@ -247,7 +247,7 @@ describe('startDatabase', () => {
         '--cpu-shares', '512', '--memory', '256m',
         '-v', 'vm:/var/lib/mysql',
         '--env-file', expect.any(String),
-        'mysql:8.4',
+        'mysql:9.7',
       ],
       {},
       log,
@@ -283,7 +283,7 @@ describe('startDatabase', () => {
         'run', '-d', '--name', 'c', '--network', 'ninedeploy', '--restart', 'unless-stopped',
         '-v', 'v:/data/db',
         '--env-file', expect.any(String),
-        'mongo:7',
+        'mongo:8.0',
       ],
       {},
       log,
@@ -698,9 +698,9 @@ describe('restoreDatabase', () => {
     expect(ENGINES.postgres.image('pgvector')).toBe('pgvector/pgvector:pg18');
     expect(ENGINES.postgres.image('16')).toBe('postgres:16');
     expect(ENGINES.valkey.image('8')).toBe('valkey/valkey:8');
-    expect(ENGINES.valkey.image()).toBe('valkey/valkey:9');
-    expect(ENGINES.clickhouse.image('24')).toBe('clickhouse/clickhouse-server:24');
-    expect(ENGINES.clickhouse.image()).toBe('clickhouse/clickhouse-server:26.7');
+    expect(ENGINES.valkey.image()).toBe('valkey/valkey:9.1');
+    expect(ENGINES.clickhouse.image('24.3')).toBe('clickhouse/clickhouse-server:24.3');
+    expect(ENGINES.clickhouse.image()).toBe('clickhouse/clickhouse-server:25.8');
     expect(ENGINES.meilisearch.image('v1.12')).toBe('getmeili/meilisearch:v1.12');
     expect(ENGINES.meilisearch.image()).toBe('getmeili/meilisearch:v1.53');
     expect(ENGINES.rabbitmq.image('3-management')).toBe('rabbitmq:3-management');
