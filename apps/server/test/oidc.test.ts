@@ -2,9 +2,9 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '../src/app.js';
 import { issueSessionTokens } from '../src/lib/sessions.js';
-import { oidcProviders, users, workspaceMembers, workspaces } from '@ninedeploy/db';
+import { oidcProviders, users, workspaceInvitations, workspaceMembers, workspaces } from '@ninedeploy/db';
 import { generateOAuthState } from '../src/lib/oauth.js';
-import { encrypt } from '../src/lib/crypto.js';
+import { encrypt, sha256 } from '../src/lib/crypto.js';
 import { eq } from 'drizzle-orm';
 
 describe('OIDC and OAuth2 SSO endpoints', () => {
@@ -372,7 +372,7 @@ describe('OIDC and OAuth2 SSO endpoints', () => {
         .mockResolvedValueOnce({
           // User info
           ok: true,
-          json: async () => ({ sub: 'g_user_1', email: 'sam@google.test', name: 'Sam Google' }),
+          json: async () => ({ sub: 'g_user_1', email: 'sam@google.test', name: 'Sam Google', email_verified: true }),
         } as never);
 
       const res = await app.inject({
@@ -394,6 +394,67 @@ describe('OIDC and OAuth2 SSO endpoints', () => {
       expect(dbUser).toBeDefined();
       const ws = await app.db.query.workspaces.findFirst({ where: eq(workspaces.ownerId, dbUser!.id) });
       expect(ws).toBeDefined();
+    });
+
+    it('refuses to auto-enroll an UNVERIFIED SSO email, even for a pending invitation', async () => {
+      // Attack: an admin invites victim@corp.test; the attacker controls an
+      // IdP account whose (unverified) email claims that address. Before the
+      // fix, the unverified guard only covered existing local accounts — the
+      // auto-enroll path created a fresh account and auto-accepted the
+      // invitation, handing over the workspace.
+      const [admin] = await app.db.query.users.findMany({ where: eq(users.email, 'admin@oidc.test') });
+      const [victimWs] = await app.db
+        .insert(workspaces)
+        .values({ name: 'Victim Co', slug: 'victim-co', ownerId: admin.id })
+        .returning();
+      await app.db.insert(workspaceInvitations).values({
+        workspaceId: victimWs.id,
+        email: 'victim@corp.test',
+        role: 'admin',
+        token: sha256('unverified-invite-token'),
+        invitedByUserId: admin.id,
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      });
+
+      const state = generateOAuthState('google', '/');
+      const attackerToken = `at-${Date.now()}`;
+      globalThis.fetch = vi
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            authorization_endpoint: 'https://accounts.google.com/o/oauth2/v2/auth',
+            token_endpoint: 'https://oauth2.googleapis.com/token',
+            userinfo_endpoint: 'https://openidconnect.googleapis.com/v1/userinfo',
+          }),
+        } as never)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ access_token: attackerToken }),
+        } as never)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ sub: 'attacker_sub', email: 'victim@corp.test', email_verified: false }),
+        } as never);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/v1/auth/oidc/google/callback',
+        payload: { code: 'attacker_code', state },
+      });
+
+      expect(res.statusCode).toBe(403);
+      // No account was created for the claimed address…
+      const squatter = await app.db.query.users.findFirst({ where: eq(users.email, 'victim@corp.test') });
+      expect(squatter).toBeUndefined();
+      // …and the invitation is still pending, not accepted.
+      const stillPending = await app.db.query.workspaceInvitations.findFirst({
+        where: eq(workspaceInvitations.email, 'victim@corp.test'),
+      });
+      expect(stillPending?.acceptedAt).toBeNull();
+
+      await app.db.delete(workspaceInvitations).where(eq(workspaceInvitations.email, 'victim@corp.test'));
+      await app.db.delete(workspaces).where(eq(workspaces.id, victimWs.id));
     });
 
     it('falls back to default /userinfo URL and honors valid returnTo path', async () => {
@@ -552,7 +613,7 @@ describe('OIDC and OAuth2 SSO endpoints', () => {
         } as never)
         .mockResolvedValueOnce({
           ok: true,
-          json: async () => ({ sub: 'first_admin', email: 'founder@google.test' }),
+          json: async () => ({ sub: 'first_admin', email: 'founder@google.test', email_verified: true }),
         } as never);
 
       const res = await app.inject({
@@ -655,7 +716,7 @@ describe('OIDC and OAuth2 SSO endpoints', () => {
         } as never)
         .mockResolvedValueOnce({
           ok: true,
-          json: async () => ({ sub: 'closed_sub', email: 'brandnew@closed.test' }),
+          json: async () => ({ sub: 'closed_sub', email: 'brandnew@closed.test', email_verified: true }),
         } as never);
 
       try {

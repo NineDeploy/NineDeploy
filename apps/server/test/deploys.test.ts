@@ -290,7 +290,10 @@ describe('deploys routes', () => {
 
   it('streams the log backlog and live lines over websocket', async () => {
     logBus.publish(5, 'backlog line');
-    const app = await buildTestApp({ websocket: true, db: createFakeDb({ findFirst: { services: svcRow({ id: 1 }) } }) });
+    const app = await buildTestApp({
+      websocket: true,
+      db: createFakeDb({ findFirst: { services: svcRow({ id: 1 }), deployments: depRow({ id: 5, serviceId: 1 }) } }),
+    });
     await app.register(deploysRoutes, { prefix: '/services' });
     const port = await listen(app);
     const ws = await openWs(wsUrl(port, '/services/1/deploys/5/logs'), 'ninedeploy.bearer.valid');
@@ -302,6 +305,32 @@ describe('deploys routes', () => {
     logBus.publish(5, 'live line');
     await waitFor(() => messages.some((m) => m.includes('live line')));
     ws.close();
+    await app.close();
+  });
+
+  it('closes the log socket when the deployment belongs to another service', async () => {
+    // The service check alone is not enough: depId must resolve to a
+    // deployment of the service in the URL, or any member could stream any
+    // tenant's build logs (which echo secrets) by iterating depId.
+    logBus.publish(6, 'VICTIM_SECRET=leaked');
+    const app = await buildTestApp({
+      websocket: true,
+      db: createFakeDb({
+        findFirst: {
+          services: svcRow({ id: 1, ownerUserId: 7 }),
+          deployments: depRow({ id: 6, serviceId: 2 }),
+        },
+      }),
+    });
+    await app.register(deploysRoutes, { prefix: '/services' });
+    const port = await listen(app);
+    const ws = await openWs(wsUrl(port, '/services/1/deploys/6/logs'), 'ninedeploy.bearer.valid');
+    sockets.push(ws);
+    const messages = collectMessages(ws);
+    const closed = new Promise<number>((resolve) => ws.addEventListener('close', (ev) => resolve(ev.code)));
+    expect(await closed).toBe(1008);
+    expect(messages).toEqual([]);
+    expect(messages.join('')).not.toContain('VICTIM_SECRET');
     await app.close();
   });
 

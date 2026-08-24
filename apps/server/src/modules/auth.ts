@@ -651,12 +651,15 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     }
 
     let user = await app.db.query.users.findFirst({ where: eq(users.email, userInfo.email) });
-    if (user && userInfo.emailVerified === false) {
-      // Never link an unverified (e.g. synthetic-namespace) SSO identity to a
-      // pre-existing local account: an attacker who pre-registered the address
-      // would otherwise silently share the real SSO user's account. Refusing
-      // (fail closed) turns a takeover into, at worst, a denial of service.
-      throw forbidden('SSO email address is not verified; refusing to link an existing account');
+    if (userInfo.emailVerified === false) {
+      // Never admit an unverified (e.g. synthetic-namespace or unconfirmed
+      // secondary) SSO identity, in either direction: linking it to a
+      // pre-existing local account would let an attacker who pre-registered
+      // the address silently share the real SSO user's account, and
+      // auto-enrolling it would let the attacker claim the address outright —
+      // including auto-accepting workspace invitations sent to the victim.
+      // Refusing (fail closed) turns both into, at worst, a denial of service.
+      throw forbidden('SSO email address is not verified; refusing to link or auto-enroll an account');
     }
     if (!user) {
       if (!provider.autoEnroll) {

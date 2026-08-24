@@ -1,6 +1,7 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { config } from '../config.js';
 import { guardedFetch } from './egressGuard.js';
+import { forbidden } from './errors.js';
 
 export interface OidcTokenResponse {
   access_token: string;
@@ -102,9 +103,10 @@ export async function fetchOidcUserInfo(userinfoEndpoint: string, accessToken: s
   if (!email) {
     throw new Error('OIDC userinfo did not contain an email address');
   }
-  // An IdP-attested unverified address must never link to a local account.
+  // An IdP-attested unverified address must never link to (or auto-enroll)
+  // a local account — 403, not an opaque 500, so operators see the reason.
   if (json['email_verified'] === false) {
-    throw new Error('OIDC email address is not verified');
+    throw forbidden('SSO email address is not verified; refusing to link or auto-enroll an account');
   }
 
   return {

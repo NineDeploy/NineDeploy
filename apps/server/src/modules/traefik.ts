@@ -307,13 +307,22 @@ async function getTraefikConfig(): Promise<{ routers: TraefikRouter[]; services:
 
 /** Traefik API routes */
 export const traefikRoutes: FastifyPluginAsync = async (app) => {
-  // Genel bilgi
-  app.get('/traefik', { preHandler: [app.authenticate] }, async () => {
-    const [status, config] = await Promise.all([
-      getTraefikContainerInfo(),
-      getTraefikConfig(),
-    ]);
-
+  // Genel bilgi. The routing tables and certificate list map out every
+  // tenant's hostnames on the instance (same inventory L-12 protects on
+  // /traefik/config), so members only get the status banner — arrays stay
+  // empty rather than 403 so the shared UI page degrades gracefully.
+  app.get('/traefik', { preHandler: [app.authenticate] }, async (req) => {
+    const status = await getTraefikContainerInfo();
+    if (req.user!.role !== 'admin') {
+      return {
+        status,
+        certificates: [],
+        routers: [],
+        services: [],
+        middlewares: [],
+      } satisfies TraefikInfo;
+    }
+    const config = await getTraefikConfig();
     return {
       status,
       certificates: processCertificates(),
@@ -324,12 +333,12 @@ export const traefikRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // Sadece status
-  app.get('/traefik/status', { preHandler: [app.authenticate] }, async () => {
+  app.get('/traefik/status', { preHandler: [app.authenticate, app.requireAdmin] }, async () => {
     return getTraefikContainerInfo();
   });
 
   // Sertifikalar
-  app.get('/traefik/certificates', { preHandler: [app.authenticate] }, async () => {
+  app.get('/traefik/certificates', { preHandler: [app.authenticate, app.requireAdmin] }, async () => {
     return processCertificates();
   });
 
@@ -370,7 +379,7 @@ export const traefikRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // Traefik versiyonunu kontrol et
-  app.get('/traefik/version', { preHandler: [app.authenticate] }, async () => {
+  app.get('/traefik/version', { preHandler: [app.authenticate, app.requireAdmin] }, async () => {
     const latest = await getLatestTraefikVersion();
     const current = await getTraefikContainerInfo();
     return {

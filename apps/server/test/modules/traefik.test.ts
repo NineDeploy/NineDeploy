@@ -419,16 +419,24 @@ tcp:
     }
   });
 
-  it('K3: Traefik logs/config require admin; the overview routes accept members', async () => {
+  it('K3: only the scoped overview answers members; inventory routes are admin-only', async () => {
     const app = await makeTraefikApp();
     vi.mocked(exec.capture).mockRejectedValue(new Error('no such container'));
 
     const member = asUser({ id: 7, role: 'member' });
-    for (const url of ['/traefik', '/traefik/status', '/traefik/certificates', '/traefik/version']) {
-      const res = await app.inject({ method: 'GET', url, headers: member });
-      expect(res.statusCode, `GET ${url} as member`).toBe(200);
-    }
-    for (const url of ['/traefik/logs', '/traefik/config']) {
+    // The shared UI page stays reachable, but must not carry the routing
+    // tables or the certificate (domain) list — those map out every tenant
+    // on the instance (same L-12 rule as /traefik/config).
+    const overview = await app.inject({ method: 'GET', url: '/traefik', headers: member });
+    expect(overview.statusCode).toBe(200);
+    const body = overview.json();
+    expect(body.status).toBeDefined();
+    expect(body.routers).toEqual([]);
+    expect(body.services).toEqual([]);
+    expect(body.middlewares).toEqual([]);
+    expect(body.certificates).toEqual([]);
+
+    for (const url of ['/traefik/status', '/traefik/certificates', '/traefik/version', '/traefik/logs', '/traefik/config']) {
       const res = await app.inject({ method: 'GET', url, headers: member });
       expect(res.statusCode, `GET ${url} as member must be admin-only`).toBe(403);
     }

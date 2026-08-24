@@ -163,6 +163,14 @@ export const deploysRoutes: FastifyPluginAsync = async (app) => {
       socket.close(1008, 'not found');
       return;
     }
+    // The deployment itself must belong to the service in the URL — without
+    // this binding, `depId` alone would read/subscribe any tenant's build
+    // log (they routinely echo secrets), passing the service check above.
+    const dep = await app.db.query.deployments.findFirst({ where: eq(deployments.id, depId) });
+    if (!dep || dep.serviceId !== id) {
+      socket.close(1008, 'not found');
+      return;
+    }
 
     // Replay backlog, then stream live lines.
     const backlog = logBus.read(depId);

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createHmac } from 'node:crypto';
 import { config } from '../../src/config.js';
+import { HttpError } from '../../src/lib/errors.js';
 import {
   exchangeGitHubCode,
   exchangeOidcCode,
@@ -147,9 +148,11 @@ describe('oauth library', () => {
         json: async () => ({ sub: 'user_2', email: 'unverified@example.com', email_verified: false }),
       } as never);
 
-      await expect(fetchOidcUserInfo('https://auth.example.com/userinfo', 'token_123')).rejects.toThrow(
-        'OIDC email address is not verified',
-      );
+      // A 403 HttpError (not a bare Error → 500): callers surface the reason.
+      const err = await fetchOidcUserInfo('https://auth.example.com/userinfo', 'token_123').catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(HttpError);
+      expect((err as HttpError).statusCode).toBe(403);
+      expect((err as Error).message).toContain('not verified');
     });
 
     it('throws when userinfo fetch fails or lacks email', async () => {

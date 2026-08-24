@@ -160,20 +160,29 @@ describe('Config Center HTTP API', () => {
     expect(filterPluginRes.statusCode).toBe(200);
     expect(filterPluginRes.json().entries.every((e: any) => e.pluginId === 'smtp')).toBe(true);
 
-    // 7. Get specific key
+    // 7. Get specific key — admin-only, same L-12 rule as the listing:
+    // instance configuration is an operator concern.
     const getPubRes = await app.inject({
+      method: 'GET',
+      url: '/system.site_name',
+      headers: asUser({ role: 'admin' }),
+    });
+    expect(getPubRes.statusCode).toBe(200);
+    expect(getPubRes.json().value).toBe('Production NineDeploy');
+
+    // A member is refused on the key route just like on the listing.
+    const getPubMemberRes = await app.inject({
       method: 'GET',
       url: '/system.site_name',
       headers: asUser({ role: 'member' }),
     });
-    expect(getPubRes.statusCode).toBe(200);
-    expect(getPubRes.json().value).toBe('Production NineDeploy');
+    expect(getPubMemberRes.statusCode).toBe(403);
 
     // Get default-only key (not in DB)
     const getDefaultOnlyRes = await app.inject({
       method: 'GET',
       url: '/system.default_only',
-      headers: asUser({ role: 'member' }),
+      headers: asUser({ role: 'admin' }),
     });
     expect(getDefaultOnlyRes.statusCode).toBe(200);
     expect(getDefaultOnlyRes.json().value).toBe('Default Value');
@@ -183,29 +192,27 @@ describe('Config Center HTTP API', () => {
     const getNoCatRes = await app.inject({
       method: 'GET',
       url: '/system.no_cat',
-      headers: asUser({ role: 'member' }),
+      headers: asUser({ role: 'admin' }),
     });
     expect(getNoCatRes.statusCode).toBe(200);
     expect(getNoCatRes.json().category).toBe('general');
     expect(getNoCatRes.json().tags).toEqual([]);
 
-    // Get secret as member (masked)
+    // Get secret as member — refused before the handler can mask anything.
     const getSecretMemberRes = await app.inject({
       method: 'GET',
       url: '/plugin:smtp:password',
       headers: asUser({ role: 'member' }),
     });
-    expect(getSecretMemberRes.statusCode).toBe(200);
-    expect(getSecretMemberRes.json().value).toBe('••••••••');
+    expect(getSecretMemberRes.statusCode).toBe(403);
 
-    // Get custom secret as member (masked)
+    // Get custom secret as member — same refusal.
     const getCustomSecMemberRes = await app.inject({
       method: 'GET',
       url: '/custom.secret_token',
       headers: asUser({ role: 'member' }),
     });
-    expect(getCustomSecMemberRes.statusCode).toBe(200);
-    expect(getCustomSecMemberRes.json().value).toBe('••••••••');
+    expect(getCustomSecMemberRes.statusCode).toBe(403);
 
     // Get secret as admin stays masked unless reveal=true is explicit.
     const getSecretAdminRes = await app.inject({

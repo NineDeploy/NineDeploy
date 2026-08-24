@@ -1,6 +1,7 @@
-import { count, desc, eq } from 'drizzle-orm';
+import { count, desc, eq, inArray } from 'drizzle-orm';
 import { databases, deployments, domains, services, webhooks } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
+import { visibleDatabaseIds } from '../lib/resourceAccess.js';
 import { capture } from '../lib/exec.js';
 import { containerIp } from '../engine/builders/docker.js';
 import { TRAEFIK_CONTAINER } from '../engine/proxy.js';
@@ -126,32 +127,56 @@ async function probeService(svc: {
 export const dashboardRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('onRequest', app.authenticate);
 
-  app.get('/', async () => {
-    const allServices = await app.db.select().from(services);
-    const allDbs = await app.db.select().from(databases);
-
-    // Aggregate counts
-    const [svcCount, dbCount, depCount, domCount, hookCount] = await Promise.all([
-      app.db.select({ n: count() }).from(services),
-      app.db.select({ n: count() }).from(databases),
-      app.db.select({ n: count() }).from(deployments),
-      app.db.select({ n: count() }).from(domains),
-      app.db.select({ n: count() }).from(webhooks),
+  app.get('/', async (req) => {
+    const user = req.user!;
+    // Scope every list/count to what the caller may see — admins get the
+    // whole instance, members only their own services plus databases visible
+    // through ownership/workspace membership (same rule as stats.ts). Without
+    // this, any member's dashboard mapped every other tenant's services,
+    // databases, domains, webhooks and recent deployments.
+    const [allServices, allDbs, visibleDbIds] = await Promise.all([
+      app.db.select().from(services),
+      app.db.select().from(databases),
+      visibleDatabaseIds(app.db, user),
     ]);
+    const scopedServices = user.role === 'admin' ? allServices : allServices.filter((s) => s.ownerUserId === user.id);
+    const scopedDbs = visibleDbIds === null ? allDbs : allDbs.filter((d) => visibleDbIds.includes(d.id));
+    const svcIds = Array.from(new Set(scopedServices.map((s) => s.id)));
+
+    // Aggregate counts. Service/database totals come from the scoped arrays;
+    // the rest are queried restricted to the scoped service ids (an empty
+    // scope short-circuits to zero rather than issuing an `IN ()` query).
+    const emptyScope = user.role !== 'admin' && svcIds.length === 0;
+    const [depCount, domCount, hookCount] = emptyScope
+      ? [[{ n: 0 }], [{ n: 0 }], [{ n: 0 }]]
+      : await Promise.all([
+          user.role === 'admin'
+            ? app.db.select({ n: count() }).from(deployments)
+            : app.db.select({ n: count() }).from(deployments).where(inArray(deployments.serviceId, svcIds)),
+          user.role === 'admin'
+            ? app.db.select({ n: count() }).from(domains)
+            : app.db.select({ n: count() }).from(domains).where(inArray(domains.serviceId, svcIds)),
+          user.role === 'admin'
+            ? app.db.select({ n: count() }).from(webhooks)
+            : app.db.select({ n: count() }).from(webhooks).where(inArray(webhooks.serviceId, svcIds)),
+        ]);
 
     // Running/stopped/error counts
-    const running = allServices.filter((s) => s.status === 'running').length;
-    const stopped = allServices.filter((s) => s.status === 'stopped').length;
-    const errored = allServices.filter((s) => s.status === 'error').length;
-    const dbRunning = allDbs.filter((d) => d.status === 'running').length;
+    const running = scopedServices.filter((s) => s.status === 'running').length;
+    const stopped = scopedServices.filter((s) => s.status === 'stopped').length;
+    const errored = scopedServices.filter((s) => s.status === 'error').length;
+    const dbRunning = scopedDbs.filter((d) => d.status === 'running').length;
 
     // Recent deployments (last 5) — ordered by id (monotonic; createdAt is
     // second-precision and would tie for same-second deploys).
-    const recentDeploys = await app.db.query.deployments.findMany({
-      orderBy: desc(deployments.id),
-      limit: 5,
-    });
-    const svcById = new Map(allServices.map((s) => [s.id, s]));
+    const recentDeploys = emptyScope
+      ? []
+      : await app.db.query.deployments.findMany({
+          ...(user.role !== 'admin' ? { where: inArray(deployments.serviceId, svcIds) } : {}),
+          orderBy: desc(deployments.id),
+          limit: 5,
+        });
+    const svcById = new Map(scopedServices.map((s) => [s.id, s]));
     const recent = recentDeploys.map((d) => {
       const svc = svcById.get(d.serviceId);
       return {
@@ -173,7 +198,7 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
     // sequential loop multiplied that delay by the service count and made the
     // dashboard take 5-7s to render.
     const healthStatuses = await Promise.all(
-      allServices.map(async (svc): Promise<HealthStatus> => {
+      scopedServices.map(async (svc): Promise<HealthStatus> => {
         const lastDep = await app.db.query.deployments.findFirst({
           where: eq(deployments.serviceId, svc.id),
           orderBy: desc(deployments.id),
@@ -221,8 +246,8 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
 
     return {
       stats: {
-        services: svcCount[0]?.n ?? 0,
-        databases: dbCount[0]?.n ?? 0,
+        services: scopedServices.length,
+        databases: scopedDbs.length,
         deployments: depCount[0]?.n ?? 0,
         domains: domCount[0]?.n ?? 0,
         webhooks: hookCount[0]?.n ?? 0,

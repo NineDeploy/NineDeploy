@@ -259,3 +259,81 @@ describe('dashboard routes', () => {
     expect(res.json().recentDeploys).toEqual([]);
   });
 });
+
+describe('dashboard member scoping', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  /** Collect the SQL column names referenced by a drizzle condition. */
+  function columnsIn(node: unknown, seen = new WeakSet<object>()): string[] {
+    if (node === null || typeof node !== 'object' || seen.has(node)) return [];
+    seen.add(node);
+    const self = (node as { name?: unknown; columnType?: unknown }).columnType
+      && typeof (node as { name?: unknown }).name === 'string'
+      ? [(node as { name: string }).name]
+      : [];
+    return [...self, ...Object.values(node as Record<string, unknown>).flatMap((v) => columnsIn(v, seen))];
+  }
+
+  function scopedDb(deploymentsResolver?: (args: unknown) => unknown[]) {
+    return createFakeDb({
+      select: {
+        services: [
+          svcRow({ id: 70, ownerUserId: 7, name: 'mine', status: 'stopped', port: null }),
+          svcRow({ id: 71, ownerUserId: 42, name: 'victim-billing-api', status: 'stopped', port: null }),
+        ],
+        databases: [],
+      },
+      findMany: {
+        ...(deploymentsResolver ? { deployments: deploymentsResolver } : {}),
+      },
+    });
+  }
+
+  it("a member's dashboard contains only their own services", async () => {
+    const app = await buildTestApp({ db: scopedDb() });
+    await app.register(dashboardRoutes);
+    const res = await app.inject({ method: 'GET', url: '/', headers: asUser({ id: 7, role: 'member' }) });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.stats.services).toBe(1);
+    expect(body.health).toHaveLength(1);
+    expect(body.health[0]).toMatchObject({ serviceId: 70, name: 'mine' });
+    // Another tenant's inventory (names, health, counts) must not leak.
+    expect(res.body).not.toContain('victim-billing-api');
+  });
+
+  it('constrains the recent-deploys query to the member’s own service ids', async () => {
+    // The fake db ignores predicates, so assert the where-clause itself
+    // carries the service_id scoping (mirrors the M-2 regression pattern).
+    let deployWhere: unknown;
+    const app = await buildTestApp({
+      db: scopedDb((args: unknown) => {
+        deployWhere = (args as { where?: unknown }).where;
+        return [depRow({ id: 8, serviceId: 70, status: 'completed' })];
+      }),
+    });
+    await app.register(dashboardRoutes);
+    const res = await app.inject({ method: 'GET', url: '/', headers: asUser({ id: 7, role: 'member' }) });
+    expect(res.statusCode).toBe(200);
+    expect(columnsIn(deployWhere)).toContain('service_id');
+    expect(res.json().recentDeploys[0]).toMatchObject({ serviceId: 70, serviceName: 'mine' });
+  });
+
+  it('an admin still sees the whole instance', async () => {
+    const app = await buildTestApp({
+      db: scopedDb((args: unknown) => {
+        // The admin path must NOT scope the recent-deploys query.
+        expect((args as { where?: unknown }).where).toBeUndefined();
+        return [depRow({ id: 8, serviceId: 71, status: 'completed' })];
+      }),
+    });
+    await app.register(dashboardRoutes);
+    const res = await app.inject({ method: 'GET', url: '/', headers: asUser({ id: 1, role: 'admin' }) });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.stats.services).toBe(2);
+    expect(body.health).toHaveLength(2);
+  });
+});

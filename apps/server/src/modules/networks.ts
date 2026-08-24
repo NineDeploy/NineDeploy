@@ -110,8 +110,10 @@ export const networkRoutes: FastifyPluginAsync = async (app) => {
     return { ok: true };
   });
 
-  // Member listing for one network (used by the attach/detach UI).
-  app.get('/:name/members', async (req) => {
+  // Member listing for one network (used by the attach/detach UI). Admin-only
+  // like GET /networks above: container names on a network map out the whole
+  // instance's inventory.
+  app.get('/:name/members', { preHandler: app.requireAdmin }, async (req) => {
     const name = String((req.params as { name: string }).name);
     if (!RE_NAME.test(name)) throw badRequest('Invalid network name');
     try {

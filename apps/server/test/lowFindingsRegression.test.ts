@@ -138,4 +138,58 @@ describe('L-12: instance-wide listings are admin-only', () => {
     expect((await (await build()).inject({ method: 'GET', url: '/networks', headers: member() })).statusCode).toBe(403);
     expect((await (await build()).inject({ method: 'GET', url: '/networks', headers: admin() })).statusCode).toBe(200);
   });
+
+  it('GET /networks/:name/members refuses a member and answers an admin', async () => {
+    // Container names on a network map out the instance inventory just like
+    // the listing does — the per-network route must not be the side door.
+    const { networkRoutes } = await import('../src/modules/networks.js');
+    const build = async () => {
+      const a = await buildTestApp({ db: createFakeDb({}) });
+      await a.register(networkRoutes, { prefix: '/networks' });
+      return a;
+    };
+    expect(
+      (await (await build()).inject({ method: 'GET', url: '/networks/bridge/members', headers: member() })).statusCode,
+    ).toBe(403);
+    expect(
+      (await (await build()).inject({ method: 'GET', url: '/networks/bridge/members', headers: admin() })).statusCode,
+    ).toBe(200);
+  });
+
+  it('GET /config/:key refuses a member and answers an admin', async () => {
+    const { configCenterRoutes } = await import('../src/modules/configCenter.js');
+    const build = async () => {
+      const a = await buildTestApp({ db: createFakeDb({ findFirst: { config_entries: undefined } }) });
+      await a.register(configCenterRoutes, { prefix: '/config' });
+      return a;
+    };
+    // The gate fires before the handler, so the member sees 403 — never a
+    // value, masked or not. The admin passes the gate (404 = unknown key).
+    expect((await (await build()).inject({ method: 'GET', url: '/config/system.site_name', headers: member() })).statusCode).toBe(403);
+    const adminRes = await (await build()).inject({ method: 'GET', url: '/config/system.site_name', headers: admin() });
+    expect([200, 404]).toContain(adminRes.statusCode);
+  });
+
+  it('GET /traefik status/certificates/version refuse a member; the composite is scoped', async () => {
+    const { traefikRoutes } = await import('../src/modules/traefik.js');
+    const build = async () => {
+      const a = await buildTestApp({ db: createFakeDb({}) });
+      await a.register(traefikRoutes, { prefix: '/v1' });
+      return a;
+    };
+    // Standalone inventory endpoints: member 403, admin 200.
+    expect((await (await build()).inject({ method: 'GET', url: '/v1/traefik/status', headers: member() })).statusCode).toBe(403);
+    expect((await (await build()).inject({ method: 'GET', url: '/v1/traefik/certificates', headers: member() })).statusCode).toBe(403);
+    expect((await (await build()).inject({ method: 'GET', url: '/v1/traefik/version', headers: member() })).statusCode).toBe(403);
+    // The shared UI page stays reachable for members but must not carry the
+    // routing tables or certificate list — only the status banner.
+    const memberRes = await (await build()).inject({ method: 'GET', url: '/v1/traefik', headers: member() });
+    expect(memberRes.statusCode).toBe(200);
+    const memberBody = memberRes.json();
+    expect(memberBody.routers).toEqual([]);
+    expect(memberBody.services).toEqual([]);
+    expect(memberBody.middlewares).toEqual([]);
+    expect(memberBody.certificates).toEqual([]);
+    expect(memberBody.status).toBeDefined();
+  });
 });

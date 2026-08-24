@@ -106,8 +106,12 @@ export const configCenterRoutes: FastifyPluginAsync = async (app) => {
     return { entries };
   });
 
-  // Get specific key
-  app.get<{ Params: { key: string }; Querystring: { reveal?: string } }>('/:key', async (req, reply) => {
+  // Get specific key — same operator-only rule as the listing above: the
+  // config center is instance configuration, not member-visible data.
+  app.get<{ Params: { key: string }; Querystring: { reveal?: string } }>(
+    '/:key',
+    { preHandler: app.requireAdmin },
+    async (req, reply) => {
     const { key } = req.params;
     const def = req.kernel.configCenter.getDefinition(key);
     const row = await app.db.query.configEntries.findFirst({

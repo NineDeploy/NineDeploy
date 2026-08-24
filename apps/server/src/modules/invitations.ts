@@ -22,6 +22,7 @@ import {
   notFound,
   parseId,
 } from '../lib/errors.js';
+import { sha256 } from '../lib/crypto.js';
 import { config } from '../config.js';
 import { iso } from '../lib/serialize.js';
 import { sendSystemEmail } from '../lib/notifier.js';
@@ -53,6 +54,10 @@ export async function createOrRefreshInvitation(
   const now = new Date();
   const expiresAt = new Date(now.getTime() + INVITATION_TTL_DAYS * 24 * 60 * 60 * 1000);
   const token = generateInvitationToken();
+  // Store the sha256 hash, never the token itself: a leaked DB file/backup
+  // (without the encryption master key) must not expose live, unexpired
+  // membership-granting tokens. Same scheme as API and password-reset tokens.
+  const tokenHash = sha256(token);
 
   const existing = await db.query.workspaceInvitations.findFirst({
     where: and(
@@ -69,7 +74,7 @@ export async function createOrRefreshInvitation(
       .update(workspaceInvitations)
       .set({
         role: args.role,
-        token,
+        token: tokenHash,
         invitedByUserId: args.invitedByUserId,
         expiresAt,
         updatedAt: now,
@@ -83,7 +88,7 @@ export async function createOrRefreshInvitation(
         workspaceId: args.workspaceId,
         email: args.email,
         role: args.role,
-        token,
+        token: tokenHash,
         invitedByUserId: args.invitedByUserId,
         expiresAt,
       })
@@ -187,11 +192,24 @@ export async function findPendingInvitationByToken(
 ): Promise<typeof workspaceInvitations.$inferSelect | null> {
   if (!token || token.length < 32) return null;
   const now = new Date();
-  const row = await db.query.workspaceInvitations.findFirst({ where: eq(workspaceInvitations.token, token) });
+  // Hash-first lookup: rows created since tokens were hashed are found here.
+  const row =
+    (await db.query.workspaceInvitations.findFirst({ where: eq(workspaceInvitations.token, sha256(token)) })) ??
+    // Legacy rows (created before hashing) still hold the cleartext token.
+    // Accept them once and rewrite the row to the hash so the fallback is
+    // self-retiring — outstanding emailed links keep working across the
+    // upgrade without leaving plaintext tokens in storage.
+    (await db.query.workspaceInvitations.findFirst({ where: eq(workspaceInvitations.token, token) }));
   if (!row) return null;
   if (row.revokedAt) return null;
   if (row.acceptedAt) return null;
   if (row.expiresAt.getTime() <= now.getTime()) return null;
+  if (row.token === token) {
+    await db
+      .update(workspaceInvitations)
+      .set({ token: sha256(token), updatedAt: now })
+      .where(eq(workspaceInvitations.id, row.id));
+  }
   return row;
 }
 

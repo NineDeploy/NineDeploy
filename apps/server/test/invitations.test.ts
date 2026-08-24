@@ -10,6 +10,7 @@ import {
   tokensMatch,
 } from '../src/modules/invitations.js';
 import { asUser, buildTestApp, createFakeDb } from './helpers.js';
+import { sha256 } from '../src/lib/crypto.js';
 
 const auditMocks = vi.hoisted(() => ({ audit: vi.fn(async () => undefined) }));
 vi.mock('../src/lib/audit.js', () => auditMocks);
@@ -184,6 +185,72 @@ describe('invitation helpers', () => {
           invitedByUserId: 2,
         }),
       ).rejects.toThrow(/Could not create invitation/);
+    });
+
+    it('stores only the sha256 hash of the token, never the cleartext', async () => {
+      // A leaked DB file/backup must not expose live membership-granting
+      // tokens — same scheme as API and password-reset tokens.
+      const inserted: Array<Record<string, unknown>> = [];
+      const db = createFakeDb({
+        findFirst: { workspace_invitations: undefined },
+        insert: {
+          workspace_invitations: (v: Record<string, unknown>) => {
+            inserted.push(v);
+            return [invitationRow({ id: 101 })];
+          },
+        },
+      });
+      const { token } = await createOrRefreshInvitation(db, {
+        workspaceId: 1,
+        email: 'bob@example.com',
+        role: 'member',
+        invitedByUserId: 2,
+      });
+      expect(token).toMatch(/^[0-9a-f]{64}$/);
+      expect(inserted).toHaveLength(1);
+      expect(inserted[0]!.token).toBe(sha256(token));
+      expect(inserted[0]!.token).not.toBe(token);
+    });
+  });
+
+  describe('token hashing round-trip', () => {
+    beforeEach(() => vi.clearAllMocks());
+
+    it('upgrades a legacy plaintext token row to its hash on first use', async () => {
+      // Invitations emailed before hashing shipped still hold the cleartext
+      // token; accepting one must rewrite the row so the fallback retires.
+      const legacy = invitationRow({ token: 'f'.repeat(64) });
+      const updates: Array<Record<string, unknown>> = [];
+      const db = createFakeDb({
+        findFirst: { workspace_invitations: legacy },
+        update: {
+          workspace_invitations: (s: Record<string, unknown>) => {
+            updates.push(s);
+            return [legacy];
+          },
+        },
+      });
+      const inv = await findPendingInvitationByToken(db, 'f'.repeat(64));
+      expect(inv).toEqual(legacy);
+      expect(updates).toHaveLength(1);
+      expect(updates[0]!.token).toBe(sha256('f'.repeat(64)));
+    });
+
+    it('returns the row without rewriting when it already stores the hash', async () => {
+      const hashed = invitationRow({ token: sha256('b'.repeat(64)) });
+      const updates: Array<Record<string, unknown>> = [];
+      const db = createFakeDb({
+        findFirst: { workspace_invitations: hashed },
+        update: {
+          workspace_invitations: (s: Record<string, unknown>) => {
+            updates.push(s);
+            return [hashed];
+          },
+        },
+      });
+      const inv = await findPendingInvitationByToken(db, 'b'.repeat(64));
+      expect(inv).toEqual(hashed);
+      expect(updates).toHaveLength(0);
     });
   });
 
