@@ -560,7 +560,9 @@ describe('template routes', () => {
     expect(res.statusCode).toBe(200);
     expect(JSON.stringify(res.json())).not.toContain('slug_taken');
     expect(inserted).toHaveLength(1);
-    expect(String(inserted[0]!['slug'])).toMatch(/^grafana-[a-z0-9]+$/i);
+    // The collision-avoidance suffix is a base64url token (3 random bytes), so
+    // it may contain `-` or `_` — match any URL-safe character after the dash.
+    expect(String(inserted[0]!['slug'])).toMatch(/^grafana-[A-Za-z0-9_-]+$/);
     expect(String(inserted[0]!['slug'])).not.toBe('grafana');
   });
 

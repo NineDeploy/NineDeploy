@@ -185,6 +185,44 @@ export const oidcProviders = sqliteTable('oidc_providers', {
   updatedAt: tsUpdatable('updated_at'),
 });
 
+// Pending workspace invitations. One row per (workspace, email) — the row is
+// created when an owner/admin invites an address that does not yet have a
+// `users` row (or that we want to onboard into a specific role). A non-null
+// `token` is the shareable accept URL handle; a non-null `acceptedAt` means
+// the invite was consumed (and a `users` row exists at the address by then).
+export const workspaceInvitations = sqliteTable(
+  'workspace_invitations',
+  {
+    id: id(),
+    workspaceId: integer('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    email: text('email').notNull(),
+    role: text('role', { enum: workspaceRole }).notNull().default('member'),
+    // Opaque random token used in the public accept URL. Unguessable from
+    // outside (32 bytes hex) so it can be sent over email without further
+    // obfuscation; only the hash is needed server-side to look the row up.
+    token: text('token').notNull().unique(),
+    invitedByUserId: integer('invited_by_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    expiresAt: integer('expires_at', { mode: 'timestamp' }).notNull(),
+    acceptedAt: integer('accepted_at', { mode: 'timestamp' }),
+    acceptedByUserId: integer('accepted_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+    revokedAt: integer('revoked_at', { mode: 'timestamp' }),
+    createdAt: ts('created_at'),
+    updatedAt: tsUpdatable('updated_at'),
+  },
+  (t) => ({
+    // One outstanding (non-revoked, unaccepted) invite per (workspace, email).
+    // Once consumed, a fresh invite to the same address is allowed (separate
+    // row) so a re-add after a member was removed can be tracked independently.
+    workspaceEmailIdx: uniqueIndex('workspace_invitations_workspace_email_idx').on(t.workspaceId, t.email),
+    workspaceIdx: index('workspace_invitations_workspace_idx').on(t.workspaceId),
+    emailIdx: index('workspace_invitations_email_idx').on(t.email),
+  }),
+);
+
 // ─── projects & services ──────────────────────────────────────────────────
 export const projects = sqliteTable('projects', {
   id: id(),

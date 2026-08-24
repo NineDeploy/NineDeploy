@@ -449,13 +449,37 @@ describe('workspaces routes', () => {
       expect(res.statusCode).toBe(403);
     });
 
-    it('rejects adding member if user not found (404)', async () => {
+    it('creates a pending invitation when the address is not yet a user', async () => {
+      // The unified POST /workspaces/:id/members endpoint now drops into the
+      // invitation flow for unknown addresses (returning the pending row +
+      // acceptUrl), instead of refusing with a 404 like the old direct-add
+      // route did. The frontend uses one button regardless of which bucket
+      // the address is in.
       const app = await buildTestApp({
         db: createFakeDb({
           findFirst: {
             workspaces: workspaceRow({ id: 1 }),
             workspace_members: memberRow({ role: 'owner' }),
             users: undefined,
+            workspaceInvitations: undefined,
+          },
+          insert: {
+            workspace_invitations: [
+              {
+                id: 99,
+                workspaceId: 1,
+                email: 'notfound@example.com',
+                role: 'member',
+                token: 'a'.repeat(64),
+                invitedByUserId: 2,
+                expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+                acceptedAt: null,
+                acceptedByUserId: null,
+                revokedAt: null,
+                createdAt: new Date(),
+                updatedAt: new Date(),
+              },
+            ],
           },
         }),
       });
@@ -467,7 +491,11 @@ describe('workspaces routes', () => {
         headers: { ...asUser({ id: 2 }), 'content-type': 'application/json' },
         payload: { email: 'notfound@example.com' },
       });
-      expect(res.statusCode).toBe(404);
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body.kind).toBe('invitation');
+      expect(body.email).toBe('notfound@example.com');
+      expect(body.acceptUrl).toMatch(/^https?:\/\/.+\/invite\/.+$/);
     });
 
     it('rejects adding an existing member with the same error as an unknown email (L-12)', async () => {

@@ -44,6 +44,22 @@ export interface WorkspaceMemberEntry {
   createdAt: string;
 }
 
+/**
+ * Response from POST /v1/workspaces/:id/members when the address is NOT a
+ * registered user yet. The server creates a pending invitation and returns
+ * the accept URL (also emailed when an SMTP channel is configured).
+ */
+export interface WorkspaceMemberInviteEntry {
+  kind: 'invitation';
+  id: number;
+  workspaceId: number;
+  email: string;
+  role: WorkspaceRole;
+  acceptUrl: string;
+  expiresAt: string;
+  createdAt: string;
+}
+
 export interface WorkspaceEntry {
   id: number;
   name: string;
@@ -60,6 +76,43 @@ export type Workspace = WorkspaceEntry;
 
 export interface WorkspaceDetail extends WorkspaceEntry {
   members: WorkspaceMemberEntry[];
+}
+
+// ─── Workspace Invitations ──────────────────────────────────────────────────
+// A pending invite lets an owner/admin onboard an address that may or may not
+// have a `users` row yet. While the row is outstanding, the only way the
+// address becomes a workspace member is by visiting the accept URL (or by
+// being promoted by an auto-accept hook on first login / OIDC).
+export const workspaceInvitationCreate = z.object({
+  email: z.string().email().max(254),
+  role: workspaceRoleEnum.default('member'),
+});
+export type WorkspaceInvitationCreate = z.infer<typeof workspaceInvitationCreate>;
+export type WorkspaceInvitationCreateInput = WorkspaceInvitationCreate;
+
+export interface WorkspaceInvitationEntry {
+  id: number;
+  workspaceId: number;
+  email: string;
+  role: WorkspaceRole;
+  invitedByUserId: number;
+  invitedByName: string | null;
+  expiresAt: string;
+  acceptedAt: string | null;
+  acceptedByUserId: number | null;
+  revokedAt: string | null;
+  createdAt: string;
+}
+
+/** Public view of an invitation (token is only returned once at create time). */
+export interface WorkspaceInvitationPublic {
+  workspaceId: number;
+  workspaceName: string;
+  workspaceSlug: string;
+  email: string;
+  role: WorkspaceRole;
+  invitedByName: string | null;
+  expiresAt: string;
 }
 
 // ─── OIDC & OAuth2 SSO Schemas ───────────────────────────────────────────────

@@ -18,6 +18,7 @@ import { findLiveSession, issueSessionTokens, refreshSessionTokens, revokeAllSes
 import { beginAuthentication, beginRegistration, finishAuthentication, finishRegistration } from '../lib/webauthn.js';
 import { exchangeGitHubCode, exchangeOidcCode, fetchOidcConfiguration, fetchOidcUserInfo, generateOAuthState, verifyOAuthState } from '../lib/oauth.js';
 import { ensureDefaultWorkspace } from './workspaces.js';
+import { acceptInvitationsForUser } from './invitations.js';
 import { iso } from '../lib/serialize.js';
 
 const toUser = (u: User): PublicUser => ({ id: u.id, email: u.email, name: u.name, role: u.role });
@@ -61,10 +62,12 @@ async function userCount(db: Pick<DB, 'select'>): Promise<number> {
 /**
  * Create the very first user (admin). Count + insert run inside a single
  * transaction so two concurrent bootstrap requests cannot both become the
- * first admin — the loser sees the committed row and gets a 409.
+ * first admin — the loser sees the committed row and gets a 409. After the
+ * transaction commits, any pending workspace invitations for the new admin
+ * are auto-accepted and audit-logged.
  */
 export async function createFirstAdmin(db: DB, input: Register) {
-  return db.transaction(async (tx) => {
+  const result = await db.transaction(async (tx) => {
     if ((await userCount(tx)) > 0) throw conflict('Instance is already initialized');
     const passwordHash = await hashPassword(input.password);
     const [user] = await tx
@@ -72,15 +75,18 @@ export async function createFirstAdmin(db: DB, input: Register) {
       .values({ email: input.email, passwordHash, name: input.name ?? null, role: 'admin' })
       .returning();
     if (!user) throw badRequest('Could not create user');
-    return { user: toUser(user), tokens: await issueSessionTokens(tx, user) };
+    return { user: toUser(user), tokens: await issueSessionTokens(tx, user), rawUser: user };
   });
+  const joined = await acceptInvitationsForUser(db, { id: result.rawUser.id, email: result.rawUser.email });
+  for (const w of joined) void audit(db, result.rawUser.id, 'workspace.invitation.accept', `auto-accept ${w.email} → workspace #${w.workspaceId} as ${w.role}`);
+  return { user: result.user, tokens: result.tokens };
 }
 
 /** Register a user. The first user becomes admin; everyone else is a member. */
 export async function registerAccount(db: DB, input: Register) {
   // Same transactional guard as the bootstrap: the count-then-insert race
   // between two simultaneous first registrations must not mint two admins.
-  return db.transaction(async (tx) => {
+  const result = await db.transaction(async (tx) => {
     const isFirst = (await userCount(tx)) === 0;
     const passwordHash = await hashPassword(input.password);
     let user: User | undefined;
@@ -93,8 +99,11 @@ export async function registerAccount(db: DB, input: Register) {
       throw badRequest('Email is already registered', 'email_taken');
     }
     if (!user) throw badRequest('Could not create user');
-    return { user: toUser(user), tokens: await issueSessionTokens(tx, user) };
+    return { user: toUser(user), tokens: await issueSessionTokens(tx, user), rawUser: user };
   });
+  const joined = await acceptInvitationsForUser(db, { id: result.rawUser.id, email: result.rawUser.email });
+  for (const w of joined) void audit(db, result.rawUser.id, 'workspace.invitation.accept', `auto-accept ${w.email} → workspace #${w.workspaceId} as ${w.role}`);
+  return { user: result.user, tokens: result.tokens };
 }
 
 /**
@@ -157,6 +166,11 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       }
     }
     recordSuccess(input.email);
+    // Auto-accept any pending workspace invitations for this email so a user
+    // who created their account to redeem an invite lands inside that
+    // workspace without re-clicking the link.
+    const joined = await acceptInvitationsForUser(app.db, { id: user.id, email: user.email });
+    for (const w of joined) void audit(app.db, user.id, 'workspace.invitation.accept', `auto-accept ${w.email} → workspace #${w.workspaceId} as ${w.role}`);
     void audit(app.db, user.id, 'auth.login', user.email, undefined, { ip: req.ip, userAgent: req.headers['user-agent'] });
     return {
       user: toUser(user),
@@ -248,6 +262,8 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       .where(eq(webauthnCredentials.id, cred.id));
     const user = await app.db.query.users.findFirst({ where: eq(users.id, cred.userId) });
     if (!user) throw unauthorized();
+    const joined = await acceptInvitationsForUser(app.db, { id: user.id, email: user.email });
+    for (const w of joined) void audit(app.db, user.id, 'workspace.invitation.accept', `auto-accept ${w.email} → workspace #${w.workspaceId} as ${w.role}`);
     void audit(app.db, user.id, 'auth.passkey_login', user.email, undefined, { ip: req.ip, userAgent: req.headers['user-agent'] });
     return {
       user: toUser(user),
@@ -666,6 +682,11 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
 
     // Ensure default workspace exists
     await ensureDefaultWorkspace(app.db, user);
+    // Pull the user into any pending invitations addressed to their email —
+    // an SSO account is the same shape as a password one from the workspace's
+    // perspective, so the join-on-first-login flow is the same.
+    const joined = await acceptInvitationsForUser(app.db, { id: user.id, email: user.email });
+    for (const w of joined) void audit(app.db, user.id, 'workspace.invitation.accept', `auto-accept ${w.email} → workspace #${w.workspaceId} as ${w.role}`);
 
     const tokens = await issueSessionTokens(app.db, user, { ip: req.ip, userAgent: req.headers['user-agent'] });
     void audit(app.db, user.id, 'auth.sso_login', `${provider.name} (${userInfo.email})`, undefined, {

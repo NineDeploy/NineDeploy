@@ -1432,6 +1432,22 @@ describe('createClient', () => {
 
       await client.workspaces.removeMember(1, 2);
       expect(last(calls)).toMatchObject({ url: '/v1/workspaces/1/members/2', init: { method: 'DELETE' } });
+
+      // Invitation flow
+      await client.workspaces.inviteMember(1, { email: 'newbie@acme.com', role: 'member' });
+      expect(last(calls)).toMatchObject({ url: '/v1/workspaces/1/invitations', init: { method: 'POST' } });
+
+      await client.workspaces.listInvitations(1);
+      expect(last(calls)).toMatchObject({ url: '/v1/workspaces/1/invitations', init: { method: 'GET' } });
+
+      await client.workspaces.revokeInvitation(1, 99);
+      expect(last(calls)).toMatchObject({ url: '/v1/workspaces/1/invitations/99', init: { method: 'DELETE' } });
+
+      await client.workspaces.previewInvitation('a'.repeat(64));
+      expect(last(calls)).toMatchObject({ url: '/v1/invitations/' + 'a'.repeat(64), init: { method: 'GET' } });
+
+      await client.workspaces.acceptInvitation('a'.repeat(64));
+      expect(last(calls)).toMatchObject({ url: '/v1/invitations/' + 'a'.repeat(64) + '/accept', init: { method: 'POST' } });
     });
   });
 

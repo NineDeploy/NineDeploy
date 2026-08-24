@@ -9,6 +9,7 @@ import { ModeProvider } from './lib/mode.js';
 import { Login } from './routes/Login.js';
 import { ForgotPassword } from './routes/ForgotPassword.js';
 import { ResetPassword } from './routes/ResetPassword.js';
+import { AcceptInvite } from './routes/AcceptInvite.js';
 import { Monitoring } from './routes/Monitoring.js';
 import { About } from './routes/About.js';
 import { Backups } from './routes/Backups.js';
@@ -62,6 +63,10 @@ export default function App() {
       <Route path="/login" element={<Login />} />
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password" element={<ResetPassword />} />
+      {/* Public invitation accept — shown to anonymous visitors and
+          authenticated users alike; the page itself routes them through
+          login/register if they are not yet a member. */}
+      <Route path="/invite/:token" element={<AcceptInvite />} />
       <Route
         element={
           <RequireAuth>

@@ -12,7 +12,13 @@ export function Login() {
   const location = useLocation();
   const [params] = useSearchParams();
   const passwordReset = params.get('reset') === 'ok';
-  const from = (location.state as { from?: string } | null)?.from ?? '/';
+  // Two ways to land on the login page with a redirect target:
+  //   1. Protected route sent us here via <Navigate state={{ from }}>.
+  //   2. A page like /invite/:token linked here with ?returnTo=… .
+  // Prefer the explicit `returnTo` query when present so the deep link survives
+  // a refresh (state is lost on a hard refresh; query strings are not).
+  const queryReturnTo = params.get('returnTo');
+  const from = queryReturnTo ?? (location.state as { from?: string } | null)?.from ?? '/';
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');

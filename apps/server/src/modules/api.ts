@@ -41,6 +41,7 @@ import { logDrainRoutes } from './logDrains.js';
 import { housekeepingRoutes } from './housekeeping.js';
 import { workspaceRoutes } from './workspaces.js';
 import { firewallRoutes } from './firewall.js';
+import { acceptInvitationRoutes, invitationRoutes, publicInvitationRoutes } from './invitations.js';
 
 /** All versioned API routes, mounted under /v1. */
 export const apiRoutes: FastifyPluginAsync = async (app) => {
@@ -54,7 +55,16 @@ export const apiRoutes: FastifyPluginAsync = async (app) => {
   await app.register(hookReceiveRoutes, { prefix: '/hooks' });
 
   await app.register(authRoutes, { prefix: '/auth' });
+  // Public invitation routes (token-only access) MUST be registered before the
+  // authenticated workspace routes so that the unmatched :token path resolves
+  // here, not as a /workspaces/:id sub-route.
+  await app.register(publicInvitationRoutes);
+  // Authenticated accept route — public path, but requires a valid session.
+  await app.register(acceptInvitationRoutes);
   await app.register(workspaceRoutes, { prefix: '/workspaces' });
+  // Workspace-scoped invitation management (auth required) piggy-backs on the
+  // workspaces prefix so callers see a single /v1/workspaces/:id/invitations.
+  await app.register(invitationRoutes, { prefix: '/workspaces' });
   await app.register(userRoutes, { prefix: '/users' });
   await app.register(demoRoutes, { prefix: '/demo' });
   await app.register(projectRoutes, { prefix: '/projects' });

@@ -86,9 +86,13 @@ import type {
   WorkspaceCreateInput,
   WorkspaceUpdateInput,
   WorkspaceMemberEntry,
+  WorkspaceMemberInviteEntry,
   WorkspaceMemberAddInput,
   WorkspaceMemberRoleUpdateInput,
   OidcPublicProvider,
+  WorkspaceInvitationEntry,
+  WorkspaceInvitationPublic,
+  WorkspaceRole,
   OidcProviderEntry,
   OidcProviderCreateInput,
   OidcProviderUpdateInput,
@@ -210,7 +214,15 @@ export interface NineDeployClient {
     create: (input: WorkspaceCreateInput) => Promise<WorkspaceEntry>;
     update: (id: number, input: WorkspaceUpdateInput) => Promise<WorkspaceEntry>;
     delete: (id: number) => Promise<{ ok: boolean }>;
-    addMember: (id: number, input: WorkspaceMemberAddInput) => Promise<WorkspaceMemberEntry>;
+    addMember: (id: number, input: WorkspaceMemberAddInput) => Promise<WorkspaceMemberEntry | WorkspaceMemberInviteEntry>;
+    /** Create a pending invitation for an email address that isn't a user yet. */
+    inviteMember: (id: number, input: WorkspaceMemberAddInput) => Promise<WorkspaceInvitationEntry & { acceptUrl: string }>;
+    listInvitations: (id: number) => Promise<WorkspaceInvitationEntry[]>;
+    revokeInvitation: (id: number, inviteId: number) => Promise<{ ok: boolean }>;
+    /** Look up a pending invitation by its public token (no auth required). */
+    previewInvitation: (token: string) => Promise<WorkspaceInvitationPublic>;
+    /** Accept an invitation as the currently authenticated user. */
+    acceptInvitation: (token: string) => Promise<{ ok: boolean; workspaceId: number; role: WorkspaceRole }>;
     updateMemberRole: (id: number, memberId: number, input: WorkspaceMemberRoleUpdateInput) => Promise<WorkspaceMemberEntry>;
     removeMember: (id: number, memberId: number) => Promise<{ ok: boolean }>;
   };
@@ -693,7 +705,23 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
       create: (input) => send<WorkspaceEntry>('POST', '/v1/workspaces', input),
       update: (id, input) => send<WorkspaceEntry>('PATCH', `/v1/workspaces/${id}`, input),
       delete: (id) => send<{ ok: boolean }>('DELETE', `/v1/workspaces/${id}`),
-      addMember: (id, input) => send<WorkspaceMemberEntry>('POST', `/v1/workspaces/${id}/members`, input),
+      addMember: (id, input) =>
+        send<WorkspaceMemberEntry | WorkspaceMemberInviteEntry>('POST', `/v1/workspaces/${id}/members`, input),
+      inviteMember: (id, input) =>
+        send<WorkspaceInvitationEntry & { acceptUrl: string }>(
+          'POST',
+          `/v1/workspaces/${id}/invitations`,
+          input,
+        ),
+      listInvitations: (id) => get<WorkspaceInvitationEntry[]>(`/v1/workspaces/${id}/invitations`),
+      revokeInvitation: (id, inviteId) =>
+        send<{ ok: boolean }>('DELETE', `/v1/workspaces/${id}/invitations/${inviteId}`),
+      previewInvitation: (token) => get<WorkspaceInvitationPublic>(`/v1/invitations/${token}`),
+      acceptInvitation: (token) =>
+        send<{ ok: boolean; workspaceId: number; role: WorkspaceRole }>(
+          'POST',
+          `/v1/invitations/${token}/accept`,
+        ),
       updateMemberRole: (id, memberId, input) => send<WorkspaceMemberEntry>('PATCH', `/v1/workspaces/${id}/members/${memberId}`, input),
       removeMember: (id, memberId) => send<{ ok: boolean }>('DELETE', `/v1/workspaces/${id}/members/${memberId}`),
     },

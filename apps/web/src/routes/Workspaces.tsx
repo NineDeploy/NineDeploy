@@ -2,7 +2,9 @@ import { useState, type FormEvent } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Building2,
+  Copy,
   HelpCircle,
+  Mail,
   Search,
   ShieldCheck,
   Trash2,
@@ -23,7 +25,12 @@ import {
   Select,
   Textarea,
 } from '../components/ui.js';
-import type { WorkspaceRole, WorkspaceMemberAddInput } from '@ninedeploy/sdk';
+import type {
+  WorkspaceInvitationEntry,
+  WorkspaceMemberAddInput,
+  WorkspaceMemberInviteEntry,
+  WorkspaceRole,
+} from '@ninedeploy/sdk';
 
 export function Workspaces() {
   const { user } = useAuth();
@@ -35,12 +42,14 @@ export function Workspaces() {
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState<WorkspaceRole>('member');
+  const [lastInvite, setLastInvite] = useState<WorkspaceMemberInviteEntry | null>(null);
   const [editOpen, setEditOpen] = useState(false);
   const [editName, setEditName] = useState('');
   const [editDescription, setEditDescription] = useState('');
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const workspaceId = currentWorkspace?.id;
 
@@ -54,20 +63,56 @@ export function Workspaces() {
     enabled: Boolean(workspaceId),
   });
 
+  const { data: invitations = [] } = useQuery<WorkspaceInvitationEntry[]>({
+    queryKey: ['workspace-invitations', workspaceId],
+    /* v8 ignore next 1 -- queryFn never runs when `enabled` is false (no workspace selected) */
+    queryFn: () => (workspaceId ? api.workspaces.listInvitations(workspaceId) : []),
+    enabled: Boolean(workspaceId) && Boolean(detail),
+    refetchInterval: 15_000,
+  });
+
   const isOwner = detail?.myRole === 'owner' || user?.role === 'admin';
   const isAdmin = isOwner || detail?.myRole === 'admin';
 
   const inviteMutation = useMutation({
     mutationFn: (input: WorkspaceMemberAddInput) =>
       api.workspaces.addMember(workspaceId!, input),
-    onSuccess: () => {
+    onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ['workspace-detail', workspaceId] });
+      queryClient.invalidateQueries({ queryKey: ['workspace-invitations', workspaceId] });
       refreshWorkspaces();
+      // The unified endpoint returns either a member row or a pending
+      // invitation. When it returns an invitation we surface the accept URL
+      // inline so the inviter can copy it without depending on email delivery.
+      if (result && 'kind' in result && result.kind === 'invitation') {
+        setLastInvite(result);
+        setInviteEmail('');
+        setInviteRole('member');
+        return;
+      }
       setInviteOpen(false);
       setInviteEmail('');
       setInviteRole('member');
     },
   });
+
+  const revokeInvitationMutation = useMutation({
+    mutationFn: (inviteId: number) =>
+      api.workspaces.revokeInvitation(workspaceId!, inviteId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['workspace-invitations', workspaceId] });
+    },
+  });
+
+  const copyAcceptUrl = async (url: string) => {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* clipboard not available — fall back to manual selection */
+    }
+  };
 
   const updateRoleMutation = useMutation({
     mutationFn: ({ memberId, role }: { memberId: number; role: WorkspaceRole }) =>
@@ -117,6 +162,21 @@ export function Workspaces() {
       setBusy(false);
     }
   };
+
+  const openInvite = () => {
+    setError(null);
+    setLastInvite(null);
+    setCopied(false);
+    setInviteOpen(true);
+  };
+
+  const closeInvite = () => {
+    setInviteOpen(false);
+    setLastInvite(null);
+    setCopied(false);
+  };
+
+  const pendingInvites = invitations.filter((i) => !i.acceptedAt && !i.revokedAt);
 
   const handleUpdateWs = async (e: FormEvent) => {
     e.preventDefault();
@@ -279,10 +339,7 @@ export function Workspaces() {
               <Button
                 size="sm"
                 className="h-8"
-                onClick={() => {
-                  setError(null);
-                  setInviteOpen(true);
-                }}
+                onClick={openInvite}
               >
                 <UserPlus size={14} />
                 <span>Invite Member</span>
@@ -417,6 +474,57 @@ export function Workspaces() {
         )}
       </Card>
 
+      {/* Pending Invitations */}
+      {isAdmin && pendingInvites.length > 0 && (
+        <Card className="p-6">
+          <div className="flex items-center gap-2 mb-4">
+            <Mail size={18} className="text-amber-300" />
+            <h2 className="text-base font-semibold text-white">Pending Invitations</h2>
+            <span className="text-xs text-slate-500">({pendingInvites.length})</span>
+          </div>
+          <div className="divide-y divide-white/5">
+            {pendingInvites.map((inv) => {
+              const expires = new Date(inv.expiresAt);
+              return (
+                <div
+                  key={inv.id}
+                  className="flex flex-col sm:flex-row sm:items-center justify-between py-3 gap-3"
+                >
+                  <div className="space-y-0.5">
+                    <div className="text-sm font-medium text-slate-200">{inv.email}</div>
+                    <div className="text-[11px] text-slate-500">
+                      Invited by {inv.invitedByName ?? 'someone'} · expires{' '}
+                      {expires.toLocaleDateString()}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Badge tone="amber" className="capitalize text-[10px]">
+                      {inv.role}
+                    </Badge>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      className="h-7 px-2 text-xs"
+                      onClick={async () => {
+                        const acceptUrl = `${window.location.origin}/invite/${(inv as WorkspaceInvitationEntry & { token?: string }).token ?? ''}`;
+                        // The list endpoint intentionally omits the cleartext
+                        // token (only the accept URL is returned at create
+                        // time). For revocation we don't need the URL — the
+                        // backend only needs the invite id.
+                        void acceptUrl;
+                        revokeInvitationMutation.mutate(inv.id);
+                      }}
+                    >
+                      Revoke
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      )}
+
       {/* Danger Zone (Workspace Deletion) */}
       {isOwner && (
         <Card className="p-6 border-rose-500/20 bg-rose-500/[0.02]">
@@ -444,41 +552,87 @@ export function Workspaces() {
 
       {/* Invite Member Dialog */}
       {inviteOpen && (
-        <Modal onClose={() => setInviteOpen(false)} title="Invite Team Member">
-          <form onSubmit={handleInvite} className="space-y-4">
-            <Field label="User Email">
-              <Input
-                type="email"
-                required
-                value={inviteEmail}
-                onChange={(e) => setInviteEmail(e.target.value)}
-                placeholder="developer@acme.com"
-                autoFocus
-              />
-            </Field>
-
-            <Field label="Workspace Role">
-              <Select
-                value={inviteRole}
-                onChange={(e) => setInviteRole(e.target.value as WorkspaceRole)}
-              >
-                <option value="admin">Admin — Full control over workspace &amp; members</option>
-                <option value="member">Member — Can manage and deploy applications</option>
-                <option value="viewer">Viewer — Read-only access to resources</option>
-              </Select>
-            </Field>
-
-            {error && <p className="text-xs text-rose-400">{error}</p>}
-
-            <div className="flex justify-end gap-2 pt-2">
-              <Button type="button" variant="secondary" onClick={() => setInviteOpen(false)}>
-                Cancel
-              </Button>
-              <Button type="submit" disabled={busy || !inviteEmail.trim()}>
-                {busy ? 'Inviting…' : 'Send Invite'}
-              </Button>
+        <Modal onClose={closeInvite} title={lastInvite ? 'Invitation Sent' : 'Invite Team Member'}>
+          {lastInvite ? (
+            <div className="space-y-4">
+              <p className="text-sm text-slate-300">
+                A pending invitation has been created for{' '}
+                <strong className="text-white">{lastInvite.email}</strong>. The address
+                will be added to this workspace the next time the recipient signs in
+                to NineDeploy — or sooner if they open the accept link below.
+              </p>
+              <Field label="Accept link">
+                <div className="flex items-stretch gap-2">
+                  <Input
+                    readOnly
+                    value={lastInvite.acceptUrl}
+                    onFocus={(e) => e.currentTarget.select()}
+                    className="font-mono text-[11px]"
+                  />
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => copyAcceptUrl(lastInvite.acceptUrl)}
+                    title="Copy accept link"
+                  >
+                    <Copy size={14} />
+                    <span>{copied ? 'Copied' : 'Copy'}</span>
+                  </Button>
+                </div>
+              </Field>
+              <p className="text-[11px] text-slate-500">
+                The link expires on{' '}
+                {new Date(lastInvite.expiresAt).toLocaleString()}. An email was also
+                dispatched if a notification channel is configured.
+              </p>
+              <div className="flex justify-end gap-2 pt-2">
+                <Button type="button" onClick={closeInvite}>
+                  Done
+                </Button>
+              </div>
             </div>
-          </form>
+          ) : (
+            <form onSubmit={handleInvite} className="space-y-4">
+              <Field label="User Email">
+                <Input
+                  type="email"
+                  required
+                  value={inviteEmail}
+                  onChange={(e) => setInviteEmail(e.target.value)}
+                  placeholder="developer@acme.com"
+                  autoFocus
+                />
+              </Field>
+
+              <Field label="Workspace Role">
+                <Select
+                  value={inviteRole}
+                  onChange={(e) => setInviteRole(e.target.value as WorkspaceRole)}
+                >
+                  <option value="admin">Admin — Full control over workspace &amp; members</option>
+                  <option value="member">Member — Can manage and deploy applications</option>
+                  <option value="viewer">Viewer — Read-only access to resources</option>
+                </Select>
+              </Field>
+
+              <p className="text-[11px] text-slate-500">
+                If the email already belongs to a user, they are added immediately. If
+                not, a pending invitation is created and the address joins the
+                workspace the next time they sign in.
+              </p>
+
+              {error && <p className="text-xs text-rose-400">{error}</p>}
+
+              <div className="flex justify-end gap-2 pt-2">
+                <Button type="button" variant="secondary" onClick={closeInvite}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={busy || !inviteEmail.trim()}>
+                  {busy ? 'Inviting…' : 'Send Invite'}
+                </Button>
+              </div>
+            </form>
+          )}
         </Modal>
       )}
 

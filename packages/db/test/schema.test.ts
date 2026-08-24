@@ -15,6 +15,7 @@ describe('schema', () => {
     'sessions',
     'workspaces',
     'workspaceMembers',
+    'workspaceInvitations',
     'oidcProviders',
     'projects',
     'services',
@@ -106,6 +107,7 @@ describe('schema', () => {
       'sessions',
       'workspaces',
       'workspaceMembers',
+      'workspaceInvitations',
       'oidcProviders',
       'projects',
       'services',
@@ -183,5 +185,54 @@ describe('schema', () => {
     const rows = await db.select().from(schema.deployments).all();
     expect(rows).toHaveLength(2);
     expect(rows.every((r) => r.serviceId === svc!.id)).toBe(true);
+  });
+
+  it('roundtrips a workspace invitation row (table + indexes)', async () => {
+    const { db } = schema.createDb({ url: ':memory:' });
+    await migrate(db, { migrationsFolder });
+
+    const [inviter] = await db
+      .insert(schema.users)
+      .values({ email: 'inviter@example.com', passwordHash: 'h' })
+      .returning();
+    const [ws] = await db
+      .insert(schema.workspaces)
+      .values({ name: 'Acme', slug: 'acme', ownerId: inviter!.id })
+      .returning();
+
+    const [inv] = await db
+      .insert(schema.workspaceInvitations)
+      .values({
+        workspaceId: ws!.id,
+        email: 'invitee@example.com',
+        role: 'member',
+        token: 'a'.repeat(64),
+        invitedByUserId: inviter!.id,
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      })
+      .returning();
+    expect(inv?.id).toBeDefined();
+
+    // Unique (workspaceId, email) prevents a second live invite for the same pair.
+    await expect(
+      db
+        .insert(schema.workspaceInvitations)
+        .values({
+          workspaceId: ws!.id,
+          email: 'invitee@example.com',
+          role: 'admin',
+          token: 'b'.repeat(64),
+          invitedByUserId: inviter!.id,
+          expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        }),
+    ).rejects.toThrow();
+
+    // Listing via the workspace index returns the row.
+    const rows = await db
+      .select()
+      .from(schema.workspaceInvitations)
+      .where(eq(schema.workspaceInvitations.workspaceId, ws!.id))
+      .all();
+    expect(rows).toHaveLength(1);
   });
 });

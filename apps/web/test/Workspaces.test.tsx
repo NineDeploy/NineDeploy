@@ -66,6 +66,22 @@ describe('Workspaces route', () => {
     });
   });
 
+  it('falls back to a stable shell when no workspace is selected', async () => {
+    // When currentWorkspace is null, the page should not crash and should not
+    // call the invitation listing endpoint.
+    mockOf(useWorkspace).mockReturnValue({
+      workspaces: [],
+      currentWorkspace: null,
+      isLoading: false,
+      switchWorkspace,
+      createWorkspace: vi.fn(),
+      refreshWorkspaces,
+    });
+    renderWithProviders(<Workspaces />);
+    expect(await screen.findByText('Workspaces & Teams')).toBeInTheDocument();
+    expect(api.workspaces.listInvitations).not.toHaveBeenCalled();
+  });
+
   it('invites a new member to the workspace', async () => {
     mockOf(api.workspaces.addMember).mockResolvedValueOnce({
       id: 12,
@@ -97,6 +113,88 @@ describe('Workspaces route', () => {
         role: 'member',
       });
       expect(refreshWorkspaces).toHaveBeenCalled();
+    });
+  });
+
+  it('shows the accept URL after a successful invite for an unknown address', async () => {
+    // The unified POST /workspaces/:id/members endpoint returns a WorkspaceMemberInviteEntry
+    // when the address is not yet a user. The UI should swap the dialog into a
+    // "link to share" state instead of closing.
+    mockOf(api.workspaces.addMember).mockResolvedValueOnce({
+      kind: 'invitation',
+      id: 50,
+      workspaceId: 1,
+      email: 'newbie@acme.com',
+      role: 'member',
+      acceptUrl: 'http://localhost:3000/invite/abc123',
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+      createdAt: new Date().toISOString(),
+    } as never);
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+    });
+
+    renderWithProviders(<Workspaces />);
+    await waitFor(() => expect(screen.getByText('Invite Member')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText('Invite Member'));
+    fireEvent.change(screen.getByPlaceholderText('developer@acme.com'), {
+      target: { value: 'newbie@acme.com' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send Invite' }));
+
+    // Dialog re-renders to the link-sharing state.
+    expect(await screen.findByText('Invitation Sent')).toBeInTheDocument();
+    const input = screen.getByDisplayValue('http://localhost:3000/invite/abc123') as HTMLInputElement;
+    expect(input.readOnly).toBe(true);
+
+    // Click the Copy button — the label should toggle to "Copied".
+    fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
+    expect(await screen.findByRole('button', { name: 'Copied' })).toBeInTheDocument();
+    expect(writeText).toHaveBeenCalledWith('http://localhost:3000/invite/abc123');
+
+    // Focusing the read-only input should select its contents (so the user can
+    // just press Ctrl-C without manually selecting the link). The Input
+    // component forwards onFocus; spy on select() before dispatching.
+    const linkInput = screen.getByDisplayValue('http://localhost:3000/invite/abc123') as HTMLInputElement & {
+      select?: () => void;
+    };
+    const select = vi.fn();
+    linkInput.select = select;
+    fireEvent.focus(linkInput);
+    expect(select).toHaveBeenCalled();
+  });
+
+  it('lists pending invitations with a revoke control', async () => {
+    mockOf(api.workspaces.listInvitations).mockResolvedValueOnce([
+      {
+        id: 90,
+        workspaceId: 1,
+        email: 'pending@acme.com',
+        role: 'admin',
+        invitedByUserId: 1,
+        // invitedByName intentionally null to hit the "Invited by someone" fallback.
+        invitedByName: null,
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+        acceptedAt: null,
+        acceptedByUserId: null,
+        revokedAt: null,
+        createdAt: new Date().toISOString(),
+      },
+    ] as never);
+    mockOf(api.workspaces.revokeInvitation).mockResolvedValueOnce({ ok: true } as never);
+
+    renderWithProviders(<Workspaces />);
+    expect(await screen.findByText('Pending Invitations')).toBeInTheDocument();
+    expect(screen.getByText('pending@acme.com')).toBeInTheDocument();
+    // Fallback text when invitedByName is null.
+    expect(screen.getByText(/Invited by someone/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Revoke' }));
+    await waitFor(() => {
+      expect(api.workspaces.revokeInvitation).toHaveBeenCalledWith(1, 90);
     });
   });
 

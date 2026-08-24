@@ -24,6 +24,8 @@ import { audit } from '../lib/audit.js';
 import { badRequest, conflict, forbidden, notFound, parseId } from '../lib/errors.js';
 import { iso } from '../lib/serialize.js';
 import { slugify } from '../lib/slug.js';
+import { createOrRefreshInvitation, buildAcceptUrl, buildInviteEmail } from './invitations.js';
+import { sendSystemEmail } from '../lib/notifier.js';
 
 function serializeMember(m: WorkspaceMember, u: Pick<User, 'email' | 'name'>): WorkspaceMemberEntry {
   return {
@@ -274,8 +276,10 @@ export const workspaceRoutes: FastifyPluginAsync = async (app) => {
     return { ok: true };
   });
 
-  // Add a member to the workspace
-  app.post('/:id/members', async (req) => {
+  // Add a member to the workspace, or create a pending invitation if the
+  // address does not belong to a registered user yet. Single UX entry point
+  // that the frontend calls without knowing whether the address is onboarded.
+  app.post('/:id/members', async (req, reply) => {
     const id = parseId((req.params as { id: string }).id);
     const userId = req.user!.id;
     const input = workspaceMemberAdd.parse(req.body);
@@ -290,34 +294,60 @@ export const workspaceRoutes: FastifyPluginAsync = async (app) => {
     const canInvite = req.user!.role === 'admin' || callerMembership?.role === 'owner' || callerMembership?.role === 'admin';
     if (!canInvite) throw forbidden('Admin or Owner role required to invite workspace members');
 
-    // L-12: this route used to answer "no such user" for an unregistered
-    // address and "already a member" for a registered one, which let any
-    // workspace owner test arbitrary email addresses for an account on this
-    // instance. Both outcomes now return the SAME error: the caller can read
-    // the member list to see who is already in, so nothing actionable is lost,
-    // and a non-member address reveals nothing about whether it is registered.
-    const UNADDABLE = 'That email address cannot be added to this workspace';
     const targetUser = await app.db.query.users.findFirst({ where: eq(users.email, input.email) });
-    if (!targetUser) throw notFound(UNADDABLE);
 
-    const existingMember = await app.db.query.workspaceMembers.findFirst({
-      where: and(eq(workspaceMembers.workspaceId, id), eq(workspaceMembers.userId, targetUser.id)),
+    // Already a member: collapse the L-12 error the same way the unknown-user
+    // case does so an outsider cannot enumerate which addresses are
+    // registered on this instance.
+    if (targetUser) {
+      const existingMember = await app.db.query.workspaceMembers.findFirst({
+        where: and(eq(workspaceMembers.workspaceId, id), eq(workspaceMembers.userId, targetUser.id)),
+      });
+      if (existingMember) throw notFound('That email address cannot be added to this workspace');
+
+      const [created] = await app.db
+        .insert(workspaceMembers)
+        .values({
+          workspaceId: id,
+          userId: targetUser.id,
+          role: input.role,
+        })
+        .returning();
+
+      if (!created) throw badRequest('Could not add member');
+      void audit(app.db, req.user!.id, 'workspace.member.add', `${targetUser.email} (${input.role}) to ${ws.name}`);
+
+      return serializeMember(created, targetUser);
+    }
+
+    // Not a registered user — drop into the invitation flow so the address
+    // can onboard when they next sign in. The frontend uses one button for
+    // both outcomes; the response shape carries the invitation row so the
+    // UI can render the accept URL inline.
+    const { token, invitation } = await createOrRefreshInvitation(app.db, {
+      workspaceId: id,
+      email: input.email,
+      role: input.role,
+      invitedByUserId: userId,
     });
-    if (existingMember) throw notFound(UNADDABLE);
+    const inviter = await app.db.query.users.findFirst({ where: eq(users.id, userId) });
+    void audit(app.db, userId, 'workspace.invitation.create', `${input.email} (${input.role}) to ${ws.name}`);
 
-    const [created] = await app.db
-      .insert(workspaceMembers)
-      .values({
-        workspaceId: id,
-        userId: targetUser.id,
-        role: input.role,
-      })
-      .returning();
+    const acceptUrl = buildAcceptUrl(token);
+    const emailBody = buildInviteEmail(ws.name, input.role, inviter?.name ?? null, acceptUrl);
+    void sendSystemEmail(app.db, emailBody.subject, emailBody.text).catch(() => undefined);
 
-    if (!created) throw badRequest('Could not add member');
-    void audit(app.db, req.user!.id, 'workspace.member.add', `${targetUser.email} (${input.role}) to ${ws.name}`);
-
-    return serializeMember(created, targetUser);
+    reply.header('x-invitation-token', token);
+    return {
+      kind: 'invitation' as const,
+      id: invitation.id,
+      workspaceId: invitation.workspaceId,
+      email: invitation.email,
+      role: invitation.role as WorkspaceRole,
+      acceptUrl,
+      expiresAt: invitation.expiresAt.toISOString(),
+      createdAt: invitation.createdAt.toISOString(),
+    };
   });
 
   // Update member role (or transfer ownership)

@@ -218,6 +218,13 @@
       "when": 1787304413476,
       "tag": "0031_repo_insights",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "6",
+      "when": 1787400000000,
+      "tag": "0032_workspace_invitations",
+      "breakpoints": true
     }
   ]
 }
