@@ -58,6 +58,10 @@ const h = vi.hoisted(() => {
       return child;
     }
 
+    alias() {
+      return this;
+    }
+
     action(fn: (...args: unknown[]) => unknown) {
       this.actionFn = fn;
       return this;
@@ -291,7 +295,8 @@ describe('program registration', () => {
       'init', 'setup', 'login', 'logout', 'whoami', 'config',
       'services', 'databases', 'templates', 'deploys', 'token', 'system',
       'env', 'domains', 'volumes', 'networks', 'sessions', 'backups', 'alerts', 'users',
-      'reset-link <idOrEmail>', 'activity', 'plugins', 'config-center', 'workspaces', 'demo', 'server', 'doctor', 'firewall',
+      'reset-link <idOrEmail>', 'activity', 'plugins', 'config-center', 'workspaces', 'demo', 'server', 'doctor',
+      'sources', 'deploy', 'webhooks', 'firewall',
     ]);
     expect(findCommand('server').children).toHaveLength(4);
     expect(findCommand('services').children).toHaveLength(12);
@@ -310,7 +315,11 @@ describe('program registration', () => {
     expect(findCommand('config-center').children).toHaveLength(4);
     expect(findCommand('demo').children).toHaveLength(1);
     expect(findCommand('firewall').children).toHaveLength(7);
-    expect(h.FakeCommand.instances).toHaveLength(104);
+    expect(h.FakeCommand.instances).toHaveLength(118);
+    // sanity: every new command we added has at least the subcommands it owns
+    expect(findCommand('sources').children.length).toBeGreaterThanOrEqual(6);
+    expect(findCommand('deploy').children.length).toBeGreaterThanOrEqual(1);
+    expect(findCommand('webhooks').children.length).toBeGreaterThanOrEqual(4);
     // argv length > 2 → no banner, no exit
     expect(h.banner).not.toHaveBeenCalled();
     expect(h.exit).not.toHaveBeenCalled();

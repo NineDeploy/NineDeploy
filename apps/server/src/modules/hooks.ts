@@ -302,6 +302,7 @@ export const webhookMgmtRoutes: FastifyPluginAsync = async (app) => {
       branch: w.branch,
       active: w.active,
       watchPaths: w.watchPaths ?? '',
+      sourceId: w.sourceId ?? null,
       url: webhookUrl(w.id),
       createdAt: w.createdAt.toISOString(),
     }));
@@ -313,10 +314,15 @@ export const webhookMgmtRoutes: FastifyPluginAsync = async (app) => {
     const svc = await loadServiceForUser(app.db, id, req.user!);
     const branch = input.branch?.trim() || svc.branch;
     const secret = randomToken(24);
+    // Inherit the parent service's sourceId so the webhook record matches the
+    // credential the deploy pipeline will use (a multi-source instance can now
+    // disambiguate which credential backs which webhook — useful in admin
+    // diagnostics and any future "re-issue secret under a different token" flow).
     const [w] = await app.db
       .insert(webhooks)
       .values({
         serviceId: id,
+        sourceId: svc.sourceId,
         branch,
         watchPaths: input.watchPaths?.trim() || null,
         secretEncrypted: encrypt(secret),
@@ -324,7 +330,7 @@ export const webhookMgmtRoutes: FastifyPluginAsync = async (app) => {
       })
       .returning();
     // The raw secret is returned exactly once.
-    return { id: w!.id, branch: w!.branch, active: w!.active, url: webhookUrl(w!.id), secret };
+    return { id: w!.id, branch: w!.branch, active: w!.active, sourceId: w!.sourceId, url: webhookUrl(w!.id), secret };
   });
 
   app.delete('/:id/webhooks/:hookId', async (req) => {

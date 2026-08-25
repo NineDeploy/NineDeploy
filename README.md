@@ -93,6 +93,7 @@ For in-depth guides, operational workflows, and configuration references:
 | Guide | Description |
 | :--- | :--- |
 | 🚀 [**Quickstart & Upgrading**](./docs/QUICKSTART.md) | Installation options, in-place upgrades, systemd unit configuration, and environment setup. |
+| 🔐 [**Private Repository Guide**](./docs/PRIVATE_REPO_GUIDE.md) | End-to-end playbook for deploying a private GitHub/GitLab repo: GitHub PAT, server-generated SSH deploy keys, encrypted source credentials, build-pack selection, auto-deploy webhooks. |
 | 🔄 [**Deployments & Pipelines**](./docs/DEPLOYMENTS.md) | Blue-green zero-downtime releases, cancellation, watch paths, and ephemeral PR preview environments. |
 | 🏢 [**Workspaces & RBAC**](./docs/WORKSPACES_RBAC.md) | Multi-tenant workspace scoping, team member invitations, and role-based permissions matrix. |
 | 🔒 [**Security & Single Sign-On**](./docs/SECURITY_SSO.md) | Dual-vault AES-256-GCM encryption, OIDC SSO (Google, GitHub, Okta), Passkeys (WebAuthn), and TOTP 2FA. |

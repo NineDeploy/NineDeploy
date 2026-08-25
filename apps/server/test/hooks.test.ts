@@ -759,6 +759,7 @@ describe('webhook management routes', () => {
         branch: 'main',
         active: true,
         watchPaths: '',
+        sourceId: null,
         url: 'http://localhost:3000/v1/hooks/3',
         createdAt: '2026-01-01T00:00:00.000Z',
       },

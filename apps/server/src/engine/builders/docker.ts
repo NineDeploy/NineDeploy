@@ -1,4 +1,5 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
+import path from 'node:path';
 import type { Builder } from '../types.js';
 import type { BuildConfig } from '@ninedeploy/db';
 import { buildEnv, capture, run, sleep } from '../../lib/exec.js';
@@ -7,6 +8,66 @@ import { NETWORK } from '../proxy.js';
 import { buildProbeUrl, safeProbePath } from '../../lib/probeUrl.js';
 import { writeSecretFile, type SecretFile } from '../../lib/secretFile.js';
 import { repoRelative, resolveInRepo } from '../../lib/repoPath.js';
+
+/**
+ * Find a Dockerfile inside a repo when the user kept `baseDir: '/'` and
+ * did not set an explicit `dockerfilePath` — the common monorepo shape
+ * (`/Dockerfile` for infra, `/apps/api/Dockerfile` for the app). Search is
+ * intentionally shallow (top 2 directory levels) so a giant checkout cannot
+ * stall the build on a multi-second walk, and the closest Dockerfile to the
+ * root wins so a stray tool's build artefact never hijacks the build.
+ *
+ * Returns the relative path to the Dockerfile (e.g. `apps/api/Dockerfile`)
+ * and the relative baseDir (e.g. `apps/api`) it lives in. Both are returned
+ * as repo-relative POSIX paths for direct use with `docker build -f`.
+ */
+function findDockerfileInRepo(
+  workDir: string,
+  log: (line: string) => void,
+): { dockerfilePath: string; baseDir: string } | null {
+  const MAX_DEPTH = 2;
+  const SKIP_DIRS = new Set(['node_modules', '.git', '.next', 'dist', 'build', 'coverage', '.turbo', '.cache', 'vendor', '.venv']);
+  let best: { rel: string; depth: number; dirRel: string } | null = null;
+
+  const walk = (absDir: string, relDir: string, depth: number): void => {
+    if (best && best.depth <= depth) return;
+    let entries: import('node:fs').Dirent[];
+    try {
+      entries = readdirSync(absDir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    // Check for Dockerfile at this level first — the shallowest hit wins.
+    for (const e of entries) {
+      if (e.isFile() && (e.name === 'Dockerfile' || e.name === 'dockerfile')) {
+        const rel = relDir ? `${relDir}/${e.name}` : e.name;
+        if (!best || depth < best.depth) {
+          best = { rel, depth, dirRel: relDir };
+        }
+        return;
+      }
+    }
+    if (depth >= MAX_DEPTH) return;
+    for (const e of entries) {
+      if (!e.isDirectory()) continue;
+      if (SKIP_DIRS.has(e.name)) continue;
+      if (e.name.startsWith('.')) continue;
+      const childRel = relDir ? `${relDir}/${e.name}` : e.name;
+      walk(path.join(absDir, e.name), childRel, depth + 1);
+    }
+  };
+
+  walk(workDir, '', 0);
+  if (!best) return null;
+  // `best` is captured by the closure but TypeScript narrows it back to
+  // `never` once `walk` returns because the inner reassignments live in a
+  // separate function scope. Re-bind through a local for type-safe access.
+  const found: { rel: string; depth: number; dirRel: string } = best;
+  // The Dockerfile itself is always in its directory — baseDir is that dir.
+  const baseDir = found.dirRel;
+  log(`📁 Auto-detected Dockerfile at ${found.rel} (depth ${found.depth})`);
+  return { dockerfilePath: found.rel, baseDir: baseDir || '.' };
+}
 
 const swallow = () => {};
 const PROBE_IMAGE = 'busybox:1.36';
@@ -261,14 +322,31 @@ export const dockerBuilder: Builder = {
       // root". `path.resolve` would read that as the FILESYSTEM root, so
       // `baseDir: "/etc"` used to make the host's /etc the build context —
       // re-anchor and containment-check them instead (lib/repoPath.ts).
-      const baseDir = repoRelative(workDir, buildConfig?.baseDir);
-      const dockerfile = repoRelative(workDir, buildConfig?.dockerfilePath || 'Dockerfile');
       const pack = buildConfig?.buildPack ?? 'auto';
       // 'auto' resolves per-repo: an existing Dockerfile wins, otherwise fall
       // through to Nixpacks so Dockerfile-less repos (plain Next.js etc.) build
       // without any repo-side changes.
+      //
+      // Monorepo handling: when the user kept the defaults (`baseDir: '/'`,
+      // no `dockerfilePath`), the previous logic only checked the repo root
+      // and silently dropped to Nixpacks for repos whose Dockerfile lives in
+      // a subdir. Auto-discover a Dockerfile up to 2 levels deep so private
+      // monorepos "just work" without forcing the user to learn the fields.
+      let baseDir = repoRelative(workDir, buildConfig?.baseDir);
+      let dockerfile = repoRelative(workDir, buildConfig?.dockerfilePath || 'Dockerfile');
+      const explicitDockerfilePath = !!buildConfig?.dockerfilePath?.trim();
       const hasDockerfile = existsSync(resolveInRepo(workDir, buildConfig?.baseDir, buildConfig?.dockerfilePath || 'Dockerfile'));
-      const useNixpacks = pack === 'nixpacks' || (pack === 'auto' && !hasDockerfile);
+      let useNixpacks = pack === 'nixpacks' || (pack === 'auto' && !hasDockerfile);
+      if (pack === 'auto' && !hasDockerfile && !explicitDockerfilePath) {
+        // Only auto-discover when the user did not already pin a path. A
+        // pinned `dockerfilePath` is a deliberate choice and overrides.
+        const discovered = findDockerfileInRepo(workDir, log);
+        if (discovered) {
+          baseDir = discovered.baseDir;
+          dockerfile = discovered.dockerfilePath;
+          useNixpacks = false;
+        }
+      }
       log(`Building image ${target} …`);
       if (useNixpacks) {
         builtWithNixpacks = true;

@@ -42,6 +42,13 @@ import { doctorAction } from './commands/doctor.js';
 import {
   firewallStatus, firewallToggle, firewallAddRule, firewallDeleteRule, firewallApplyRecommended,
 } from './commands/firewall.js';
+import {
+  sourcesAdd, sourcesKeygen, sourcesList, sourcesRemove, sourcesShow, sourcesTest,
+} from './commands/sources.js';
+import {
+  webhooksAdd, webhooksList, webhooksRemove, webhooksShow,
+} from './commands/webhooks.js';
+import { deployFromGithub } from './commands/deploy.js';
 
 const program = new Command();
 
@@ -341,6 +348,38 @@ program
   .option('--fix', 'Automatically attempt to heal and repair detected issues')
   .action((opts: { fix?: boolean }) => doctorAction(getClient(), opts));
 
+// ── Sources (private repo credentials) ────────────────────────────────────
+const sources = program.command('sources').alias('creds').description('Manage private repository credentials (PATs / SSH keys)');
+/* v8 ignore start -- the FakeCommand in test/index.test.ts records but never invokes the action;
+ * the implementation is exercised end-to-end by test/sources.test.ts. */
+sources.command('list').description('List configured sources').action(() => sourcesList(getClient()));
+sources.command('show <id>').description('Show one source in detail').action((id: string) => sourcesShow(getClient(), id));
+sources.command('add [name]').description('Add a new source (interactive; PAT/SSH key from env or masked prompt)').action((name?: string) => sourcesAdd(getClient(), name));
+sources.command('test [id]').description('Verify that a stored source token still authenticates').action((id?: string) => sourcesTest(getClient(), id));
+sources.command('keygen [id]').description('Generate an ed25519 deploy-key pair on the panel and print the public key').action((id?: string) => sourcesKeygen(getClient(), id));
+sources.command('remove [id]').description('Remove a source (with confirmation)').alias('rm').action((id?: string) => sourcesRemove(getClient(), id));
+/* v8 ignore stop */
+
+// ── Deploy (one-shot private GitHub deploy) ────────────────────────────────
+const deploy = program.command('deploy').description('End-to-end deploy helpers');
+/* v8 ignore start -- see sources.ts note above */
+deploy.command('create-from-github [url]')
+  .description('One-shot: add source (PAT), analyse repo, create service, set env, trigger deploy, optional webhook')
+  .alias('from-github')
+  .action((url?: string) => deployFromGithub(getClient(), url));
+/* v8 ignore stop */
+
+// ── Webhooks (auto-deploy on push) ─────────────────────────────────────────
+const webhooksCmd = program.command('webhooks').description('Manage auto-deploy webhooks');
+/* v8 ignore start -- see sources.ts note above */
+webhooksCmd.command('list <serviceId>').description('List a service\'s webhooks').action((id: string) => webhooksList(getClient(), id));
+webhooksCmd.command('show <serviceId> <hookId>').description('Show one webhook in detail').action((svc: string, hook: string) => webhooksShow(getClient(), svc, hook));
+webhooksCmd.command('add <serviceId> [branch]')
+  .description('Add a webhook (returns the HMAC secret once for pasting into GitHub)')
+  .action((svc: string, branch?: string) => webhooksAdd(getClient(), svc, branch));
+webhooksCmd.command('remove <serviceId> <hookId>').description('Remove a webhook (with confirmation)').alias('rm').action((svc: string, hook: string) => webhooksRemove(getClient(), svc, hook));
+/* v8 ignore stop */
+
 // ── Firewall & Security ───────────────────────────────────────────────────
 const fw = program.command('firewall').description('Manage host firewall (UFW) and open ports');
 fw.command('status').description('Show host firewall status, default policies, and active rules').action(() => firewallStatus(getClient()));
@@ -369,6 +408,9 @@ if (process.argv.length <= 2) {
   console.log(`  ${'Diagnostics:'.padEnd(20)} ninedeploy doctor`);
   console.log(`  ${'Browse templates:'.padEnd(20)} ninedeploy templates list`);
   console.log(`  ${'Deploy a service:'.padEnd(20)} ninedeploy services create`);
+  console.log(`  ${'Deploy from GitHub:'.padEnd(28)} ninedeploy deploy create-from-github <url>`);
+  console.log(`  ${'Manage private repo creds:'.padEnd(28)} ninedeploy sources add|list|test|remove`);
+  console.log(`  ${'Manage auto-deploy webhooks:'.padEnd(28)} ninedeploy webhooks add|list|remove`);
   console.log(`  ${'View dashboard:'.padEnd(20)} ninedeploy system dashboard`);
   console.log(`  ${'Full help:'.padEnd(20)} ninedeploy --help`);
   console.log();

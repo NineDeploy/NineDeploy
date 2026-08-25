@@ -1,7 +1,23 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { sourcesRoutes } from '../src/modules/sources.js';
 import { encrypt } from '../src/lib/crypto.js';
 import { asUser, buildTestApp, createFakeDb, sourceRow } from './helpers.js';
+
+const h = vi.hoisted(() => ({
+  generateDeployKeyPair: vi.fn(),
+}));
+
+beforeEach(() => {
+  h.generateDeployKeyPair.mockReset();
+});
+
+afterEach(() => {
+  h.generateDeployKeyPair.mockReset();
+});
+
+vi.mock('../src/lib/sshKey.js', () => ({
+  generateDeployKeyPair: h.generateDeployKeyPair,
+}));
 
 describe('sources routes', () => {
   it('lists sources with token/deploy-key presence flags', async () => {
@@ -383,5 +399,189 @@ describe('sources routes', () => {
     await app404.register(sourcesRoutes);
     const res404 = await app404.inject({ method: 'GET', url: '/99/repos', headers: asUser() });
     expect(res404.statusCode).toBe(404);
+  });
+});
+
+describe('GET /:id/test', () => {
+  /** Helper: run the test endpoint with a mocked upstream GitHub/GitLab. */
+  async function runTest(respond: (url: string) => Response | Promise<Response>) {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const u = typeof input === 'string' ? input : (input as { url: string }).url;
+      return respond(u);
+    }) as typeof fetch;
+    try {
+      const app = await buildTestApp({
+        db: createFakeDb({
+          findFirst: { sources: sourceRow({ id: 1, type: 'github', tokenEncrypted: encrypt('ghp_test') }) },
+        }),
+      });
+      await app.register(sourcesRoutes);
+      return await app.inject({ method: 'GET', url: '/1/test', headers: asUser() });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  }
+
+  it('returns ok with the GitHub login on a 200', async () => {
+    const res = await runTest(() => ({ ok: true, json: async () => ({ login: 'octocat', name: 'The Octocat' }) } as Response));
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: true, provider: 'github', login: 'octocat', name: 'The Octocat' });
+  });
+
+  it('returns the upstream status + body on a 401', async () => {
+    const res = await runTest(() => ({ ok: false, status: 401, text: async () => 'Bad credentials' } as unknown as Response));
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ ok: false, provider: 'github', status: 401, error: 'Bad credentials' });
+  });
+
+  it('covers the GitLab branch (token type gitlab, GitLab API endpoint)', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const u = typeof input === 'string' ? input : (input as { url: string }).url;
+      expect(u).toContain('gitlab.com/api/v4/user');
+      return { ok: true, json: async () => ({ username: 'gl-user', name: 'GL User' }) } as Response;
+    }) as typeof fetch;
+    try {
+      const app = await buildTestApp({
+        db: createFakeDb({
+          findFirst: { sources: sourceRow({ id: 2, type: 'gitlab', tokenEncrypted: encrypt('glpat_test') }) },
+        }),
+      });
+      await app.register(sourcesRoutes);
+      const res = await app.inject({ method: 'GET', url: '/2/test', headers: asUser() });
+      expect(res.json()).toEqual({ ok: true, provider: 'gitlab', login: 'gl-user', name: 'GL User' });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('returns the upstream status + body on a GitLab 401', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => ({ ok: false, status: 401, text: async () => 'Invalid token' } as unknown as Response)) as typeof fetch;
+    try {
+      const app = await buildTestApp({
+        db: createFakeDb({
+          findFirst: { sources: sourceRow({ id: 2, type: 'gitlab', tokenEncrypted: encrypt('glpat_bad') }) },
+        }),
+      });
+      await app.register(sourcesRoutes);
+      const res = await app.inject({ method: 'GET', url: '/2/test', headers: asUser() });
+      expect(res.json()).toMatchObject({ ok: false, provider: 'gitlab', status: 401, error: 'Invalid token' });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('rejects when the source has no token at all', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { sources: sourceRow({ id: 1, type: 'github', tokenEncrypted: null }) },
+      }),
+    });
+    await app.register(sourcesRoutes);
+    const res = await app.inject({ method: 'GET', url: '/1/test', headers: asUser() });
+    expect(res.json()).toEqual({ ok: false, error: 'No token configured for this source' });
+  });
+
+  it('rejects a gitea source (no upstream support yet)', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { sources: sourceRow({ id: 3, type: 'gitea', tokenEncrypted: encrypt('gtok') }) },
+      }),
+    });
+    await app.register(sourcesRoutes);
+    const res = await app.inject({ method: 'GET', url: '/3/test', headers: asUser() });
+    expect(res.json()).toEqual({ ok: false, error: expect.stringContaining('gitea sources') });
+  });
+
+  it('rejects an unknown source type', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { sources: sourceRow({ id: 4, type: 'custom', tokenEncrypted: encrypt('cust') }) },
+      }),
+    });
+    await app.register(sourcesRoutes);
+    const res = await app.inject({ method: 'GET', url: '/4/test', headers: asUser() });
+    expect(res.json()).toEqual({ ok: false, error: expect.stringContaining('Unknown source type') });
+  });
+
+  it('returns 404 when the source is missing', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({ findFirst: { sources: null } }),
+    });
+    await app.register(sourcesRoutes);
+    const res = await app.inject({ method: 'GET', url: '/99/test', headers: asUser() });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('surfaces network errors as a 200 with ok:false', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => { throw new Error('econnrefused'); }) as typeof fetch;
+    try {
+      const app = await buildTestApp({
+        db: createFakeDb({
+          findFirst: { sources: sourceRow({ id: 1, type: 'github', tokenEncrypted: encrypt('ghp') }) },
+        }),
+      });
+      await app.register(sourcesRoutes);
+      const res = await app.inject({ method: 'GET', url: '/1/test', headers: asUser() });
+      expect(res.json()).toEqual({ ok: false, error: 'econnrefused' });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+describe('POST /:id/generate-deploy-key', () => {
+  it('generates a key pair, encrypts the private key, and returns the public side', async () => {
+    h.generateDeployKeyPair.mockResolvedValueOnce({
+      privateKey: '-----BEGIN OPENSSH PRIVATE KEY-----\nfake\n-----END OPENSSH PRIVATE KEY-----',
+      publicKey: 'ssh-ed25519 AAAAfake ninedeploy@github-personal',
+      fingerprint: 'SHA256:abc123',
+    });
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { sources: sourceRow({ id: 1, name: 'github-personal', type: 'github', tokenEncrypted: encrypt('old-pat') }) },
+        update: { sources: [sourceRow({ id: 1, name: 'github-personal', type: 'github', deployKeyEncrypted: 'enc-new', tokenEncrypted: null })] },
+      }),
+    });
+    await app.register(sourcesRoutes);
+    const res = await app.inject({ method: 'POST', url: '/1/generate-deploy-key', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ publicKey: 'ssh-ed25519 AAAAfake ninedeploy@github-personal', fingerprint: 'SHA256:abc123' });
+    // The response MUST NOT contain the private key — it lives only in the
+    // encrypted column.
+    expect(res.body).not.toContain('PRIVATE KEY');
+    expect(h.generateDeployKeyPair).toHaveBeenCalledWith('ninedeploy@github-personal');
+  });
+
+  it('returns 404 when the source is missing', async () => {
+    const app = await buildTestApp({ db: createFakeDb({ findFirst: { sources: null } }) });
+    await app.register(sourcesRoutes);
+    const res = await app.inject({ method: 'POST', url: '/99/generate-deploy-key', headers: asUser() });
+    expect(res.statusCode).toBe(404);
+    expect(h.generateDeployKeyPair).not.toHaveBeenCalled();
+  });
+
+  it('rejects a non-numeric id', async () => {
+    const app = await buildTestApp({ db: createFakeDb() });
+    await app.register(sourcesRoutes);
+    const res = await app.inject({ method: 'POST', url: '/abc/generate-deploy-key', headers: asUser() });
+    expect(res.statusCode).toBe(400);
+    expect(h.generateDeployKeyPair).not.toHaveBeenCalled();
+  });
+
+  it('surfaces ssh-keygen failures as a 500 (the panel itself is broken, not the user input)', async () => {
+    h.generateDeployKeyPair.mockRejectedValueOnce(new Error('ssh-keygen: command not found'));
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { sources: sourceRow({ id: 1, name: 'gh', type: 'github' }) },
+      }),
+    });
+    await app.register(sourcesRoutes);
+    const res = await app.inject({ method: 'POST', url: '/1/generate-deploy-key', headers: asUser() });
+    expect(res.statusCode).toBe(500);
+    expect(res.json().error.message).toContain('ssh-keygen: command not found');
   });
 });

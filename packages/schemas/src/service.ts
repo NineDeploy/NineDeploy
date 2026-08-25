@@ -170,8 +170,10 @@ export const source = z.object({
   type: z.string(),
   hasToken: z.boolean(),
   hasDeployKey: z.boolean(),
+  registryUsername: z.string().nullable().optional(),
   defaultBranch: z.string().nullable(),
   createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime().optional(),
 });
 export type Source = z.infer<typeof source>;
 
@@ -257,6 +259,7 @@ export const webhook = z.object({
   branch: z.string(),
   active: z.boolean(),
   watchPaths: z.string(),
+  sourceId: z.number().int().nullable().optional(),
   url: z.string(),
   createdAt: z.string().datetime(),
 });

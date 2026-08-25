@@ -174,3 +174,135 @@ This inspects:
 
 For exit code 137 or kernel OOM records, add swap or memory separately; the installer provisions swap automatically on low-memory supported Linux hosts.
 
+---
+
+## 🔐 9. Private Repository 401 or 404 on Clone
+
+**Symptoms**:
+- First deploy of a private repo logs `remote: Repository not found` or `fatal: Authentication failed for 'https://github.com/…'`.
+- The build stage exits non-zero before any `docker build` / `nixpacks` line appears.
+
+**Cause**:
+- The credential attached to the service cannot reach the repository. Most often a **stale or under-scoped PAT**, an **SSH key without write-access to the repo**, or a credential bound to a different GitHub user than the repo owner.
+
+**Resolution**:
+1. **Live-test the credential** before debugging the deploy:
+   ```bash
+   ninedeploy sources test <id>
+   # or
+   curl -fsS -H "Authorization: Bearer $ND_TOKEN" https://your-ninedeploy.example.com/v1/sources/<id>/test
+   ```
+   The response is `{ ok: true, login: "<your-handle>" }` on success, or `{ ok: false, status: 401, error: "Bad credentials" }` (or 404) on failure.
+2. **Re-issue the PAT** with the right scopes. The minimum working scopes are:
+   - **Fine-grained PAT**: `Contents: Read-only` (on the specific repo) + `Metadata: Read-only` (always required).
+   - **Classic PAT**: `repo`.
+3. **For GitHub org repos**, the PAT must be issued by a user who has access to the org, OR you must enable "Allow access via fine-grained personal access tokens" in the org's third-party application settings.
+4. **For SSH**: ensure the **public** key is added as a *Deploy key* on the repo with **read** access; the matching **private** key is what you paste into the Source.
+5. **If the repo was renamed or transferred**, the Source still works (it stores only the token), but the service's `repoUrl` is stale — update it under **Service → Settings → Repository URL** and re-trigger a deploy.
+6. **If the credential passes the test but the clone still fails**, the panel server cannot reach `github.com` (or your self-hosted Gitea/GitLab host). From the host:
+   ```bash
+   curl -fsS -I https://github.com
+   ```
+
+See [PRIVATE_REPO_GUIDE.md](./PRIVATE_REPO_GUIDE.md) for a full step-by-step.
+
+---
+
+## 🪝 10. Webhook Signature Rejected (401)
+
+**Symptoms**:
+- A `git push` does **not** trigger a new deploy row.
+- GitHub's webhook delivery page shows the request returning **HTTP 401** with body `{"error":{"code":"unauthorized","message":"Invalid webhook signature"}}`.
+
+**Cause**:
+- The **secret on the GitHub side does not match the secret NineDeploy stored**. Most often caused by: copying a trailing space / newline, regenerating the secret in NineDeploy but forgetting to update GitHub, or registering the webhook on the wrong repo.
+
+**Resolution**:
+1. **Cross-check the secret byte-for-byte**:
+   - In NineDeploy: **Service → Webhooks → the secret was returned only once, at creation**. If you don't have it, **delete the webhook in both places and re-add it**.
+   - In GitHub: **Repo → Settings → Webhooks → the webhook → Secret** (latest "Update" overrides earlier ones; there's no "show me what I set" — re-paste it).
+2. **Test locally with the same secret**:
+   ```bash
+   SECRET='paste-the-secret-here'
+   BODY='{"ref":"refs/heads/main","head_commit":{"id":"abc1234","message":"hi","author":{"username":"x"}},"repository":{"clone_url":"https://github.com/owner/repo.git"}}'
+   SIG="sha256=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$SECRET" -hex | awk '{print $2}')"
+   curl -i -X POST "https://your-ninedeploy.example.com/v1/hooks/<id>" \
+     -H "Content-Type: application/json" \
+     -H "X-GitHub-Event: push" \
+     -H "X-Hub-Signature-256: $SIG" \
+     --data "$BODY"
+   #   → expect 200 { "ok": true, "deploymentId": ... }
+   ```
+3. **Make sure the URL is reachable from GitHub** (i.e. your panel has a public HTTPS address). If you are testing locally, GitHub cannot reach `http://localhost:3000` — use a tunnel (`ngrok`, `cloudflared`) or test with the curl above.
+4. **Re-save the secret**: if the original secret in NineDeploy was lost, the only recovery is delete + re-add on both sides. The new secret is shown exactly once.
+
+---
+
+## 🛠️ 11. Nixpacks CLI Not Found
+
+**Symptoms**:
+- A Dockerfile-less repo's deploy fails immediately with:
+  ```
+  ✗ Deployment failed: Nixpacks CLI is unavailable. Re-run the NineDeploy installer to provision the checksum-verified source build tool.
+  ```
+
+**Cause**:
+- The `nixpacks` binary is not on the panel server's `PATH`. This is normally installed by `install.sh`, but a manually-installed or Docker-only install may not have provisioned it.
+
+**Resolution**:
+- **Bare-metal install**: re-run the installer — it skips already-installed components and only provisions the missing ones:
+  ```bash
+  curl -fsSL https://raw.githubusercontent.com/NineDeploy/NineDeploy/main/install.sh | bash
+  ```
+  The installer fetches a pinned Nixpacks release, verifies its SHA-256 against the table inside `install.sh`, and only then puts it on `PATH`.
+- **Docker install**: the `ninedeploy` image bundles the binary at `/usr/local/bin/nixpacks`. If you built the image yourself and the binary is missing, rebuild from the official `Dockerfile` (it has the checksum-verified `ARG NIXPACKS_VERSION` step) or set `NINEDEPLOY_NIXPACKS_VERSION` and rebuild:
+  ```bash
+  docker compose -f docker-compose.prod.yml build --no-cache
+  ```
+- **Verify**:
+  ```bash
+  nixpacks --version    # bare-metal
+  docker exec ninedeploy nixpacks --version   # Docker install
+  ```
+- **Don't want Nixpacks?** Switch the service to `buildPack: "dockerfile"` and provide a Dockerfile — the panel will not invoke Nixpacks.
+
+---
+
+## 📁 12. Dockerfile Not Found (Monorepo With a Subdirectory Dockerfile)
+
+**Symptoms**:
+- A repo that has a `Dockerfile` (e.g. `apps/api/Dockerfile`) silently uses Nixpacks instead of `docker build`. The build output shows Nixpacks detection logs, and your custom Dockerfile is never read.
+
+**Cause**:
+- For backward compatibility with single-Dockerfile-at-root repos, the old behavior was "if `/Dockerfile` does not exist at the configured `baseDir`, use Nixpacks". That misses monorepos.
+
+**Resolution**:
+- **If you can re-deploy without changing anything**: the current `auto` build pack walks the repo up to 2 directory levels deep and picks the closest Dockerfile to the root. `apps/api/Dockerfile` will now be detected automatically.
+- **If you want to be explicit** (recommended for any non-trivial repo): set either
+  - `Service → Settings → Build → Base directory: /apps/api`, **or**
+  - `Service → Settings → Build → Dockerfile path: apps/api/Dockerfile`.
+- **If you want Nixpacks regardless of the Dockerfile**: set `buildPack: "nixpacks"` (or `"auto"` won't help — explicit override wins).
+- **If your Dockerfile is more than 2 levels deep** (e.g. `services/payments/api/Dockerfile`): set `baseDir` to the directory containing it, or set `dockerfilePath` to the full path.
+
+The deploy log prints the path it picked: `📁 Auto-detected Dockerfile at apps/api/Dockerfile (depth 1)`.
+
+---
+
+## 🔑 13. `ninedeploy sources keygen` Fails With "ssh-keygen: command not found"
+
+**Symptoms**:
+- The CLI/Web generate-deploy-key flow returns a 500 with `ssh-keygen: command not found` (or similar) in the error message.
+- Server log shows the same error originating from `lib/sshKey.ts`.
+
+**Cause**:
+- The bare-metal installer's `apt-get install -y ...` step pulls in `openssh-client` (the `ssh` binary) on Debian/Ubuntu but not on every minimal container image. The `Dockerfile` provided by this repo installs `openssh-client` explicitly; if you built a custom image without it, server-side key generation is unavailable.
+
+**Resolution**:
+- **Bare-metal**: `sudo apt-get install -y openssh-client`, then re-run the keygen.
+- **Docker**: rebuild the panel image with `apt-get install -y openssh-client` in your custom `Dockerfile`, or fall back to the manual workflow (§4.3 in `PRIVATE_REPO_GUIDE.md`) — generate a key on your workstation with `ssh-keygen -t ed25519`, paste the private key into the source's "SSH deploy key" field.
+- **Verify** the binary is on `PATH` inside the container:
+  ```bash
+  docker exec ninedeploy ssh-keygen -V
+  ```
+
+

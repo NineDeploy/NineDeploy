@@ -62,7 +62,7 @@ export const sourcesRoutes: FastifyPluginAsync = async (app) => {
     return serialize(updated);
   });
 
-  app.get('/:id/repos', async (req) => {
+  app.get('/:id/repos', async (req, reply) => {
     const id = parseId((req.params as { id: string }).id);
     const src = await app.db.query.sources.findFirst({ where: eq(sources.id, id) });
     if (!src) throw notFound('Source not found');
@@ -78,7 +78,12 @@ export const sourcesRoutes: FastifyPluginAsync = async (app) => {
             'User-Agent': 'NineDeploy',
           },
         });
-        if (!res.ok) return [];
+        if (!res.ok) {
+          // Surface the real failure to admins — "empty list" silently looked
+          // like "no repos" and a stale PAT was the most common operator trap.
+          reply.header('x-nd-source-error', `GitHub API ${res.status}`);
+          return [];
+        }
         const data = (await res.json()) as Array<{
           name: string;
           full_name: string;
@@ -93,7 +98,8 @@ export const sourcesRoutes: FastifyPluginAsync = async (app) => {
           defaultBranch: r.default_branch || 'main',
           isPrivate: r.private,
         }));
-      } catch {
+      } catch (err) {
+        reply.header('x-nd-source-error', `GitHub API unreachable: ${err instanceof Error ? err.message : String(err)}`);
         return [];
       }
     }
@@ -103,7 +109,10 @@ export const sourcesRoutes: FastifyPluginAsync = async (app) => {
         const res = await fetch('https://gitlab.com/api/v4/projects?membership=true&per_page=100&order_by=updated_at', {
           headers: { 'PRIVATE-TOKEN': token },
         });
-        if (!res.ok) return [];
+        if (!res.ok) {
+          reply.header('x-nd-source-error', `GitLab API ${res.status}`);
+          return [];
+        }
         const data = (await res.json()) as Array<{
           name: string;
           path_with_namespace: string;
@@ -118,7 +127,8 @@ export const sourcesRoutes: FastifyPluginAsync = async (app) => {
           defaultBranch: r.default_branch || 'main',
           isPrivate: r.visibility !== 'public',
         }));
-      } catch {
+      } catch (err) {
+        reply.header('x-nd-source-error', `GitLab API unreachable: ${err instanceof Error ? err.message : String(err)}`);
         return [];
       }
     }
@@ -126,7 +136,7 @@ export const sourcesRoutes: FastifyPluginAsync = async (app) => {
     return [];
   });
 
-  app.get('/:id/branches', async (req) => {
+  app.get('/:id/branches', async (req, reply) => {
     const id = parseId((req.params as { id: string }).id);
     const src = await app.db.query.sources.findFirst({ where: eq(sources.id, id) });
     if (!src || !src.tokenEncrypted) return ['main', 'master'];
@@ -145,14 +155,103 @@ export const sourcesRoutes: FastifyPluginAsync = async (app) => {
             'User-Agent': 'NineDeploy',
           },
         });
-        if (!res.ok) return ['main', 'master'];
+        if (!res.ok) {
+          // Same diagnosis surfacing as for /:id/repos: a `['main','master']`
+          // fallback hid bad PATs, missing scopes, and 404s on renamed repos.
+          reply.header('x-nd-source-error', `GitHub API ${res.status} on ${cleanRepo}`);
+          return ['main', 'master'];
+        }
         const data = (await res.json()) as Array<{ name: string }>;
         return data.map((b) => b.name);
-      } catch {
+      } catch (err) {
+        reply.header('x-nd-source-error', `GitHub API unreachable: ${err instanceof Error ? err.message : String(err)}`);
         return ['main', 'master'];
       }
     }
     return ['main', 'master'];
+  });
+
+  /**
+   * Validate that a source's credentials actually work — a CLI/UI sanity
+   * check that says "this token can list my repos" without having to open
+   * the DeployWizard. Hits the provider's user endpoint, never throws.
+   */
+  app.get('/:id/test', async (req) => {
+    const id = parseId((req.params as { id: string }).id);
+    const src = await app.db.query.sources.findFirst({ where: eq(sources.id, id) });
+    if (!src) throw notFound('Source not found');
+    if (!src.tokenEncrypted) {
+      return { ok: false, error: 'No token configured for this source' };
+    }
+    const token = decrypt(src.tokenEncrypted);
+    try {
+      if (src.type === 'github') {
+        const res = await fetch('https://api.github.com/user', {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: 'application/vnd.github+json',
+            'User-Agent': 'NineDeploy',
+          },
+        });
+        if (res.ok) {
+          const data = (await res.json()) as { login: string; name?: string };
+          return { ok: true, provider: 'github', login: data.login, name: data.name ?? null };
+        }
+        const body = await res.text().catch(() => '');
+        return { ok: false, provider: 'github', status: res.status, error: body.slice(0, 240) };
+      }
+      if (src.type === 'gitlab') {
+        const res = await fetch('https://gitlab.com/api/v4/user', {
+          headers: { 'PRIVATE-TOKEN': token },
+        });
+        if (res.ok) {
+          const data = (await res.json()) as { username: string; name: string };
+          return { ok: true, provider: 'gitlab', login: data.username, name: data.name };
+        }
+        const body = await res.text().catch(() => '');
+        return { ok: false, provider: 'gitlab', status: res.status, error: body.slice(0, 240) };
+      }
+      if (src.type === 'gitea') {
+        return { ok: false, error: 'Live credential test is not supported for gitea sources — verify manually' };
+      }
+      return { ok: false, error: `Unknown source type: ${src.type}` };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  /**
+   * Generate a fresh ed25519 SSH deploy key pair on the server, encrypt the
+   * private key into the source row, and return the public key (so the operator
+   * can paste it into GitHub/GitLab/Gitea's "Deploy keys" UI in one copy).
+   *
+   * Replaces any existing token on the source — a server-generated key is the
+   * canonical credential and the panel cannot store a user-pasted private key
+   * alongside a server-generated one without an explicit upgrade path.
+   */
+  app.post('/:id/generate-deploy-key', async (req) => {
+    const id = parseId((req.params as { id: string }).id);
+    const src = await app.db.query.sources.findFirst({ where: eq(sources.id, id) });
+    if (!src) throw notFound('Source not found');
+    const { generateDeployKeyPair } = await import('../lib/sshKey.js');
+    const pair = await generateDeployKeyPair(`ninedeploy@${src.name}`);
+    // The generated key supersedes whatever credential was there — wipe the
+    // token so the next clone doesn't fall through to a half-valid auth state.
+    await app.db
+      .update(sources)
+      .set({
+        deployKeyEncrypted: encrypt(pair.privateKey),
+        tokenEncrypted: null,
+        // Update the comment so a re-generate produces a recognisable follow-up.
+      })
+      .where(eq(sources.id, id));
+    void audit(app.db, req.user!.id, 'source.generateDeployKey', src.name);
+    return {
+      publicKey: pair.publicKey,
+      fingerprint: pair.fingerprint,
+      // The private key is never returned — it lives only in the encrypted
+      // source row, used at clone time by lib/git.ts.
+    };
   });
 
   app.delete('/:id', async (req) => {

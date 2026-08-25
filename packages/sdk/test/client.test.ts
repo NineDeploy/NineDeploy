@@ -894,6 +894,12 @@ describe('createClient', () => {
 
       await client.sources.branches(1, 'owner/repo');
       expect(last(calls)).toMatchObject({ url: '/v1/sources/1/branches?repo=owner%2Frepo', init: { method: 'GET' } });
+
+      await client.sources.test(1);
+      expect(last(calls)).toMatchObject({ url: '/v1/sources/1/test', init: { method: 'GET' } });
+
+      await client.sources.generateDeployKey(1);
+      expect(last(calls)).toMatchObject({ url: '/v1/sources/1/generate-deploy-key', init: { method: 'POST' } });
     });
   });
 

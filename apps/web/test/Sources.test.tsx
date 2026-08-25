@@ -49,7 +49,7 @@ describe('Sources', () => {
     renderWithProviders(<Sources />);
     fireEvent.click(await screen.findByRole('button', { name: /New source/ }));
     await userEvent.type(await screen.findByPlaceholderText('github-personal'), 'x');
-    await userEvent.type(screen.getByPlaceholderText('ghp_… / glpat-…'), 'tok');
+    await userEvent.type(screen.getByPlaceholderText('ghp_… / github_pat_…'), 'tok');
     fireEvent.click(screen.getByRole('button', { name: /Save source/ }));
     await waitFor(() => expect(api.sources.create).toHaveBeenCalled());
     const buttons = screen.getAllByRole('button');
@@ -78,9 +78,9 @@ describe('Sources', () => {
     await user.click(await screen.findByRole('button', { name: /New source/ }));
     await user.type(await screen.findByPlaceholderText('github-personal'), 'my-src');
     await user.selectOptions(screen.getByRole('combobox'), 'gitlab');
-    await user.type(screen.getByPlaceholderText('ghp_… / glpat-…'), 'ghp_token');
+    await user.type(screen.getByPlaceholderText('glpat-…'), 'glpat_token');
     await user.click(screen.getByRole('button', { name: /Save source/ }));
-    await waitFor(() => expect(api.sources.create).toHaveBeenCalledWith({ name: 'my-src', type: 'gitlab', token: 'ghp_token', deployKey: undefined }));
+    await waitFor(() => expect(api.sources.create).toHaveBeenCalledWith({ name: 'my-src', type: 'gitlab', token: 'glpat_token', deployKey: undefined }));
     expect(screen.queryByPlaceholderText('github-personal')).not.toBeInTheDocument();
   });
 
@@ -91,9 +91,41 @@ describe('Sources', () => {
     renderWithProviders(<Sources />);
     await user.click(await screen.findByRole('button', { name: /New source/ }));
     await user.type(await screen.findByPlaceholderText('github-personal'), 'ssh-src');
+    // The SSH key field is gated by the auth-method radio — pick "SSH deploy key"
+    // first, otherwise the key textarea is unmounted.
+    await user.click(screen.getByRole('button', { name: /SSH deploy key/ }));
     await user.type(screen.getByPlaceholderText('-----BEGIN OPENSSH PRIVATE KEY-----'), 'PRIVATE KEY');
     await user.click(screen.getByRole('button', { name: /Save source/ }));
     await waitFor(() => expect(api.sources.create).toHaveBeenCalledWith({ name: 'ssh-src', type: 'github', token: undefined, deployKey: 'PRIVATE KEY' }));
+  });
+
+  it('creates a gitea source with the "access token" placeholder (third branch)', async () => {
+    // Exercises the third arm of the placeholder ternary (gitea + custom).
+    const user = userEvent.setup();
+    mockOf(api.sources.list).mockResolvedValue([] as never);
+    mockOf(api.sources.create).mockResolvedValue({ id: 5, name: 'gt', type: 'gitea', hasToken: true, hasDeployKey: false } as never);
+    renderWithProviders(<Sources />);
+    await user.click(await screen.findByRole('button', { name: /New source/ }));
+    await user.type(await screen.findByPlaceholderText('github-personal'), 'gitea-src');
+    await user.selectOptions(screen.getByRole('combobox'), 'gitea');
+    const tokenField = await screen.findByPlaceholderText('access token');
+    await user.type(tokenField, 'gtok');
+    await user.click(screen.getByRole('button', { name: /Save source/ }));
+    await waitFor(() => expect(api.sources.create).toHaveBeenCalledWith(expect.objectContaining({ name: 'gitea-src', type: 'gitea', token: 'gtok' })));
+  });
+
+  it('shows the generic "your Git host" hint for custom (no docs link)', async () => {
+    // Verifies the DEPLOY_KEY_DOCS fallback branch (label is empty for custom).
+    const user = userEvent.setup();
+    mockOf(api.sources.list).mockResolvedValue([] as never);
+    mockOf(api.sources.create).mockResolvedValue({ id: 6, name: 'c', type: 'custom', hasToken: false, hasDeployKey: true } as never);
+    renderWithProviders(<Sources />);
+    await user.click(await screen.findByRole('button', { name: /New source/ }));
+    await user.type(await screen.findByPlaceholderText('github-personal'), 'custom-src');
+    await user.selectOptions(screen.getByRole('combobox'), 'custom');
+    await user.click(screen.getByRole('button', { name: /SSH deploy key/ }));
+    const hint = await screen.findByText(/your Git host/);
+    expect(hint).toBeInTheDocument();
   });
 
   it('shows the saving label while the source is being created', async () => {
@@ -103,7 +135,7 @@ describe('Sources', () => {
     renderWithProviders(<Sources />);
     await user.click(await screen.findByRole('button', { name: /New source/ }));
     await user.type(await screen.findByPlaceholderText('github-personal'), 'x');
-    await user.type(screen.getByPlaceholderText('ghp_… / glpat-…'), 'tok');
+    await user.type(screen.getByPlaceholderText('ghp_… / github_pat_…'), 'tok');
     await user.click(screen.getByRole('button', { name: /Save source/ }));
     expect(await screen.findByText('Saving…')).toBeInTheDocument();
   });
@@ -146,13 +178,16 @@ describe('Sources', () => {
     renderWithProviders(<Sources />);
     fireEvent.click(await screen.findByRole('button', { name: /New source/ }));
     fireEvent.change(await screen.findByPlaceholderText('github-personal'), { target: { value: 'ghcr' } });
-    fireEvent.change(screen.getByPlaceholderText('ghp_… / glpat-…'), { target: { value: 'pat' } });
-    // Switch the type select to registry.
+    // Switch the type select to registry FIRST so the password field is the
+    // only credential input we need to fill (no PAT placeholder to confuse
+    // the test).
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'registry' } });
+    const passwordField = await screen.findByPlaceholderText('dckr_pat_… / password');
+    await user.type(passwordField, 'regpass');
     const userField = await screen.findByPlaceholderText('dockerhub-user');
     await user.type(userField, 'ci-bot');
     fireEvent.submit(userField.closest('form')!);
     await waitFor(() =>
-      expect(api.sources.create).toHaveBeenCalledWith(expect.objectContaining({ type: 'registry', registryUsername: 'ci-bot' })));
+      expect(api.sources.create).toHaveBeenCalledWith(expect.objectContaining({ type: 'registry', registryUsername: 'ci-bot', token: 'regpass' })));
   });
 });
