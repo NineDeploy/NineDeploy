@@ -1014,15 +1014,52 @@ if [ -f "$INSTALL_DIR/package.json" ]; then
     sudo systemctl stop ninedeploy
   fi
 
-  # Safety net before an upgrade: snapshot DB + master key inside the data dir.
+  # Safety net before an upgrade: snapshot the database and the master key.
+  #
+  # This used to pass both paths to one `tar` invocation with stderr muted.
+  # `master.key` is written lazily — the first time something is encrypted —
+  # so on an instance that has no secrets yet the file does not exist, tar
+  # exits non-zero, and the whole snapshot was skipped: including the
+  # database, which did exist. The operator saw one muted warning and
+  # upgraded with no rollback point at all.
+  #
+  # Archive each member that is actually present, and treat a missing
+  # master.key as the normal state it is. SQLite's -wal/-shm sidecars are
+  # included when present so the snapshot is a consistent set rather than a
+  # main file missing its most recent committed transactions.
+  BACKUP_OK=false
+  BACKUP_FILE=""
   if [ -d .data ]; then
-    mkdir -p .data/upgrade-backups
-    BACKUP_FILE=".data/upgrade-backups/pre-update-$(date +%Y%m%d-%H%M%S).tar.gz"
-    if tar -czf "$BACKUP_FILE" .data/ninedeploy.db .data/master.key 2>/dev/null; then
-      ok "Pre-update backup saved to $BACKUP_FILE"
+    BACKUP_MEMBERS=""
+    for _f in .data/ninedeploy.db .data/ninedeploy.db-wal .data/ninedeploy.db-shm .data/master.key; do
+      [ -f "$_f" ] && BACKUP_MEMBERS="$BACKUP_MEMBERS $_f"
+    done
+
+    if [ -z "$BACKUP_MEMBERS" ]; then
+      # Nothing to lose — a data directory with no database is a fresh state.
+      info "No database or master key in .data yet — nothing to snapshot"
     else
-      warn "Backup of .data failed — continuing without a pre-upgrade snapshot"
+      mkdir -p .data/upgrade-backups
+      BACKUP_FILE=".data/upgrade-backups/pre-update-$(date +%Y%m%d-%H%M%S).tar.gz"
+      # shellcheck disable=SC2086 # deliberate word splitting: one arg per member
+      if TAR_ERR=$(tar -czf "$BACKUP_FILE" $BACKUP_MEMBERS 2>&1); then
+        BACKUP_OK=true
+        ok "Pre-update backup saved to $BACKUP_FILE ($(echo "$BACKUP_MEMBERS" | wc -w) file(s))"
+      else
+        rm -f "$BACKUP_FILE"
+        BACKUP_FILE=""
+        warn "Could not snapshot .data — continuing WITHOUT a rollback point:"
+        printf '%s\n' "$TAR_ERR" | head -5 | sed 's/^/     /'
+      fi
     fi
+  fi
+
+  # Used by the readiness gate's failure messages, which must not claim a
+  # backup exists when the snapshot above did not run.
+  if [ "$BACKUP_OK" = true ]; then
+    BACKUP_HINT="A pre-update backup is in ${INSTALL_DIR}/${BACKUP_FILE#./}"
+  else
+    BACKUP_HINT="No pre-update backup was taken"
   fi
 
   # ── Upgrade: release tarball first, git second ─────────────────────────
@@ -1303,14 +1340,14 @@ if [ "$(uname -s)" = "Linux" ] && command -v systemctl &>/dev/null; then
         failed)
           warn "ninedeploy entered the failed state while starting"
           dump_service_diagnostics
-          fail "Service failed to start. A pre-update backup is in ${DATA_DIR}/upgrade-backups"
+          fail "Service failed to start. ${BACKUP_HINT:-No pre-update backup was taken}"
           ;;
         *)
           _crash_strikes=$((_crash_strikes + 1))
           if [ "$_crash_strikes" -ge 3 ]; then
             warn "ninedeploy is restarting repeatedly — it is crashing on boot"
             dump_service_diagnostics
-            fail "Service is crash-looping. A pre-update backup is in ${DATA_DIR}/upgrade-backups"
+            fail "Service is crash-looping. ${BACKUP_HINT:-No pre-update backup was taken}"
           fi
           ;;
       esac
@@ -1323,7 +1360,7 @@ if [ "$(uname -s)" = "Linux" ] && command -v systemctl &>/dev/null; then
     else
       warn "The process is running but /health did not answer within ${HEALTH_TIMEOUT}s"
       dump_service_diagnostics
-      fail "Service did not become healthy in ${HEALTH_TIMEOUT}s. Raise the window with NINEDEPLOY_HEALTH_TIMEOUT=<seconds> if this host is just slow. A pre-update backup is in ${DATA_DIR}/upgrade-backups"
+      fail "Service did not become healthy in ${HEALTH_TIMEOUT}s. Raise the window with NINEDEPLOY_HEALTH_TIMEOUT=<seconds> if this host is just slow. ${BACKUP_HINT:-No pre-update backup was taken}"
     fi
   else
     ok "NineDeploy service started (systemd, hardened unit)"

@@ -9,7 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_Nothing yet._
+### Fixed
+- **The Pre-Upgrade Snapshot Usually Did Nothing**: the installer passed `.data/ninedeploy.db` and `.data/master.key` to a single `tar` with stderr muted. `master.key` is written lazily — the first time something is encrypted — so on any instance without stored secrets the file is absent, `tar` exits non-zero, and the *entire* snapshot was skipped, database included. The operator saw one vague warning and upgraded with no rollback point, next to a truncated archive left on disk. Each file that exists is now archived (SQLite's `-wal`/`-shm` sidecars included so the snapshot is a consistent set), a missing `master.key` is treated as the normal state it is, tar's actual error is printed instead of muted, and a failed archive is removed rather than left behind.
+- **Failure Messages Claimed A Backup That Did Not Exist**: every readiness-gate failure ended with "A pre-update backup is in …/upgrade-backups" regardless of whether the snapshot had run. The message now reports what actually happened.
+
+_Installer changes take effect immediately — `install.sh` is fetched from `main`, not from the release tarball._
 
 ---
 
