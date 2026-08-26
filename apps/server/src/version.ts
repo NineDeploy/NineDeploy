@@ -1,4 +1,4 @@
-export const VERSION = '0.3.0';
+export const VERSION = '0.3.1';
 
 export interface ChangelogEntry {
   version: string;
@@ -8,6 +8,17 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.3.1',
+    date: '2026-08-26',
+    title: 'Boot Fix For 0.3.0',
+    changes: [
+      "0.3.0 could not start: every boot died with \"Cannot access 'NETWORK' before initialization\" and systemd restarted it forever",
+      'Two engine modules imported each other and one evaluated the other\'s constant at module scope, so the entry graph decided whether it was initialised yet; the shared Docker names moved to a module that imports nothing',
+      'A new test walks the server module graph and fails on any import cycle — a type checker cannot see a temporal dead zone, so this could only surface in production',
+      'A readiness failure now prints systemd status, the last 60 journal lines and the health port owner, and a crash-loop ends the wait immediately instead of sitting through the whole window',
+    ],
+  },
   {
     version: '0.3.0',
     date: '2026-08-26',

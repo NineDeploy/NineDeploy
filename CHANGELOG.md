@@ -13,6 +13,18 @@ _Nothing yet._
 
 ---
 
+## [0.3.1] - 2026-08-26
+
+### Fixed
+- **`0.3.0` Could Not Start**: every boot died with `ReferenceError: Cannot access 'NETWORK' before initialization` and systemd restarted it forever. `engine/proxy.ts` and `lib/serviceBridge.ts` imported each other, and `serviceBridge` evaluates `RESERVED_NETWORKS = [NETWORK]` at module scope — so whichever module Node reached first decided whether the constant was initialised, and the real entry graph reaches `proxy` first. The shared Docker names now live in `engine/dockerNames.ts`, a module that imports nothing and therefore can never be half-initialised; `proxy` re-exports them so existing imports are unchanged.
+- **Per-Service Bridge Reap Was Untested**: the two delete tests asserted that no `docker` command ran at all. That held only because the suite's `proxy` mock omitted `TRAEFIK_CONTAINER`: `serviceBridge` read a missing binding, threw, and the delete route swallowed it — so `removeServiceBridgeIfEmpty` silently never ran under test. The tests now separate runtime commands from the bridge reap and assert both.
+
+### Added
+- **Import-Cycle Guard**: a test walks the server's own module graph and fails on any runtime import cycle, naming the chain. TypeScript cannot see a temporal dead zone and the suites happened to import the two modules in the safe order, so this class of defect could only ever surface in production.
+- **Readiness Failures Diagnose Themselves**: when the API does not answer `/health`, the installer prints `systemctl status`, the last 60 journal lines and what is listening on the health port instead of telling the operator to go and collect them. A crash-loop now ends the wait immediately — `Restart=always` keeps a crashing unit oscillating between `active` and `activating` rather than settling into `failed`, so the old gate sat through its entire window before reporting a failure it could have called in seconds. The window itself is 120s (was 60s) and honours `NINEDEPLOY_HEALTH_TIMEOUT`.
+
+---
+
 ## [0.3.0] - 2026-08-26
 
 ### Added
