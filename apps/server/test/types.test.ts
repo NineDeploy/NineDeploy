@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+﻿import { describe, expect, it } from 'vitest';
 import type { BuildContext, Builder, DeployRuntime } from '../src/engine/types.js';
 
 describe('engine types', () => {

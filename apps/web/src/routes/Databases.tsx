@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { Check, Copy, Database, HardDriveDownload, Link2, Plus, Trash2 } from 'lucide-react';
 import { Link } from 'react-router';
 import { api } from '../lib/api.js';
-import { useProjectScope } from '../lib/projects.js';
+import { useTagScope } from '../lib/projects.js';
 import { useToast } from '../components/Toast.js';
 import { Button, Card, ConfirmDialog, EmptyState, ErrorCard, PageHeader, Skeleton, StatusBadge, cn } from '../components/ui.js';
 import { useCopy } from '../lib/format.js';
@@ -28,11 +28,15 @@ export function Databases() {
   const [wizard, setWizard] = useState(false);
   const [pendingRemove, setPendingRemove] = useState<{ id: number; name: string; attachedServices?: Array<{ id: number; name: string; slug: string }> } | null>(null);
   const { copied, copy } = useCopy();
-  const { selectedId } = useProjectScope();
+  // Databases are still scoped by a single project (the new many-to-many
+  // tagging is services-only). We pull the first selected project from the
+  // tag scope so the top-bar filter continues to narrow the list.
+  const { projectIds } = useTagScope();
+  const activeProjectId = projectIds[0] ?? null;
 
   const list = useQuery({
-    queryKey: ['databases', selectedId],
-    queryFn: () => api.databases.list(selectedId != null ? `?projectId=${selectedId}` : ''),
+    queryKey: ['databases', activeProjectId],
+    queryFn: () => api.databases.list(activeProjectId != null ? `?projectId=${activeProjectId}` : ''),
   });
   const remove = useMutation({
     mutationFn: ({ id, force }: { id: number; force?: boolean }) => api.databases.remove(id, { force }),

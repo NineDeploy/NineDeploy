@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+﻿import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildAgentApp } from '../../src/agentApp.js';
 import { config } from '../../src/config.js';
 
@@ -9,7 +9,7 @@ afterEach(() => {
 describe('buildAgentApp', () => {
   it('exposes only the registered agent routes (no API surface by default)', async () => {
     const app = await buildAgentApp();
-    // No routes registered yet → 404 on any path.
+    // No routes registered yet â†’ 404 on any path.
     const res = await app.inject({ method: 'GET', url: '/agent/ping' });
     expect(res.statusCode).toBe(404);
     await app.close();

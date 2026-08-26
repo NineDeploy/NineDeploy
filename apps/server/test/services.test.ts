@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+﻿import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
@@ -86,7 +86,7 @@ describe('services routes', () => {
             svcRow({ id: 2, name: 'public-app', sourceId: null }),
             svcRow({ id: 3, name: 'dangling', sourceId: 99 }),
           ],
-          // One query feeds the whole list page — no per-row source lookups.
+          // One query feeds the whole list page â€” no per-row source lookups.
           sources: [{ id: 7, name: 'github-app', type: 'github' }],
         },
       }),
@@ -190,7 +190,7 @@ describe('services routes', () => {
   });
 
   it('repairs an older failed Hub service with the current trusted template database contract', async () => {
-    // Registry-controlled fields must match the bundled registry — hardcoding
+    // Registry-controlled fields must match the bundled registry â€” hardcoding
     // them here drifts whenever the curated template images are bumped.
     const ghost = getBundledTemplates().find((t) => t.id === 'ghost');
     expect(ghost).toBeDefined();
@@ -470,7 +470,7 @@ describe('services routes', () => {
   });
 
   it('deletes a service', async () => {
-    // No runtime id — covers the "nothing to retire" branch.
+    // No runtime id â€” covers the "nothing to retire" branch.
     const app = await buildTestApp({
       db: createFakeDb({ findFirst: { services: svcRow({ id: 1, name: 'web' }) } }),
     });

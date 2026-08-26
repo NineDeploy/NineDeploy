@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+﻿import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createFakeDb, dbRow, svcRow } from './helpers.js';
 
 const mocks = vi.hoisted(() => ({
@@ -11,6 +11,7 @@ vi.mock('../src/templates/registry.js', () => ({
 }));
 vi.mock('../src/engine/database.js', () => ({
   startDatabase: mocks.startDatabase,
+  attachDatabaseToServiceBridges: vi.fn(async () => undefined),
   defaultPort: vi.fn((engine: string) => engine === 'redis' ? 6379 : 3306),
   ENGINES: {
     mysql: { username: () => 'root', dbName: () => 'app' },

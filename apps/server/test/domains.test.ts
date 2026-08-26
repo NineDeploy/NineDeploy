@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+﻿import { describe, expect, it, vi } from 'vitest';
 import { domainsRoutes } from '../src/modules/domains.js';
 import { asUser, buildTestApp, createFakeDb, domainRow, svcRow } from './helpers.js';
 
@@ -241,7 +241,7 @@ describe('domains routes', () => {
     expect(res.json().error.code).toBe('validation_error');
   });
 
-  // ── routing extras: ssl / www redirect / headers ─────────────────────────
+  // â”€â”€ routing extras: ssl / www redirect / headers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   it('patches ssl, redirectWww and headers together', async () => {
     const app = await buildTestApp({
       db: createFakeDb({

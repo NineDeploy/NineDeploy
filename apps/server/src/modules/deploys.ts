@@ -213,8 +213,8 @@ export const deploysRoutes: FastifyPluginAsync = async (app) => {
       socket.close(1008, 'unauthorized');
       return;
     }
-    if (user.role !== 'admin') {
-      socket.close(1008, 'admin access required');
+    if (!user.isOperator) {
+      socket.close(1008, 'operator access required');
       return;
     }
     const svc = await app.db.query.services.findFirst({ where: eq(services.id, id) });

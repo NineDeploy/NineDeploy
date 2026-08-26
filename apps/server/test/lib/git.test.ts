@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, rmSync, } from 'node:fs';
+﻿import { existsSync, mkdirSync, rmSync, } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -54,7 +54,7 @@ afterAll(() => {
   rmSync(tmpRoot, { recursive: true, force: true });
 });
 
-describe('checkoutCommit — fresh clone', () => {
+describe('checkoutCommit â€” fresh clone', () => {
   it('clones a public repo, checks out the branch, and returns the resolved sha', async () => {
     const dir = gitDir('fresh-public');
     const sink = vi.fn();
@@ -64,7 +64,7 @@ describe('checkoutCommit — fresh clone', () => {
     expect(gitState.simpleGit.mock.calls[1]).toEqual([dir, {}]); // checkout instance
     const bare = gitState.simpleGit.mock.results[0]!.value;
     expect(bare.clone).toHaveBeenCalledWith('https://github.com/ada/repo.git', dir, []);
-    expect(sink).toHaveBeenCalledWith('Cloning https://github.com/ada/repo.git …');
+    expect(sink).toHaveBeenCalledWith('Cloning https://github.com/ada/repo.git â€¦');
     expect(sink).toHaveBeenCalledWith('Checked out 0123456 on main');
     expect(resolved).toBe('0123456789abcdef');
   });
@@ -83,7 +83,7 @@ describe('checkoutCommit — fresh clone', () => {
       dir,
       [],
     );
-    expect(sink).toHaveBeenCalledWith('Cloning https://github.com/org/private.git (access token) …');
+    expect(sink).toHaveBeenCalledWith('Cloning https://github.com/org/private.git (access token) â€¦');
   });
 
   it('masks credentials already embedded in the repo url', async () => {
@@ -91,7 +91,7 @@ describe('checkoutCommit — fresh clone', () => {
     const sink = vi.fn();
     await checkoutCommit('https://user:secret@example.com/org/repo.git', 'main', undefined, dir, sink);
 
-    expect(sink).toHaveBeenCalledWith('Cloning https://***@example.com/org/repo.git …');
+    expect(sink).toHaveBeenCalledWith('Cloning https://***@example.com/org/repo.git â€¦');
   });
 
   it('uses oauth2 as the user for gitlab tokens', async () => {
@@ -135,7 +135,7 @@ describe('checkoutCommit — fresh clone', () => {
       dir,
       ['--config', expect.stringContaining('core.sshCommand=')],
     );
-    expect(sink).toHaveBeenCalledWith('Cloning git@github.com:org/repo.git (SSH deploy key) …');
+    expect(sink).toHaveBeenCalledWith('Cloning git@github.com:org/repo.git (SSH deploy key) â€¦');
   });
 
   it('leaves a non-convertible url untouched when using a deploy key', async () => {
@@ -184,12 +184,12 @@ describe('checkoutCommit — fresh clone', () => {
       }),
     ).rejects.toThrow('mid-clone');
 
-    // Nothing on disk to clean → no set-url call on the reopened handle.
+    // Nothing on disk to clean â†’ no set-url call on the reopened handle.
     expect(reopened.remote).not.toHaveBeenCalled();
   });
 });
 
-describe('checkoutCommit — existing checkout', () => {
+describe('checkoutCommit â€” existing checkout', () => {
   it('fetches, checks out, pulls, and reuses the working tree', async () => {
     const dir = existingCheckout('existing-public');
     const git = makeGit();
@@ -203,7 +203,7 @@ describe('checkoutCommit — existing checkout', () => {
     expect(git.checkout).toHaveBeenCalledWith('main');
     expect(git.pull).toHaveBeenCalledWith('origin', 'main');
     expect(git.raw).toHaveBeenCalledWith(['log', '-1', '--format=%H']);
-    expect(sink).toHaveBeenCalledWith('Fetching latest…');
+    expect(sink).toHaveBeenCalledWith('Fetching latestâ€¦');
     expect(resolved).toBe('0123456789abcdef');
   });
 
@@ -261,7 +261,7 @@ describe('checkoutCommit — existing checkout', () => {
   });
 });
 
-describe('checkoutCommit — edge cases', () => {
+describe('checkoutCommit â€” edge cases', () => {
   it('continues when pull fails (detached/empty remote)', async () => {
     const dir = existingCheckout('existing-pull-fail');
     const git = makeGit();

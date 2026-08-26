@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+﻿import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createHmac } from 'node:crypto';
 import { config } from '../../src/config.js';
 import { HttpError } from '../../src/lib/errors.js';
@@ -148,7 +148,7 @@ describe('oauth library', () => {
         json: async () => ({ sub: 'user_2', email: 'unverified@example.com', email_verified: false }),
       } as never);
 
-      // A 403 HttpError (not a bare Error → 500): callers surface the reason.
+      // A 403 HttpError (not a bare Error â†’ 500): callers surface the reason.
       const err = await fetchOidcUserInfo('https://auth.example.com/userinfo', 'token_123').catch((e: unknown) => e);
       expect(err).toBeInstanceOf(HttpError);
       expect((err as HttpError).statusCode).toBe(403);

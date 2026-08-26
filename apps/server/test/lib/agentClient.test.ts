@@ -1,4 +1,4 @@
-
+﻿
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { agentOp, agentPing, generateAgentToken, tokenMatches } from '../../src/lib/agentClient.js';
 import { runOp } from '../../src/agent.js';

@@ -1,4 +1,4 @@
-import { afterEach, vi } from 'vitest';
+﻿import { afterEach, vi } from 'vitest';
 import { cleanup, render } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router';
@@ -9,7 +9,7 @@ import { ToastProvider } from '../src/components/Toast.js';
 import { ProjectScopeProvider } from '../src/lib/projects.js';
 import { WorkspaceProvider } from '../src/lib/workspace.js';
 
-/** jsdom does not implement ResizeObserver — some rendered components touch it. */
+/** jsdom does not implement ResizeObserver â€” some rendered components touch it. */
 if (typeof globalThis.ResizeObserver === 'undefined') {
   class ResizeObserverStub {
     observe(): void {}
@@ -32,7 +32,7 @@ afterEach(() => {
 
 // Re-exported so `import { createFakeApiModule } from './helpers.js'` still
 // works at TEST time. Inside a vi.mock factory, import './apiMock.js' directly
-// — see the note in that file.
+// â€” see the note in that file.
 export { createFakeApiModule } from './apiMock.js';
 
 export { createAuthMock, createThemeMock, createWorkspaceMock } from './apiMock.js';

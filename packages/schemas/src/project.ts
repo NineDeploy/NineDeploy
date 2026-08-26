@@ -10,8 +10,8 @@ import { slug } from './common.js';
 export const createProject = z.object({
   name: z.string().trim().min(2).max(63),
   slug: slug.optional(),
-  description: z.string().trim().max(500).optional(),
-  workspaceId: z.number().int().positive().optional(),
+  description: z.string().trim().max(500).nullable().optional(),
+  workspaceId: z.number().int().positive().nullable().optional(),
 });
 export type CreateProject = z.infer<typeof createProject>;
 export type CreateProjectInput = CreateProject;
@@ -30,6 +30,8 @@ export type ProjectPatchInput = ProjectPatch;
 export interface ProjectEntry {
   id: number;
   workspaceId?: number | null;
+  /** Display name of the owning workspace. Resolved server-side. */
+  workspaceName?: string | null;
   name: string;
   slug: string;
   description: string | null;

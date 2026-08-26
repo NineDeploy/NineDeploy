@@ -15,6 +15,7 @@ import { composeBuilder } from '../engine/builders/compose.js';
 import { dockerBuilder } from '../engine/builders/docker.js';
 import { pm2Builder, pm2Logs, pm2Restart, pm2Start, pm2Stop } from '../engine/builders/pm2.js';
 import { writeDynamicConfig } from '../engine/proxy.js';
+import { removeServiceBridgeIfEmpty } from '../lib/serviceBridge.js';
 
 /** Shape a DB row into the API representation (Date → ISO string). */
 function serialize(s: Service, sourceName: string | null = null) {
@@ -318,6 +319,15 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
       else if (svc.type === 'docker') await dockerBuilder.stop(svc.runtimeId);
       else if (svc.type === 'compose') await composeBuilder.stop(svc.runtimeId);
       else req.log.warn({ type: svc.type, runtimeId: svc.runtimeId }, 'unsupported service type — leaving runtime in place');
+    }
+    // Model B: reap the service's private bridge. A no-op when a database is
+    // still attached to it (so the DB keeps resolving the service's bridge
+    // and the panel can still show the connection). Failures are logged, not
+    // thrown — the row is already gone and a stale bridge is recoverable.
+    try {
+      await removeServiceBridgeIfEmpty(svc.slug, (line) => req.log.info({ bridge: svc.slug }, line));
+    } catch (err) {
+      req.log.warn({ err, slug: svc.slug }, 'failed to reap per-service bridge');
     }
     void audit(app.db, req.user!.id, 'service.delete', svc.name);
     reply.status(204);

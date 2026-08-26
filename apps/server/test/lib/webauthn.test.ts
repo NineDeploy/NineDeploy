@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+﻿import { describe, expect, it, vi } from 'vitest';
 import { beginAuthentication, beginRegistration, finishAuthentication, finishRegistration } from '../../src/lib/webauthn.js';
 
 // Mock the WebAuthn library: the routes' contract is options/verify round-trips.

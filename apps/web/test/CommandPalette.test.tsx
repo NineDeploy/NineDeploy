@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+﻿import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -106,7 +106,7 @@ describe('CommandPalette', () => {
     } as never);
     renderPalette();
     // Query 'b' matches nav "Backups" and service "blog" (label) + database
-    // "Backups" doesn't match pg-main — use a broader query to surface all
+    // "Backups" doesn't match pg-main â€” use a broader query to surface all
     // dynamic results; the test asserts they render alongside nav commands.
     fireEvent.change(screen.getByPlaceholderText(/Search services/), { target: { value: 'b' } });
     await waitFor(() => expect(screen.getByText('blog')).toBeInTheDocument());

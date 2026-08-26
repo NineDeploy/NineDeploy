@@ -1,10 +1,10 @@
-import { describe, expect, it, vi } from 'vitest';
+﻿import { describe, expect, it, vi } from 'vitest';
 import { apiRoutes } from '../src/modules/api.js';
 import { buildTestApp, createFakeDb } from './helpers.js';
 
 const stubs = vi.hoisted(() => {
   const createFirstAdmin = vi.fn(async () => ({
-    user: { id: 1, email: 'admin@example.com', name: null, role: 'admin' },
+    user: { id: 1, email: 'admin@example.com', name: null, isOperator: true },
     tokens: { accessToken: 'a', refreshToken: 'r', expiresIn: 900 },
   }));
   // Each stub registers a route with a unique path so plugins sharing a
@@ -80,7 +80,7 @@ describe('api routes (mounted under /v1)', () => {
       payload: { email: 'admin@example.com', password: 'password123', name: 'Admin' },
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json().user).toMatchObject({ id: 1, email: 'admin@example.com', role: 'admin' });
+    expect(res.json().user).toMatchObject({ id: 1, email: 'admin@example.com', isOperator: true });
     expect(stubs.createFirstAdmin).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ email: 'admin@example.com' }));
   });
 

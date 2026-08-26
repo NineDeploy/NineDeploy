@@ -1,11 +1,11 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+﻿import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { VolumesTab } from '../src/routes/service/VolumesTab.js';
 import { api } from '../src/lib/api.js';
 import { renderWithProviders, mockOf } from './helpers.js';
 
 vi.mock('../src/lib/api.js', async () => {
-  // Must be './apiMock.js', not './helpers.js' — see the note in apiMock.ts.
+  // Must be './apiMock.js', not './helpers.js' â€” see the note in apiMock.ts.
   const { createFakeApiModule } = await import('./apiMock.js');
   return createFakeApiModule();
 });
@@ -23,7 +23,9 @@ vi.mock('../src/components/VolumeBrowser.js', () => ({
 function svc(overrides: Record<string, unknown> = {}) {
   return {
     id: 1,
-    projectId: null,
+    projectIds: [],
+    workspaceIds: [],
+    labelIds: [],
     name: 'api',
     slug: 'api',
     type: 'docker',
@@ -88,7 +90,7 @@ describe('VolumesTab', () => {
     expect(screen.getAllByText('4.1 KB').length).toBe(2);
     // The attached database card links to the database.
     expect(screen.getByRole('link', { name: /main/ })).toHaveAttribute('href', '/databases/7');
-    expect(screen.getByText('postgres · nd-db-main-data')).toBeInTheDocument();
+    expect(screen.getByText('postgres Â· nd-db-main-data')).toBeInTheDocument();
     expect(screen.getByText('Retained on Delete')).toBeInTheDocument();
     expect(screen.queryByText('nd-db-other-data')).not.toBeInTheDocument();
   });
@@ -103,8 +105,8 @@ describe('VolumesTab', () => {
     expect(await screen.findByText('nd-vol-api')).toBeInTheDocument();
     expect(screen.getByText(/Detached \(Stopped\)/)).toBeInTheDocument();
 
-    // The toggle flips the stored flag: undefined → true (still protected)
-    // → false (off). The first click is a visual no-op by design.
+    // The toggle flips the stored flag: undefined â†’ true (still protected)
+    // â†’ false (off). The first click is a visual no-op by design.
     const toggle = screen.getByRole('button', { name: /Protection On/i });
     fireEvent.click(toggle);
     expect(screen.getByRole('button', { name: /Protection On/i })).toBeInTheDocument();

@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync } from 'node:fs';
+﻿import { mkdirSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { sql } from 'drizzle-orm';
@@ -81,7 +81,7 @@ describe('buildApp', () => {
     const app = await buildApp();
     const res = await app.inject({ method: 'GET', url: '/health' });
     expect(res.headers['x-content-type-options']).toBe('nosniff');
-    // The panel drives deploys, deletions and node approvals — it must never
+    // The panel drives deploys, deletions and node approvals â€” it must never
     // be framable.
     expect(res.headers['x-frame-options']).toBe('DENY');
     expect(res.headers['referrer-policy']).toBe('no-referrer');

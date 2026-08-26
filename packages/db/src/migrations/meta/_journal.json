@@ -225,6 +225,34 @@
       "when": 1787400000000,
       "tag": "0032_workspace_invitations",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "6",
+      "when": 1787500000000,
+      "tag": "0033_service_volume_attachments",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "6",
+      "when": 1787600000000,
+      "tag": "0034_tags_and_team_overhaul",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "6",
+      "when": 1787700000000,
+      "tag": "0035_volume_backups",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "6",
+      "when": 1787800000000,
+      "tag": "0036_database_owner_user_id",
+      "breakpoints": true
     }
   ]
 }

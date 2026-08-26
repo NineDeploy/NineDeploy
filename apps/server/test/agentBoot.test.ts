@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+﻿import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const state = vi.hoisted(() => ({
   buildApp: vi.fn(),
@@ -82,7 +82,7 @@ async function importAgent() {
 describe('agent bootstrap', () => {
   it('exits without a token hash', async () => {
     delete process.env['NINEDEPLOY_AGENT_TOKEN'];
-    // process.exit is mocked (doesn't halt), so main would continue — give it
+    // process.exit is mocked (doesn't halt), so main would continue â€” give it
     // a fake app to register against so the run stays clean.
     state.buildApp.mockResolvedValue(fakeApp());
     const mod = await importAgent();
@@ -100,7 +100,7 @@ describe('agent bootstrap', () => {
     expect(app.register).toHaveBeenCalledWith(expect.anything(), { tokenHash: 'a'.repeat(64) });
     expect(mod.agentMode.OPS).toBeDefined();
 
-    // SIGTERM & SIGINT → graceful close.
+    // SIGTERM & SIGINT â†’ graceful close.
     await state.signalListeners['SIGTERM']!();
     await vi.waitFor(() => expect(app.close).toHaveBeenCalled());
     await vi.waitFor(() => expect(state.exitCalls).toContain(0));

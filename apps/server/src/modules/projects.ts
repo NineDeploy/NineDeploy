@@ -1,5 +1,5 @@
-import { and, asc, eq } from 'drizzle-orm';
-import { databases, projects, services, type Project } from '@ninedeploy/db';
+import { and, asc, eq, inArray } from 'drizzle-orm';
+import { databases, projects, serviceProjects, type Project, workspaces, type Workspace } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { createProject, projectPatch } from '@ninedeploy/schemas';
 import { audit } from '../lib/audit.js';
@@ -8,10 +8,15 @@ import { badRequest, conflict, parseId } from '../lib/errors.js';
 import { iso } from '../lib/serialize.js';
 import { slugify } from '../lib/slug.js';
 
-function serialize(p: Project, counts?: { services: number; databases: number }) {
+function serialize(
+  p: Project,
+  counts?: { services: number; databases: number },
+  workspaceName?: string | null,
+) {
   return {
     id: p.id,
     workspaceId: p.workspaceId ?? null,
+    workspaceName: workspaceName ?? null,
     name: p.name,
     slug: p.slug,
     description: p.description,
@@ -44,9 +49,15 @@ export const projectRoutes: FastifyPluginAsync = async (app) => {
     ];
     const where = filters.length === 0 ? undefined : filters.length === 1 ? filters[0] : and(...filters);
     const rows = await app.db.query.projects.findMany({ where, orderBy: [asc(projects.name)] });
+    // Resolve workspace display names in one shot.
+    const wsIds = Array.from(new Set(rows.map((r) => r.workspaceId).filter((id): id is number => id != null)));
+    const wsRows: Workspace[] = wsIds.length > 0
+      ? await app.db.query.workspaces.findMany({ where: inArray(workspaces.id, wsIds) })
+      : [];
+    const wsNameById = new Map(wsRows.map((w) => [w.id, w.name]));
     // Count resource membership in JS: projects are few, and a GROUP BY here
     // would still scan the same rows on SQLite at self-hosted scale.
-    const svcRows = await app.db.select({ projectId: services.projectId }).from(services);
+    const svcRows = await app.db.select({ projectId: serviceProjects.projectId }).from(serviceProjects);
     const dbRows = await app.db.select({ projectId: databases.projectId }).from(databases);
     const count = (list: Array<{ projectId: number | null }>) => {
       const m = new Map<number, number>();
@@ -56,7 +67,11 @@ export const projectRoutes: FastifyPluginAsync = async (app) => {
     const svcMap = count(svcRows);
     const dbMap = count(dbRows);
     return rows.map((p) =>
-      serialize(p, { services: svcMap.get(p.id) ?? 0, databases: dbMap.get(p.id) ?? 0 }),
+      serialize(
+        p,
+        { services: svcMap.get(p.id) ?? 0, databases: dbMap.get(p.id) ?? 0 },
+        p.workspaceId == null ? null : wsNameById.get(p.workspaceId) ?? null,
+      ),
     );
   });
 
@@ -88,8 +103,8 @@ export const projectRoutes: FastifyPluginAsync = async (app) => {
     if (input.workspaceId != null) await assertWorkspaceMember(app.db, input.workspaceId, req.user!);
     // Detaching a project (workspaceId: null) makes it admin-only under the
     // access rules, so only an admin may do it.
-    if (input.workspaceId === null && req.user!.role !== 'admin') {
-      throw badRequest('Only an admin can detach a project from its workspace');
+    if (input.workspaceId === null && !req.user!.isOperator) {
+      throw badRequest('Only an operator can detach a project from its workspace');
     }
     const [updated] = await app.db
       .update(projects)
@@ -113,3 +128,27 @@ export const projectRoutes: FastifyPluginAsync = async (app) => {
     return { ok: true };
   });
 };
+
+/**
+ * For a service-tag write: return the subset of `ids` the caller is allowed
+ * to assign (i.e. projects they can see). Operators see every requested id
+ * (we still verify the rows exist). Returns an empty array when none match.
+ */
+export async function visibleProjectIds(
+  db: import('@ninedeploy/db').DB,
+  user: { id: number; isOperator: boolean },
+  ids: number[],
+): Promise<number[]> {
+  if (ids.length === 0) return [];
+  const rows = await db.query.projects.findMany({
+    where: (p, { inArray: inOp }) => inOp(p.id, ids),
+  });
+  if (user.isOperator) return rows.map((r) => r.id);
+  const ms = await db.query.workspaceMembers.findMany({
+    where: (m, { eq: eqOp }) => eqOp(m.userId, user.id),
+  });
+  const wsIds = new Set(ms.map((m) => m.workspaceId));
+  return rows
+    .filter((r) => r.workspaceId != null && wsIds.has(r.workspaceId))
+    .map((r) => r.id);
+}

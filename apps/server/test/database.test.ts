@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+﻿import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { existsSync as existsSyncMock, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -20,8 +20,8 @@ import {
 } from '../src/engine/database.js';
 
 const h = vi.hoisted(() => {
-  // decrypt handles BOTH envelope round-trips (v0:… = real envelope shape)
-  // and DB passwords (pw:… fallback).
+  // decrypt handles BOTH envelope round-trips (v0:â€¦ = real envelope shape)
+  // and DB passwords (pw:â€¦ fallback).
   const decrypt = vi.fn((v: string) => (v.startsWith('v0:') ? v.slice(3) : `pw:${v}`));
   const encrypt = vi.fn((v: string) => `v0:${v}`);
   const run = vi.fn(async (_cmd: string, _args: unknown[], _opts: unknown, sink?: (line: string) => void) => {
@@ -147,7 +147,7 @@ describe('startDatabase', () => {
 
     expect(log).toHaveBeenCalledWith('Reusing retained volume v (previous data restored)');
     expect(h.pullDockerImage).toHaveBeenCalledWith('postgres:16', log);
-    expect(log).toHaveBeenCalledWith('Starting postgres database db (c) …');
+    expect(log).toHaveBeenCalledWith('Starting postgres database db (c) â€¦');
     expect(h.run).toHaveBeenCalledWith(
       'docker',
       [
@@ -169,7 +169,7 @@ describe('startDatabase', () => {
 
     await startDatabase(dbRow({ engine: 'postgres' }), log);
 
-    expect(log).toHaveBeenCalledWith('c already running — reusing');
+    expect(log).toHaveBeenCalledWith('c already running â€” reusing');
     expect(h.pullDockerImage).not.toHaveBeenCalled();
     expect(h.run).not.toHaveBeenCalled();
   });
@@ -186,7 +186,7 @@ describe('startDatabase', () => {
 
   it('removes a stale same-name container before starting (no name conflict)', async () => {
     // Container not running, volume retained. The rm -f may fail if there was
-    // nothing to remove — that's absorbed and we still proceed to start.
+    // nothing to remove â€” that's absorbed and we still proceed to start.
     h.capture.mockResolvedValue('[{"Name":"v"}]');
     h.run.mockRejectedValueOnce(new Error('no such container'));
     const log = vi.fn();
@@ -202,7 +202,7 @@ describe('startDatabase', () => {
 
     await startDatabase(dbRow({ engine: 'postgres' }), log);
 
-    expect(log).toHaveBeenCalledWith('Starting postgres database db (c) …');
+    expect(log).toHaveBeenCalledWith('Starting postgres database db (c) â€¦');
     expect(h.run).toHaveBeenCalledWith('docker', expect.arrayContaining(['run', '-d', '--name', 'c']), {}, log);
   });
 
@@ -217,7 +217,7 @@ describe('startDatabase', () => {
     const log = vi.fn();
 
     await expect(startDatabase(dbRow(), log)).resolves.toBeUndefined();
-    expect(log).toHaveBeenCalledWith('c is running despite docker run failure — adopting it');
+    expect(log).toHaveBeenCalledWith('c is running despite docker run failure â€” adopting it');
   });
 
   it('preserves a docker run failure when no container is running', async () => {
@@ -262,7 +262,7 @@ describe('startDatabase', () => {
 
     expect(h.run).toHaveBeenCalledWith(
       'docker',
-      // Redis has no env vars → no --env-file; the password rides as the
+      // Redis has no env vars â†’ no --env-file; the password rides as the
       // container command's --requirepass argument so the shared network
       // cannot be reached without authenticating.
       ['run', '-d', '--name', 'c', '--network', 'ninedeploy', '--restart', 'unless-stopped', '-v', 'v:/data', '--requirepass', 'pw:enc', 'redis:8'],
@@ -324,7 +324,7 @@ describe('stopDatabase', () => {
 
     await stopDatabase(dbRow(), log);
 
-    expect(log).toHaveBeenCalledWith('Stopping c (volume retained) …');
+    expect(log).toHaveBeenCalledWith('Stopping c (volume retained) â€¦');
     expect(h.run).toHaveBeenCalledWith('docker', ['rm', '-f', 'c'], {}, expect.any(Function));
   });
 
@@ -346,7 +346,7 @@ describe('removeVolume', () => {
 
     await removeVolume('v', log);
 
-    expect(log).toHaveBeenCalledWith('Deleting volume v …');
+    expect(log).toHaveBeenCalledWith('Deleting volume v â€¦');
     expect(h.run).toHaveBeenCalledWith('docker', ['volume', 'rm', 'v'], {}, log);
   });
 

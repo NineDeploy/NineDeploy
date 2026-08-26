@@ -1,4 +1,4 @@
-import Fastify from 'fastify';
+﻿import Fastify from 'fastify';
 import { describe, expect, it } from 'vitest';
 import rateLimitPlugin from '../../src/plugins/rateLimit.js';
 
@@ -27,7 +27,7 @@ describe('rateLimitPlugin', () => {
 
     expect((await app.inject({ method: 'POST', url: '/a' })).statusCode).toBe(200);
     expect((await app.inject({ method: 'POST', url: '/a' })).statusCode).toBe(429);
-    // Different route — independent bucket, still allowed.
+    // Different route â€” independent bucket, still allowed.
     expect((await app.inject({ method: 'POST', url: '/b' })).statusCode).toBe(200);
     await app.close();
   });

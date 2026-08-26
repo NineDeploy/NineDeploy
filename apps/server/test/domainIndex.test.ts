@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+﻿import { describe, expect, it, vi } from 'vitest';
 import { domainIndexRoutes } from '../src/modules/domainIndex.js';
 import { asUser, buildTestApp, createFakeDb, domainRow, svcRow } from './helpers.js';
 
@@ -34,7 +34,7 @@ describe('domain index routes', () => {
       port: 3000,
     });
     expect(rows[1]).toMatchObject({ id: 2, serviceId: 99, serviceName: null, container: null, port: null });
-    // No acme.json → no cert info.
+    // No acme.json â†’ no cert info.
     expect(rows[0]).toMatchObject({ certExpiresAt: null });
   });
 
@@ -56,7 +56,7 @@ describe('domain index routes', () => {
       }),
     });
     await app.register(domainIndexRoutes);
-    const res = await app.inject({ method: 'GET', url: '/', headers: asUser({ id: 7, role: 'member' }) });
+    const res = await app.inject({ method: 'GET', url: '/', headers: asUser({ id: 7, isOperator: false }) });
     expect(res.statusCode).toBe(200);
     expect(res.json().map((domain: { hostname: string }) => domain.hostname)).toEqual(['mine.example.com']);
   });

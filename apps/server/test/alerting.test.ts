@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+﻿import { describe, expect, it, vi } from 'vitest';
 import type { DB } from '@ninedeploy/db';
 import { evaluateAlerts, ensureAlertState, resetAlertState, type MetricSnapshot } from '../src/lib/alerting.js';
 
@@ -39,7 +39,7 @@ function makeDb(rules: Rule[], states: State[]) {
           then: (ok: (v: unknown) => unknown, rej?: (e: Error) => unknown) => unknown;
           where: () => Promise<typeof rows>;
         } = {
-          // biome-ignore lint/suspicious/noThenProperty: intentional thenable — the fake alert query result must be awaitable by the code under test.
+          // biome-ignore lint/suspicious/noThenProperty: intentional thenable â€” the fake alert query result must be awaitable by the code under test.
           then: (ok, rej) => Promise.resolve(rows).then(ok as never, rej as never),
           where: () => Promise.resolve(rows),
         };
@@ -103,7 +103,7 @@ describe('evaluateAlerts', () => {
     expect(updates).toHaveLength(0);
   });
 
-  it('moves ok → breaching on the first breach without notifying', async () => {
+  it('moves ok â†’ breaching on the first breach without notifying', async () => {
     const { db, updates, auditInserts } = makeDb([rule()], []);
     await evaluateAlerts(db, [snap()], T0);
     expect(updates[0]).toMatchObject({ status: 'breaching', lastValue: 90 });
@@ -186,7 +186,7 @@ describe('evaluateAlerts', () => {
       [{ ruleId: 1, status: 'breaching', breachSince: null, firedAt: null, lastNotifiedAt: null, lastValue: 85 }],
     );
     await evaluateAlerts(db, [snap()], T0);
-    // elapsed = 0 < required 60s → still breaching, only lastValue touched.
+    // elapsed = 0 < required 60s â†’ still breaching, only lastValue touched.
     expect(updates).toEqual([{ lastValue: 90 }]);
   });
 
@@ -215,17 +215,17 @@ describe('alert state helpers', () => {
     const db = {
       select: () => ({
         from: () => ({
-          // biome-ignore lint/suspicious/noThenProperty: intentional thenable — the fake alert query result must be awaitable by the code under test.
+          // biome-ignore lint/suspicious/noThenProperty: intentional thenable â€” the fake alert query result must be awaitable by the code under test.
           then: (ok: (v: unknown) => unknown) => Promise.resolve(states).then(ok as never),
           where: () => Promise.resolve(states),
         }),
       }),
       insert: () => ({ values: async () => { inserted++; return []; } }),
     } as unknown as DB;
-    await ensureAlertState(db, 1); // state exists → no insert
+    await ensureAlertState(db, 1); // state exists â†’ no insert
     expect(inserted).toBe(0);
     states = [];
-    await ensureAlertState(db, 2); // no state → insert
+    await ensureAlertState(db, 2); // no state â†’ insert
     expect(inserted).toBe(1);
   });
 

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+﻿import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { serverRoutes } from '../src/modules/servers.js';
 import { asUser, buildTestApp, createFakeDb } from './helpers.js';
 
@@ -13,8 +13,8 @@ vi.mock('../src/lib/agentClient.js', async () => {
 
 const cryptoMocks = vi.hoisted(() => ({ encrypt: vi.fn((s: string) => `enc:${s}`), decrypt: vi.fn((s: string) => s.replace('enc:', '')) }));
 // Only the envelope helpers are stubbed (so tests can read the stored value);
-// everything else — notably the constant-time `secretEquals` the announce
-// route compares tokens with — stays real.
+// everything else â€” notably the constant-time `secretEquals` the announce
+// route compares tokens with â€” stays real.
 vi.mock('../src/lib/crypto.js', async () => {
   const actual = await vi.importActual<typeof import('../src/lib/crypto.js')>('../src/lib/crypto.js');
   return { ...actual, ...cryptoMocks };
@@ -66,7 +66,7 @@ describe('servers routes', () => {
   });
 
   it('requires admin', async () => {
-    const app = await appWith({ findFirst: { users: { id: 2, role: 'member' } } });
+    const app = await appWith({ findFirst: { users: { id: 2, isOperator: false } } });
     const res = await app.inject({ method: 'GET', url: '/servers', headers: { 'x-test-user': '2', 'x-test-role': 'member' } });
     expect(res.statusCode).toBe(403);
   });

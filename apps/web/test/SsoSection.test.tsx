@@ -1,11 +1,11 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+﻿import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { screen, fireEvent, waitFor } from '@testing-library/react';
 import { SsoSection } from '../src/routes/settings/SsoSection.js';
 import { api } from '../src/lib/api.js';
 import { renderWithProviders, mockOf } from './helpers.js';
 
 vi.mock('../src/lib/api.js', async () => {
-  // Must be './apiMock.js', not './helpers.js' — see the note in apiMock.ts.
+  // Must be './apiMock.js', not './helpers.js' â€” see the note in apiMock.ts.
   const { createFakeApiModule } = await import('./apiMock.js');
   return createFakeApiModule();
 });
@@ -21,7 +21,7 @@ describe('SsoSection', () => {
       scopes: 'openid profile email',
       enabled: true,
       autoEnroll: true,
-      defaultRole: 'member' as const,
+      defaultisOperator: false as const,
       createdAt: '2026-01-01',
       updatedAt: '2026-01-01',
     },
@@ -70,7 +70,7 @@ describe('SsoSection', () => {
       target: { value: 'https://accounts.google.com' },
     });
     fireEvent.change(screen.getByPlaceholderText('OAuth Client ID'), { target: { value: 'g-cid' } });
-    fireEvent.change(screen.getByPlaceholderText('••••••••••••'), { target: { value: 'g-sec' } });
+    fireEvent.change(screen.getByPlaceholderText('â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢'), { target: { value: 'g-sec' } });
 
     // A non-Error rejection surfaces the generic message.
     mockOf(api.auth.oidc.create).mockRejectedValueOnce('boom' as never);
@@ -86,7 +86,7 @@ describe('SsoSection', () => {
     renderWithProviders(<SsoSection />);
     fireEvent.click(await screen.findByRole('button', { name: /edit/i }));
     const form = screen.getByPlaceholderText('e.g. Google Workspace').closest('form')!;
-    // Leave the (empty) issuer blank → the update sends null.
+    // Leave the (empty) issuer blank â†’ the update sends null.
     const nameInput = screen.getByPlaceholderText('e.g. Google Workspace') as HTMLInputElement;
     fireEvent.change(nameInput, { target: { value: 'Renamed' } });
     fireEvent.submit(form);
@@ -107,7 +107,7 @@ describe('SsoSection', () => {
       scopes: 'read:user user:email',
       enabled: true,
       autoEnroll: true,
-      defaultRole: 'member',
+      defaultisOperator: false,
       createdAt: '2026-01-01',
       updatedAt: '2026-01-01',
     } as never);
@@ -124,7 +124,7 @@ describe('SsoSection', () => {
     fireEvent.change(screen.getByPlaceholderText('OAuth Client ID'), {
       target: { value: 'gh-cid' },
     });
-    fireEvent.change(screen.getByPlaceholderText('••••••••••••'), {
+    fireEvent.change(screen.getByPlaceholderText('â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢'), {
       target: { value: 'gh-csec' },
     });
 
@@ -220,7 +220,7 @@ describe('SsoSection', () => {
     // The slug input lowercases and strips invalid characters.
     fireEvent.change(screen.getByPlaceholderText('e.g. google or okta'), { target: { value: 'My IdP!' } });
     fireEvent.change(screen.getByPlaceholderText('OAuth Client ID'), { target: { value: 'cid-3' } });
-    fireEvent.change(screen.getByPlaceholderText('••••••••••••'), { target: { value: 's3cret' } });
+    fireEvent.change(screen.getByPlaceholderText('â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢'), { target: { value: 's3cret' } });
     fireEvent.click(screen.getByLabelText('Enable SSO on login page'));
     fireEvent.click(screen.getByLabelText('Auto-enroll new users on first login'));
     // Field labels are spans, not <label>s: target the modal's only select.
@@ -233,7 +233,7 @@ describe('SsoSection', () => {
         slug: 'myidp',
         enabled: false,
         autoEnroll: false,
-        defaultRole: 'admin',
+        defaultisOperator: true,
       }));
     });
     // The modal closes after a successful save.
@@ -264,7 +264,7 @@ describe('SsoSection', () => {
 
     fireEvent.click(screen.getByText('Edit'));
     await screen.findByText('Edit Google Workspace');
-    const secretField = screen.getByPlaceholderText('••••••••••••');
+    const secretField = screen.getByPlaceholderText('â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢');
     fireEvent.change(secretField, { target: { value: 'rotated-fixture-secret' } });
     // Assert with the value read back from the form field.
     const typedSecret = (secretField as HTMLInputElement).value;

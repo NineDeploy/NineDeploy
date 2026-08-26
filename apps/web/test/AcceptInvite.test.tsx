@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+﻿import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { screen, fireEvent } from '@testing-library/react';
 import { AcceptInvite } from '../src/routes/AcceptInvite.js';
 import { api } from '../src/lib/api.js';
@@ -29,7 +29,7 @@ describe('AcceptInvite page', () => {
       workspaceName: 'Acme',
       workspaceSlug: 'acme',
       email: 'invitee@example.com',
-      role: 'member',
+      isOperator: false,
       // invitedByName intentionally omitted to exercise the "A workspace owner" fallback.
       invitedByName: undefined as unknown as string,
       expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
@@ -49,7 +49,7 @@ describe('AcceptInvite page', () => {
     expect(await screen.findByText('Join Acme')).toBeInTheDocument();
     const signIn = screen.getByRole('button', { name: /Sign in to accept/i });
     fireEvent.click(signIn);
-    // The router navigates within MemoryRouter — the login route would catch it
+    // The router navigates within MemoryRouter â€” the login route would catch it
     // if the navigate() call was not gated on user.
   });
 
@@ -59,7 +59,7 @@ describe('AcceptInvite page', () => {
       workspaceName: 'Acme',
       workspaceSlug: 'acme',
       email: 'invitee@example.com',
-      role: 'member',
+      isOperator: false,
       invitedByName: 'Owner',
       expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
     } as never);
@@ -67,7 +67,7 @@ describe('AcceptInvite page', () => {
     // Error` false branch in onError.
     mockOf(api.workspaces.acceptInvitation).mockRejectedValueOnce('not-an-error' as never);
     mockOf(useAuth).mockReturnValue({
-      user: { id: 1, email: 'invitee@example.com', name: 'Invitee', role: 'member' },
+      user: { id: 1, email: 'invitee@example.com', name: 'Invitee', isOperator: false },
       loading: false,
       login: vi.fn(),
       setup: vi.fn(),
@@ -87,15 +87,15 @@ describe('AcceptInvite page', () => {
       workspaceName: 'Acme',
       workspaceSlug: 'acme',
       email: 'invitee@example.com',
-      role: 'member',
+      isOperator: false,
       invitedByName: 'Owner',
       expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
     } as never);
     mockOf(api.workspaces.acceptInvitation)
       .mockRejectedValueOnce(new Error('Boom') as never)
-      .mockResolvedValueOnce({ ok: true, workspaceId: 1, role: 'member' } as never);
+      .mockResolvedValueOnce({ ok: true, workspaceId: 1, isOperator: false } as never);
     mockOf(useAuth).mockReturnValue({
-      user: { id: 1, email: 'invitee@example.com', name: 'Invitee', role: 'member' },
+      user: { id: 1, email: 'invitee@example.com', name: 'Invitee', isOperator: false },
       loading: false,
       login: vi.fn(),
       setup: vi.fn(),
@@ -108,7 +108,7 @@ describe('AcceptInvite page', () => {
     expect(await screen.findByText('Join Acme')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Accept invitation' }));
     expect(await screen.findByText('Could not accept')).toBeInTheDocument();
-    // Click "Try again" — the retry should succeed and transition the page.
+    // Click "Try again" â€” the retry should succeed and transition the page.
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
     expect(await screen.findByText('Welcome aboard')).toBeInTheDocument();
   });
@@ -119,12 +119,12 @@ describe('AcceptInvite page', () => {
       workspaceName: 'Acme',
       workspaceSlug: 'acme',
       email: 'invitee@example.com',
-      role: 'admin',
+      isOperator: true,
       invitedByName: 'Owner',
       expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
     } as never);
     mockOf(useAuth).mockReturnValue({
-      user: { id: 1, email: 'someone-else@example.com', name: 'Other', role: 'member' },
+      user: { id: 1, email: 'someone-else@example.com', name: 'Other', isOperator: false },
       loading: false,
       login: vi.fn(),
       setup: vi.fn(),
@@ -143,17 +143,17 @@ describe('AcceptInvite page', () => {
       workspaceName: 'Acme',
       workspaceSlug: 'acme',
       email: 'invitee@example.com',
-      role: 'member',
+      isOperator: false,
       invitedByName: 'Owner',
       expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
     } as never);
     mockOf(api.workspaces.acceptInvitation).mockResolvedValueOnce({
       ok: true,
       workspaceId: 1,
-      role: 'member',
+      isOperator: false,
     } as never);
     mockOf(useAuth).mockReturnValue({
-      user: { id: 1, email: 'invitee@example.com', name: 'Invitee', role: 'member' },
+      user: { id: 1, email: 'invitee@example.com', name: 'Invitee', isOperator: false },
       loading: false,
       login: vi.fn(),
       setup: vi.fn(),
@@ -191,13 +191,13 @@ describe('AcceptInvite page', () => {
       workspaceName: 'Acme',
       workspaceSlug: 'acme',
       email: 'invitee@example.com',
-      role: 'member',
+      isOperator: false,
       invitedByName: 'Owner',
       expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
     } as never);
     mockOf(api.workspaces.acceptInvitation).mockRejectedValueOnce(new Error('Boom') as never);
     mockOf(useAuth).mockReturnValue({
-      user: { id: 1, email: 'invitee@example.com', name: 'Invitee', role: 'member' },
+      user: { id: 1, email: 'invitee@example.com', name: 'Invitee', isOperator: false },
       loading: false,
       login: vi.fn(),
       setup: vi.fn(),

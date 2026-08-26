@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+﻿import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router';
@@ -69,7 +69,7 @@ describe('Layout', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     authMock.useAuth.mockReturnValue({
-      user: { id: 1, email: 'ada@example.com', name: 'Ada', role: 'admin' },
+      user: { id: 1, email: 'ada@example.com', name: 'Ada', isOperator: true },
       logout: vi.fn(),
       loading: false,
     });
@@ -97,13 +97,13 @@ describe('Layout', () => {
 
   it('renders the activity bar, groups and the user avatar', () => {
     renderLayout();
-    // brand mark is the SVG logo now (aria-hidden) — assert the rail renders it
+    // brand mark is the SVG logo now (aria-hidden) â€” assert the rail renders it
     expect(document.querySelector('.flex.w-12 svg')).toBeInTheDocument();
     for (const g of ['Deploy', 'Data', 'Network', 'System']) {
       expect(screen.getAllByText(g).length).toBeGreaterThan(0);
     }
     expect(screen.getByText('A')).toBeInTheDocument(); // avatar initial
-    expect(screen.getByText('ada@example.com · Sign out')).toBeInTheDocument();
+    expect(screen.getByText('ada@example.com Â· Sign out')).toBeInTheDocument();
   });
 
   it('opens the group panel and marks the matching link active', () => {
@@ -200,7 +200,7 @@ describe('Layout', () => {
   it('opens the command palette with the search button and closes it', async () => {
     const user = userEvent.setup();
     renderLayout();
-    await user.click(screen.getByTitle('Search (⌘K)'));
+    await user.click(screen.getByTitle('Search (âŒ˜K)'));
     expect(screen.getByPlaceholderText(/Search services/)).toBeInTheDocument();
     await user.click(screen.getByText('Hub'));
     await waitFor(() =>
@@ -331,7 +331,7 @@ describe('Layout', () => {
 
   it('logs out from the avatar button', async () => {
     const logout = vi.fn();
-    authMock.useAuth.mockReturnValue({ user: { id: 1, email: 'a@b.c', name: null, role: 'admin' }, logout, loading: false });
+    authMock.useAuth.mockReturnValue({ user: { id: 1, email: 'a@b.c', name: null, isOperator: true }, logout, loading: false });
     const user = userEvent.setup();
     renderLayout();
     await user.click(screen.getByTitle('Sign out'));

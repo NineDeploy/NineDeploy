@@ -1,4 +1,4 @@
-import type { BuildConfig, Service } from '@ninedeploy/db';
+import type { BuildConfig, Service, ServiceVolumeAttachment } from '@ninedeploy/db';
 
 export interface BuildContext {
   deploymentId: number;
@@ -31,6 +31,13 @@ export interface BuildContext {
    * builders can run remote operations without touching the DB layer.
    */
   agentCall?: (op: string, params: Record<string, unknown>, sink: (line: string) => void) => Promise<{ exitCode: number; lines: string[] }>;
+  /**
+   * Additional named volumes the service mounts alongside its primary
+   * `service.volumeMount`. Persistence is handled by Docker; the builder
+   * simply adds `-v <volumeName>:<containerPath>[:ro]` for each row. May
+   * be empty (then the builder only mounts the primary, if set).
+   */
+  volumeAttachments?: ServiceVolumeAttachment[];
   /** Append a log line (persisted + broadcast to subscribers). */
   log: (line: string) => void;
 }

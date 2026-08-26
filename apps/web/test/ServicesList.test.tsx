@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+﻿import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { screen, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ServicesList } from '../src/routes/ServicesList.js';
@@ -6,7 +6,7 @@ import { api } from '../src/lib/api.js';
 import { renderWithProviders, mockOf } from './helpers.js';
 
 vi.mock('../src/lib/api.js', async () => {
-  // Must be './apiMock.js', not './helpers.js' — see the note in apiMock.ts.
+  // Must be './apiMock.js', not './helpers.js' â€” see the note in apiMock.ts.
   const { createFakeApiModule } = await import('./apiMock.js');
   return createFakeApiModule();
 });
@@ -124,7 +124,7 @@ describe('ServicesList', () => {
   it('searches by slug, branch and type, and shows live usage plus the volume badge', async () => {
     mockOf(api.services.list).mockResolvedValue([
       { id: 1, name: 'Frontend', slug: 'web-ui', type: 'docker', branch: 'release', port: 3000, status: 'running', volumeMount: '/app/data' },
-      // An image-based service has no branch at all — the filter must not
+      // An image-based service has no branch at all â€” the filter must not
       // crash on the nullish branch field.
       { id: 2, name: 'Sidebar', slug: 'side-car', type: 'docker', branch: null, port: 3010, status: 'idle' },
     ] as never);
@@ -143,7 +143,7 @@ describe('ServicesList', () => {
     // Volume badge carries the mount path.
     expect(screen.getByTitle('Volume mounted at /app/data')).toBeInTheDocument();
 
-    // Search matches slug, branch and type — and a branch-less service still
+    // Search matches slug, branch and type â€” and a branch-less service still
     // matches on its other fields.
     const searchInput = screen.getByPlaceholderText('Search services...');
     for (const q of ['WEB-UI', 'release', 'docker', 'side-car']) {

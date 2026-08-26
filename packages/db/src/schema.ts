@@ -19,7 +19,10 @@ const tsUpdatable = (name: string) =>
     .$onUpdate(() => new Date());
 
 // ─── enums (stored as TEXT) ───────────────────────────────────────────────
-export const userRole = ['admin', 'member'] as const;
+// Global `userRole` was removed when the team model was made workspace-only.
+// Authorization now flows from `workspace_members.role` for every action; the
+// only operator-level shortcut is "is `owner`/`admin` in any workspace", which
+// is computed at request time.
 export const workspaceRole = ['owner', 'admin', 'member', 'viewer'] as const;
 export const serviceType = ['pm2', 'docker', 'compose'] as const;
 export const serviceStatus = [
@@ -44,7 +47,7 @@ export const domainStatus = ['pending', 'active', 'error'] as const;
 export const sourceType = ['github', 'gitlab', 'gitea', 'bitbucket', 'custom', 'registry'] as const;
 export const backupScope = ['db', 'scheduled', 'volumes', 'full'] as const;
 export const backupStatus = ['pending', 'running', 'completed', 'failed'] as const;
-export const jobKind = ['deploy', 'exec'] as const;
+export const jobKind = ['deploy', 'exec', 'backup'] as const;
 export const jobRunStatus = ['running', 'completed', 'failed'] as const;
 export const serverStatus = ['offline', 'online', 'error', 'pending'] as const;
 
@@ -54,7 +57,6 @@ export const users = sqliteTable('users', {
   email: text('email').notNull().unique(),
   passwordHash: text('password_hash').notNull(),
   name: text('name'),
-  role: text('role', { enum: userRole }).notNull().default('member'),
   // Monotonic counter baked into issued JWTs (`ver` claim). Bumping it
   // (logout / role change / password change) invalidates all outstanding tokens
   // for the user without needing a server-side blocklist.
@@ -180,7 +182,7 @@ export const oidcProviders = sqliteTable('oidc_providers', {
   scopes: text('scopes').notNull().default('openid profile email'),
   enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
   autoEnroll: integer('auto_enroll', { mode: 'boolean' }).notNull().default(true),
-  defaultRole: text('default_role', { enum: userRole }).notNull().default('member'),
+  defaultRole: text('default_role', { enum: workspaceRole }).notNull().default('member'),
   createdAt: ts('created_at'),
   updatedAt: tsUpdatable('updated_at'),
 });
@@ -234,11 +236,91 @@ export const projects = sqliteTable('projects', {
   updatedAt: tsUpdatable('updated_at'),
 });
 
+// Labels are workspace-scoped free-form tags (color + name). A service can
+// carry many labels; labels themselves live inside a workspace and a label
+// row deleted by the workspace cascade removes all service_labels rows too.
+export const labels = sqliteTable(
+  'labels',
+  {
+    id: id(),
+    workspaceId: integer('workspace_id').references(() => workspaces.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    color: text('color').notNull().default('indigo'),
+    createdAt: ts('created_at'),
+    updatedAt: tsUpdatable('updated_at'),
+  },
+  (t) => ({
+    workspaceNameIdx: uniqueIndex('labels_workspace_name_idx').on(t.workspaceId, t.name),
+    workspaceIdx: index('labels_workspace_idx').on(t.workspaceId),
+  }),
+);
+
+// N-N: services ↔ projects. Replaces the legacy single `services.project_id`
+// FK. A service can be linked to multiple projects (and live in multiple
+// workspaces via `service_workspaces`) so the top-bar filter can compose
+// across dimensions.
+export const serviceProjects = sqliteTable(
+  'service_projects',
+  {
+    serviceId: integer('service_id')
+      .notNull()
+      .references(() => services.id, { onDelete: 'cascade' }),
+    projectId: integer('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    createdAt: ts('created_at'),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.serviceId, t.projectId] }),
+    projectIdx: index('service_projects_project_idx').on(t.projectId),
+  }),
+);
+
+// N-N: services ↔ workspaces. A service can belong to many workspaces; the
+// effective list is the union of explicit `service_workspaces` rows.
+export const serviceWorkspaces = sqliteTable(
+  'service_workspaces',
+  {
+    serviceId: integer('service_id')
+      .notNull()
+      .references(() => services.id, { onDelete: 'cascade' }),
+    workspaceId: integer('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    createdAt: ts('created_at'),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.serviceId, t.workspaceId] }),
+    workspaceIdx: index('service_workspaces_workspace_idx').on(t.workspaceId),
+  }),
+);
+
+// N-N: services ↔ labels. A label grants cross-cutting tagging that isn't
+// tied to the project hierarchy (e.g. "production", "staging", "team-x").
+export const serviceLabels = sqliteTable(
+  'service_labels',
+  {
+    serviceId: integer('service_id')
+      .notNull()
+      .references(() => services.id, { onDelete: 'cascade' }),
+    labelId: integer('label_id')
+      .notNull()
+      .references(() => labels.id, { onDelete: 'cascade' }),
+    createdAt: ts('created_at'),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.serviceId, t.labelId] }),
+    labelIdx: index('service_labels_label_idx').on(t.labelId),
+  }),
+);
+
 export const services = sqliteTable(
   'services',
   {
     id: id(),
-    projectId: integer('project_id').references(() => projects.id, { onDelete: 'set null' }),
+    // `projectId` is GONE — see `serviceProjects`. The column used to gate
+    // access on a single project; with N-N tag scopes the row is decided
+    // per-request from `service_projects` + `service_workspaces`.
     ownerUserId: integer('owner_user_id').references(() => users.id, { onDelete: 'set null' }),
     name: text('name').notNull(),
     slug: text('slug').notNull(),
@@ -288,7 +370,9 @@ export const services = sqliteTable(
     createdAt: ts('created_at'),
     updatedAt: tsUpdatable('updated_at'),
   },
-  (t) => ({ projectSlugIdx: uniqueIndex('services_project_slug_idx').on(t.projectId, t.slug) }),
+  // No DB-level unique on (projectId, slug) anymore — projects are N-N via
+  // `service_projects`, so per-project slug uniqueness is enforced at the
+  // application layer when needed.
 );
 
 export const buildConfigs = sqliteTable('build_configs', {
@@ -474,7 +558,13 @@ export const backups = sqliteTable(
   'backups',
   {
     id: id(),
+    // databaseId is nullable so volume-scope backups (scope='volumes') can
+    // target a Docker volume without a corresponding DB row. A constraint
+    // check below guarantees exactly one of (databaseId, volumeName) is set.
     databaseId: integer('database_id').references(() => databases.id, { onDelete: 'cascade' }),
+    // Docker volume name (managed: nd-svc-* / nd-db-*). Required for
+    // scope='volumes' rows; NULL for scope='db'.
+    volumeName: text('volume_name'),
     scope: text('scope', { enum: backupScope }).notNull(),
     status: text('status', { enum: backupStatus }).notNull().default('pending'),
     path: text('path').notNull(),
@@ -483,7 +573,12 @@ export const backups = sqliteTable(
     sizeBytes: integer('size_bytes').notNull().default(0),
     createdAt: ts('created_at'),
   },
-  (t) => ({ dbStatusIdx: index('backups_db_status_idx').on(t.databaseId, t.status) }),
+  (t) => ({
+    dbStatusIdx: index('backups_db_status_idx').on(t.databaseId, t.status),
+    // Volume backups are listed by (volume, createdAt DESC) for the per-volume
+    // route and retention sweep. The index is harmless for DB rows.
+    volumeCreatedIdx: index('backups_volume_created_idx').on(t.volumeName, t.createdAt),
+  }),
 );
 
 // ─── S3-compatible backup destinations ────────────────────────────────────
@@ -599,6 +694,38 @@ export const databaseAttachments = sqliteTable(
   (t) => ({ uniq: uniqueIndex('db_attach_svc_db_idx').on(t.serviceId, t.databaseId) }),
 );
 
+// ─── service volume attachments ───────────────────────────────────────────
+// Additional named volumes a service mounts alongside its primary volumeMount.
+// One service can attach N volumes; the same volume can be attached to many
+// services (shared). Persistence is handled by Docker named volumes — the
+// attachment row only records (service, volume, path, readonly); detaching
+// never deletes the underlying volume.
+export const serviceVolumeAttachments = sqliteTable(
+  'service_volume_attachments',
+  {
+    id: id(),
+    serviceId: integer('service_id')
+      .notNull()
+      .references(() => services.id, { onDelete: 'cascade' }),
+    // Docker volume name. Always starts with `nd-svc-` for managed volumes;
+    // inventory lookups consult this column before the legacy
+    // `nd-svc-<slug>-data` heuristic.
+    volumeName: text('volume_name').notNull(),
+    // Absolute container path the volume is mounted at inside the service.
+    containerPath: text('container_path').notNull(),
+    // Read-only mount (default false). Useful for config-only volumes.
+    readOnly: integer('read_only', { mode: 'boolean' }).notNull().default(false),
+    createdAt: ts('created_at'),
+    updatedAt: tsUpdatable('updated_at'),
+  },
+  (t) => ({
+    // A service cannot mount two volumes at the same path.
+    pathIdx: uniqueIndex('svc_vol_attach_svc_path_idx').on(t.serviceId, t.containerPath),
+    // A service cannot attach the same volume twice (each service×volume is unique).
+    volumeIdx: uniqueIndex('svc_vol_attach_svc_volume_idx').on(t.serviceId, t.volumeName),
+  }),
+);
+
 // ─── cloudflare tunnels ───────────────────────────────────────────────────
 export const tunnelStatus = ['running', 'stopped', 'error'] as const;
 
@@ -701,7 +828,8 @@ export const scheduledJobs = sqliteTable(
     name: text('name').notNull(),
     // 5-field cron expression (minute hour dom month dow), user-local timezone.
     cron: text('cron').notNull(),
-    // deploy → re-deploy the service; exec → run `command` inside the runtime container.
+    // deploy → re-deploy the service; exec → run `command` inside the runtime
+    // container; backup → snapshot the service's primary + every attached volume.
     kind: text('kind', { enum: jobKind }).notNull().default('deploy'),
     command: text('command'),
     enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
@@ -872,15 +1000,38 @@ export const apiTokensRelations = relations(apiTokens, ({ one }) => ({
 
 export const projectsRelations = relations(projects, ({ one, many }) => ({
   workspace: one(workspaces, { fields: [projects.workspaceId], references: [workspaces.id] }),
-  services: many(services),
+  serviceProjects: many(serviceProjects),
 }));
 
 export const servicesRelations = relations(services, ({ one, many }) => ({
-  project: one(projects, { fields: [services.projectId], references: [projects.id] }),
   buildConfig: one(buildConfigs),
   deployments: many(deployments),
   envVars: many(envVars),
   domains: many(domains),
+  volumeAttachments: many(serviceVolumeAttachments),
+  projectLinks: many(serviceProjects),
+  workspaceLinks: many(serviceWorkspaces),
+  labelLinks: many(serviceLabels),
+}));
+
+export const labelsRelations = relations(labels, ({ one, many }) => ({
+  workspace: one(workspaces, { fields: [labels.workspaceId], references: [workspaces.id] }),
+  serviceLinks: many(serviceLabels),
+}));
+
+export const serviceProjectsRelations = relations(serviceProjects, ({ one }) => ({
+  service: one(services, { fields: [serviceProjects.serviceId], references: [services.id] }),
+  project: one(projects, { fields: [serviceProjects.projectId], references: [projects.id] }),
+}));
+
+export const serviceWorkspacesRelations = relations(serviceWorkspaces, ({ one }) => ({
+  service: one(services, { fields: [serviceWorkspaces.serviceId], references: [services.id] }),
+  workspace: one(workspaces, { fields: [serviceWorkspaces.workspaceId], references: [workspaces.id] }),
+}));
+
+export const serviceLabelsRelations = relations(serviceLabels, ({ one }) => ({
+  service: one(services, { fields: [serviceLabels.serviceId], references: [services.id] }),
+  label: one(labels, { fields: [serviceLabels.labelId], references: [labels.id] }),
 }));
 
 export const buildConfigsRelations = relations(buildConfigs, ({ one }) => ({
@@ -918,6 +1069,10 @@ export const databaseAttachmentsRelations = relations(databaseAttachments, ({ on
   database: one(databases, { fields: [databaseAttachments.databaseId], references: [databases.id] }),
 }));
 
+export const serviceVolumeAttachmentsRelations = relations(serviceVolumeAttachments, ({ one }) => ({
+  service: one(services, { fields: [serviceVolumeAttachments.serviceId], references: [services.id] }),
+}));
+
 export const notificationLogRelations = relations(notificationLog, ({ one }) => ({
   channel: one(notificationChannels, { fields: [notificationLog.channelId], references: [notificationChannels.id] }),
 }));
@@ -946,7 +1101,14 @@ export type NewWorkspaceMember = typeof workspaceMembers.$inferInsert;
 export type OidcProvider = typeof oidcProviders.$inferSelect;
 export type NewOidcProvider = typeof oidcProviders.$inferInsert;
 export type Project = typeof projects.$inferSelect;
+export type NewProject = typeof projects.$inferInsert;
 export type Service = typeof services.$inferSelect;
+export type NewService = typeof services.$inferInsert;
+export type Label = typeof labels.$inferSelect;
+export type NewLabel = typeof labels.$inferInsert;
+export type ServiceProject = typeof serviceProjects.$inferSelect;
+export type ServiceWorkspace = typeof serviceWorkspaces.$inferSelect;
+export type ServiceLabel = typeof serviceLabels.$inferSelect;
 export type BuildConfig = typeof buildConfigs.$inferSelect;
 export type Deployment = typeof deployments.$inferSelect;
 export type EnvVar = typeof envVars.$inferSelect;
@@ -960,6 +1122,8 @@ export type Setting = typeof settings.$inferSelect;
 export type Database = typeof databases.$inferSelect;
 export type NewDatabase = typeof databases.$inferInsert;
 export type DatabaseAttachment = typeof databaseAttachments.$inferSelect;
+export type ServiceVolumeAttachment = typeof serviceVolumeAttachments.$inferSelect;
+export type NewServiceVolumeAttachment = typeof serviceVolumeAttachments.$inferInsert;
 export type Tunnel = typeof tunnels.$inferSelect;
 export type NotificationChannel = typeof notificationChannels.$inferSelect;
 export type NotificationLog = typeof notificationLog.$inferSelect;

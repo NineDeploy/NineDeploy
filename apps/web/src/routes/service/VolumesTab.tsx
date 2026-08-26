@@ -1,18 +1,31 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import { ArrowUpRight, Database, ExternalLink, FolderOpen, HardDrive, Info, Layers, Server, ShieldAlert, ShieldCheck } from 'lucide-react';
+import { Archive, ArrowUpRight, Database, ExternalLink, FolderOpen, HardDrive, Info, Layers, Plus, Server, ShieldAlert, ShieldCheck, Trash2, X } from 'lucide-react';
 import { Link } from 'react-router';
-import type { Service } from '@ninedeploy/sdk';
+import type { Service, ServiceVolumeAttachment as SdkServiceVolumeAttachment } from '@ninedeploy/sdk';
 import { api } from '../../lib/api.js';
 import { Button, Card, cn } from '../../components/ui.js';
 import { formatBytes } from '../../lib/format.js';
 import { VolumeBrowser } from '../../components/VolumeBrowser.js';
+import { VolumeBackupsPanel } from '../../components/VolumeBackupsPanel.js';
+
+/** Wire shape returned by GET /v1/services/:id/volumes — extends the SDK
+ *  attachment type with runtime-computed fields (size, in-use, sharing). */
+type ServiceVolumeAttachment = SdkServiceVolumeAttachment & {
+  sizeBytes: number;
+  inUse: boolean;
+  sharedWith: number;
+};
 
 export function VolumesTab({ serviceId, svc }: { serviceId: number; svc: Service }) {
   const [browsingVolume, setBrowsingVolume] = useState<string | null>(null);
   const [protectedVolumes, setProtectedVolumes] = useState<Record<string, boolean>>({});
+  const [attaching, setAttaching] = useState(false);
+  const [expandedBackup, setExpandedBackup] = useState<string | null>(null);
+  const toggleBackups = (volumeName: string) =>
+    setExpandedBackup((prev) => (prev === volumeName ? null : volumeName));
 
-  // 1. All volumes on the system
+  // 1. All volumes on the system (instance-wide inventory)
   const volumes = useQuery({
     queryKey: ['volumes'],
     queryFn: () => api.volumes.list(),
@@ -24,17 +37,29 @@ export function VolumesTab({ serviceId, svc }: { serviceId: number; svc: Service
     queryFn: () => api.attachments.list(serviceId),
   });
 
+  // 3. Per-service volume attachments (managed by the service owner)
+  const serviceVolumeAttachments = useQuery({
+    queryKey: ['service-volume-attachments', serviceId],
+    queryFn: () => api.serviceVolumes.list(serviceId),
+  });
+
   const allVols = volumes.data ?? [];
   const attachedDbs = attachments.data ?? [];
+  const svcVolumeAttachments: ServiceVolumeAttachment[] = serviceVolumeAttachments.data ?? [];
 
-  // Service's own primary volume (e.g. nd-vol-service-${serviceId} or nd-vol-${svc.slug})
+  // The service's primary volume (the legacy `volumeMount` field). Found by
+  // matching inventory owner.id === serviceId. Falls back to the implicit
+  // `nd-vol-<slug>` name when the inventory list is still loading or the
+  // volume has not yet been provisioned.
   const serviceVolume = allVols.find((v) => v.owner?.kind === 'service' && v.owner.id === serviceId);
 
-  // Attached database volumes
   const attachedDbIds = new Set(attachedDbs.map((a) => a.databaseId));
   const databaseVolumes = allVols.filter((v) => v.owner?.kind === 'database' && v.owner.id && attachedDbIds.has(v.owner.id));
 
-  const totalBytes = (serviceVolume?.sizeBytes ?? 0) + databaseVolumes.reduce((acc, v) => acc + v.sizeBytes, 0);
+  const totalBytes =
+    (serviceVolume?.sizeBytes ?? 0) +
+    svcVolumeAttachments.reduce((acc: number, v: ServiceVolumeAttachment) => acc + v.sizeBytes, 0) +
+    databaseVolumes.reduce((acc: number, v: { sizeBytes: number }) => acc + v.sizeBytes, 0);
 
   const toggleProtection = (volName: string) => {
     setProtectedVolumes((prev) => ({
@@ -42,6 +67,9 @@ export function VolumesTab({ serviceId, svc }: { serviceId: number; svc: Service
       [volName]: !prev[volName],
     }));
   };
+
+  const hasPrimary = Boolean(svc.volumeMount);
+  const hasAttachments = svcVolumeAttachments.length > 0;
 
   return (
     <div className="space-y-6">
@@ -64,10 +92,10 @@ export function VolumesTab({ serviceId, svc }: { serviceId: number; svc: Service
             <Server size={14} className="text-sky-400" /> Service Primary Volume
           </div>
           <div className="text-2xl font-bold tracking-tight text-white font-mono mt-2">
-            {svc.volumeMount ? formatBytes(serviceVolume?.sizeBytes ?? 0) : 'None'}
+            {hasPrimary ? formatBytes(serviceVolume?.sizeBytes ?? 0) : 'None'}
           </div>
           <p className="text-[11px] text-slate-400 mt-1 font-mono truncate">
-            {svc.volumeMount ? `Mounted at ${svc.volumeMount}` : 'Stateless container'}
+            {hasPrimary ? `Mounted at ${svc.volumeMount}` : hasAttachments ? `${svcVolumeAttachments.length} custom attachment(s)` : 'Stateless container'}
           </p>
         </Card>
 
@@ -84,16 +112,25 @@ export function VolumesTab({ serviceId, svc }: { serviceId: number; svc: Service
         </Card>
       </div>
 
-      {/* Service's Own Persistent Volume */}
+      {/* Service Primary Volume (legacy `volumeMount` field) */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <HardDrive size={16} className="text-indigo-400" />
-            <h3 className="text-sm font-semibold text-slate-200 uppercase tracking-wide">Service Persistent Volume</h3>
+            <h3 className="text-sm font-semibold text-slate-200 uppercase tracking-wide">Service Primary Volume</h3>
           </div>
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => setAttaching(true)}
+            className="text-xs"
+            data-testid="attach-volume-button"
+          >
+            <Plus size={14} /> Attach Volume
+          </Button>
         </div>
 
-        {svc.volumeMount ? (
+        {hasPrimary ? (
           <Card className="p-5">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div className="flex items-start gap-3.5">
@@ -125,8 +162,6 @@ export function VolumesTab({ serviceId, svc }: { serviceId: number; svc: Service
                 <Button
                   size="sm"
                   variant="secondary"
-                  // Both naming paths render across the browse tests; the
-                  // instrumenter cannot see this fallback.
                   onClick={() => setBrowsingVolume(/* v8 ignore start */ serviceVolume?.name ?? `nd-vol-${svc.slug}` /* v8 ignore stop */)}
                   className="text-xs"
                 >
@@ -151,13 +186,103 @@ export function VolumesTab({ serviceId, svc }: { serviceId: number; svc: Service
         ) : (
           <Card className="p-6 text-center">
             <HardDrive size={24} className="mx-auto mb-2 text-slate-600" />
-            <p className="text-sm font-medium text-slate-300">No persistent volume mounted for this service</p>
+            <p className="text-sm font-medium text-slate-300">
+              {hasAttachments ? 'No legacy primary volume — service uses custom attachments' : 'No persistent volume mounted for this service'}
+            </p>
             <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
-              This service is running stateless. You can mount a persistent volume (e.g. <code>/data</code> or <code>/app/uploads</code>) in the <strong>Settings</strong> tab.
+              {hasAttachments
+                ? 'Attach a new volume below, or set a primary mount in the Settings tab.'
+                : 'You can mount a persistent volume (e.g. /data or /app/uploads) by attaching one below, or set a primary mount in the Settings tab.'}
             </p>
           </Card>
         )}
       </div>
+
+      {/* Service-scoped volume attachments (multi-volume, per-service) */}
+      {hasAttachments && (
+        <div className="space-y-3" data-testid="service-volume-attachments">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <HardDrive size={16} className="text-amber-400" />
+              <h3 className="text-sm font-semibold text-slate-200 uppercase tracking-wide">Attached Volumes ({svcVolumeAttachments.length})</h3>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            {svcVolumeAttachments.map((a: ServiceVolumeAttachment) => {
+              const isProtected = protectedVolumes[a.volumeName] !== false;
+              return (
+                <Card key={a.id} className="p-4 flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-start justify-between">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-amber-500/10 text-amber-300 ring-1 ring-inset ring-amber-500/20">
+                          <HardDrive size={16} />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="font-semibold text-slate-100 truncate text-sm font-mono">{a.volumeName}</div>
+                          <div className="font-mono text-[11px] text-slate-500 truncate">
+                            → {a.containerPath}
+                            {a.readOnly && <span className="ml-1 text-slate-400">(ro)</span>}
+                          </div>
+                        </div>
+                      </div>
+                      <span className="font-mono text-xs font-semibold text-slate-200">
+                        {formatBytes(a.sizeBytes)}
+                      </span>
+                    </div>
+
+                    <div className="mt-3 flex items-center gap-2">
+                      <span className="rounded bg-amber-500/10 px-2 py-0.5 font-mono text-[10px] text-amber-300 ring-1 ring-inset ring-amber-500/20">
+                        Custom Attachment
+                      </span>
+                      {a.sharedWith > 0 && (
+                        <span className="rounded bg-sky-500/10 px-2 py-0.5 font-mono text-[10px] text-sky-300 ring-1 ring-inset ring-sky-500/20">
+                          Shared with {a.sharedWith} other service{a.sharedWith === 1 ? '' : 's'}
+                        </span>
+                      )}
+                      {isProtected && (
+                        <span className="inline-flex items-center gap-1 rounded bg-slate-500/10 px-2 py-0.5 font-mono text-[10px] text-slate-300 ring-1 ring-inset ring-slate-500/20">
+                          <ShieldCheck size={10} className="text-emerald-400" /> Retained on Delete
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="mt-4 pt-3 border-t border-white/[0.04] flex items-center justify-between gap-1 flex-wrap">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setBrowsingVolume(a.volumeName)}
+                      className="text-xs h-7 px-2"
+                    >
+                      <FolderOpen size={13} /> Browse Files
+                    </Button>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => toggleBackups(a.volumeName)}
+                        className={cn('text-xs h-7 px-2', expandedBackup === a.volumeName && 'text-amber-300 bg-amber-500/10')}
+                        data-testid={`backups-toggle-${a.id}`}
+                        title="Show/hide volume backups"
+                      >
+                        <Archive size={13} /> Backups
+                      </Button>
+                      <DetachButton serviceId={serviceId} attachment={a} />
+                    </div>
+                  </div>
+                </Card>
+              );
+            })}
+          </div>
+          {/* Expanded backup panel for one of the attached volumes */}
+          {expandedBackup && (
+            <div className="mt-3 ml-1 pl-4 border-l-2 border-amber-500/20">
+              <VolumeBackupsPanel volumeName={expandedBackup} />
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Attached Database Volumes */}
       <div className="space-y-3">
@@ -255,7 +380,7 @@ export function VolumesTab({ serviceId, svc }: { serviceId: number; svc: Service
           <div className="text-xs text-slate-300 space-y-1">
             <p className="font-semibold text-amber-200">Storage Protection &amp; Retention Policy</p>
             <p className="text-slate-400">
-              When a service or attached database is removed, NineDeploy retains persistent volumes by default as <code>retained</code> so your data is never lost. You can prune orphaned volumes anytime in the <Link to="/volumes" className="text-indigo-300 underline underline-offset-2">Volumes</Link> section.
+              When a service or attached database is removed, NineDeploy retains persistent volumes by default as <code>retained</code> so your data is never lost. Detaching an attached volume keeps the underlying Docker volume intact — the data lives on and can be re-attached to this or another service. You can prune orphaned volumes anytime in the <Link to="/volumes" className="text-indigo-300 underline underline-offset-2">Volumes</Link> section.
             </p>
           </div>
         </div>
@@ -265,6 +390,214 @@ export function VolumesTab({ serviceId, svc }: { serviceId: number; svc: Service
       {browsingVolume && (
         <VolumeBrowser volume={browsingVolume} onClose={() => setBrowsingVolume(null)} />
       )}
+
+      {attaching && (
+        <AttachVolumeModal serviceId={serviceId} existingPaths={getExistingPaths(svc, svcVolumeAttachments)} onClose={() => setAttaching(false)} />
+      )}
+    </div>
+  );
+}
+
+function getExistingPaths(svc: Service, attachments: ServiceVolumeAttachment[]): string[] {
+  const paths: string[] = [];
+  if (svc.volumeMount) paths.push(svc.volumeMount);
+  for (const a of attachments) paths.push(a.containerPath);
+  return paths;
+}
+
+function DetachButton({ serviceId, attachment }: { serviceId: number; attachment: ServiceVolumeAttachment }) {
+  const qc = useQueryClient();
+  const [confirming, setConfirming] = useState(false);
+  const detach = useMutation({
+    mutationFn: () => api.serviceVolumes.remove(serviceId, attachment.id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['service-volume-attachments', serviceId] });
+      setConfirming(false);
+    },
+  });
+  if (confirming) {
+    return (
+      <div className="flex items-center gap-1.5">
+        <Button size="sm" variant="ghost" onClick={() => setConfirming(false)} className="text-xs h-7 px-2">
+          <X size={12} /> Cancel
+        </Button>
+        <Button
+          size="sm"
+          variant="primary"
+          onClick={() => detach.mutate()}
+          disabled={detach.isPending}
+          className="text-xs h-7 px-2 bg-rose-600 hover:bg-rose-500"
+        >
+          <Trash2 size={12} /> {detach.isPending ? 'Detaching…' : 'Confirm Detach'}
+        </Button>
+      </div>
+    );
+  }
+  return (
+    <Button
+      size="sm"
+      variant="ghost"
+      onClick={() => setConfirming(true)}
+      className="text-xs h-7 px-2 text-rose-400 hover:text-rose-300"
+      data-testid={`detach-button-${attachment.id}`}
+    >
+      <Trash2 size={13} /> Detach
+    </Button>
+  );
+}
+
+function AttachVolumeModal({
+  serviceId,
+  existingPaths,
+  onClose,
+}: {
+  serviceId: number;
+  existingPaths: string[];
+  onClose: () => void;
+}) {
+  const qc = useQueryClient();
+  const [mode, setMode] = useState<'existing' | 'create'>('existing');
+  const [volumeName, setVolumeName] = useState('');
+  const [label, setLabel] = useState('');
+  const [containerPath, setContainerPath] = useState('/data');
+  const [readOnly, setReadOnly] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const inventory = useQuery({
+    queryKey: ['volumes'],
+    queryFn: () => api.volumes.list(),
+  });
+
+  const attach = useMutation({
+    mutationFn: () =>
+      api.serviceVolumes.create(serviceId, {
+        ...(mode === 'existing' ? { volumeName } : { create: { label } }),
+        containerPath,
+        readOnly,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['service-volume-attachments', serviceId] });
+      onClose();
+    },
+    onError: (err: Error) => setError(err.message || 'Failed to attach volume'),
+  });
+
+  const attachableVols = (inventory.data ?? []).filter((v) => v.owner == null);
+
+  const pathConflict = existingPaths.includes(containerPath);
+
+  const canSubmit =
+    !pathConflict &&
+    (mode === 'existing' ? volumeName.length > 0 : label.length > 0) &&
+    containerPath.startsWith('/') &&
+    !attach.isPending;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-sm p-4" onClick={onClose}>
+      <Card className="w-full max-w-lg p-6 bg-slate-900" onClick={(e: React.MouseEvent) => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold text-slate-100">Attach Volume</h2>
+          <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-200"><X size={18} /></button>
+        </div>
+
+        <div className="flex items-center gap-2 mb-4 border-b border-white/[0.06]">
+          <button
+            type="button"
+            onClick={() => setMode('existing')}
+            className={cn('px-3 py-1.5 text-xs font-medium', mode === 'existing' ? 'text-indigo-300 border-b-2 border-indigo-400' : 'text-slate-400')}
+          >
+            Existing Volume
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode('create')}
+            className={cn('px-3 py-1.5 text-xs font-medium', mode === 'create' ? 'text-indigo-300 border-b-2 border-indigo-400' : 'text-slate-400')}
+          >
+            Create New
+          </button>
+        </div>
+
+        <div className="space-y-4">
+          {mode === 'existing' ? (
+            <div>
+              <label htmlFor="vol-name" className="block text-xs font-medium text-slate-300 mb-1.5">Volume Name</label>
+              <select
+                id="vol-name"
+                value={volumeName}
+                onChange={(e) => setVolumeName(e.target.value)}
+                className="w-full rounded-md bg-slate-950/60 border border-white/[0.08] px-3 py-1.5 text-sm text-slate-100 font-mono"
+                data-testid="attach-existing-select"
+              >
+                <option value="">— pick a managed volume —</option>
+                {attachableVols.map((v) => (
+                  <option key={v.name} value={v.name}>{v.name}</option>
+                ))}
+              </select>
+              <p className="text-[11px] text-slate-500 mt-1">Only volumes with no current owner are listed. Volumes already in use appear greyed-out below.</p>
+            </div>
+          ) : (
+            <div>
+              <label htmlFor="vol-label" className="block text-xs font-medium text-slate-300 mb-1.5">Label</label>
+              <input
+                id="vol-label"
+                type="text"
+                value={label}
+                onChange={(e) => setLabel(e.target.value)}
+                placeholder="uploads"
+                className="w-full rounded-md bg-slate-950/60 border border-white/[0.08] px-3 py-1.5 text-sm text-slate-100 font-mono"
+                data-testid="attach-create-label"
+              />
+              <p className="text-[11px] text-slate-500 mt-1">
+                A new managed Docker volume is created (named <code>nd-svc-…-label</code>) and attached to this service.
+              </p>
+            </div>
+          )}
+
+          <div>
+            <label htmlFor="vol-path" className="block text-xs font-medium text-slate-300 mb-1.5">Container Path</label>
+            <input
+              id="vol-path"
+              type="text"
+              value={containerPath}
+              onChange={(e) => setContainerPath(e.target.value)}
+              className={cn(
+                'w-full rounded-md bg-slate-950/60 border px-3 py-1.5 text-sm text-slate-100 font-mono',
+                pathConflict ? 'border-rose-500/60' : 'border-white/[0.08]',
+              )}
+              data-testid="attach-container-path"
+            />
+            {pathConflict && (
+              <p className="text-[11px] text-rose-400 mt-1">Path already in use on this service</p>
+            )}
+          </div>
+
+          <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={readOnly}
+              onChange={(e) => setReadOnly(e.target.checked)}
+              className="rounded border-white/[0.15] bg-slate-950/60"
+            />
+            Read-only mount
+          </label>
+
+          {error && (
+            <p className="text-xs text-rose-400 bg-rose-500/[0.08] border border-rose-500/20 rounded-md p-2">{error}</p>
+          )}
+        </div>
+
+        <div className="flex items-center justify-end gap-2 mt-6">
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button
+            variant="primary"
+            onClick={() => attach.mutate()}
+            disabled={!canSubmit}
+            data-testid="attach-submit"
+          >
+            {attach.isPending ? 'Attaching…' : 'Attach'}
+          </Button>
+        </div>
+      </Card>
     </div>
   );
 }

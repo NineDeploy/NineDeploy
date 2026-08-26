@@ -6,7 +6,6 @@ import type { RepoInsights, Template } from '@ninedeploy/sdk';
 import { api } from '../lib/api.js';
 import { toInt } from '../lib/format.js';
 import { useAuth } from '../lib/auth.js';
-import { useProjectScope } from '../lib/projects.js';
 import { useExperienceMode } from '../lib/mode.js';
 import { useToast } from './Toast.js';
 import { Button, Input, Select, cn } from './ui.js';
@@ -21,9 +20,8 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
   const { toast } = useToast();
   const { isAdvanced } = useExperienceMode();
   const { user } = useAuth();
-  // Compose and PM2 both execute on the host, so the API admits admins only.
-  const isAdmin = user?.role === 'admin';
-  const { selectedId: projectId } = useProjectScope();
+  // Compose and PM2 both execute on the host, so the API admits operators only.
+  const isAdmin = user?.isOperator === true;
   const sources = useQuery({ queryKey: ['sources'], queryFn: () => api.sources.list() });
   const servers = useQuery({ queryKey: ['servers'], queryFn: () => api.servers.list() });
 
@@ -240,7 +238,6 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
       if (template) {
         const input = {
           name,
-          projectId: projectId ?? undefined,
           serverId: serverId ? toInt(serverId) : undefined,
           publishedPort: toInt(publishedPort),
           healthPath: healthPath || undefined,
@@ -283,7 +280,6 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
       const svc = await api.services.create({
         name,
         type,
-        projectId: projectId ?? undefined,
         ...(serverId ? { serverId: toInt(serverId) } : {}),
         // Non-template creates always run in repo mode (image mode only
         // exists for templates, which return above), so the image arms of

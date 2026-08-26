@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+﻿import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { demoRoutes } from '../src/modules/demo.js';
 import { asUser, buildTestApp, createFakeDb } from './helpers.js';
 
@@ -64,8 +64,8 @@ describe('demo routes', () => {
     expect(body.services[0]).toMatchObject({ id: 30, name: 'Next.js Docker App', type: 'docker', port: 80 });
     expect(body.services[1]).toMatchObject({ id: 31, name: 'Next.js PM2 Service', type: 'pm2', port: 3001 });
     expect(auditMocks.audit).toHaveBeenCalled();
-    // The demo DB password is a per-seed random token — never a hardcoded
-    // credential — and the connection string embeds it URL-encoded.
+    // The demo DB password is a per-seed random token â€” never a hardcoded
+    // credential â€” and the connection string embeds it URL-encoded.
     expect(cryptoMocks.randomToken).toHaveBeenCalledWith(24);
     expect(cryptoMocks.encrypt).toHaveBeenCalledWith(
       'postgres://nine:demo-rand-24-char-secret@nd-db-demo-postgres:5432/app',

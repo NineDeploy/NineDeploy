@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Integration test: Redis backup path against a live container through the real
  * engine/database.ts code (redis-cli SAVE + docker cp of dump.rdb). Redis has
  * no restore path by design (see engine/database.ts), so this verifies the
@@ -41,7 +41,7 @@ describe.skipIf(!ENABLED)('database backup (real Redis container)', () => {
 
     await backupDatabase(db as never, dumpFile, () => undefined);
     expect(existsSync(dumpFile)).toBe(true);
-    // The RDB contains the literal value in binary form — the AT-REST file must not.
+    // The RDB contains the literal value in binary form â€” the AT-REST file must not.
     const atRest = readFileSync(dumpFile, 'utf8');
     expect(/^v\d+:/.test(atRest)).toBe(true);
     expect(atRest).not.toContain('roundtrip');

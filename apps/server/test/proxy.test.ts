@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+﻿import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -67,7 +67,7 @@ describe('certificate tracking', () => {
   });
 
   it('keeps the newest of multiple parsed timestamps', () => {
-    // notAfter in the past relative to notBefore — max() must still pick notBefore.
+    // notAfter in the past relative to notBefore â€” max() must still pick notBefore.
     expect(parseCertExpiry(pemWithDates('270101000000Z', '260101000000Z'))).toEqual(new Date('2027-01-01T00:00:00Z'));
   });
 
@@ -373,7 +373,7 @@ describe('ensureTraefik', () => {
 
     await ensureTraefik(log);
 
-    expect(log).toHaveBeenCalledWith('starting traefik container …');
+    expect(log).toHaveBeenCalledWith('starting traefik container â€¦');
     expect(log).toHaveBeenCalledWith('traefik started (http :80 / https :443) on shared network');
     expect(h.sleep).toHaveBeenCalledWith(1000);
     expect(h.run).toHaveBeenCalledWith('docker', ['rm', '-f', 'ninedeploy-traefik'], {}, expect.any(Function));
@@ -400,7 +400,7 @@ describe('ensureTraefik', () => {
 
     await ensureTraefik(log);
 
-    expect(log).toHaveBeenCalledWith('starting traefik container …');
+    expect(log).toHaveBeenCalledWith('starting traefik container â€¦');
     expect(log).toHaveBeenCalledWith('traefik started (http :80 / https :443) on shared network');
   });
 
@@ -416,7 +416,7 @@ describe('ensureTraefik', () => {
 
     await ensureTraefik(log);
 
-    expect(log).toHaveBeenCalledWith('starting traefik container …');
+    expect(log).toHaveBeenCalledWith('starting traefik container â€¦');
   });
 
   it('logs and rejects when the ps command fails', async () => {
@@ -635,10 +635,15 @@ describe('DNS-01 challenge (wildcard SSL)', () => {
     await ensureTraefik(() => undefined, 'ops@example.com', { provider: 'cloudflare', token: 'sekrit', wildcardApex: 'example.com' });
     const envFile = path.join(traefikDir, 'dns.env');
     expect(readFileSync(envFile, 'utf8')).toBe('CF_DNS_API_TOKEN=sekrit\n');
-    const args = h.run.mock.calls.at(-1)![1] as string[];
-    const idx = args.indexOf('--env-file');
+    // The last `run` call is the post-deploy Traefik bridge reap (Model B),
+    // not the Traefik container run we want to inspect. Find the `docker run
+    // -d --name ninedeploy-traefik` call explicitly.
+    const runArgs = h.run.mock.calls.map((c) => c[1] as string[]);
+    const args = runArgs.find((a) => a[0] === 'run' && a.includes('--name') && a.includes('ninedeploy-traefik'));
+    expect(args).toBeDefined();
+    const idx = args!.indexOf('--env-file');
     expect(idx).toBeGreaterThan(-1);
-    expect(args[idx + 1]).toBe(envFile);
+    expect(args![idx + 1]).toBe(envFile);
     h.config.acmeEmail = null;
   });
 
@@ -657,7 +662,7 @@ describe('DNS-01 challenge (wildcard SSL)', () => {
       dns_token_encrypted: encrypt('sekrit'),
       wildcard_domain: '*.example.com',
     };
-    // getDnsConfig reads the three settings in a fixed order — answer each
+    // getDnsConfig reads the three settings in a fixed order â€” answer each
     // lookup with its own value via a sequential mock.
     const ordered = [values['dns_provider'], values['dns_token_encrypted'], values['wildcard_domain']].map((value) => ({ value }));
     const db = {
@@ -704,10 +709,10 @@ describe('DNS-01 challenge (wildcard SSL)', () => {
 
   it('renderDnsEnvFile returns null without provider/token or for unknown providers', async () => {
     h.config.acmeEmail = 'ops@example.com';
-    // No token → no env file, no --env-file flag.
+    // No token â†’ no env file, no --env-file flag.
     await ensureTraefik(() => undefined, 'ops@example.com', { provider: 'cloudflare', token: null, wildcardApex: null });
     expect(existsSync(path.join(traefikDir, 'dns.env'))).toBe(false);
-    // Unknown provider → also skipped (falls back to HTTP-01).
+    // Unknown provider â†’ also skipped (falls back to HTTP-01).
     await ensureTraefik(() => undefined, 'ops@example.com', { provider: 'nope', token: 'tok', wildcardApex: null });
     expect(existsSync(path.join(traefikDir, 'dns.env'))).toBe(false);
     h.config.acmeEmail = null;
@@ -742,7 +747,7 @@ describe('DNS-01 challenge (wildcard SSL)', () => {
     );
     await writeDynamicConfig(db as never);
     const yml = readFileSync(path.join(traefikDir, 'dynamic.yml'), 'utf8');
-    // Wildcard host → HostRegexp with an escaped suffix.
+    // Wildcard host â†’ HostRegexp with an escaped suffix.
     // Backslashes are doubled: the rule sits in a double-quoted YAML scalar.
     expect(yml).toContain('HostRegexp(`^[a-zA-Z0-9-]+\\\\.example\\\\.com$`)');
     // Plain host keeps the literal matcher.
@@ -760,7 +765,7 @@ describe('DNS-01 challenge (wildcard SSL)', () => {
 
   it('omits the wildcard block without DNS-01 readiness', async () => {
     h.config.acmeEmail = 'ops@example.com';
-    h.config.dnsProvider = null; // no provider → HTTP-01 only
+    h.config.dnsProvider = null; // no provider â†’ HTTP-01 only
     h.config.wildcardDomain = 'example.com';
     await writeDynamicConfig(makeDb([], []) as never);
     const yml = readFileSync(path.join(traefikDir, 'dynamic.yml'), 'utf8');
@@ -769,7 +774,7 @@ describe('DNS-01 challenge (wildcard SSL)', () => {
     h.config.wildcardDomain = '';
   });
 
-  it('emits a www→apex redirect middleware and wires it to the router', async () => {
+  it('emits a wwwâ†’apex redirect middleware and wires it to the router', async () => {
     const db = makeDb(
       [{ id: 1, serviceId: 1, hostname: 'www.example.com', path: '/', ssl: true, redirectWww: true, status: 'active' }],
       [{ id: 1, slug: 'web', port: 3000, runtimeId: 'web-1' }],
@@ -949,7 +954,7 @@ describe('DNS-01 challenge (wildcard SSL)', () => {
       const yaml = readFileSync(path.join(traefikDir, 'dynamic.yml'), 'utf8');
 
       // Traefik's default priority IS the rule length, so a service router with
-      // `Host(panel…) && PathPrefix(/v1)` would otherwise out-rank the panel and
+      // `Host(panelâ€¦) && PathPrefix(/v1)` would otherwise out-rank the panel and
       // intercept admin bearer tokens.
       const priority = /ninedeploy_panel:[\s\S]*?priority: (\d+)/.exec(yaml)?.[1];
       expect(priority).toBeDefined();

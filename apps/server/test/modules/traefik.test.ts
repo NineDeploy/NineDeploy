@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+﻿import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { asUser, buildTestApp } from '../helpers.js';
 import { traefikRoutes } from '../../src/modules/traefik.js';
 import * as exec from '../../src/lib/exec.js';
@@ -423,9 +423,9 @@ tcp:
     const app = await makeTraefikApp();
     vi.mocked(exec.capture).mockRejectedValue(new Error('no such container'));
 
-    const member = asUser({ id: 7, role: 'member' });
+    const member = asUser({ id: 7, isOperator: false });
     // The shared UI page stays reachable, but must not carry the routing
-    // tables or the certificate (domain) list — those map out every tenant
+    // tables or the certificate (domain) list â€” those map out every tenant
     // on the instance (same L-12 rule as /traefik/config).
     const overview = await app.inject({ method: 'GET', url: '/traefik', headers: member });
     expect(overview.statusCode).toBe(200);

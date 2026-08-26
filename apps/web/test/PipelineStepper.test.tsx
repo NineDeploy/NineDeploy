@@ -1,11 +1,11 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+﻿import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { parsePipelineStages, PipelineStepper } from '../src/components/PipelineStepper.js';
 
 describe('PipelineStepper', () => {
   it('parses raw logs into active pipeline stages correctly', () => {
     const rawLogs = `
-▶ Deployment #10 for "api" (docker)
+â–¶ Deployment #10 for "api" (docker)
 ##[stage:PREPARE:running] Resolving repository, sources and workspace
 ##[stage:PREPARE:success]
 ##[stage:BUILD:running] Building image and compiling dependencies
@@ -17,7 +17,7 @@ describe('PipelineStepper', () => {
 ##[stage:PROXY_SWAP:success]
 ##[stage:CLEANUP:success]
 ##[stage:COMPLETE:success] Service is live and healthy on production
-✓ Deployment successful
+âœ“ Deployment successful
 `;
 
     const stages = parsePipelineStages(rawLogs, 'running');

@@ -49,7 +49,6 @@ describe('schema', () => {
 
   it('exposes the expected enum arrays', () => {
     for (const name of [
-      'userRole',
       'workspaceRole',
       'serviceType',
       'serviceStatus',

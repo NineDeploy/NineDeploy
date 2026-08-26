@@ -15,14 +15,15 @@ export class MenuRegistry implements IMenuRegistry {
     return this.items.delete(id);
   }
 
-  getItemsForSlot(slot: MenuSlot, userRole?: 'admin' | 'member'): MenuItemDefinition[] {
+  getItemsForSlot(slot: MenuSlot, isOperator?: boolean): MenuItemDefinition[] {
     const list: MenuItemDefinition[] = [];
 
     for (const item of this.items.values()) {
       if (item.slot !== slot) continue;
-      if (item.permission && userRole && item.permission === 'admin' && userRole !== 'admin') {
-        continue;
-      }
+      // `permission: 'admin'` on a menu item is the old "global admin only"
+      // gate; after the team overhaul it means "operator" (owner/admin in some
+      // workspace). When the caller is not an operator the item is hidden.
+      if (item.permission === 'admin' && isOperator !== true) continue;
       list.push(item);
     }
 

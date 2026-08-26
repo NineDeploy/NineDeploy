@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+﻿import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { screen } from '@testing-library/react';
 import { DatabaseTopologyTab } from '../src/routes/database/DatabaseTopologyTab.js';
 import { api } from '../src/lib/api.js';
@@ -6,7 +6,7 @@ import { renderWithProviders, mockOf } from './helpers.js';
 import type { DatabaseDetail as IDatabaseDetail } from '@ninedeploy/sdk';
 
 vi.mock('../src/lib/api.js', async () => {
-  // Must be './apiMock.js', not './helpers.js' — see the note in apiMock.ts.
+  // Must be './apiMock.js', not './helpers.js' â€” see the note in apiMock.ts.
   const { createFakeApiModule } = await import('./apiMock.js');
   return createFakeApiModule();
 });

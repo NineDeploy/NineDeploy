@@ -1,11 +1,11 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+﻿import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import { About } from '../src/routes/About.js';
 import { api } from '../src/lib/api.js';
 import { renderWithProviders, mockOf } from './helpers.js';
 
 vi.mock('../src/lib/api.js', async () => {
-  // Must be './apiMock.js', not './helpers.js' — see the note in apiMock.ts.
+  // Must be './apiMock.js', not './helpers.js' â€” see the note in apiMock.ts.
   const { createFakeApiModule } = await import('./apiMock.js');
   return createFakeApiModule();
 });
@@ -67,7 +67,7 @@ describe('About', () => {
     expect(screen.getByText('2 databases')).toBeInTheDocument();
     expect(screen.getByText('1 users')).toBeInTheDocument();
     expect(screen.getByText('5 plugins')).toBeInTheDocument();
-    expect(screen.getByText("What's New — v0.0.1")).toBeInTheDocument();
+    expect(screen.getByText("What's New â€” v0.0.1")).toBeInTheDocument();
     expect(screen.getByText('First release')).toBeInTheDocument();
     expect(screen.getByText('Initial commit')).toBeInTheDocument();
     expect(screen.getByText('Runtime')).toBeInTheDocument();
@@ -88,7 +88,7 @@ describe('About', () => {
     } as never);
     renderWithProviders(<About />);
     await screen.findByRole('heading', { name: 'NineDeploy' });
-    // The update query resolves in a second paint — poll the DOM for the badge.
+    // The update query resolves in a second paint â€” poll the DOM for the badge.
     for (let i = 0; i < 40; i++) {
       const el = document.querySelector<HTMLAnchorElement>('[title^="Upgrade to"]');
       if (el) {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+﻿import { describe, expect, it } from 'vitest';
 import { ABOUT, CHANGELOG, VERSION } from '../src/version.js';
 
 describe('version', () => {

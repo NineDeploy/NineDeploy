@@ -1,8 +1,9 @@
-import { mkdtempSync, readFileSync, rmSync, existsSync } from 'node:fs';
+﻿import { mkdtempSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { composeBuilder } from '../../src/engine/builders/compose.js';
+import { NOW } from '../helpers.js';
 
 const h = vi.hoisted(() => {
   const run = vi.fn(async (_cmd: string, _args: unknown[], _opts: unknown, sink?: (line: string) => void) => {
@@ -40,8 +41,8 @@ describe('composeBuilder.buildAndRun', () => {
   it('brings the project up with env vars in a temporary .env', async () => {
     const runtime = await composeBuilder.buildAndRun(makeCtx() as never);
 
-    // Previous revision torn down first — with -f so a non-default compose
-    // file is honored — then up --build.
+    // Previous revision torn down first â€” with -f so a non-default compose
+    // file is honored â€” then up --build.
     const downCall = h.run.mock.calls.find((c) => (c[1] as string[])[5] === 'down');
     expect(downCall).toBeTruthy();
     expect((downCall![1] as string[])).toEqual(['compose', '-p', 'ndcmp-stack', '-f', 'compose.yaml', 'down', '--remove-orphans']);
@@ -97,6 +98,60 @@ describe('composeBuilder.buildAndRun', () => {
     });
     const runtime = await composeBuilder.buildAndRun(makeCtx() as never);
     expect(runtime.runtimeId).toBe('ndcmp-stack-api-1');
+  });
+
+  it('writes an override compose file with -v mounts when attachments are present, and removes it afterwards', async () => {
+    const overridePath = path.join(tmp, '.ninedeploy.compose.override.yml');
+    const ctx = makeCtx({
+      service: { slug: 'stack', composeService: 'api', port: 3000, healthPath: '/' },
+      volumeAttachments: [
+        { id: 1, serviceId: 1, volumeName: 'nd-svc-stack-uploads', containerPath: '/uploads', readOnly: false, createdAt: NOW, updatedAt: NOW },
+        { id: 2, serviceId: 1, volumeName: 'nd-svc-stack-config', containerPath: '/etc/app', readOnly: true, createdAt: NOW, updatedAt: NOW },
+      ],
+    });
+
+    let seenOverride: string | null = null;
+    h.run.mockImplementation(async (_c, a, _o, sink) => {
+      sink?.('');
+      const args = a as string[];
+      if (args.includes('up')) {
+        seenOverride = readFileSync(overridePath, 'utf8');
+      }
+    });
+
+    await composeBuilder.buildAndRun(ctx as never);
+
+    // The override file was written and then cleaned up.
+    expect(seenOverride).not.toBeNull();
+    expect(seenOverride).toContain('services:');
+    expect(seenOverride).toContain('  api:');
+    expect(seenOverride).toContain('      - "nd-svc-stack-uploads:/uploads"');
+    expect(seenOverride).toContain('      - "nd-svc-stack-config:/etc/app:ro"');
+    expect(seenOverride).toContain('volumes:');
+    expect(seenOverride).toContain('  nd-svc-stack-uploads:');
+    expect(seenOverride).toContain('  nd-svc-stack-config:');
+    // Each top-level volume is external (the user owns the named volume).
+    expect(seenOverride).toContain('    external: true');
+    expect(existsSync(overridePath)).toBe(false);
+
+    // Both `down` and `up` invocations pass the override via -f.
+    const downCall = h.run.mock.calls.find((c) => (c[1] as string[]).includes('down'));
+    const upCall = h.run.mock.calls.find((c) => (c[1] as string[]).includes('up'));
+    const downArgs = downCall![1] as string[];
+    const upArgs = upCall![1] as string[];
+    // Compose builder uses the absolute path of the override file in the
+    // -f flag (it's written into the workdir).
+    expect(downArgs).toEqual(expect.arrayContaining([overridePath]));
+    expect(upArgs).toEqual(expect.arrayContaining([overridePath]));
+  });
+
+  it('omits the override file entirely when there are no attachments', async () => {
+    const overridePath = path.join(tmp, '.ninedeploy.compose.override.yml');
+    const ctx = makeCtx({ volumeAttachments: [] });
+    await composeBuilder.buildAndRun(ctx as never);
+    expect(existsSync(overridePath)).toBe(false);
+    const upCall = h.run.mock.calls.find((c) => (c[1] as string[]).includes('up'));
+    expect((upCall![1] as string[])).not.toContain(overridePath);
   });
 });
 

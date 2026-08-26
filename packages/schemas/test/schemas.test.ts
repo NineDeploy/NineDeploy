@@ -24,6 +24,7 @@ import {
   createDomain,
   createProject,
   createService,
+  createServiceVolumeAttachment,
   createSource,
   createTunnel,
   createWebhook,
@@ -49,6 +50,8 @@ import {
   register,
   service,
   serviceType,
+  serviceVolumeAttachment,
+  serviceVolumeAttachment as serviceVolumeAttachmentSchema,
   session,
   setLimits,
   setup,
@@ -62,6 +65,7 @@ import {
   triggerDeploy,
   tunnelEntry,
   updateService,
+  updateServiceVolumeAttachment,
   upsertEnvVar,
   volumeEntry,
   webhook,
@@ -72,6 +76,12 @@ import {
   workspaceMemberRoleUpdate,
   oidcProviderCreate,
   oidcProviderUpdate,
+  labelPatch,
+  label,
+  createLabel,
+  setServiceTags,
+  serviceTags,
+  serviceListFilter,
 } from '../src/index.js';
 
 /** Helper: assert a schema accepts an input. */
@@ -244,28 +254,52 @@ describe('auth', () => {
 
   describe('publicUser', () => {
     it('accepts a valid user', () => {
-      const data = ok(publicUser, { id: 1, email: 'a@b.com', name: null, role: 'admin' });
-      expect(data).toEqual({ id: 1, email: 'a@b.com', name: null, role: 'admin' });
+      const data = ok(publicUser, {
+        id: 1,
+        email: 'a@b.com',
+        name: null,
+        isOperator: true,
+        workspaceCount: 1,
+        createdAt: '2026-01-01T00:00:00Z',
+      });
+      expect(data).toEqual({
+        id: 1,
+        email: 'a@b.com',
+        name: null,
+        isOperator: true,
+        workspaceCount: 1,
+        createdAt: '2026-01-01T00:00:00Z',
+      });
     });
 
     it('rejects invalid users', () => {
-      bad(publicUser, { id: 1, email: 'a@b.com', name: null, role: 'root' });
-      bad(publicUser, { id: 1, email: 'a@b.com', name: null });
-      bad(publicUser, { id: 1.5, email: 'a@b.com', name: null, role: 'member' });
+      bad(publicUser, { id: 1, email: 'not-an-email', name: null, isOperator: true, workspaceCount: 1, createdAt: '2026-01-01T00:00:00Z' });
+      bad(publicUser, { id: 1, email: 'a@b.com', name: null, isOperator: true, workspaceCount: 1 });
+      bad(publicUser, { id: 1.5, email: 'a@b.com', name: null, isOperator: true, workspaceCount: 1, createdAt: '2026-01-01T00:00:00Z' });
     });
   });
 
   describe('session', () => {
     it('accepts a session', () => {
       const data = ok(session, {
-        user: { id: 1, email: 'a@b.com', name: 'Ada', role: 'admin' },
+        user: {
+          id: 1,
+          email: 'a@b.com',
+          name: 'Ada',
+          isOperator: true,
+          workspaceCount: 2,
+          createdAt: '2026-01-01T00:00:00Z',
+        },
         tokens: { accessToken: 'a', refreshToken: 'r', expiresIn: 60 },
       });
       expect(data?.tokens.expiresIn).toBe(60);
     });
 
     it('rejects an invalid session', () => {
-      bad(session, { user: { id: 1, email: 'a@b.com', role: 'admin' }, tokens: { accessToken: 'a', refreshToken: 'r', expiresIn: 60 } });
+      bad(session, {
+        user: { id: 1, email: 'not-an-email', isOperator: true, workspaceCount: 1, createdAt: '2026-01-01T00:00:00Z' },
+        tokens: { accessToken: 'a', refreshToken: 'r', expiresIn: 60 },
+      });
     });
   });
 
@@ -353,10 +387,73 @@ describe('service', () => {
     });
   });
 
+  describe('createServiceVolumeAttachment', () => {
+    it('accepts an existing managed volume name', () => {
+      const data = ok(createServiceVolumeAttachment, { volumeName: 'nd-svc-web-uploads', containerPath: '/uploads' });
+      expect(data?.volumeName).toBe('nd-svc-web-uploads');
+      expect(data?.containerPath).toBe('/uploads');
+    });
+
+    it('accepts a create+attach input with a label', () => {
+      const data = ok(createServiceVolumeAttachment, { create: { label: 'uploads' }, containerPath: '/uploads' });
+      expect(data?.create?.label).toBe('uploads');
+    });
+
+    it('rejects when neither volumeName nor create.label is present', () => {
+      bad(createServiceVolumeAttachment, { containerPath: '/x' });
+    });
+
+    it('rejects when both volumeName and create.label are present', () => {
+      bad(createServiceVolumeAttachment, { volumeName: 'nd-svc-x', create: { label: 'y' }, containerPath: '/x' });
+    });
+
+    it('rejects non-absolute container paths', () => {
+      bad(createServiceVolumeAttachment, { volumeName: 'nd-svc-x', containerPath: 'relative' });
+      bad(createServiceVolumeAttachment, { volumeName: 'nd-svc-x', containerPath: '' });
+      bad(createServiceVolumeAttachment, { volumeName: 'nd-svc-x', containerPath: '//double' });
+    });
+
+    it('rejects invalid docker volume names', () => {
+      bad(createServiceVolumeAttachment, { volumeName: 'has space', containerPath: '/x' });
+      bad(createServiceVolumeAttachment, { volumeName: '-leading-hyphen', containerPath: '/x' });
+    });
+  });
+
+  describe('updateServiceVolumeAttachment', () => {
+    it('accepts a path change', () => {
+      expect(updateServiceVolumeAttachment.safeParse({ containerPath: '/new' }).success).toBe(true);
+    });
+
+    it('accepts a readOnly toggle', () => {
+      expect(updateServiceVolumeAttachment.safeParse({ readOnly: true }).success).toBe(true);
+    });
+
+    it('rejects an empty patch', () => {
+      bad(updateServiceVolumeAttachment, {});
+    });
+  });
+
+  describe('serviceVolumeAttachment (output)', () => {
+    it('round-trips a valid row', () => {
+      const row = {
+        id: 1,
+        serviceId: 1,
+        volumeName: 'nd-svc-web-uploads',
+        containerPath: '/uploads',
+        readOnly: false,
+        createdAt: '2026-01-01T00:00:00Z',
+        updatedAt: '2026-01-01T00:00:00Z',
+      };
+      expect(serviceVolumeAttachmentSchema.parse(row)).toEqual(row);
+    });
+  });
+
   describe('service', () => {
     const valid = {
       id: 1,
-      projectId: null,
+      projectIds: [],
+      workspaceIds: [],
+      labelIds: [],
       name: 'Web',
       slug: 'web',
       type: 'docker',
@@ -607,15 +704,15 @@ describe('service', () => {
 
   describe('backups', () => {
     it('backup accepts a row', () => {
-      const data = ok(backup, { id: 1, databaseId: 2, status: 'done', sizeBytes: 1024, createdAt: '2026-01-01T00:00:00Z' });
+      const data = ok(backup, { id: 1, databaseId: 2, volumeName: null, scope: 'db', status: 'done', sizeBytes: 1024, createdAt: '2026-01-01T00:00:00Z' });
       expect(data?.sizeBytes).toBe(1024);
-      bad(backup, { id: 1, databaseId: 2, status: 'done', sizeBytes: 1024, createdAt: 'x' });
+      bad(backup, { id: 1, databaseId: 2, volumeName: null, scope: 'db', status: 'done', sizeBytes: 1024, createdAt: 'x' });
     });
 
     it('backupWithDb extends backup', () => {
-      const data = ok(backupWithDb, { id: 1, databaseId: null, status: 'done', sizeBytes: 1, createdAt: '2026-01-01T00:00:00Z', databaseName: null });
+      const data = ok(backupWithDb, { id: 1, databaseId: null, volumeName: null, scope: 'db', status: 'done', sizeBytes: 1, createdAt: '2026-01-01T00:00:00Z', databaseName: null });
       expect(data?.databaseName).toBeNull();
-      bad(backupWithDb, { id: 1, databaseId: null, status: 'done', sizeBytes: 1, createdAt: '2026-01-01T00:00:00Z' });
+      bad(backupWithDb, { id: 1, databaseId: null, volumeName: null, scope: 'db', status: 'done', sizeBytes: 1, createdAt: '2026-01-01T00:00:00Z' });
     });
   });
 
@@ -954,6 +1051,56 @@ describe('service', () => {
       ok(oidcProviderUpdate, { name: 'New Name' });
       ok(oidcProviderUpdate, { enabled: false, autoEnroll: false, defaultRole: 'admin' });
       bad(oidcProviderUpdate, {});
+    });
+  });
+
+  describe('labels', () => {
+    it('createLabel accepts a valid label', () => {
+      ok(createLabel, { name: 'prod', color: 'indigo' });
+      ok(createLabel, { name: 'prod' });
+    });
+    it('createLabel rejects a bad color', () => {
+      bad(createLabel, { name: 'prod', color: 'red' });
+    });
+    it('labelPatch accepts a name or color update', () => {
+      ok(labelPatch, { name: 'staging' });
+      ok(labelPatch, { color: 'amber' });
+    });
+    it('labelPatch rejects an empty patch', () => {
+      bad(labelPatch, {});
+    });
+    it('label round-trips a full row', () => {
+      const row = {
+        id: 1,
+        workspaceId: 2,
+        name: 'prod',
+        color: '#ff00ff',
+        serviceCount: 0,
+        createdAt: '2026-01-01T00:00:00Z',
+        updatedAt: '2026-01-01T00:00:00Z',
+      };
+      expect(label.parse(row)).toEqual(row);
+    });
+    it('setServiceTags accepts all three id arrays', () => {
+      const parsed = setServiceTags.parse({ projectIds: [1], workspaceIds: [2], labelIds: [3] });
+      expect(parsed.projectIds).toEqual([1]);
+      expect(parsed.workspaceIds).toEqual([2]);
+      expect(parsed.labelIds).toEqual([3]);
+    });
+    it('setServiceTags defaults missing arrays to empty', () => {
+      expect(setServiceTags.parse({})).toEqual({ projectIds: [], workspaceIds: [], labelIds: [] });
+    });
+    it('serviceTags round-trips a full row', () => {
+      const row = {
+        serviceId: 1,
+        projects: [{ id: 1, name: 'P', slug: 'p' }],
+        workspaces: [{ id: 2, name: 'W', slug: 'w' }],
+        labels: [{ id: 3, name: 'L', color: '#fff' }],
+      };
+      expect(serviceTags.parse(row)).toEqual(row);
+    });
+    it('serviceListFilter accepts an empty filter', () => {
+      ok(serviceListFilter, {});
     });
   });
 });

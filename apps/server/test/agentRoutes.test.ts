@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+﻿import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -122,7 +122,7 @@ describe('agent /agent/exec route', () => {
     const app = await buildTestApp();
     delete process.env['NINEDEPLOY_AGENT_TOKEN'];
     await app.register(agentRoutes);
-    // No token hash → every token is rejected.
+    // No token hash â†’ every token is rejected.
     const res = await app.inject({
       method: 'POST', url: '/agent/exec',
       headers: { 'x-agent-token': 'anything' },

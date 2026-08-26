@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+﻿import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ToastProvider } from '../src/components/Toast.js';
@@ -6,7 +6,7 @@ import { ToastProvider } from '../src/components/Toast.js';
 /**
  * H-3 (UI half): deployment lifecycle hooks execute binaries on the HOST, so
  * `assertMayUseHostPrivilege` restricts them to admins. The settings form must
- * not offer them to a member — otherwise every save comes back 403 — and, more
+ * not offer them to a member â€” otherwise every save comes back 403 â€” and, more
  * importantly, a member's save must OMIT the hook keys rather than send them
  * empty, or an ordinary rename would clear what an admin configured.
  *
@@ -23,7 +23,7 @@ const apiMock = vi.hoisted(() => ({
 }));
 vi.mock('../src/lib/api.js', () => apiMock);
 
-const authMock = vi.hoisted(() => ({ user: { id: 1, role: 'admin', email: 'a@test', name: 'A' } }));
+const authMock = vi.hoisted(() => ({ user: { id: 1, isOperator: true, email: 'a@test', name: 'A' } }));
 vi.mock('../src/lib/auth.js', () => ({ AuthProvider: ({ children }: { children?: React.ReactNode }) => children, useAuth: () => authMock }));
 
 import { SettingsTab } from '../src/routes/service/SettingsTab.js';
@@ -76,7 +76,7 @@ describe('SettingsTab host-privilege gating', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    authMock.user = { id: 1, role: 'admin', email: 'a@test', name: 'A' };
+    authMock.user = { id: 1, isOperator: true, email: 'a@test', name: 'A' };
     apiMock.api.services.get.mockResolvedValue(service);
     apiMock.api.services.update.mockResolvedValue(service);
     apiMock.api.limits.setService.mockResolvedValue({ cpuShares: 0, memLimitMb: 0 });
@@ -98,7 +98,7 @@ describe('SettingsTab host-privilege gating', () => {
   });
 
   it('hides the lifecycle hook fields from a member', async () => {
-    authMock.user = { id: 5, role: 'member', email: 'm@test', name: 'M' };
+    authMock.user = { id: 5, isOperator: false, email: 'm@test', name: 'M' };
     renderTab();
     await screen.findByText('Service settings');
     expect(screen.queryByText('CI/CD Lifecycle Hooks')).not.toBeInTheDocument();
@@ -109,12 +109,12 @@ describe('SettingsTab host-privilege gating', () => {
   });
 
   it("omits the hook keys from a member's patch instead of clearing them", async () => {
-    authMock.user = { id: 5, role: 'member', email: 'm@test', name: 'M' };
+    authMock.user = { id: 5, isOperator: false, email: 'm@test', name: 'M' };
     renderTab();
     await screen.findByText('Service settings');
     fireEvent.click(screen.getByRole('button', { name: /Save settings/ }));
     const build = await savedBuild();
-    // absent, not '' — an empty string would wipe the admin's `make migrate`
+    // absent, not '' â€” an empty string would wipe the admin's `make migrate`
     expect(build.preDeployCmd).toBeUndefined();
     expect(build.postDeployCmd).toBeUndefined();
     expect(build.preStopCmd).toBeUndefined();

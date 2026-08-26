@@ -54,7 +54,7 @@ interface TraefikMiddleware {
 
 export function Traefik() {
   const { user: me } = useAuth();
-  const isAdmin = me?.role === 'admin';
+  const isAdmin = me?.isOperator === true;
 
   const info = useQuery({
     queryKey: ['traefik'],

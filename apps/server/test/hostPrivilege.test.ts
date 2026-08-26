@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+﻿import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { servicesRoutes } from '../src/modules/services.js';
 import { deploysRoutes } from '../src/modules/deploys.js';
 import { hostPrivilegeReasons } from '../src/lib/hostPrivilege.js';
@@ -13,10 +13,10 @@ import { asUser, buildTestApp, createFakeDb, svcRow } from './helpers.js';
  * were all admin-gated on the grounds that host reach is admin-only. These
  * tests hold that boundary closed:
  *
- *   • PM2 services            → `sh -c <installCmd>` on the host
- *   • Compose services        → attacker-authored YAML (host mounts, privileged)
- *   • Lifecycle hooks         → host binaries via engine/pipeline.ts
- *   • docker-socket templates → container control of the whole host
+ *   â€¢ PM2 services            â†’ `sh -c <installCmd>` on the host
+ *   â€¢ Compose services        â†’ attacker-authored YAML (host mounts, privileged)
+ *   â€¢ Lifecycle hooks         â†’ host binaries via engine/pipeline.ts
+ *   â€¢ docker-socket templates â†’ container control of the whole host
  */
 
 const execMocks = vi.hoisted(() => ({
@@ -48,8 +48,8 @@ vi.mock('../src/config.js', () => ({
 }));
 
 const MEMBER = 7;
-const member = () => asUser({ id: MEMBER, role: 'member' });
-const admin = () => asUser({ id: 1, role: 'admin' });
+const member = () => asUser({ id: MEMBER, isOperator: false });
+const admin = () => asUser({ id: 1, isOperator: true });
 
 const dockerService = {
   name: 'app',

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+﻿import { afterEach, describe, expect, it, vi } from 'vitest';
 import { isLocked, recordFailure, recordSuccess } from '../../src/lib/loginLockout.js';
 
 describe('loginLockout', () => {

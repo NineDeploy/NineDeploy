@@ -1,4 +1,4 @@
-import Fastify from 'fastify';
+﻿import Fastify from 'fastify';
 import { describe, expect, it, vi } from 'vitest';
 
 const proxyMock = vi.hoisted(() => ({

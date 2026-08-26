@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+﻿import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { workspaceRoutes, ensureDefaultWorkspace } from '../src/modules/workspaces.js';
 import { asUser, buildTestApp, createFakeDb } from './helpers.js';
 
@@ -30,7 +30,7 @@ const userRow = (over: Record<string, unknown> = {}) => ({
   id: 2,
   email: 'alice@example.com',
   name: 'Alice Dev',
-  role: 'member',
+  isOperator: false,
   ...over,
 });
 
@@ -78,7 +78,7 @@ describe('workspaces routes', () => {
           select: {
             workspace_members: [
               memberRow({ workspaceId: 1, userId: 2, role: 'owner' }),
-              memberRow({ workspaceId: 2, userId: 2, role: 'member' }),
+              memberRow({ workspaceId: 2, userId: 2, isOperator: false }),
             ],
             projects: [{ id: 1, workspaceId: 1 }],
           },
@@ -206,7 +206,7 @@ describe('workspaces routes', () => {
       });
       await app.register(workspaceRoutes, { prefix: '/workspaces' });
 
-      const res = await app.inject({ method: 'GET', url: '/workspaces/1', headers: asUser({ id: 1, role: 'admin' }) });
+      const res = await app.inject({ method: 'GET', url: '/workspaces/1', headers: asUser({ id: 1, isOperator: true }) });
       expect(res.statusCode).toBe(200);
       expect(res.json().myRole).toBe('admin');
     });
@@ -222,7 +222,7 @@ describe('workspaces routes', () => {
       });
       await app.register(workspaceRoutes, { prefix: '/workspaces' });
 
-      const res = await app.inject({ method: 'GET', url: '/workspaces/1', headers: asUser({ id: 9, role: 'member' }) });
+      const res = await app.inject({ method: 'GET', url: '/workspaces/1', headers: asUser({ id: 9, isOperator: false }) });
       expect(res.statusCode).toBe(403);
     });
   });
@@ -270,7 +270,7 @@ describe('workspaces routes', () => {
       const res = await app.inject({
         method: 'PATCH',
         url: '/workspaces/1',
-        headers: { ...asUser({ id: 99, role: 'admin' }), 'content-type': 'application/json' },
+        headers: { ...asUser({ id: 99, isOperator: true }), 'content-type': 'application/json' },
         payload: { name: 'Admin Edited', description: 'New description' },
       });
       expect(res.statusCode).toBe(200);
@@ -291,7 +291,7 @@ describe('workspaces routes', () => {
       const res = await app.inject({
         method: 'PATCH',
         url: '/workspaces/1',
-        headers: { ...asUser({ id: 3, role: 'member' }), 'content-type': 'application/json' },
+        headers: { ...asUser({ id: 3, isOperator: false }), 'content-type': 'application/json' },
         payload: { name: 'Hacked' },
       });
       expect(res.statusCode).toBe(403);
@@ -355,7 +355,7 @@ describe('workspaces routes', () => {
       });
       await app.register(workspaceRoutes, { prefix: '/workspaces' });
 
-      const res = await app.inject({ method: 'DELETE', url: '/workspaces/1', headers: asUser({ id: 3, role: 'member' }) });
+      const res = await app.inject({ method: 'DELETE', url: '/workspaces/1', headers: asUser({ id: 3, isOperator: false }) });
       expect(res.statusCode).toBe(403);
     });
 
@@ -382,7 +382,7 @@ describe('workspaces routes', () => {
             users: userRow({ id: 4, email: 'bob@example.com' }),
           },
           insert: {
-            workspace_members: [memberRow({ id: 10, workspaceId: 1, userId: 4, role: 'member' })],
+            workspace_members: [memberRow({ id: 10, workspaceId: 1, userId: 4, isOperator: false })],
           },
         }),
       });
@@ -393,7 +393,7 @@ describe('workspaces routes', () => {
         method: 'POST',
         url: '/workspaces/1/members',
         headers: { ...asUser({ id: 2 }), 'content-type': 'application/json' },
-        payload: { email: 'bob@example.com', role: 'member' },
+        payload: { email: 'bob@example.com', isOperator: false },
       });
       expect(res.statusCode).toBe(200);
       expect(res.json().email).toBe('bob@example.com');
@@ -424,7 +424,7 @@ describe('workspaces routes', () => {
         method: 'POST',
         url: '/workspaces/1/members',
         headers: { ...asUser({ id: 2 }), 'content-type': 'application/json' },
-        payload: { email: 'bob@example.com', role: 'member' },
+        payload: { email: 'bob@example.com', isOperator: false },
       });
       expect(res.statusCode).toBe(400);
     });
@@ -443,7 +443,7 @@ describe('workspaces routes', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/workspaces/1/members',
-        headers: { ...asUser({ id: 3, role: 'member' }), 'content-type': 'application/json' },
+        headers: { ...asUser({ id: 3, isOperator: false }), 'content-type': 'application/json' },
         payload: { email: 'test@example.com' },
       });
       expect(res.statusCode).toBe(403);
@@ -469,7 +469,7 @@ describe('workspaces routes', () => {
                 id: 99,
                 workspaceId: 1,
                 email: 'notfound@example.com',
-                role: 'member',
+                isOperator: false,
                 token: 'a'.repeat(64),
                 invitedByUserId: 2,
                 expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
@@ -520,7 +520,7 @@ describe('workspaces routes', () => {
         headers: { ...asUser({ id: 2 }), 'content-type': 'application/json' },
         payload: { email: 'bob@example.com' },
       });
-      // Was 409 "already a member" vs 404 "user not found" — two answers that
+      // Was 409 "already a member" vs 404 "user not found" â€” two answers that
       // together told a workspace owner whether any given email had an account
       // on this instance. Both now return the same 404 with the same message.
       expect(res.statusCode).toBe(404);
@@ -532,7 +532,7 @@ describe('workspaces routes', () => {
         db: createFakeDb({
           findFirst: {
             workspaces: workspaceRow({ id: 1, ownerId: 2 }),
-            workspaceMembers: memberRow({ id: 10, workspaceId: 1, userId: 4, role: 'admin' }),
+            workspaceMembers: memberRow({ id: 10, workspaceId: 1, userId: 4, isOperator: true }),
             users: userRow({ id: 4, email: 'bob@example.com' }),
           },
           update: {
@@ -558,7 +558,7 @@ describe('workspaces routes', () => {
         db: createFakeDb({
           findFirst: {
             workspaces: workspaceRow({ id: 1, ownerId: 2 }),
-            workspaceMembers: memberRow({ id: 10, workspaceId: 1, userId: 4, role: 'admin' }),
+            workspaceMembers: memberRow({ id: 10, workspaceId: 1, userId: 4, isOperator: true }),
             users: userRow({ id: 4, email: 'bob@example.com' }),
           },
           update: {
@@ -572,7 +572,7 @@ describe('workspaces routes', () => {
       const res = await app.inject({
         method: 'PATCH',
         url: '/workspaces/1/members/10',
-        headers: { ...asUser({ id: 99, role: 'admin' }), 'content-type': 'application/json' },
+        headers: { ...asUser({ id: 99, isOperator: true }), 'content-type': 'application/json' },
         payload: { role: 'owner' },
       });
       expect(res.statusCode).toBe(200);
@@ -583,7 +583,7 @@ describe('workspaces routes', () => {
         db: createFakeDb({
           findFirst: {
             workspaces: workspaceRow({ id: 1, ownerId: 2 }),
-            workspaceMembers: memberRow({ id: 10, workspaceId: 1, userId: 4, role: 'admin' }),
+            workspaceMembers: memberRow({ id: 10, workspaceId: 1, userId: 4, isOperator: true }),
           },
         }),
       });
@@ -592,7 +592,7 @@ describe('workspaces routes', () => {
       const res = await app.inject({
         method: 'PATCH',
         url: '/workspaces/1/members/10',
-        headers: { ...asUser({ id: 5, role: 'member' }), 'content-type': 'application/json' },
+        headers: { ...asUser({ id: 5, isOperator: false }), 'content-type': 'application/json' },
         payload: { role: 'owner' },
       });
       expect(res.statusCode).toBe(403);
@@ -612,8 +612,8 @@ describe('workspaces routes', () => {
       const res = await app.inject({
         method: 'PATCH',
         url: '/workspaces/1/members/10',
-        headers: { ...asUser({ id: 5, role: 'member' }), 'content-type': 'application/json' },
-        payload: { role: 'member' },
+        headers: { ...asUser({ id: 5, isOperator: false }), 'content-type': 'application/json' },
+        payload: { isOperator: false },
       });
       expect(res.statusCode).toBe(403);
     });
@@ -637,7 +637,7 @@ describe('workspaces routes', () => {
         method: 'PATCH',
         url: '/workspaces/1/members/999',
         headers: { ...asUser({ id: 2 }), 'content-type': 'application/json' },
-        payload: { role: 'admin' },
+        payload: { isOperator: true },
       });
       expect(res.statusCode).toBe(404);
     });
@@ -666,7 +666,7 @@ describe('workspaces routes', () => {
         db: createFakeDb({
           findFirst: {
             workspaces: workspaceRow({ id: 1, ownerId: 2 }),
-            workspace_members: memberRow({ id: 10, workspaceId: 1, userId: 4, role: 'member' }),
+            workspace_members: memberRow({ id: 10, workspaceId: 1, userId: 4, isOperator: false }),
           },
         }),
       });
@@ -686,7 +686,7 @@ describe('workspaces routes', () => {
         db: createFakeDb({
           findFirst: {
             workspaces: workspaceRow({ id: 1, ownerId: 2 }),
-            workspace_members: memberRow({ id: 10, workspaceId: 1, userId: 4, role: 'member' }),
+            workspace_members: memberRow({ id: 10, workspaceId: 1, userId: 4, isOperator: false }),
           },
         }),
       });
@@ -695,7 +695,7 @@ describe('workspaces routes', () => {
       const res = await app.inject({
         method: 'DELETE',
         url: '/workspaces/1/members/10',
-        headers: asUser({ id: 9, role: 'member' }),
+        headers: asUser({ id: 9, isOperator: false }),
       });
       expect(res.statusCode).toBe(403);
     });
@@ -705,7 +705,7 @@ describe('workspaces routes', () => {
         db: createFakeDb({
           findFirst: {
             workspaces: workspaceRow({ id: 1, ownerId: 2 }),
-            workspace_members: memberRow({ id: 10, workspaceId: 1, userId: 4, role: 'member' }),
+            workspace_members: memberRow({ id: 10, workspaceId: 1, userId: 4, isOperator: false }),
           },
         }),
       });
@@ -714,7 +714,7 @@ describe('workspaces routes', () => {
       const res = await app.inject({
         method: 'DELETE',
         url: '/workspaces/1/members/10',
-        headers: asUser({ id: 4, role: 'member' }),
+        headers: asUser({ id: 4, isOperator: false }),
       });
       expect(res.statusCode).toBe(200);
       expect(res.json().ok).toBe(true);
@@ -725,7 +725,7 @@ describe('workspaces routes', () => {
         db: createFakeDb({
           findFirst: {
             workspaces: workspaceRow({ id: 1, ownerId: 2 }),
-            workspace_members: memberRow({ id: 10, workspaceId: 1, userId: 4, role: 'admin' }),
+            workspace_members: memberRow({ id: 10, workspaceId: 1, userId: 4, isOperator: true }),
             users: undefined,
           },
           update: {
@@ -739,7 +739,7 @@ describe('workspaces routes', () => {
         method: 'PATCH',
         url: '/workspaces/1/members/10',
         headers: { ...asUser({ id: 2 }), 'content-type': 'application/json' },
-        payload: { role: 'admin' },
+        payload: { isOperator: true },
       });
       expect(resFail.statusCode).toBe(400);
 
@@ -747,11 +747,11 @@ describe('workspaces routes', () => {
         db: createFakeDb({
           findFirst: {
             workspaces: workspaceRow({ id: 1, ownerId: 2 }),
-            workspace_members: memberRow({ id: 10, workspaceId: 1, userId: 4, role: 'admin' }),
+            workspace_members: memberRow({ id: 10, workspaceId: 1, userId: 4, isOperator: true }),
             users: undefined,
           },
           update: {
-            workspace_members: [memberRow({ id: 10, role: 'admin' })],
+            workspace_members: [memberRow({ id: 10, isOperator: true })],
           },
         }),
       });
@@ -761,7 +761,7 @@ describe('workspaces routes', () => {
         method: 'PATCH',
         url: '/workspaces/1/members/10',
         headers: { ...asUser({ id: 2 }), 'content-type': 'application/json' },
-        payload: { role: 'admin' },
+        payload: { isOperator: true },
       });
       expect(resSuccess.statusCode).toBe(200);
     });
@@ -802,7 +802,7 @@ describe('workspaces routes', () => {
         method: 'PATCH',
         url: '/workspaces/99/members/1',
         headers: { ...asUser({ id: 2 }), 'content-type': 'application/json' },
-        payload: { role: 'admin' },
+        payload: { isOperator: true },
       });
       expect(res2.statusCode).toBe(404);
 

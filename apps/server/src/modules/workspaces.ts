@@ -58,7 +58,11 @@ function serializeWorkspace(
   };
 }
 
-export async function ensureDefaultWorkspace(db: DB, user: { id: number; name?: string | null; email?: string }): Promise<Workspace> {
+export async function ensureDefaultWorkspace(
+  db: Pick<DB, 'query' | 'select' | 'insert' | 'update' | 'delete'>,
+  user: { id: number; name?: string | null; email?: string },
+  role: WorkspaceRole = 'owner',
+): Promise<Workspace> {
   const existingMembership = await db.query.workspaceMembers.findFirst({
     where: eq(workspaceMembers.userId, user.id),
   });
@@ -95,10 +99,31 @@ export async function ensureDefaultWorkspace(db: DB, user: { id: number; name?: 
   await db.insert(workspaceMembers).values({
     workspaceId: ws!.id,
     userId: user.id,
-    role: 'owner',
+    role,
   });
 
   return ws!;
+}
+
+/**
+ * Like `ensureDefaultWorkspace` but always grants the given role even when
+ * a personal workspace already exists. Used by SSO auto-enroll where the
+ * provider's `defaultRole` is a workspace role.
+ */
+export async function ensureDefaultWorkspaceWithRole(
+  db: Pick<DB, 'query' | 'select' | 'insert' | 'update' | 'delete'>,
+  user: { id: number; name?: string | null; email?: string },
+  role: WorkspaceRole,
+): Promise<Workspace> {
+  const ws = await ensureDefaultWorkspace(db, user, role);
+  // ensureDefaultWorkspace is a no-op when a workspace already exists; in
+  // that case we still need to align the membership role with the requested
+  // value (idempotent UPDATE).
+  await db
+    .update(workspaceMembers)
+    .set({ role })
+    .where(and(eq(workspaceMembers.workspaceId, ws.id), eq(workspaceMembers.userId, user.id)));
+  return ws;
 }
 
 export const workspaceRoutes: FastifyPluginAsync = async (app) => {
@@ -197,7 +222,7 @@ export const workspaceRoutes: FastifyPluginAsync = async (app) => {
       where: and(eq(workspaceMembers.workspaceId, id), eq(workspaceMembers.userId, userId)),
     });
 
-    const isInstanceAdmin = req.user!.role === 'admin';
+    const isInstanceAdmin = req.user!.isOperator;
     if (!membership && !isInstanceAdmin) {
       throw forbidden('You are not a member of this workspace');
     }
@@ -241,7 +266,7 @@ export const workspaceRoutes: FastifyPluginAsync = async (app) => {
       where: and(eq(workspaceMembers.workspaceId, id), eq(workspaceMembers.userId, userId)),
     });
 
-    const canEdit = req.user!.role === 'admin' || membership?.role === 'owner' || membership?.role === 'admin';
+    const canEdit = req.user!.isOperator || membership?.role === 'owner' || membership?.role === 'admin';
     if (!canEdit) throw forbidden('Admin or Owner role required to update workspace settings');
 
     const [updated] = await app.db
@@ -268,7 +293,7 @@ export const workspaceRoutes: FastifyPluginAsync = async (app) => {
     const ws = await app.db.query.workspaces.findFirst({ where: eq(workspaces.id, id) });
     if (!ws) throw notFound('Workspace not found');
 
-    const isOwner = ws.ownerId === userId || req.user!.role === 'admin';
+    const isOwner = ws.ownerId === userId || req.user!.isOperator;
     if (!isOwner) throw forbidden('Only the workspace owner or system admin can delete a workspace');
 
     await app.db.delete(workspaces).where(eq(workspaces.id, id));
@@ -291,7 +316,7 @@ export const workspaceRoutes: FastifyPluginAsync = async (app) => {
       where: and(eq(workspaceMembers.workspaceId, id), eq(workspaceMembers.userId, userId)),
     });
 
-    const canInvite = req.user!.role === 'admin' || callerMembership?.role === 'owner' || callerMembership?.role === 'admin';
+    const canInvite = req.user!.isOperator || callerMembership?.role === 'owner' || callerMembership?.role === 'admin';
     if (!canInvite) throw forbidden('Admin or Owner role required to invite workspace members');
 
     const targetUser = await app.db.query.users.findFirst({ where: eq(users.email, input.email) });
@@ -364,7 +389,7 @@ export const workspaceRoutes: FastifyPluginAsync = async (app) => {
       where: and(eq(workspaceMembers.workspaceId, id), eq(workspaceMembers.userId, userId)),
     });
 
-    const canManage = req.user!.role === 'admin' || callerMembership?.role === 'owner' || callerMembership?.role === 'admin';
+    const canManage = req.user!.isOperator || callerMembership?.role === 'owner' || callerMembership?.role === 'admin';
     if (!canManage) throw forbidden('Admin or Owner role required to update member roles');
 
     const targetMembership = await app.db.query.workspaceMembers.findFirst({
@@ -373,7 +398,7 @@ export const workspaceRoutes: FastifyPluginAsync = async (app) => {
     if (!targetMembership) throw notFound('Member not found in this workspace');
 
     if (input.role === 'owner') {
-      if (ws.ownerId !== userId && req.user!.role !== 'admin') {
+      if (ws.ownerId !== userId && !req.user!.isOperator) {
         throw forbidden('Only the workspace owner can transfer ownership');
       }
       // Demote current owner to admin in members table and update workspace ownerId
@@ -417,7 +442,7 @@ export const workspaceRoutes: FastifyPluginAsync = async (app) => {
     });
 
     const isSelf = targetMembership.userId === userId;
-    const canRemove = req.user!.role === 'admin' || callerMembership?.role === 'owner' || callerMembership?.role === 'admin' || isSelf;
+    const canRemove = req.user!.isOperator || callerMembership?.role === 'owner' || callerMembership?.role === 'admin' || isSelf;
     if (!canRemove) throw forbidden('Permission denied to remove member');
 
     if (targetMembership.userId === ws.ownerId) {
@@ -429,3 +454,26 @@ export const workspaceRoutes: FastifyPluginAsync = async (app) => {
     return { ok: true };
   });
 };
+
+/**
+ * For a service-tag write: return the subset of `ids` the caller is allowed
+ * to assign (i.e. workspaces they belong to). Operators see every requested
+ * id (we still verify the rows exist). Returns an empty array when none
+ * match.
+ */
+export async function visibleWorkspaceIds(
+  db: import('@ninedeploy/db').DB,
+  user: { id: number; isOperator: boolean },
+  ids: number[],
+): Promise<number[]> {
+  if (ids.length === 0) return [];
+  const rows = await db.query.workspaces.findMany({
+    where: (w, { inArray: inOp }) => inOp(w.id, ids),
+  });
+  if (user.isOperator) return rows.map((w) => w.id);
+  const ms = await db.query.workspaceMembers.findMany({
+    where: (m, { eq: eqOp, and: andOp, inArray: inOp }) =>
+      andOp(eqOp(m.userId, user.id), inOp(m.workspaceId, ids)),
+  });
+  return ms.map((m) => m.workspaceId);
+}

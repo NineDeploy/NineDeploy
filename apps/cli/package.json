@@ -29,6 +29,7 @@
   },
   "dependencies": {
     "@ninedeploy/sdk": "workspace:*",
+    "@ninedeploy/schemas": "workspace:*",
     "commander": "^15.0.0",
     "ws": "^8.21.3"
   },

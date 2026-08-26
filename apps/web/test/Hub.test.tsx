@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+﻿import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Hub } from '../src/routes/Hub.js';
@@ -7,7 +7,7 @@ import { useAuth } from '../src/lib/auth.js';
 import { renderWithProviders, mockOf } from './helpers.js';
 
 vi.mock('../src/lib/api.js', async () => {
-  // Must be './apiMock.js', not './helpers.js' — see the note in apiMock.ts.
+  // Must be './apiMock.js', not './helpers.js' â€” see the note in apiMock.ts.
   const { createFakeApiModule } = await import('./apiMock.js');
   return createFakeApiModule();
 });
@@ -31,7 +31,7 @@ const templates = [
   {
     id: 'n8n',
     name: 'n8n',
-    emoji: '⚡',
+    emoji: 'âš¡',
     category: 'Automation',
     tagline: 'Workflow automation',
     featured: true,
@@ -40,7 +40,7 @@ const templates = [
   {
     id: 'ghost',
     name: 'Ghost',
-    emoji: '👻',
+    emoji: 'ðŸ‘»',
     category: 'Blogging',
     tagline: 'Publishing platform',
     featured: false,
@@ -51,7 +51,7 @@ const templates = [
 const templateDetail = {
   id: 'n8n',
   name: 'n8n',
-  emoji: '⚡',
+  emoji: 'âš¡',
   category: 'Automation',
   tagline: 'Workflow automation',
   description: 'A workflow tool',
@@ -109,7 +109,7 @@ describe('Hub', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockOf(useAuth).mockReturnValue({
-      user: { id: 1, email: 'admin@test.com', name: 'Admin', role: 'admin' },
+      user: { id: 1, email: 'admin@test.com', name: 'Admin', isOperator: true },
       loading: false,
     } as never);
     mockOf(api.templates.list).mockResolvedValue(templates as never);
@@ -136,7 +136,7 @@ describe('Hub', () => {
     mockOf(api.templates.list).mockResolvedValue(templates as never);
     const { unmount } = renderWithProviders(<Hub />);
     await screen.findByText('n8n');
-    await user.type(screen.getByPlaceholderText('Search templates…'), 'nothing-matches');
+    await user.type(screen.getByPlaceholderText('Search templatesâ€¦'), 'nothing-matches');
     expect(await screen.findByText('No templates match')).toBeInTheDocument();
     expect(screen.getByText(/Nothing matches "nothing-matches" in any category/)).toBeInTheDocument();
     unmount();
@@ -162,7 +162,7 @@ describe('Hub', () => {
     expect(screen.queryByText('Workflow automation')).not.toBeInTheDocument();
     expect(screen.getByText('Publishing platform')).toBeInTheDocument();
     // filter by search
-    await user.type(screen.getByPlaceholderText('Search templates…'), 'n8n');
+    await user.type(screen.getByPlaceholderText('Search templatesâ€¦'), 'n8n');
     expect(screen.queryByText('Publishing platform')).not.toBeInTheDocument();
   });
 
@@ -199,7 +199,7 @@ describe('Hub', () => {
   it('shows the requires hint for templates that need extra setup', async () => {
     mockOf(api.templates.get).mockResolvedValue({
       ...templateDetail,
-      requires: 'Umami needs a PostgreSQL database — one is provisioned automatically',
+      requires: 'Umami needs a PostgreSQL database â€” one is provisioned automatically',
       dbEngine: 'postgres',
     } as never);
     renderWithProviders(<Hub />);
@@ -228,7 +228,7 @@ describe('Hub', () => {
     expect(screen.getByText('Volume')).toBeInTheDocument();
     expect(screen.getByText('N8N_HOST')).toBeInTheDocument();
     expect(screen.getByText('localhost')).toBeInTheDocument();
-    expect(screen.getByText('••• secret')).toBeInTheDocument();
+    expect(screen.getByText('â€¢â€¢â€¢ secret')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'n8n.io' })).toHaveAttribute('href', 'https://n8n.io');
     // deploy opens the wizard with the template
     await user.click(screen.getByRole('button', { name: /Configure & deploy/ }));
@@ -296,7 +296,7 @@ describe('Hub', () => {
     const minimalYaml = generateComposeYaml({
       id: 'simple-app',
       name: 'Simple App',
-      emoji: '🚀',
+      emoji: 'ðŸš€',
       category: 'Tools',
       tagline: 'Simple test app',
       description: 'A test app without env or port or volume',
@@ -331,7 +331,7 @@ describe('Hub', () => {
       });
 
       // Filter marketplace items
-      await user.type(screen.getByPlaceholderText('Search extensions…'), 'Amazon');
+      await user.type(screen.getByPlaceholderText('Search extensionsâ€¦'), 'Amazon');
       expect(screen.getByText('S3 Sync')).toBeInTheDocument();
       expect(screen.queryByText('Discord Bot')).not.toBeInTheDocument();
 
@@ -348,7 +348,7 @@ describe('Hub', () => {
     it('switches back to templates tab and tests non-admin disabled install', async () => {
       const user = userEvent.setup();
       mockOf(useAuth).mockReturnValue({
-        user: { id: 2, email: 'member@test.com', name: 'Member', role: 'member' },
+        user: { id: 2, email: 'member@test.com', name: 'Member', isOperator: false },
         loading: false,
       } as never);
 
@@ -380,10 +380,10 @@ describe('Hub', () => {
       await waitFor(() => expect(screen.getByText('S3 Sync')).toBeInTheDocument());
 
       await user.click(screen.getByRole('button', { name: /Install/ }));
-      expect(await screen.findByText('Installing…')).toBeInTheDocument();
+      expect(await screen.findByText('Installingâ€¦')).toBeInTheDocument();
 
       resolveInstall({ ok: true, id: 's3-backups', status: 'active' });
-      await waitFor(() => expect(screen.queryByText('Installing…')).not.toBeInTheDocument());
+      await waitFor(() => expect(screen.queryByText('Installingâ€¦')).not.toBeInTheDocument());
     });
 
     it('shows loading state in marketplace tab', async () => {
@@ -425,7 +425,7 @@ describe('Hub', () => {
       await user.click(screen.getByRole('button', { name: /Extension Marketplace/ }));
       await waitFor(() => expect(screen.getByText('S3 Sync')).toBeInTheDocument());
 
-      await user.type(screen.getByPlaceholderText('Search extensions…'), 'xyznonexistent');
+      await user.type(screen.getByPlaceholderText('Search extensionsâ€¦'), 'xyznonexistent');
       expect(await screen.findByText('No extensions match')).toBeInTheDocument();
       expect(screen.getByText('Nothing matches "xyznonexistent" in extensions.')).toBeInTheDocument();
     });

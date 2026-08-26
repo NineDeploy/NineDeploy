@@ -1,11 +1,11 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+﻿import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { screen, waitFor, fireEvent } from '@testing-library/react';
 import { Backups } from '../src/routes/Backups.js';
 import { api, getToken } from '../src/lib/api.js';
 import { renderWithProviders, mockOf } from './helpers.js';
 
 vi.mock('../src/lib/api.js', async () => {
-  // Must be './apiMock.js', not './helpers.js' — see the note in apiMock.ts.
+  // Must be './apiMock.js', not './helpers.js' â€” see the note in apiMock.ts.
   const { createFakeApiModule } = await import('./apiMock.js');
   return createFakeApiModule();
 });
@@ -56,7 +56,7 @@ describe('Backups', () => {
     expect(screen.getByText('2.1 GB')).toBeInTheDocument();
     expect(screen.getByText('52.4 MB')).toBeInTheDocument();
     expect(screen.getByText('100 B')).toBeInTheDocument();
-    expect(screen.getAllByText('—').length).toBeGreaterThan(0); // null databaseName
+    expect(screen.getAllByText('â€”').length).toBeGreaterThan(0); // null databaseName
     expect(screen.getByText('running')).toBeInTheDocument();
     expect(screen.getByText('error')).toBeInTheDocument();
     expect(screen.getAllByText('idle').length).toBeGreaterThan(0); // multiple idle backups
@@ -211,7 +211,7 @@ describe('Backups', () => {
     await waitFor(() => expect(api.backupDestinations.list).toHaveBeenCalledTimes(2));
   });
 
-  // ── off-site destinations ───────────────────────────────────────────────
+  // â”€â”€ off-site destinations â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   it('renders destinations with active/paused badges and test/remove actions', async () => {
     mockOf(api.backups.list).mockResolvedValue([] as never);
     mockOf(api.backupDestinations.list).mockResolvedValue([
@@ -281,7 +281,7 @@ describe('Backups', () => {
     const secretInput = document.querySelector<HTMLInputElement>('input[type="password"]');
     fireEvent.change(secretInput!, { target: { value: 'sk' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save destination' }));
-    expect(await screen.findByText('Saving…')).toBeInTheDocument();
+    expect(await screen.findByText('Savingâ€¦')).toBeInTheDocument();
   });
 
   it('toggles destination active state and surfaces test failures', async () => {
@@ -304,7 +304,7 @@ describe('Backups', () => {
     // Success path toasts too.
     mockOf(api.backupDestinations.test).mockResolvedValueOnce({ ok: true } as never);
     fireEvent.click(screen.getByTitle('Test connection'));
-    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Destination reachable — credentials work', 'success'));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Destination reachable â€” credentials work', 'success'));
     expect(alertSpy).not.toHaveBeenCalled();
   });
 });

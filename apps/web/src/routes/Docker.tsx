@@ -14,7 +14,7 @@ function fmtEventTime(raw: string): string {
 /** Unified Docker dashboard: disk/images + live container inspector + daemon event feed. */
 export function DockerDashboard() {
   const { user } = useAuth();
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = user?.isOperator === true;
   const [selectedContainer, setSelectedContainer] = useState<string | null>(null);
   const [manualContainer, setManualContainer] = useState('');
   const [copiedYaml, setCopiedYaml] = useState(false);

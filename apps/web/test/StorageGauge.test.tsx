@@ -1,4 +1,4 @@
-import { screen, waitFor } from '@testing-library/react';
+﻿import { screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createQueryClient, renderWithProviders } from './web-utils.js';
 
@@ -29,7 +29,7 @@ describe('StorageGauge', () => {
     const { container } = renderWithProviders(<StorageGauge databaseId={3} />, {
       queryClient: createQueryClient(),
     });
-    expect(screen.getByText('…')).toBeInTheDocument();
+    expect(screen.getByText('â€¦')).toBeInTheDocument();
     expect(container.querySelector('.animate-pulse')).not.toBeNull();
   });
 

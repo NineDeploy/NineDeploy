@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+﻿import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { projectRoutes } from '../src/modules/projects.js';
 import { asUser, buildTestApp, createFakeDb } from './helpers.js';
 

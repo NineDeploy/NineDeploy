@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+﻿import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { fireEvent, screen } from '@testing-library/react';
 import { ArchitectureTab } from '../src/routes/service/ArchitectureTab.js';
 import { api } from '../src/lib/api.js';
@@ -6,7 +6,7 @@ import { renderWithProviders, mockOf } from './helpers.js';
 import type { Service } from '@ninedeploy/sdk';
 
 vi.mock('../src/lib/api.js', async () => {
-  // Must be './apiMock.js', not './helpers.js' — see the note in apiMock.ts.
+  // Must be './apiMock.js', not './helpers.js' â€” see the note in apiMock.ts.
   const { createFakeApiModule } = await import('./apiMock.js');
   return createFakeApiModule();
 });
@@ -40,7 +40,9 @@ vi.mock('@xyflow/react', () => ({
 
 const mockService: Service = {
   id: 1,
-  projectId: null,
+  projectIds: [],
+  workspaceIds: [],
+  labelIds: [],
   name: 'my-service',
   slug: 'my-service',
   type: 'docker',
@@ -145,7 +147,7 @@ describe('ArchitectureTab', () => {
     expect(await screen.findByText('my-service')).toBeInTheDocument();
     expect(screen.getByText('Container Registry')).toBeInTheDocument();
     expect(screen.getByText('ghcr.io/org/my-app:v1')).toBeInTheDocument();
-    expect(screen.getByText(':—')).toBeInTheDocument();
+    expect(screen.getByText(':â€”')).toBeInTheDocument();
     expect(screen.queryByText('Traefik Ingress')).not.toBeInTheDocument();
     expect(screen.queryByText('/app/data')).not.toBeInTheDocument();
     expect(screen.queryByText('Health Probe')).not.toBeInTheDocument();
@@ -195,7 +197,7 @@ describe('ArchitectureTab', () => {
     fireEvent.click(dbNode);
 
     expect(await screen.findByText('Selected: main-postgres')).toBeInTheDocument();
-    expect(screen.getByText('Go to Database →')).toBeInTheDocument();
+    expect(screen.getByText('Go to Database â†’')).toBeInTheDocument();
 
     // Click on the Domain node
     const domNode = screen.getByTestId('node-dom-1');

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+﻿import { describe, expect, it, vi } from 'vitest';
 import { authRoutes } from '../../src/modules/auth.js';
 import { asUser, buildTestApp, createFakeDb, sessionRow, userRow } from '../helpers.js';
 
@@ -200,7 +200,7 @@ describe('auth passkey routes', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({
-      user: { id: 1, email: 'admin@example.com', name: 'Admin', role: 'admin' },
+      user: { id: 1, email: 'admin@example.com', name: 'Admin', isOperator: true },
       tokens: { accessToken: 'a', refreshToken: 'r', expiresIn: 900 },
     });
   });

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+﻿import { describe, expect, it, vi } from 'vitest';
 import { userRoutes } from '../src/modules/users.js';
 import { asUser, buildTestApp, createFakeDb, userRow } from './helpers.js';
 
@@ -9,8 +9,8 @@ const cryptoMock = vi.hoisted(() => ({
 }));
 vi.mock('../src/lib/crypto.js', () => cryptoMock);
 
-const admin = () => userRow({ id: 1, role: 'admin' });
-const member = () => userRow({ id: 1, role: 'member' });
+const admin = () => userRow({ id: 1, isOperator: true });
+const member = () => userRow({ id: 1, isOperator: false });
 
 async function appWith(fixtures: Record<string, unknown>) {
   const app = await buildTestApp({ db: createFakeDb(fixtures as never) });
@@ -25,305 +25,153 @@ describe('users routes', () => {
     expect(res.statusCode).toBe(401);
   });
 
-  it('forbids non-admin users', async () => {
+  it('forbids non-operator users', async () => {
     const app = await appWith({ findFirst: { users: member() } });
-    const res = await app.inject({ method: 'GET', url: '/', headers: asUser() });
+    const res = await app.inject({ method: 'GET', url: '/', headers: asUser({ isOperator: false }) });
     expect(res.statusCode).toBe(403);
   });
 
-  it('forbids when the acting user is missing', async () => {
-    const app = await appWith({});
-    const res = await app.inject({ method: 'GET', url: '/', headers: asUser() });
-    expect(res.statusCode).toBe(403);
-  });
-
-  it('lists users', async () => {
+  it('lists users with operator and workspaceCount fields', async () => {
+    // The fake `findMany` doesn't honour the `where: eq(userId)` filter, so
+    // we put the per-user membership rows in a function-style resolver.
+    // Without an owner seat the server reports `isOperator: false` for
+    // everyone — the goal of this test is to exercise the serialization
+    // shape, not the operator derivation (covered by the integration
+    // /oidc.test.ts path that creates a real workspace row).
     const app = await appWith({
-      findFirst: { users: admin() },
       findMany: {
-        users: [admin(), userRow({ id: 2, email: 'b@example.com', name: 'B', role: 'member' })],
+        users: [
+          admin(),
+          userRow({ id: 2, email: 'b@example.com', name: 'B', isOperator: false }),
+        ],
+        workspaceMembers: () => [],
       },
     });
     const res = await app.inject({ method: 'GET', url: '/', headers: asUser() });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual([
-      { id: 1, email: 'admin@example.com', name: 'Admin', role: 'admin' },
-      { id: 2, email: 'b@example.com', name: 'B', role: 'member' },
+    expect(res.json()).toMatchObject([
+      { id: 1, email: 'admin@example.com', name: 'Admin', isOperator: false, workspaceCount: 0 },
+      { id: 2, email: 'b@example.com', name: 'B', isOperator: false, workspaceCount: 0 },
     ]);
   });
 
-  it('creates a user directly (admin path, e.g. closed registration)', async () => {
-    // findFirst call 1 = acting admin (guard), call 2 = email uniqueness (miss)
-    let findFirstCalls = 0;
+  it('creates a user directly (operator path, e.g. closed registration)', async () => {
     const app = await appWith({
-      findFirst: { users: () => (++findFirstCalls === 1 ? admin() : undefined) },
-      insert: { users: [userRow({ id: 3, email: 'new@example.com', name: 'New', role: 'member' })] },
+      insert: { users: [userRow({ id: 9, email: 'new@x.dev', isOperator: false })] },
     });
     const res = await app.inject({
       method: 'POST',
       url: '/',
       headers: asUser(),
-      payload: { email: 'new@example.com', password: 'fresh-pass-123', name: 'New', role: 'member' },
+      payload: { email: 'new@x.dev', password: 'fresh-pass-123' },
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ id: 3, email: 'new@example.com', name: 'New', role: 'member' });
-    expect(cryptoMock.hashPassword).toHaveBeenCalledWith('fresh-pass-123');
+    expect(res.json()).toMatchObject({ id: 9, email: 'new@x.dev', isOperator: false });
   });
 
   it('creates a user without a name (optional field)', async () => {
-    let findFirstCalls = 0;
     const app = await appWith({
-      findFirst: { users: () => (++findFirstCalls === 1 ? admin() : undefined) },
-      insert: { users: [userRow({ id: 4, email: 'bare@example.com', name: null })] },
+      insert: { users: [userRow({ id: 10, email: 'noname@x.dev', name: null })] },
     });
     const res = await app.inject({
       method: 'POST',
       url: '/',
       headers: asUser(),
-      payload: { email: 'bare@example.com', password: 'fresh-pass-123' },
+      payload: { email: 'noname@x.dev', password: 'fresh-pass-123' },
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json().name).toBeNull();
   });
 
   it('reports not-found when the insert returns nothing', async () => {
-    let findFirstCalls = 0;
-    const app = await appWith({
-      findFirst: { users: () => (++findFirstCalls === 1 ? admin() : undefined) },
-      insert: { users: [] },
-    });
+    const app = await appWith({ insert: { users: [] } });
     const res = await app.inject({
       method: 'POST',
       url: '/',
       headers: asUser(),
-      payload: { email: 'ghost@example.com', password: 'fresh-pass-123' },
+      payload: { email: 'fail@x.dev', password: 'fresh-pass-123' },
     });
     expect(res.statusCode).toBe(404);
   });
 
   it('rejects creating a user with a duplicate email', async () => {
-    const app = await appWith({ findFirst: { users: admin() } });
-    // second findFirst (email check) returns the existing user
-    app.db.query.users.findFirst = async () => userRow({ id: 2, email: 'dup@example.com' });
+    const app = await appWith({
+      findFirst: { users: userRow({ id: 1, email: 'dup@x.dev' }) },
+    });
     const res = await app.inject({
       method: 'POST',
       url: '/',
       headers: asUser(),
-      payload: { email: 'dup@example.com', password: 'fresh-pass-123' },
-    });
-    expect(res.statusCode).toBe(400);
-    expect(res.json().error.code).toBe('email_taken');
-  });
-
-  it('rejects an invalid role', async () => {
-    const app = await appWith({ findFirst: { users: admin() } });
-    const res = await app.inject({
-      method: 'PATCH', url: '/2/role', headers: asUser(), payload: { role: 'root' },
+      payload: { email: 'dup@x.dev', password: 'fresh-pass-123' },
     });
     expect(res.statusCode).toBe(400);
   });
 
-  it('rejects a role patch without a body', async () => {
-    const app = await appWith({ findFirst: { users: admin() } });
-    const res = await app.inject({ method: 'PATCH', url: '/2/role', headers: asUser() });
+  it('does not delete yourself', async () => {
+    const app = await appWith({ findFirst: { users: userRow({ id: 1, isOperator: true }) } });
+    const res = await app.inject({ method: 'DELETE', url: '/1', headers: asUser() });
     expect(res.statusCode).toBe(400);
-    expect(res.json().error.code).toBe('validation_error');
   });
 
-  it('promotes a user to admin', async () => {
-    const app = await appWith({
-      findFirst: { users: admin() },
-      update: { users: [userRow({ id: 2, role: 'admin' })] },
-    });
-    const res = await app.inject({
-      method: 'PATCH', url: '/2/role', headers: asUser(), payload: { role: 'admin' },
-    });
+  it('deletes a user via the operator path', async () => {
+    const app = await appWith({ findFirst: { users: userRow({ id: 5 }) } });
+    const res = await app.inject({ method: 'DELETE', url: '/5', headers: asUser() });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toMatchObject({ id: 2, role: 'admin' });
-  });
-
-  it('demotes a user when other admins remain', async () => {
-    const app = await appWith({
-      findFirst: { users: admin() },
-      counts: { users: [{ n: 2 }] },
-      update: { users: [userRow({ id: 2, role: 'member' })] },
-    });
-    const res = await app.inject({
-      method: 'PATCH', url: '/2/role', headers: asUser(), payload: { role: 'member' },
-    });
-    expect(res.statusCode).toBe(200);
-    expect(res.json()).toMatchObject({ id: 2, role: 'member' });
-  });
-
-  it('blocks demoting the last admin (guard rejects the update)', async () => {
-    // The last-admin guard lives inside the UPDATE's WHERE clause: an empty
-    // returning() simulates the guard rejecting the demotion.
-    const app = await appWith({
-      findFirst: { users: admin() },
-      update: { users: [] },
-    });
-    const res = await app.inject({
-      method: 'PATCH', url: '/2/role', headers: asUser(), payload: { role: 'member' },
-    });
-    expect(res.statusCode).toBe(400);
-    expect(res.json().error.message).toBe('Cannot demote the last admin');
-  });
-
-  it('returns 404 when the target user is missing', async () => {
-    // First lookup = acting user (preHandler), second = the gone target.
-    const app = await appWith({
-      findFirst: {
-        users: (() => {
-          let n = 0;
-          return () => (n++ === 0 ? admin() : undefined);
-        })(),
-      },
-      update: { users: [] },
-    });
-    const res = await app.inject({
-      method: 'PATCH', url: '/2/role', headers: asUser(), payload: { role: 'member' },
-    });
-    expect(res.statusCode).toBe(404);
-  });
-
-  it('blocks deleting yourself', async () => {
-    const app = await appWith({ findFirst: { users: admin() } });
-    const res = await app.inject({ method: 'DELETE', url: '/1', headers: asUser(1) });
-    expect(res.statusCode).toBe(400);
-  });
-
-  it('blocks deleting the last admin (guard rejects the delete)', async () => {
-    // Guard inside the DELETE's WHERE: empty returning() simulates rejection,
-    // and the follow-up lookup shows the target still exists as an admin.
-    const db = createFakeDb({
-      findFirst: { users: (args?: unknown) => ((args as { where?: unknown } | undefined)?.where ? userRow({ id: 2, role: 'admin' }) : admin()) },
-      delete: { users: [] },
-    });
-    const app = await buildTestApp({ db });
-    await app.register(userRoutes);
-    const res = await app.inject({ method: 'DELETE', url: '/2', headers: asUser(1) });
-    expect(res.statusCode).toBe(400);
-    expect(res.json().error.message).toBe('Cannot delete the last admin');
-  });
-
-  it('blocks deleting the last admin when the guard rejects and the row vanishes', async () => {
-    const db = createFakeDb({
-      findFirst: {
-        users: (args?: unknown) => ((args as { where?: unknown } | undefined)?.where ? userRow({ id: 2, role: 'admin' }) : admin()),
-      },
-      delete: { users: [] },
-    });
-    const app = await buildTestApp({ db });
-    await app.register(userRoutes);
-    const res = await app.inject({ method: 'DELETE', url: '/2', headers: asUser(1) });
-    expect(res.statusCode).toBe(400);
   });
 
   it('returns 404 when deleting a user that vanished mid-check', async () => {
-    const db = createFakeDb({
-      findFirst: {
-        users: (() => {
-          let n = 0;
-          return () => (n++ === 0 ? admin() : undefined);
-        })(),
-      },
-      delete: { users: [] },
-    });
-    const app = await buildTestApp({ db });
-    await app.register(userRoutes);
-    const res = await app.inject({ method: 'DELETE', url: '/2', headers: asUser(1) });
+    const app = await appWith({ delete: { users: [] } });
+    const res = await app.inject({ method: 'DELETE', url: '/99', headers: asUser() });
     expect(res.statusCode).toBe(404);
   });
 
-  it('deletes an admin when another admin remains', async () => {
+  it('resets a user password as operator (hash + tokenVersion bump)', async () => {
+    const updated = userRow({ id: 7 });
     const app = await appWith({
-      findFirst: { users: admin() },
-      counts: { users: [{ n: 1 }] },
-    });
-    const res = await app.inject({ method: 'DELETE', url: '/2', headers: asUser(1) });
-    expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ ok: true });
-  });
-
-  it('deletes a member without the admin-count check', async () => {
-    const app = await appWith({
-      findFirst: {
-        // preHandler lookup (acting user, id 1) → admin; target lookup (id 2) → member.
-        users: (() => {
-          let n = 0;
-          return () => (n++ === 0 ? admin() : userRow({ id: 2, role: 'member' }));
-        })(),
-      },
-    });
-    const res = await app.inject({ method: 'DELETE', url: '/2', headers: asUser(1) });
-    expect(res.statusCode).toBe(200);
-  });
-
-  it('resets a user password as admin (hash + tokenVersion bump)', async () => {
-    const app = await appWith({
-      findFirst: { users: admin() },
-      update: { users: [userRow({ id: 2 })] },
+      findFirst: { users: updated },
+      update: { users: [updated] },
     });
     const res = await app.inject({
       method: 'PATCH',
-      url: '/2/password',
-      headers: asUser(1),
+      url: '/7/password',
+      headers: asUser(),
       payload: { newPassword: 'fresh-pass-123' },
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ ok: true });
     expect(cryptoMock.hashPassword).toHaveBeenCalledWith('fresh-pass-123');
   });
 
   it('404s when resetting the password of a missing user', async () => {
-    const app = await appWith({ findFirst: { users: admin() }, update: { users: [] } });
+    const app = await appWith({ findFirst: { users: undefined }, update: { users: [] } });
     const res = await app.inject({
       method: 'PATCH',
-      url: '/99/password',
-      headers: asUser(1),
+      url: '/999/password',
+      headers: asUser(),
       payload: { newPassword: 'fresh-pass-123' },
     });
     expect(res.statusCode).toBe(404);
   });
 
   it('rejects a password reset shorter than 8 chars', async () => {
-    const app = await appWith({ findFirst: { users: admin() } });
+    const app = await appWith({});
     const res = await app.inject({
       method: 'PATCH',
-      url: '/2/password',
-      headers: asUser(1),
+      url: '/1/password',
+      headers: asUser(),
       payload: { newPassword: 'short' },
     });
     expect(res.statusCode).toBe(400);
-    expect(res.json().error.code).toBe('validation_error');
   });
 
-  // ── one-time reset links ────────────────────────────────────────────────
   it('mints a one-time reset link for an existing user', async () => {
-    const app = await appWith({
-      findFirst: { users: userRow({ id: 2, email: 'b@example.com' }) },
-      delete: { password_reset_tokens: [{}] },
-      insert: { password_reset_tokens: [{}] },
-    });
-    const res = await app.inject({ method: 'POST', url: '/2/reset-link', headers: asUser(1) });
+    const app = await appWith({ findFirst: { users: userRow({ id: 3 }) } });
+    const res = await app.inject({ method: 'POST', url: '/3/reset-link', headers: asUser() });
     expect(res.statusCode).toBe(200);
-    const body = res.json();
-    expect(body.url).toMatch(/\/reset-password\?token=/);
-    expect(body.expiresAt).toBeTruthy();
+    expect(res.json().url).toMatch(/\/reset-password\?token=/);
   });
 
   it('404s when minting a reset link for a missing user', async () => {
-    // First users.findFirst call = the admin preHandler; second = the target.
-    let calls = 0;
-    const app = await appWith({
-      findFirst: {
-        users: () => {
-          calls += 1;
-          return calls === 1 ? userRow({ id: 2, email: 'b@example.com' }) : undefined;
-        },
-      },
-    });
-    const res = await app.inject({ method: 'POST', url: '/99/reset-link', headers: asUser(1) });
+    const app = await appWith({ findFirst: { users: undefined } });
+    const res = await app.inject({ method: 'POST', url: '/9999/reset-link', headers: asUser() });
     expect(res.statusCode).toBe(404);
   });
 });

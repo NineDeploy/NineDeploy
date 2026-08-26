@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+﻿import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ModeProvider, useExperienceMode } from '../src/lib/mode.js';
 import { ModeToggle } from '../src/components/ModeToggle.js';

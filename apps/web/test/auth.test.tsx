@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react';
+﻿import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import './web-utils.js';
@@ -26,7 +26,7 @@ vi.mock('@simplewebauthn/browser', () => webauthnMock);
 
 import { AuthProvider, useAuth } from '../src/lib/auth.js';
 
-const USER: PublicUser = { id: 1, email: 'a@b.c', name: 'Ann', role: 'admin' };
+const USER: PublicUser = { id: 1, email: 'a@b.c', name: 'Ann', isOperator: true, workspaceCount: 1, createdAt: '2026-01-01T00:00:00Z' };
 const SESSION = {
   user: USER,
   tokens: { accessToken: 'access-1', refreshToken: 'refresh-1', expiresIn: 3600 },
@@ -197,10 +197,10 @@ describe('AuthProvider', () => {
     const user = userEvent.setup();
     renderAuth();
     await user.click(screen.getByText('login-passkey'));
-    // The browser assertion flow receives the server-generated options…
+    // The browser assertion flow receives the server-generated optionsâ€¦
     expect(apiMock.api.auth.passkeys.loginOptions).toHaveBeenCalled();
     expect(webauthnMock.startAuthentication).toHaveBeenCalledWith({ challenge: 'abc', rpId: 'nd.local' });
-    // …and the assertion is verified server-side for a fresh session.
+    // â€¦and the assertion is verified server-side for a fresh session.
     expect(apiMock.api.auth.passkeys.loginVerify).toHaveBeenCalledWith({ id: 'assertion-1' });
     await waitFor(() => expect(apiMock.setSessionTokens).toHaveBeenCalledWith('access-1', 'refresh-1'));
     expect(screen.getByTestId('email')).toHaveTextContent('a@b.c');
@@ -226,9 +226,9 @@ describe('AuthProvider', () => {
     renderAuth();
     await waitFor(() => expect(screen.getByTestId('email')).toHaveTextContent('a@b.c'));
     await user.click(screen.getByText('logout'));
-    // The session is revoked on the server (tokenVersion bump)…
+    // The session is revoked on the server (tokenVersion bump)â€¦
     expect(apiMock.api.auth.logout).toHaveBeenCalled();
-    // …and the local state is cleared regardless.
+    // â€¦and the local state is cleared regardless.
     expect(apiMock.clearTokens).toHaveBeenCalled();
     expect(screen.getByTestId('email')).toHaveTextContent('none');
   });

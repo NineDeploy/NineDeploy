@@ -1,8 +1,9 @@
-import type { databases, services } from '@ninedeploy/db';
+import type { databases, services, serviceVolumeAttachments } from '@ninedeploy/db';
 import { capture } from './exec.js';
 
 type ServiceRow = typeof services.$inferSelect;
 type DatabaseRow = typeof databases.$inferSelect;
+type VolumeAttachmentRow = typeof serviceVolumeAttachments.$inferSelect;
 
 /** Owner reference for a managed volume, as consumed by topology/inventory views. */
 export interface VolumeOwnerRef {
@@ -15,12 +16,29 @@ export interface VolumeOwnerRef {
 }
 
 /** Resolve the owner (service/database) of a managed volume name — pure, no
- * docker calls, so callers that already loaded both tables can reuse it. */
+ * docker calls, so callers that already loaded both tables can reuse it.
+ *
+ * Two ownership paths are consulted, in order:
+ *  1. The `service_volume_attachments` table — explicit (service, volume)
+ *     links. Wins over the legacy heuristic, and is the only path that can
+ *     resolve user-created volumes that do NOT match the
+ *     `nd-svc-<slug>-data` naming convention.
+ *  2. The legacy `nd-svc-<slug>-data` / `nd-db-<slug>-data` naming — kept so
+ *     pre-attachment services (which only set `service.volumeMount`) still
+ *     resolve to the right owner. */
 export function resolveVolumeOwner(
   svcs: ServiceRow[],
   dbs: DatabaseRow[],
   name: string,
+  attachments: VolumeAttachmentRow[] = [],
 ): VolumeOwnerRef | null {
+  // 1) explicit attachment link (any service may own the volume).
+  const att = attachments.find((a) => a.volumeName === name);
+  if (att) {
+    const s = svcs.find((x) => x.id === att.serviceId);
+    if (s) return { kind: 'service', refId: s.id, name: s.name, containerName: s.runtimeId };
+    // Orphan attachment: row exists but service was deleted. Fall through.
+  }
   if (name.startsWith('nd-svc-')) {
     const slug = name.replace('nd-svc-', '').replace(/-data$/, '');
     const s = svcs.find((x) => x.slug === slug);
@@ -32,6 +50,21 @@ export function resolveVolumeOwner(
     return d ? { kind: 'database', refId: d.id, name: d.name, engine: d.engine, containerName: d.containerName } : null;
   }
   return null;
+}
+
+/** Like {@link resolveVolumeOwner} but also reports the number of OTHER
+ *  services that share the volume. Used by the inventory / topology views
+ *  to surface a "shared with N" badge. */
+export function resolveVolumeOwnerWithSharing(
+  svcs: ServiceRow[],
+  dbs: DatabaseRow[],
+  name: string,
+  attachments: VolumeAttachmentRow[],
+): { owner: VolumeOwnerRef; sharedWith: number } | null {
+  const owner = resolveVolumeOwner(svcs, dbs, name, attachments);
+  if (!owner) return null;
+  const sharedWith = attachments.filter((a) => a.volumeName === name).length - 1;
+  return { owner, sharedWith: sharedWith > 0 ? sharedWith : 0 };
 }
 
 /** Names of NineDeploy-managed docker volumes (nd-svc- and nd-db- prefixed). */

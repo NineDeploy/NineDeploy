@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+﻿import { afterEach, describe, expect, it, vi } from 'vitest';
 import { isNewer } from '../../src/lib/updateCheck.js';
 
 const feed = (body: unknown, ok = true) =>

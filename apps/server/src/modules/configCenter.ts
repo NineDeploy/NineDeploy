@@ -22,8 +22,8 @@ export const configCenterRoutes: FastifyPluginAsync = async (app) => {
   // L-12: instance configuration is an operator concern. Secret values were
   // already admin-only inside the handler; the non-secret ones still describe
   // how the whole instance is wired.
-  app.get('/', { preHandler: [app.requireAdmin] }, async (req) => {
-    const isAdmin = req.user!.role === 'admin';
+  app.get('/', { preHandler: [app.requireOperator] }, async (req) => {
+    const isOperator = req.user!.isOperator;
     const query = req.query as { category?: string; pluginId?: string; reveal?: string };
     const definitions = req.kernel.configCenter.listDefinitions(query.category, query.pluginId);
 
@@ -43,7 +43,7 @@ export const configCenterRoutes: FastifyPluginAsync = async (app) => {
       let effectiveValue: unknown;
       if (row) {
         if (isSecret) {
-          if (isAdmin && query.reveal === 'true') {
+          if (isOperator && query.reveal === 'true') {
             effectiveValue = await req.kernel.configCenter.getSecret(def.key);
           } else {
             effectiveValue = '••••••••';
@@ -79,7 +79,7 @@ export const configCenterRoutes: FastifyPluginAsync = async (app) => {
 
       let effectiveValue: unknown;
       if (row.isSecret) {
-        if (isAdmin && query.reveal === 'true') {
+        if (isOperator && query.reveal === 'true') {
           effectiveValue = await req.kernel.configCenter.getSecret(row.key);
         } else {
           effectiveValue = '••••••••';
@@ -110,7 +110,7 @@ export const configCenterRoutes: FastifyPluginAsync = async (app) => {
   // config center is instance configuration, not member-visible data.
   app.get<{ Params: { key: string }; Querystring: { reveal?: string } }>(
     '/:key',
-    { preHandler: app.requireAdmin },
+    { preHandler: app.requireOperator },
     async (req, reply) => {
     const { key } = req.params;
     const def = req.kernel.configCenter.getDefinition(key);
@@ -128,7 +128,7 @@ export const configCenterRoutes: FastifyPluginAsync = async (app) => {
     let value: unknown;
 
     if (isSecret) {
-      if (req.user!.role === 'admin' && req.query.reveal === 'true') {
+      if (req.user!.isOperator && req.query.reveal === 'true') {
         value = await req.kernel.configCenter.getSecret(key);
       } else {
         value = '••••••••';
@@ -166,8 +166,8 @@ export const configCenterRoutes: FastifyPluginAsync = async (app) => {
     };
   });
 
-  // Set config key (admin only)
-  app.post<{ Params: { key: string } }>('/:key', { preHandler: app.requireAdmin }, async (req) => {
+  // Set config key (operator only)
+  app.post<{ Params: { key: string } }>('/:key', { preHandler: app.requireOperator }, async (req) => {
     const { key } = req.params;
     const body = setConfigBody.parse(req.body);
     const def = req.kernel.configCenter.getDefinition(key);
@@ -205,8 +205,8 @@ export const configCenterRoutes: FastifyPluginAsync = async (app) => {
     return { ok: true, key };
   });
 
-  // Delete config key (admin only)
-  app.delete<{ Params: { key: string } }>('/:key', { preHandler: app.requireAdmin }, async (req) => {
+  // Delete config key (operator only)
+  app.delete<{ Params: { key: string } }>('/:key', { preHandler: app.requireOperator }, async (req) => {
     const { key } = req.params;
     await req.kernel.configCenter.delete(key);
 

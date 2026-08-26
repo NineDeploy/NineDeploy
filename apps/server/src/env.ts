@@ -42,6 +42,9 @@ const schema = z.object({
   // (GitHub Releases format). Defaults to the NineDeploy releases feed; set to
   // "disabled" to turn update checks off (air-gapped instances).
   NINEDEPLOY_UPDATE_CHECK_URL: z.string().optional(),
+  // Number of volume backups to keep per volume (1-100). Older backups
+  // (file + DB row) are pruned automatically after each successful backup.
+  NINEDEPLOY_BACKUP_VOLUME_RETAIN_COUNT: z.coerce.number().int().min(1).max(100).default(10),
 });
 
 export type Env = z.infer<typeof schema>;

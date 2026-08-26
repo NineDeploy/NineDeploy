@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+﻿import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
@@ -43,7 +43,7 @@ function renderProvider(list: Promise<typeof PROJECTS> | undefined = Promise.res
   return utils;
 }
 
-// The provider loads the project list through the api client module — mock it.
+// The provider loads the project list through the api client module â€” mock it.
 vi.mock('../src/lib/api.js', () => {
   const state = { projects: [...PROJECTS] };
   return {

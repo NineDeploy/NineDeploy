@@ -1,9 +1,23 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import { Cable, Network, Plus, Trash2, Unplug } from 'lucide-react';
+import { Cable, Network, Plus, ShieldAlert, Trash2, Unplug } from 'lucide-react';
 import { api } from '../lib/api.js';
 import { useToast } from '../components/Toast.js';
 import { Button, Card, ConfirmDialog, EmptyState, ErrorCard, PageHeader, Skeleton } from '../components/ui.js';
+
+type NetworkRow = {
+  name: string;
+  driver: string;
+  members: string[];
+  isManaged?: boolean;
+};
+
+// Mirror of the server-side `lib/managedNamespace.ts` prefixes. The server is
+// the authority — this is purely so the attach form can warn the operator
+// *before* the round-trip, not to authorize anything.
+const MANAGED_CONTAINER_PREFIXES = [/^nd-svc-/, /^nd-db-/, /^ninedeploy/];
+const isLikelyManagedContainer = (name: string): boolean =>
+  MANAGED_CONTAINER_PREFIXES.some((re) => re.test(name));
 
 /** Docker network management: list, create, delete, attach/detach containers. */
 export function Networks() {
@@ -16,7 +30,7 @@ export function Networks() {
   const [newDriver, setNewDriver] = useState<'bridge' | 'overlay'>('bridge');
   const [attachTo, setAttachTo] = useState<string | null>(null);
   const [container, setContainer] = useState('');
-  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<NetworkRow | null>(null);
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ['networks'] });
 
@@ -62,6 +76,7 @@ export function Networks() {
   });
 
   const networks = list.data?.networks ?? [];
+  const attachLooksManaged = isLikelyManagedContainer(container);
 
   return (
     <div>
@@ -132,6 +147,18 @@ export function Networks() {
               Cancel
             </button>
           </div>
+          {attachLooksManaged && (
+            <div
+              role="alert"
+              className="mt-3 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200"
+            >
+              <ShieldAlert size={13} className="mt-0.5 shrink-0" />
+              <span>
+                <span className="font-mono">{container}</span> looks like a NineDeploy-managed container. The
+                server will reject this attach — managed containers must stay on their reserved networks.
+              </span>
+            </div>
+          )}
         </Card>
       )}
 
@@ -152,7 +179,7 @@ export function Networks() {
                   <div className="flex items-center gap-2">
                     <span className="font-medium text-slate-100">{n.name}</span>
                     <span className="rounded bg-white/5 px-1.5 py-0.5 text-[10px] font-medium uppercase text-slate-500">{n.driver}</span>
-                    {n.name === 'ninedeploy' && (
+                    {n.isManaged && (
                       <span className="rounded bg-indigo-500/15 px-1.5 py-0.5 text-[10px] font-medium text-indigo-300">managed</span>
                     )}
                   </div>
@@ -164,8 +191,8 @@ export function Networks() {
                   <Button size="sm" variant="secondary" onClick={() => setAttachTo(n.name)}>
                     <Cable size={13} /> Attach
                   </Button>
-                  {n.name !== 'ninedeploy' && (
-                    <Button size="sm" variant="danger" onClick={() => setPendingDelete(n.name)} disabled={remove.isPending}>
+                  {!n.isManaged && (
+                    <Button size="sm" variant="danger" onClick={() => setPendingDelete(n)} disabled={remove.isPending}>
                       <Trash2 size={13} /> Delete
                     </Button>
                   )}
@@ -179,6 +206,14 @@ export function Networks() {
                       className="group flex items-center gap-1.5 rounded-lg bg-white/[0.03] px-2 py-1 font-mono text-[11px] text-slate-400 ring-1 ring-inset ring-white/5"
                     >
                       {m}
+                      {isLikelyManagedContainer(m) && (
+                        <span
+                          title="NineDeploy-managed container"
+                          className="rounded bg-indigo-500/15 px-1 text-[9px] font-medium text-indigo-300"
+                        >
+                          managed
+                        </span>
+                      )}
                       <button
                         type="button"
                         title="Detach"
@@ -199,11 +234,41 @@ export function Networks() {
       <ConfirmDialog
         open={pendingDelete != null}
         title="Delete network"
-        message={pendingDelete
-          ? <>Network <code className="rounded bg-black/30 px-1.5 py-0.5 font-mono text-[11px]">{pendingDelete}</code> will be removed and every attached container disconnected.</>
-          : ''}
+        message={
+          pendingDelete ? (
+            <div className="space-y-3">
+              <p>
+                Network{' '}
+                <code className="rounded bg-black/30 px-1.5 py-0.5 font-mono text-[11px]">{pendingDelete.name}</code>{' '}
+                will be removed. Every attached container will be disconnected from it.
+              </p>
+              {pendingDelete.members.length > 0 && (
+                <div>
+                  <p className="mb-1.5 text-xs uppercase tracking-wider text-slate-500">
+                    Containers that will lose connectivity
+                  </p>
+                  <ul className="flex flex-wrap gap-1.5">
+                    {pendingDelete.members.map((m) => (
+                      <li
+                        key={m}
+                        className="flex items-center gap-1.5 rounded bg-white/[0.04] px-2 py-0.5 font-mono text-[11px] text-slate-300 ring-1 ring-inset ring-white/5"
+                      >
+                        {m}
+                        {isLikelyManagedContainer(m) && (
+                          <span className="rounded bg-amber-500/15 px-1 text-[9px] font-medium text-amber-300">managed</span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          ) : (
+            ''
+          )
+        }
         confirmLabel="Delete"
-        onConfirm={() => pendingDelete && remove.mutate(pendingDelete)}
+        onConfirm={() => pendingDelete && remove.mutate(pendingDelete.name)}
         onClose={() => setPendingDelete(null)}
       />
     </div>

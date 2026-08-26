@@ -62,7 +62,7 @@ function resolvePluginMeta(item: ConfigItem): PluginMeta {
 
 export function ConfigCenterSection() {
   const { user } = useAuth();
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = user?.isOperator === true;
   const queryClient = useQueryClient();
   const { toast } = useToast();
 

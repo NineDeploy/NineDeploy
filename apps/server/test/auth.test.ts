@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+﻿import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { authRoutes, createFirstAdmin, registerAccount } from '../src/modules/auth.js';
 import { asUser, buildTestApp, createFakeDb, sessionRow, tokenRow, userRow } from './helpers.js';
 
@@ -47,7 +47,7 @@ describe('auth module helpers', () => {  it('createFirstAdmin succeeds when no u
       insert: { users: [userRow({ id: 1, email: 'new@example.com' })] },
     });
     const result = await createFirstAdmin(db, validRegister as never);
-    expect(result.user).toMatchObject({ id: 1, email: 'new@example.com', role: 'admin' });
+    expect(result.user).toMatchObject({ id: 1, email: 'new@example.com', isOperator: true });
     expect(result.tokens).toEqual({ accessToken: 'access-token', refreshToken: 'refresh-token', expiresIn: 900 });
   });
 
@@ -61,22 +61,22 @@ describe('auth module helpers', () => {  it('createFirstAdmin succeeds when no u
     await expect(createFirstAdmin(db, validRegister as never)).rejects.toMatchObject({ statusCode: 400 });
   });
 
-  it('registerAccount makes the first user an admin', async () => {
+  it('registerAccount makes the first user an operator', async () => {
     const db = createFakeDb({
       counts: { users: [{ n: 0 }] },
-      insert: { users: [userRow({ id: 1, email: 'new@example.com', role: 'admin' })] },
+      insert: { users: [userRow({ id: 1, email: 'new@example.com', isOperator: true })] },
     });
     const result = await registerAccount(db, validRegister as never);
-    expect(result.user.role).toBe('admin');
+    expect(result.user.isOperator).toBe(true);
   });
 
-  it('registerAccount makes subsequent users members', async () => {
+  it('registerAccount makes subsequent users non-operators', async () => {
     const db = createFakeDb({
       counts: { users: [{ n: 2 }] },
-      insert: { users: [userRow({ id: 3, email: 'new@example.com', role: 'member' })] },
+      insert: { users: [userRow({ id: 3, email: 'new@example.com', isOperator: false })] },
     });
     const result = await registerAccount(db, validRegister as never);
-    expect(result.user.role).toBe('member');
+    expect(result.user.isOperator).toBe(false);
   });
 
   it('registerAccount reports duplicate emails', async () => {
@@ -124,13 +124,13 @@ describe('auth routes', () => {
       db: createFakeDb({
         counts: { users: [{ n: 1 }] },
         findFirst: { settings: { key: 'allow_registration', value: true } },
-        insert: { users: [userRow({ id: 2, email: 'new@example.com', role: 'member' })] },
+        insert: { users: [userRow({ id: 2, email: 'new@example.com', isOperator: false })] },
       }),
     });
     await app.register(authRoutes);
     const res = await app.inject({ method: 'POST', url: '/register', payload: validRegister });
     expect(res.statusCode).toBe(200);
-    expect(res.json().user).toMatchObject({ id: 2, email: 'new@example.com', role: 'member' });
+    expect(res.json().user).toMatchObject({ id: 2, email: 'new@example.com', isOperator: false });
     expect(res.json().tokens.expiresIn).toBe(900);
   });
 
@@ -152,13 +152,13 @@ describe('auth routes', () => {
       db: createFakeDb({
         counts: { users: [{ n: 0 }] },
         findFirst: { settings: { key: 'allow_registration', value: false } },
-        insert: { users: [userRow({ id: 1, email: 'new@example.com', role: 'admin' })] },
+        insert: { users: [userRow({ id: 1, email: 'new@example.com', isOperator: true })] },
       }),
     });
     await app.register(authRoutes);
     const res = await app.inject({ method: 'POST', url: '/register', payload: validRegister });
     expect(res.statusCode).toBe(200);
-    expect(res.json().user.role).toBe('admin');
+    expect(res.json().user.isOperator).toBe(true);
   });
 
   it('exposes allowRegistration on the public status endpoint', async () => {
@@ -328,7 +328,7 @@ describe('auth routes', () => {
     await app.register(authRoutes);
     const res = await app.inject({ method: 'GET', url: '/me', headers: asUser() });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ id: 1, email: 'admin@example.com', name: 'Admin', role: 'admin' });
+    expect(res.json()).toMatchObject({ id: 1, email: 'admin@example.com', name: 'Admin', isOperator: true });
   });
 
   it('returns 401 from /me when the user is gone', async () => {
@@ -524,7 +524,7 @@ describe('auth routes', () => {
     expect(list.statusCode).toBe(401);
   });
 
-  // ── forgot / reset password ─────────────────────────────────────────────
+  // â”€â”€ forgot / reset password â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   it('accepts a forgot-password request for an existing user', async () => {
     const app = await buildTestApp({
       db: createFakeDb({
@@ -608,7 +608,7 @@ describe('auth routes', () => {
     expect(res.statusCode).toBe(400);
   });
 
-  // ── per-account login lockout ────────────────────────────────────────────
+  // â”€â”€ per-account login lockout â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   it('locks an account after 5 failed logins (same message as a wrong password)', async () => {
     const app = await buildTestApp({
       db: createFakeDb({ findFirst: { users: userRow({ id: 1 }) } }),

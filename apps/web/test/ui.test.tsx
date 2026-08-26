@@ -1,6 +1,6 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+﻿import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { createRef } from 'react';
+import { createRef, useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import './web-utils.js';
 import { rejectPanelAutofill } from '../src/lib/autofill.js';
@@ -173,11 +173,11 @@ describe('Field', () => {
 
   it('renders the optional hint next to the label', () => {
     render(
-      <Field label="Token" hint="Found under Settings → API">
+      <Field label="Token" hint="Found under Settings â†’ API">
         <input aria-label="Token" />
       </Field>,
     );
-    expect(screen.getByText('Found under Settings → API')).toBeInTheDocument();
+    expect(screen.getByText('Found under Settings â†’ API')).toBeInTheDocument();
   });
 });
 
@@ -546,5 +546,460 @@ describe('AutofillRejectingInput', () => {
     rejectPanelAutofill(field, onAutofillRejected);
     expect(field).toHaveValue('');
     expect(onAutofillRejected).toHaveBeenCalledTimes(1);
+  });
+});
+
+import {
+  ChipInput,
+  KeyValueEditor,
+  ListEditor,
+  PresetSelector,
+} from '../src/components/ui.js';
+
+const { useState: _useStateImported } = { useState };
+type PresetOption<T> = { id: string; label: string; description?: string; manifest: T };
+
+describe('ChipInput', () => {
+  it('renders existing chips with a remove button each', () => {
+    render(<ChipInput value={['A', 'B']} onChange={() => {}} />);
+    expect(screen.getByText('A')).toBeInTheDocument();
+    expect(screen.getByText('B')).toBeInTheDocument();
+    expect(screen.getByLabelText('Remove A')).toBeInTheDocument();
+    expect(screen.getByLabelText('Remove B')).toBeInTheDocument();
+  });
+
+  it('shows a placeholder when there are no chips', () => {
+    render(<ChipInput value={[]} onChange={() => {}} placeholder="add a key" />);
+    expect(screen.getByPlaceholderText('add a key')).toBeInTheDocument();
+  });
+
+  it('adds a chip on Enter, trims whitespace, and clears the input', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<ChipInput value={[]} onChange={onChange} />);
+    const input = screen.getByRole('textbox');
+    await user.type(input, '  NEW_KEY  {enter}');
+    expect(onChange).toHaveBeenCalledWith(['NEW_KEY']);
+  });
+
+  it('adds a chip on comma too', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<ChipInput value={[]} onChange={onChange} />);
+    const input = screen.getByRole('textbox');
+    await user.type(input, 'A,B{enter}');
+    // Two commits: one for 'A' (on comma), one for 'B' (on enter). The second
+    // call replaces the value, so we look at the full mock.calls list.
+    expect(onChange.mock.calls.map((c) => c[0])).toEqual([['A'], ['B']]);
+  });
+
+  it('adds a chip on blur when there is a draft', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<ChipInput value={[]} onChange={onChange} />);
+    const input = screen.getByRole('textbox');
+    await user.type(input, 'X');
+    input.blur();
+    expect(onChange).toHaveBeenCalledWith(['X']);
+  });
+
+  it('does not commit a blank draft', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<ChipInput value={['A']} onChange={onChange} />);
+    const input = screen.getByRole('textbox');
+    await user.type(input, '   {enter}');
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('rejects chips that fail the pattern', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<ChipInput value={[]} onChange={onChange} pattern={/^[A-Z]+$/} />);
+    const input = screen.getByRole('textbox');
+    await user.type(input, 'lower{enter}');
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('drops duplicate chips', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<ChipInput value={['A']} onChange={onChange} />);
+    const input = screen.getByRole('textbox');
+    await user.type(input, 'A{enter}');
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('removes a chip when the X is clicked', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<ChipInput value={['A', 'B']} onChange={onChange} />);
+    await user.click(screen.getByLabelText('Remove A'));
+    expect(onChange).toHaveBeenCalledWith(['B']);
+  });
+
+  it('removes the last chip when backspace is pressed in an empty draft', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<ChipInput value={['A', 'B']} onChange={onChange} />);
+    const input = screen.getByRole('textbox');
+    await user.click(input);
+    await user.keyboard('{Backspace}');
+    expect(onChange).toHaveBeenCalledWith(['A']);
+  });
+
+  it('shows the label and hint when provided', () => {
+    render(<ChipInput value={[]} onChange={() => {}} label="Keys" hint="one per env" />);
+    expect(screen.getByText('Keys')).toBeInTheDocument();
+    expect(screen.getByText('one per env')).toBeInTheDocument();
+  });
+
+  it('hides the input when disabled', () => {
+    render(<ChipInput value={['A']} onChange={() => {}} disabled />);
+    const input = screen.getByRole('textbox');
+    expect(input).toBeDisabled();
+  });
+
+  it('unlocks the autofill guard on pointer-down so the user can type', () => {
+    // The guard is unlocked the moment the user touches the input via
+    // pointer; the readOnly flag flips from true to false on the second
+    // pointerdown. We exercise that path so the autofill contract stays
+    // observable in tests.
+    render(<AutofillRejectingInput aria-label="af" />);
+    const field = screen.getByLabelText<HTMLInputElement>('af');
+    expect(field.readOnly).toBe(true);
+    fireEvent.pointerDown(field);
+    expect(field.readOnly).toBe(false);
+  });
+});
+
+describe('KeyValueEditor', () => {
+  it('renders one row per entry with the right initial values', () => {
+    render(<KeyValueEditor value={{ A: '1', B: '2' }} onChange={() => {}} />);
+    const a = screen.getByLabelText('key A') as HTMLInputElement;
+    const aVal = screen.getByLabelText('value for A') as HTMLInputElement;
+    expect(a.value).toBe('A');
+    expect(aVal.value).toBe('1');
+  });
+
+  it('adds a new empty row when the Add button is clicked', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<KeyValueEditor value={{}} onChange={onChange} addLabel="Add pair" />);
+    await user.click(screen.getByRole('button', { name: 'Add pair' }));
+    expect(onChange).toHaveBeenCalledWith({ '': '' });
+  });
+
+  it('renames the key on blur of the key input', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<KeyValueEditor value={{ A: '1' }} onChange={onChange} />);
+    const keyInput = screen.getByLabelText('key A') as HTMLInputElement;
+    await user.clear(keyInput);
+    await user.type(keyInput, 'B');
+    fireEvent.blur(keyInput);
+    expect(onChange).toHaveBeenLastCalledWith({ B: '1' });
+  });
+
+  it('updates the value on blur of the value input', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<KeyValueEditor value={{ A: '1' }} onChange={onChange} />);
+    const valInput = screen.getByLabelText('value for A') as HTMLInputElement;
+    await user.clear(valInput);
+    await user.type(valInput, '2');
+    fireEvent.blur(valInput);
+    expect(onChange).toHaveBeenLastCalledWith({ A: '2' });
+  });
+
+  it('drops the row when the key becomes empty (no empty keys leak through)', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<KeyValueEditor value={{ A: '1' }} onChange={onChange} />);
+    const keyInput = screen.getByLabelText('key A') as HTMLInputElement;
+    await user.clear(keyInput);
+    fireEvent.blur(keyInput);
+    expect(onChange).toHaveBeenLastCalledWith({});
+  });
+
+  it('rewrites the same key when rename leaves it unchanged (no row removed)', () => {
+    const onChange = vi.fn();
+    render(<KeyValueEditor value={{ A: '1' }} onChange={onChange} />);
+    const keyInput = screen.getByLabelText('key A') as HTMLInputElement;
+    // Re-focus + re-blur without changing the value: should still emit a
+    // setRow call so the parent sees the row (covers the "keep existing
+    // entry" branch of the rename logic).
+    keyInput.focus();
+    fireEvent.blur(keyInput);
+    expect(onChange).toHaveBeenLastCalledWith({ A: '1' });
+  });
+
+  it('preserves untouched rows when renaming one of two', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<KeyValueEditor value={{ A: '1', B: '2' }} onChange={onChange} />);
+    const keyA = screen.getByLabelText('key A') as HTMLInputElement;
+    await user.clear(keyA);
+    await user.type(keyA, 'A2');
+    fireEvent.blur(keyA);
+    // The rename touches row A; row B is iterated over and copied through
+    // the `next[k] = v` branch. Both rows must be present in the result.
+    expect(onChange).toHaveBeenLastCalledWith({ A2: '1', B: '2' });
+  });
+
+  it('respects validateKey and blocks invalid renames', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(
+      <KeyValueEditor
+        value={{ A: '1' }}
+        onChange={onChange}
+        validateKey={(k) => /^[A-Z]+$/.test(k)}
+      />,
+    );
+    const keyInput = screen.getByLabelText('key A') as HTMLInputElement;
+    await user.clear(keyInput);
+    await user.type(keyInput, 'lowercase');
+    fireEvent.blur(keyInput);
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('removes a row when the delete button is clicked', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<KeyValueEditor value={{ A: '1', B: '2' }} onChange={onChange} />);
+    await user.click(screen.getByLabelText('Delete A'));
+    expect(onChange).toHaveBeenCalledWith({ B: '2' });
+  });
+
+  it('uses a "row" label for the delete button when the key is empty', () => {
+    // Add a row, leave the key empty, click delete â€” the aria-label falls
+    // back to the literal "Delete row" so screen readers can still announce
+    // the action target.
+    render(<KeyValueEditor value={{ '': '' }} onChange={() => {}} />);
+    expect(screen.getByLabelText('Delete row')).toBeInTheDocument();
+  });
+});
+
+describe('ListEditor', () => {
+  interface Item {
+    name: string;
+    value: number;
+  }
+  const renderItem = (item: Item, update: (next: Item) => void) => (
+    <div>
+      <input
+        aria-label={`name ${item.name}`}
+        defaultValue={item.name}
+        onBlur={(e) => update({ ...item, name: e.target.value })}
+      />
+      <input
+        aria-label={`value ${item.name}`}
+        type="number"
+        defaultValue={item.value}
+        onBlur={(e) => update({ ...item, value: Number(e.target.value) })}
+      />
+    </div>
+  );
+
+  it('shows an empty state when there are no items', () => {
+    render(
+      <ListEditor<Item>
+        value={[]}
+        onChange={() => {}}
+        createNew={() => ({ name: 'new', value: 0 })}
+        renderItem={renderItem}
+        emptyMessage="Nothing yet."
+      />,
+    );
+    expect(screen.getByText('Nothing yet.')).toBeInTheDocument();
+  });
+
+  it('renders one card per item with the right itemLabel', () => {
+    render(
+      <ListEditor<Item>
+        value={[{ name: 'A', value: 1 }, { name: 'B', value: 2 }]}
+        onChange={() => {}}
+        createNew={() => ({ name: 'new', value: 0 })}
+        renderItem={renderItem}
+        itemLabel={(it) => it.name}
+      />,
+    );
+    expect(screen.getByText('A')).toBeInTheDocument();
+    expect(screen.getByText('B')).toBeInTheDocument();
+  });
+
+  it('falls back to "Item N" when no itemLabel is provided', () => {
+    render(
+      <ListEditor<Item>
+        value={[{ name: 'A', value: 1 }]}
+        onChange={() => {}}
+        createNew={() => ({ name: 'new', value: 0 })}
+        renderItem={renderItem}
+      />,
+    );
+    expect(screen.getByText('Item 1')).toBeInTheDocument();
+  });
+
+  it('appends a new item when the Add button is clicked', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(
+      <ListEditor<Item>
+        value={[]}
+        onChange={onChange}
+        createNew={() => ({ name: 'fresh', value: 99 })}
+        renderItem={renderItem}
+        addLabel="Add item"
+      />,
+    );
+    await user.click(screen.getByRole('button', { name: 'Add item' }));
+    expect(onChange).toHaveBeenCalledWith([{ name: 'fresh', value: 99 }]);
+  });
+
+  it('updates an item through the renderer-supplied update callback', async () => {
+    const user = userEvent.setup();
+    function Controlled() {
+      const [items, setItems] = useState<Item[]>([{ name: 'A', value: 1 }]);
+      return (
+        <ListEditor<Item>
+          value={items}
+          onChange={setItems}
+          createNew={() => ({ name: 'new', value: 0 })}
+          renderItem={renderItem}
+        />
+      );
+    }
+    render(<Controlled />);
+    // Update via the renderer's onBlur â†’ update path.
+    const nameInput = screen.getByLabelText('name A') as HTMLInputElement;
+    await user.clear(nameInput);
+    await user.type(nameInput, 'A2');
+    fireEvent.blur(nameInput);
+    expect(screen.getByLabelText<HTMLInputElement>('name A2').value).toBe('A2');
+  });
+
+  it('removes an item when the Remove button is clicked', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(
+      <ListEditor<Item>
+        value={[{ name: 'A', value: 1 }, { name: 'B', value: 2 }]}
+        onChange={onChange}
+        createNew={() => ({ name: 'new', value: 0 })}
+        renderItem={renderItem}
+      />,
+    );
+    const removeButtons = screen.getAllByLabelText('Remove');
+    await user.click(removeButtons[0]!);
+    expect(onChange).toHaveBeenCalledWith([{ name: 'B', value: 2 }]);
+  });
+
+  it('moves items up and down with the arrow buttons', async () => {
+    const user = userEvent.setup();
+    // The component reads `value` from props; the only way to observe the
+    // effect of a re-order is to thread the new value back through state.
+    // Using a controlled wrapper keeps each move independent.
+    function Controlled() {
+      const [items, setItems] = useState<Item[]>([
+        { name: 'A', value: 1 },
+        { name: 'B', value: 2 },
+        { name: 'C', value: 3 },
+      ]);
+      return (
+        <ListEditor<Item>
+          value={items}
+          onChange={setItems}
+          createNew={() => ({ name: 'new', value: 0 })}
+          renderItem={renderItem}
+          itemLabel={(it) => `${it.name}-${it.value}`}
+        />
+      );
+    }
+    render(<Controlled />);
+
+    // First item can't move up; last item can't move down.
+    expect(screen.getAllByLabelText('Move up')[0]).toBeDisabled();
+    expect(screen.getAllByLabelText('Move down')[2]).toBeDisabled();
+
+    await user.click(screen.getAllByLabelText('Move up')[1]!); // B up
+    // After move, the labels (rendered via itemLabel) are B-2, A-1, C-3.
+    const labels1 = screen.getAllByText(/^[ABC]-\d$/).map((n) => n.textContent);
+    expect(labels1).toEqual(['B-2', 'A-1', 'C-3']);
+
+    await user.click(screen.getAllByLabelText('Move down')[1]!); // A down (now index 1)
+    const labels2 = screen.getAllByText(/^[ABC]-\d$/).map((n) => n.textContent);
+    expect(labels2).toEqual(['B-2', 'C-3', 'A-1']);
+  });
+
+  it('moveItem on an empty list is a safe no-op', () => {
+    // The disabled buttons on the first/last item block the click in
+    // normal use, but we exercise the moveItem code path on a one-item
+    // list with `up` (out-of-range target) to confirm no error throws.
+    function Controlled() {
+      const [items, setItems] = useState<Item[]>([{ name: 'A', value: 1 }]);
+      return (
+        <ListEditor<Item>
+          value={items}
+          onChange={setItems}
+          createNew={() => ({ name: 'new', value: 0 })}
+          renderItem={renderItem}
+        />
+      );
+    }
+    render(<Controlled />);
+    const upButton = screen.getByLabelText('Move up') as HTMLButtonElement;
+    expect(upButton.disabled).toBe(true);
+    // Force a click on the disabled button â€” the click handler still
+    // runs in jsdom, exercising the moveItem branch with a
+    // out-of-range target.
+    fireEvent.click(upButton);
+    // State should be unchanged: the splice returned undefined and the
+    // array stays a single item.
+    expect(screen.getByText('Item 1')).toBeInTheDocument();
+  });
+});
+
+describe('PresetSelector', () => {
+  const opts: PresetOption<{ version: '1' }>[] = [
+    { id: 'node', label: 'Node 20', description: 'npm-based Node app', manifest: { version: '1' } },
+    { id: 'py', label: 'Python 3.12', description: 'pip + FastAPI', manifest: { version: '1' } },
+  ];
+
+  it('renders one option per preset with the label and description', () => {
+    render(<PresetSelector options={opts} onSelect={() => {}} />);
+    expect(screen.getByText('Node 20')).toBeInTheDocument();
+    expect(screen.getByText('npm-based Node app')).toBeInTheDocument();
+    expect(screen.getByText('Python 3.12')).toBeInTheDocument();
+    expect(screen.getByText('pip + FastAPI')).toBeInTheDocument();
+  });
+
+  it('emits onSelect with the chosen manifest when an option is clicked', async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+    render(<PresetSelector options={opts} onSelect={onSelect} />);
+    await user.click(screen.getByText('Python 3.12'));
+    expect(onSelect).toHaveBeenCalledWith(opts[1]!.manifest);
+  });
+
+  it('marks the active option with aria-pressed=true', () => {
+    render(<PresetSelector options={opts} onSelect={() => {}} value="py" />);
+    const pyButton = screen.getByText('Python 3.12').closest('button')!;
+    const nodeButton = screen.getByText('Node 20').closest('button')!;
+    expect(pyButton.getAttribute('aria-pressed')).toBe('true');
+    expect(nodeButton.getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('renders the label and hint when provided', () => {
+    render(
+      <PresetSelector
+        options={opts}
+        onSelect={() => {}}
+        label="Start from preset"
+        hint="pick the closest match"
+      />,
+    );
+    expect(screen.getByText('Start from preset')).toBeInTheDocument();
+    expect(screen.getByText('pick the closest match')).toBeInTheDocument();
   });
 });

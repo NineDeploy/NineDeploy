@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+﻿import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -30,7 +30,7 @@ const h = vi.hoisted(() => {
 });
 
 vi.mock('../src/config.js', () => ({ config: h.config }));
-// The finalize grace period sleeps 2s in real life — stub it for tests.
+// The finalize grace period sleeps 2s in real life â€” stub it for tests.
 const execMock = vi.hoisted(() => ({
   sleep: vi.fn(async () => undefined),
   run: vi.fn(async () => ({ stdout: '', stderr: '' })),
@@ -127,7 +127,15 @@ function makeDb(): { db: FakeDb; updates: { table: unknown; values: Record<strin
       databases: { findFirst: vi.fn().mockResolvedValue(undefined) },
       domains: { findFirst: vi.fn() },
     },
-    select: vi.fn(),
+    select: vi.fn(() => ({
+      from: vi.fn(() => ({
+        where: vi.fn(() => Promise.resolve([])),
+        leftJoin: vi.fn(() => Promise.resolve([])),
+        innerJoin: vi.fn(() => Promise.resolve([])),
+        orderBy: vi.fn(() => Promise.resolve([])),
+        then: (ok: (v: unknown) => unknown) => ok([]),
+      })),
+    })),
     update: vi.fn((table: unknown) => ({
       set: (values: Record<string, unknown>) => {
         updates.push({ table, values });
@@ -183,7 +191,7 @@ describe('runDeployment env merging', () => {
     const { db } = makeDb();
     baseSetup(db, { projectId: null, image: 'nginx:latest' });
     await runDeployment(db as never, 1);
-    // Snapshot + service lookup only — no project-scope query.
+    // Snapshot + service lookup only â€” no project-scope query.
     expect(db.query.envVars.findMany).toHaveBeenCalledTimes(2);
   });
 
@@ -248,8 +256,8 @@ describe('runDeployment', () => {
 
     await runDeployment(db as never, 1);
 
-    expect(lines).toContain('▶ Deployment #1 for "Web" (k8s)');
-    expect(lines).toContain('✗ Unknown service type: k8s');
+    expect(lines).toContain('â–¶ Deployment #1 for "Web" (k8s)');
+    expect(lines).toContain('âœ— Unknown service type: k8s');
     expect(updates.map((u) => [u.table, u.values.status])).toEqual([
       [deployments, 'building'],
       [services, 'deploying'],
@@ -274,8 +282,8 @@ describe('runDeployment', () => {
     expect(ctx.workDir).toBe(path.join(reposDir, '5'));
     expect(previous).toBeUndefined();
     expect(lines).toContain('Image deploy from nginx:latest');
-    expect(lines).toContain('Running healthcheck …');
-    expect(lines).toContain('✓ Deployment successful');
+    expect(lines).toContain('Running healthcheck â€¦');
+    expect(lines).toContain('âœ“ Deployment successful');
 
     const svcUpdate = updates.find((u) => u.table === services && u.values.status === 'running');
     expect(svcUpdate?.values).toMatchObject({ runtimeId: 'c-1', port: null, commitSha: '' });
@@ -411,7 +419,7 @@ describe('runDeployment', () => {
 
     await runDeployment(db as never, 1);
 
-    expect(lines).toContain('✓ Deployment successful');
+    expect(lines).toContain('âœ“ Deployment successful');
     // Routing flipped to the new container first, a grace period let Traefik
     // reload, and only then was the old container stopped.
     expect(h.writeDynamicConfig).toHaveBeenCalledWith(db);
@@ -429,7 +437,7 @@ describe('runDeployment', () => {
 
     await runDeployment(db as never, 1);
 
-    expect(lines).toContain('↩ Previous runtime is still healthy — rolled back to it.');
+    expect(lines).toContain('â†© Previous runtime is still healthy â€” rolled back to it.');
     expect(h.builder.stop).toHaveBeenCalledWith('c-2'); // failed new runtime cleaned up
     expect(updates.some((u) => u.table === services && u.values.status === 'running')).toBe(true);
     expect(updates.some((u) => u.table === deployments && u.values.status === 'failed')).toBe(true);
@@ -491,7 +499,7 @@ describe('runDeployment', () => {
     await runDeployment(db as never, 1);
 
     expect(lines).toContain('finalize warning (previous stop): docker down');
-    expect(lines).toContain('✓ Deployment successful');
+    expect(lines).toContain('âœ“ Deployment successful');
   });
 
   it('logs a wildcard-domain warning and still succeeds when the insert fails', async () => {
@@ -505,7 +513,7 @@ describe('runDeployment', () => {
     await runDeployment(db as never, 1);
 
     expect(lines).toContain('warning: could not auto-assign wildcard domain: unique constraint');
-    expect(lines).toContain('✓ Deployment successful');
+    expect(lines).toContain('âœ“ Deployment successful');
   });
 
   it('auto-provisions a wildcard domain when configured and missing', async () => {
@@ -526,7 +534,7 @@ describe('runDeployment', () => {
       ssl: false,
       status: 'active',
     });
-    expect(lines).toContain('🌐 Auto-assigned URL: http://web.example.com');
+    expect(lines).toContain('ðŸŒ Auto-assigned URL: http://web.example.com');
   });
 
   it('enables HTTPS for auto-provisioned wildcard domains when ACME is configured', async () => {
@@ -540,7 +548,7 @@ describe('runDeployment', () => {
     await runDeployment(db as never, 1);
 
     expect(inserts[0].values).toMatchObject({ hostname: 'web.example.com', ssl: true });
-    expect(lines).toContain('🌐 Auto-assigned URL: https://web.example.com');
+    expect(lines).toContain('ðŸŒ Auto-assigned URL: https://web.example.com');
   });
 
   it('does not duplicate an existing wildcard domain', async () => {
@@ -565,7 +573,7 @@ describe('runDeployment', () => {
     await runDeployment(db as never, 1);
 
     expect(lines).toContain('proxy warning: disk full');
-    expect(lines).toContain('✓ Deployment successful');
+    expect(lines).toContain('âœ“ Deployment successful');
   });
 
   it('logs a proxy warning with the raw value when the failure is not an Error', async () => {
@@ -577,7 +585,7 @@ describe('runDeployment', () => {
     await runDeployment(db as never, 1);
 
     expect(lines).toContain('proxy warning: disk full');
-    expect(lines).toContain('✓ Deployment successful');
+    expect(lines).toContain('âœ“ Deployment successful');
   });
 
   it('keeps the previous container serving when the routing flip fails (no silent outage)', async () => {
@@ -589,9 +597,9 @@ describe('runDeployment', () => {
 
     await runDeployment(db as never, 1);
 
-    // Routing did not flip → the previous container must NOT be retired.
+    // Routing did not flip â†’ the previous container must NOT be retired.
     expect(h.builder.stop).not.toHaveBeenCalledWith('old-c');
-    expect(lines).toContain('↩ finalize skipped: routing did not flip, the previous container stays live');
+    expect(lines).toContain('â†© finalize skipped: routing did not flip, the previous container stays live');
   });
 
   it('fails the deployment with a stringified reason when the failure is not an Error', async () => {
@@ -602,7 +610,7 @@ describe('runDeployment', () => {
 
     await runDeployment(db as never, 1);
 
-    expect(lines).toContain('✗ Deployment failed: build boom');
+    expect(lines).toContain('âœ— Deployment failed: build boom');
     expect(h.builder.stop).not.toHaveBeenCalled();
   });
 
@@ -615,7 +623,7 @@ describe('runDeployment', () => {
 
     await runDeployment(db as never, 1);
 
-    expect(lines).toContain('✗ Deployment failed: Healthcheck failed — service did not become ready in time');
+    expect(lines).toContain('âœ— Deployment failed: Healthcheck failed â€” service did not become ready in time');
     expect(h.builder.stop).toHaveBeenCalledWith('c-1');
     expect(updates.some((u) => u.table === deployments && u.values.status === 'failed')).toBe(true);
     expect(updates.some((u) => u.table === services && u.values.status === 'error')).toBe(true);
@@ -630,7 +638,7 @@ describe('runDeployment', () => {
 
     await runDeployment(db as never, 1);
 
-    expect(lines).toContain('✗ Deployment failed: build boom');
+    expect(lines).toContain('âœ— Deployment failed: build boom');
     expect(h.builder.stop).not.toHaveBeenCalled();
     expect(updates.some((u) => u.table === deployments && u.values.status === 'failed')).toBe(true);
   });
@@ -643,7 +651,7 @@ describe('runDeployment', () => {
 
     await runDeployment(db as never, 1);
 
-    expect(lines).toContain('✗ Deployment failed: auth failed');
+    expect(lines).toContain('âœ— Deployment failed: auth failed');
     expect(h.builder.stop).not.toHaveBeenCalled();
   });
 
@@ -777,10 +785,10 @@ describe('runDeployment', () => {
     await runDeployment(db as never, 1);
 
     expect(h.builder.buildAndRun).not.toHaveBeenCalled();
-    expect(lines).toContain('✗ Deployment failed: Managed database dependency is not ready (0/1 attachments running)');
+    expect(lines).toContain('âœ— Deployment failed: Managed database dependency is not ready (0/1 attachments running)');
   });
 
-  // ── private-registry auth ────────────────────────────────────────────────
+  // â”€â”€ private-registry auth â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   it('resolves registry auth from a registry-type source for image deploys', async () => {
     const { db } = makeDb();
     baseSetup(db, { image: 'ghcr.io/acme/app:1', sourceId: 7 });
@@ -849,7 +857,7 @@ describe('runDeployment', () => {
     const [ctx] = h.builder.buildAndRun.mock.calls[0] as [Record<string, unknown>];
     expect(ctx.registryAuth).toMatchObject({ server: 'registry.local:5000' });
 
-    // org/app (no dot in the first segment) → no server, Docker Hub default.
+    // org/app (no dot in the first segment) â†’ no server, Docker Hub default.
     h.builder.buildAndRun.mockClear();
     baseSetup(db, { image: 'acme/app:1', sourceId: 7 });
     db.query.sources.findFirst.mockResolvedValue({ id: 7, type: 'registry', registryUsername: 'u', tokenEncrypted: 't' });
@@ -860,7 +868,7 @@ describe('runDeployment', () => {
 
   it('covers null registryUsername and port-style bare image names', async () => {
     const { db } = makeDb();
-    // registryUsername null → username '' → auth skipped (incomplete).
+    // registryUsername null â†’ username '' â†’ auth skipped (incomplete).
     baseSetup(db, { image: 'reg.io/app:1', sourceId: 7 });
     db.query.sources.findFirst.mockResolvedValue({ id: 7, type: 'registry', registryUsername: null, tokenEncrypted: 't' });
     await runDeployment(db as never, 1);
@@ -876,7 +884,7 @@ describe('runDeployment', () => {
     expect(ctx2.registryAuth).toMatchObject({ server: undefined });
   });
 
-  // ── cancellation ─────────────────────────────────────────────────────────
+  // â”€â”€ cancellation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   it('aborts before the build when the deployment was cancelled mid-flight', async () => {
     const { db, updates } = makeDb();
     baseSetup(db, { image: 'nginx:latest' });
@@ -890,8 +898,8 @@ describe('runDeployment', () => {
     await runDeployment(db as never, 1);
 
     expect(h.builder.buildAndRun).not.toHaveBeenCalled();
-    expect(lines.join('\n')).toContain('⏹ Deployment cancelled');
-    // No previous runtime → the service is idle, the deployment cancelled.
+    expect(lines.join('\n')).toContain('â¹ Deployment cancelled');
+    // No previous runtime â†’ the service is idle, the deployment cancelled.
     const svcUpdate = updates.find((u) => u.table === services && u.values.status === 'idle');
     expect(svcUpdate).toBeTruthy();
     const depUpdate = updates.find((u) => u.table === deployments && u.values.status === 'cancelled');
@@ -914,8 +922,8 @@ describe('runDeployment', () => {
 
     await runDeployment(db as never, 1);
 
-    expect(lines.join('\n')).toContain('⏹ Deployment cancelled');
-    expect(lines.join('\n')).toContain('↩ Previous runtime is still healthy — rolled back to it.');
+    expect(lines.join('\n')).toContain('â¹ Deployment cancelled');
+    expect(lines.join('\n')).toContain('â†© Previous runtime is still healthy â€” rolled back to it.');
     // The new runtime was retired, the service stays running.
     expect(h.builder.stop).toHaveBeenCalledWith('new-c');
     const svcUpdate = updates.find((u) => u.table === services && u.values.status === 'running');
@@ -926,8 +934,8 @@ describe('runDeployment', () => {
     const { db } = makeDb();
     baseSetup(db, { image: 'nginx:latest', runtimeId: 'old-c' });
     db.query.deployments.findFirst.mockResolvedValue(dep);
-    // …but the conditional finalize update (status running + imageDigest set)
-    // returns no rows — as if the cancel flipped the row between checkpoint and write.
+    // â€¦but the conditional finalize update (status running + imageDigest set)
+    // returns no rows â€” as if the cancel flipped the row between checkpoint and write.
     const dbAny = db as unknown as {
       update: (t: unknown) => { set: (v: Record<string, unknown>) => { where: () => { returning: () => Promise<unknown[]> } } };
     };
@@ -957,7 +965,7 @@ describe('runDeployment', () => {
   it('cancels a repo deploy at the post-checkout checkpoint', async () => {
     const { db } = makeDb();
     baseSetup(db, { repoUrl: 'https://github.com/a/b.git' });
-    // Reads: 1 = initial, 2 = pre-build checkpoint; 3 = post-checkout → cancelled.
+    // Reads: 1 = initial, 2 = pre-build checkpoint; 3 = post-checkout â†’ cancelled.
     db.query.deployments.findFirst
       .mockResolvedValueOnce(dep)
       .mockResolvedValueOnce(dep)
@@ -968,7 +976,7 @@ describe('runDeployment', () => {
 
     expect(h.checkoutCommit).toHaveBeenCalledTimes(1);
     expect(h.builder.buildAndRun).not.toHaveBeenCalled();
-    expect(lines.join('\n')).toContain('⏹ Deployment cancelled');
+    expect(lines.join('\n')).toContain('â¹ Deployment cancelled');
   });
 
   it('cancels after a passing healthcheck, just before the success writes', async () => {
@@ -988,8 +996,8 @@ describe('runDeployment', () => {
 
     // The healthcheck ran; the success path never executed.
     expect(lines.join('\n')).toContain('Running healthcheck');
-    expect(lines.join('\n')).toContain('⏹ Deployment cancelled');
-    expect(lines.join('\n')).not.toContain('✓ Deployment successful');
+    expect(lines.join('\n')).toContain('â¹ Deployment cancelled');
+    expect(lines.join('\n')).not.toContain('âœ“ Deployment successful');
   });
 
   it('a finalize-race cancel without a previous runtime leaves the service untouched', async () => {    const { db } = makeDb();
@@ -1072,7 +1080,7 @@ describe('runDeployment', () => {
     // Pre-deploy hook failure causes deploy to fail and rollback
     execMock.run.mockRejectedValueOnce(new Error('migration failed'));
     await runDeployment(db as never, 1);
-    expect(lines.join('\n')).toContain('✗ Deployment failed: migration failed');
+    expect(lines.join('\n')).toContain('âœ— Deployment failed: migration failed');
 
     // Post-deploy hook failure is logged but does not fail the deploy
     execMock.run.mockResolvedValueOnce({ stdout: '', stderr: '' });

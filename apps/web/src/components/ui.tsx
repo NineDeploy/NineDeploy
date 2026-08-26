@@ -7,10 +7,13 @@ import {
   forwardRef,
   useCallback,
   useEffect,
+  useId,
+  useMemo,
   useRef,
   useState,
 } from 'react';
 import { createPortal } from 'react-dom';
+import { Plus, X } from 'lucide-react';
 import { rejectPanelAutofill } from '../lib/autofill.js';
 
 export const cn = (...parts: Array<string | false | null | undefined>) => parts.filter(Boolean).join(' ');
@@ -332,6 +335,7 @@ export function Modal({
   footer,
   wide,
   initialFocusRef,
+  open = true,
 }: {
   title: ReactNode;
   onClose: () => void;
@@ -339,10 +343,18 @@ export function Modal({
   footer?: ReactNode;
   wide?: boolean;
   initialFocusRef?: React.RefObject<HTMLElement | null>;
+  /** Defaults to true; set false to hide without unmounting. */
+  open?: boolean;
 }) {
+  // Hooks must be called unconditionally — the early return for `!open`
+  // would violate the rules of hooks (and is also why we keep the open
+  // check at the JSX level further down).
   const panelRef = useRef<HTMLDivElement>(null);
+  const isOpen = open !== false;
 
   useEffect(() => {
+    // The portal only mounts when isOpen; skip side-effects when closed.
+    if (!isOpen) return;
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
 
@@ -380,7 +392,7 @@ export function Modal({
       document.body.style.overflow = prevOverflow;
       window.removeEventListener('keydown', onKey);
     };
-  }, [onClose, initialFocusRef]);
+  }, [onClose, initialFocusRef, isOpen]);
 
   const modalContent = (
     <div className="fixed inset-0 z-[9999] flex items-end justify-center sm:items-center p-4 sm:p-6">
@@ -422,6 +434,12 @@ export function Modal({
       </div>
     </div>
   );
+
+  // When `!open`, render nothing — the hooks above already ran, so
+  // rules of hooks is satisfied, and the early return prevents the
+  // portal from being created (which would otherwise stay in the DOM
+  // and interfere with focus order).
+  if (!isOpen) return null;
 
   // SSR guard: document always exists in the browser (and in jsdom tests).
   /* v8 ignore start */
@@ -598,5 +616,373 @@ export function Tooltip({ content, children }: { content: string; children: Reac
         {content}
       </span>
     </span>
+  );
+}
+
+// ── ChipInput — array of strings edited as removable chips ──────────────
+/**
+ * Compact editor for `string[]` values: env.required, watch.paths,
+ * network.aliases. Each value renders as a chip with a remove button; the
+ * trailing input adds a new value on Enter, comma, or blur (when the
+ * input is non-empty). Whitespace is trimmed and duplicates are dropped so
+ * the form state stays canonical without bothering the caller.
+ */
+export interface ChipInputProps {
+  value: string[];
+  onChange: (next: string[]) => void;
+  placeholder?: string;
+  /** Hint shown above the input. */
+  hint?: string;
+  /** Optional explicit label; defaults to a small uppercase label like other fields. */
+  label?: string;
+  /** Validation: reject chips that don't match this regex. Invalid chips are simply not added. */
+  pattern?: RegExp;
+  disabled?: boolean;
+}
+
+export function ChipInput({
+  value,
+  onChange,
+  placeholder,
+  hint,
+  label,
+  pattern,
+  disabled,
+}: ChipInputProps) {
+  const [draft, setDraft] = useState('');
+  const id = useId();
+  const commit = useCallback(
+    (raw: string) => {
+      const next = raw.trim();
+      if (!next) return;
+      if (pattern && !pattern.test(next)) {
+        setDraft('');
+        return;
+      }
+      if (value.includes(next)) {
+        setDraft('');
+        return;
+      }
+      onChange([...value, next]);
+      setDraft('');
+    },
+    [onChange, pattern, value],
+  );
+
+  return (
+    <div>
+      {label && (
+        <div className="mb-1.5 flex items-center justify-between">
+          <label htmlFor={id} className="block text-xs font-semibold uppercase tracking-wide text-slate-400">
+            {label}
+          </label>
+          {hint && <span className="text-[11px] text-slate-500">{hint}</span>}
+        </div>
+      )}
+      <div
+        className={cn(
+          'flex flex-wrap items-center gap-1.5 rounded-lg bg-black/30 px-2 py-1.5 text-sm ring-1 ring-inset ring-white/10',
+          'focus-within:ring-2 focus-within:ring-indigo-400/60',
+          disabled && 'pointer-events-none opacity-50',
+        )}
+      >
+        {value.map((chip) => (
+          <span
+            key={chip}
+            className="inline-flex items-center gap-1 rounded-md bg-indigo-500/15 px-2 py-0.5 text-xs font-medium text-indigo-200 ring-1 ring-inset ring-indigo-500/30"
+          >
+            {chip}
+            <button
+              type="button"
+              aria-label={`Remove ${chip}`}
+              className="rounded-sm p-0.5 text-indigo-300 hover:bg-indigo-500/30 hover:text-indigo-100"
+              onClick={() => onChange(value.filter((c) => c !== chip))}
+            >
+              <X size={11} />
+            </button>
+          </span>
+        ))}
+        <input
+          id={id}
+          type="text"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ',') {
+              e.preventDefault();
+              commit(draft);
+            } else if (e.key === 'Backspace' && draft === '' && value.length > 0) {
+              // Convenient: empty draft + backspace removes the last chip.
+              onChange(value.slice(0, -1));
+            }
+          }}
+          onBlur={() => commit(draft)}
+          placeholder={value.length === 0 ? placeholder : undefined}
+          disabled={disabled}
+          className="min-w-[8ch] flex-1 bg-transparent px-1 py-0.5 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none"
+        />
+      </div>
+    </div>
+  );
+}
+
+// ── KeyValueEditor — object editor for env.aliases, route.headers, ... ──
+/**
+ * Renders a `Record<string, string>` as a list of editable rows. Each row
+ * has key and value inputs plus a delete button; an "Add row" button
+ * appends a new empty pair. Empty keys are dropped silently on commit
+ * so partial input never poisons the value.
+ */
+export interface KeyValueEditorProps {
+  value: Record<string, string>;
+  onChange: (next: Record<string, string>) => void;
+  keyPlaceholder?: string;
+  valuePlaceholder?: string;
+  addLabel?: string;
+  /** Optional key validator; invalid keys are kept in the input but excluded from `onChange`. */
+  validateKey?: (key: string) => boolean;
+}
+
+export function KeyValueEditor({
+  value,
+  onChange,
+  keyPlaceholder = 'key',
+  valuePlaceholder = 'value',
+  addLabel = 'Add',
+  validateKey,
+}: KeyValueEditorProps) {
+  const entries = useMemo(() => Object.entries(value), [value]);
+  const setRow = (key: string, newKey: string, newValue: string) => {
+    const next: Record<string, string> = {};
+    for (const [k, v] of entries) {
+      if (k === key) {
+        if (newKey) next[newKey] = newValue;
+      } else {
+        next[k] = v;
+      }
+    }
+    onChange(next);
+  };
+  const deleteRow = (key: string) => {
+    const next: Record<string, string> = {};
+    for (const [k, v] of entries) if (k !== key) next[k] = v;
+    onChange(next);
+  };
+  const addRow = () => {
+    const next = { ...value, '': '' };
+    onChange(next);
+  };
+  return (
+    <div className="space-y-1.5">
+      {entries.map(([k, v], i) => (
+        // Row index is part of the key so reordering is stable; the value
+        // input is identified by `kv-row-{i}-value` for test stability.
+        <div key={`${k}:${i}`} className="flex items-center gap-1.5">
+          <Input
+            aria-label={`key ${k || '(empty)'}`}
+            defaultValue={k}
+            placeholder={keyPlaceholder}
+            className="h-8 flex-1 font-mono text-xs"
+            onBlur={(e) => {
+              const next = e.target.value.trim();
+              if (validateKey && !validateKey(next)) return;
+              setRow(k, next, v);
+            }}
+          />
+          <span className="text-slate-500">=</span>
+          <Input
+            aria-label={`value for ${k || '(empty)'}`}
+            defaultValue={v}
+            placeholder={valuePlaceholder}
+            className="h-8 flex-1 font-mono text-xs"
+            onBlur={(e) => setRow(k, k, e.target.value)}
+          />
+          <button
+            type="button"
+            aria-label={`Delete ${k || 'row'}`}
+            onClick={() => deleteRow(k)}
+            className="rounded-md p-1.5 text-slate-400 hover:bg-rose-500/15 hover:text-rose-300"
+          >
+            <X size={12} />
+          </button>
+        </div>
+      ))}
+      <Button type="button" variant="ghost" size="sm" onClick={addRow}>
+        <Plus size={12} /> {addLabel}
+      </Button>
+    </div>
+  );
+}
+
+// ── ListEditor — array of objects with custom item renderer ──────────────
+/**
+ * Generic list editor for `T[]` where each item is a complex object
+ * (routes, alerts, etc.). The consumer passes `renderItem` to decide how
+ * each item looks; the editor owns add / remove / reorder.
+ */
+export interface ListEditorProps<T> {
+  value: T[];
+  onChange: (next: T[]) => void;
+  /** Builds a fresh item when the user clicks "Add". */
+  createNew: () => T;
+  /** Renders the body of a single item. The consumer is responsible for any field-level inputs. */
+  renderItem: (item: T, update: (next: T) => void, index: number) => ReactNode;
+  /** Per-item label shown in the card header. Optional. */
+  itemLabel?: (item: T, index: number) => string;
+  addLabel?: string;
+  emptyMessage?: string;
+}
+
+export function ListEditor<T>({
+  value,
+  onChange,
+  createNew,
+  renderItem,
+  itemLabel,
+  addLabel = 'Add',
+  emptyMessage = 'No items yet.',
+}: ListEditorProps<T>) {
+  const setItem = (index: number, next: T) => {
+    const copy = value.slice();
+    copy[index] = next;
+    onChange(copy);
+  };
+  const removeItem = (index: number) => {
+    onChange(value.filter((_, i) => i !== index));
+  };
+  const moveItem = (index: number, delta: -1 | 1) => {
+    // The disabled buttons on the first/last item already block invalid
+    // moves through the UI, so this function is only ever called with a
+    // valid target. The disabled attribute on the buttons is the gate.
+    const target = index + delta;
+    const next = value.slice();
+    const [moved] = next.splice(index, 1);
+    // `moved` is typed `T | undefined` because splice returns it, but
+    // the disabled-button gate guarantees `index` is in range here.
+    next.splice(target, 0, moved as T);
+    onChange(next);
+  };
+  return (
+    <div className="space-y-2">
+      {value.length === 0 ? (
+        <div className="rounded-lg border border-dashed border-white/10 bg-white/[0.02] px-3 py-4 text-center text-xs text-slate-500">
+          {emptyMessage}
+        </div>
+      ) : (
+        value.map((item, i) => (
+          <div
+            // The index is part of the key so React reuses the card across
+            // reorder operations without losing focus.
+            key={i}
+            className="rounded-lg border border-white/[0.08] bg-white/[0.02] p-3"
+          >
+            <div className="mb-2 flex items-center justify-between">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                {itemLabel ? `${itemLabel(item, i)}` : `Item ${i + 1}`}
+              </div>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  aria-label={`Move up`}
+                  onClick={() => moveItem(i, -1)}
+                  disabled={i === 0}
+                  className="rounded-md p-1 text-slate-400 hover:bg-white/10 hover:text-slate-200 disabled:opacity-30"
+                >
+                  ↑
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Move down`}
+                  onClick={() => moveItem(i, 1)}
+                  disabled={i === value.length - 1}
+                  className="rounded-md p-1 text-slate-400 hover:bg-white/10 hover:text-slate-200 disabled:opacity-30"
+                >
+                  ↓
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Remove`}
+                  onClick={() => removeItem(i)}
+                  className="rounded-md p-1 text-slate-400 hover:bg-rose-500/15 hover:text-rose-300"
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            </div>
+            <div>{renderItem(item, (next) => setItem(i, next), i)}</div>
+          </div>
+        ))
+      )}
+      <Button type="button" variant="ghost" size="sm" onClick={() => onChange([...value, createNew()])}>
+        <Plus size={12} /> {addLabel}
+      </Button>
+    </div>
+  );
+}
+
+// ── PresetSelector — single-select preset chooser with preview ───────────
+/**
+ * Renders a labelled preset picker. When the user picks an option, the
+ * consumer receives the parsed `NinedeployManifest` (so it can drop it
+ * into the form state). The selector is intentionally stateless — the
+ * current selection lives in the form, not the component — so the same
+ * preset can be re-applied without re-firing `onSelect`.
+ */
+export interface PresetOption<T> {
+  id: string;
+  label: string;
+  description?: string;
+  manifest: T;
+}
+
+export interface PresetSelectorProps<T> {
+  options: readonly PresetOption<T>[];
+  onSelect: (manifest: T) => void;
+  label?: string;
+  hint?: string;
+  /** ID of the currently-selected preset, used to highlight the active option. */
+  value?: string;
+}
+
+export function PresetSelector<T>({ options, onSelect, label, hint, value }: PresetSelectorProps<T>) {
+  const id = useId();
+  return (
+    <div>
+      {label && (
+        <div className="mb-1.5 flex items-center justify-between">
+          <label
+            htmlFor={id}
+            className="block text-xs font-semibold uppercase tracking-wide text-slate-400"
+          >
+            {label}
+          </label>
+          {hint && <span className="text-[11px] text-slate-500">{hint}</span>}
+        </div>
+      )}
+      <div id={id} className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+        {options.map((opt) => {
+          const active = opt.id === value;
+          return (
+            <button
+              key={opt.id}
+              type="button"
+              onClick={() => onSelect(opt.manifest)}
+              aria-pressed={active}
+              className={cn(
+                'rounded-lg border p-3 text-left transition',
+                active
+                  ? 'border-indigo-500/60 bg-indigo-500/10 ring-1 ring-indigo-500/30'
+                  : 'border-white/10 bg-white/[0.02] hover:border-white/20 hover:bg-white/[0.04]',
+              )}
+            >
+              <div className="text-sm font-medium text-slate-100">{opt.label}</div>
+              {opt.description && (
+                <div className="mt-0.5 text-xs text-slate-500">{opt.description}</div>
+              )}
+            </button>
+          );
+        })}
+      </div>
+    </div>
   );
 }

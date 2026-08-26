@@ -296,7 +296,7 @@ describe('program registration', () => {
       'services', 'databases', 'templates', 'deploys', 'token', 'system',
       'env', 'domains', 'volumes', 'networks', 'sessions', 'backups', 'alerts', 'users',
       'reset-link <idOrEmail>', 'activity', 'plugins', 'config-center', 'workspaces', 'demo', 'server', 'doctor',
-      'sources', 'deploy', 'webhooks', 'firewall',
+      'sources', 'deploy', 'webhooks', 'firewall', 'manifest',
     ]);
     expect(findCommand('server').children).toHaveLength(4);
     expect(findCommand('services').children).toHaveLength(12);
@@ -315,7 +315,8 @@ describe('program registration', () => {
     expect(findCommand('config-center').children).toHaveLength(4);
     expect(findCommand('demo').children).toHaveLength(1);
     expect(findCommand('firewall').children).toHaveLength(7);
-    expect(h.FakeCommand.instances).toHaveLength(118);
+    expect(findCommand('manifest').children).toHaveLength(4);
+    expect(h.FakeCommand.instances).toHaveLength(123);
     // sanity: every new command we added has at least the subcommands it owns
     expect(findCommand('sources').children.length).toBeGreaterThanOrEqual(6);
     expect(findCommand('deploy').children.length).toBeGreaterThanOrEqual(1);

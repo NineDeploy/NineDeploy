@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+﻿import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { assertPublicHttpUrl, isPrivateAddress } from '../src/lib/egressGuard.js';
 import { notifyEvent } from '../src/lib/notifier.js';
 import { exchangeOidcCode, fetchOidcConfiguration, fetchOidcUserInfo } from '../src/lib/oauth.js';
@@ -24,7 +24,7 @@ describe('isPrivateAddress', () => {
   it('names the addresses a server must not dial', () => {
     for (const ip of [
       '127.0.0.1', // loopback
-      '169.254.169.254', // cloud instance metadata — the one that matters
+      '169.254.169.254', // cloud instance metadata â€” the one that matters
       '10.1.2.3',
       '172.16.0.1',
       '172.31.255.254',

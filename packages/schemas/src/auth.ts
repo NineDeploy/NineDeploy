@@ -41,12 +41,16 @@ export const passwordChange = z.object({
 export type PasswordChange = z.infer<typeof passwordChange>;
 
 /** Admin-initiated password reset for another user. */
-/** Admin-created user — same shape as register plus the starting role. */
+/**
+ * Admin-created user — same shape as register, no global role.
+ * A new user has no workspace memberships until an existing owner/admin
+ * invites them; the first user on a fresh install is auto-promoted to owner
+ * of a personal workspace by the auth module.
+ */
 export const userCreate = z.object({
   email: z.email().max(255),
   password: z.string().min(8).max(128),
   name: z.string().min(1).max(100).optional(),
-  role: z.enum(['admin', 'member']).default('member'),
 });
 export type UserCreate = z.infer<typeof userCreate>;
 
@@ -81,12 +85,22 @@ export const refresh = z.object({
 });
 export type Refresh = z.infer<typeof refresh>;
 
-/** Public user representation (never includes passwordHash). */
+/**
+ * Public user representation (never includes passwordHash).
+ * The legacy global `role` field was removed; authorization is per-workspace
+ * now. The effective "is operator" check is computed by joining
+ * `workspace_members` and asking whether the user holds owner/admin in any
+ * workspace.
+ */
 export const publicUser = z.object({
   id: z.number().int(),
   email: z.email(),
   name: z.string().nullable(),
-  role: z.enum(['admin', 'member']),
+  /** True iff the user holds owner/admin in at least one workspace. */
+  isOperator: z.boolean(),
+  /** Number of workspaces the user belongs to. Computed by the server. */
+  workspaceCount: z.number().int().nonnegative(),
+  createdAt: z.string().datetime(),
 });
 export type PublicUser = z.infer<typeof publicUser>;
 

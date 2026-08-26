@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+﻿import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { screen, fireEvent, waitFor } from '@testing-library/react';
 import { Workspaces } from '../src/routes/Workspaces.js';
 import { api } from '../src/lib/api.js';
@@ -7,7 +7,7 @@ import { useWorkspace } from '../src/lib/workspace.js';
 import { renderWithProviders, mockOf } from './helpers.js';
 
 vi.mock('../src/lib/api.js', async () => {
-  // Must be './apiMock.js', not './helpers.js' — see the note in apiMock.ts.
+  // Must be './apiMock.js', not './helpers.js' â€” see the note in apiMock.ts.
   const { createFakeApiModule } = await import('./apiMock.js');
   return createFakeApiModule();
 });
@@ -35,7 +35,7 @@ describe('Workspaces route', () => {
     updatedAt: '2026-01-01T00:00:00.000Z',
     members: [
       { id: 10, userId: 1, role: 'owner' as const, createdAt: '2026-01-01', email: 'admin@acme.com', name: 'Admin' },
-      { id: 11, userId: 2, role: 'member' as const, createdAt: '2026-01-01', email: 'dev@acme.com', name: 'Developer' },
+      { id: 11, userId: 2, isOperator: false as const, createdAt: '2026-01-01', email: 'dev@acme.com', name: 'Developer' },
     ],
   };
 
@@ -86,7 +86,7 @@ describe('Workspaces route', () => {
     mockOf(api.workspaces.addMember).mockResolvedValueOnce({
       id: 12,
       userId: 3,
-      role: 'member',
+      isOperator: false,
       createdAt: '2026-01-01',
       email: 'newuser@acme.com',
       name: null,
@@ -110,7 +110,7 @@ describe('Workspaces route', () => {
     await waitFor(() => {
       expect(api.workspaces.addMember).toHaveBeenCalledWith(1, {
         email: 'newuser@acme.com',
-        role: 'member',
+        isOperator: false,
       });
       expect(refreshWorkspaces).toHaveBeenCalled();
     });
@@ -125,7 +125,7 @@ describe('Workspaces route', () => {
       id: 50,
       workspaceId: 1,
       email: 'newbie@acme.com',
-      role: 'member',
+      isOperator: false,
       acceptUrl: 'http://localhost:3000/invite/abc123',
       expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
       createdAt: new Date().toISOString(),
@@ -150,7 +150,7 @@ describe('Workspaces route', () => {
     const input = screen.getByDisplayValue('http://localhost:3000/invite/abc123') as HTMLInputElement;
     expect(input.readOnly).toBe(true);
 
-    // Click the Copy button — the label should toggle to "Copied".
+    // Click the Copy button â€” the label should toggle to "Copied".
     fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
     expect(await screen.findByRole('button', { name: 'Copied' })).toBeInTheDocument();
     expect(writeText).toHaveBeenCalledWith('http://localhost:3000/invite/abc123');
@@ -173,7 +173,7 @@ describe('Workspaces route', () => {
         id: 90,
         workspaceId: 1,
         email: 'pending@acme.com',
-        role: 'admin',
+        isOperator: true,
         invitedByUserId: 1,
         // invitedByName intentionally null to hit the "Invited by someone" fallback.
         invitedByName: null,
@@ -244,7 +244,7 @@ describe('Workspaces route', () => {
       expect(screen.queryByText(/Are you sure you want to permanently delete/)).not.toBeInTheDocument());
     expect(api.workspaces.delete).not.toHaveBeenCalled();
 
-    // Each dialog also closes via its backdrop (✕).
+    // Each dialog also closes via its backdrop (âœ•).
     fireEvent.click(screen.getByText('Invite Member'));
     expect(await screen.findByText('Invite Team Member')).toBeInTheDocument();
     fireEvent.click(screen.getAllByLabelText('Close dialog')[0]!);
@@ -267,7 +267,7 @@ describe('Workspaces route', () => {
     mockOf(api.workspaces.updateMemberRole).mockResolvedValueOnce({
       id: 11,
       userId: 2,
-      role: 'admin',
+      isOperator: true,
       createdAt: '2026-01-01',
     } as never);
 
@@ -285,7 +285,7 @@ describe('Workspaces route', () => {
 
     await waitFor(() => {
       expect(api.workspaces.updateMemberRole).toHaveBeenCalledWith(1, 11, {
-        role: 'admin',
+        isOperator: true,
       });
     });
   });
@@ -346,7 +346,7 @@ describe('Workspaces route', () => {
     renderWithProviders(<Workspaces />);
 
     // The danger zone has both a heading and a button labelled "Delete
-    // Workspace" — target the button by role.
+    // Workspace" â€” target the button by role.
     await waitFor(() => {
       expect(screen.getByRole('button', { name: 'Delete Workspace' })).toBeInTheDocument();
     });
@@ -382,8 +382,8 @@ describe('Workspaces route', () => {
     renderWithProviders(<Workspaces />);
     fireEvent.click(await screen.findByRole('button', { name: /Roles Guide/ }));
     expect(await screen.findByText(/Role & Permissions Matrix/)).toBeInTheDocument();
-    // The banner's ✕ button collapses it again.
-    fireEvent.click(screen.getByRole('button', { name: '✕' }));
+    // The banner's âœ• button collapses it again.
+    fireEvent.click(screen.getByRole('button', { name: 'âœ•' }));
     await waitFor(() =>
       expect(screen.queryByText(/Role & Permissions Matrix/)).not.toBeInTheDocument());
   });
@@ -426,7 +426,7 @@ describe('Workspaces route', () => {
     fireEvent.change(screen.getByPlaceholderText('developer@acme.com'), {
       target: { value: 'viewer@acme.com' },
     });
-    fireEvent.change(screen.getByDisplayValue(/Member — Can manage/), { target: { value: 'viewer' } });
+    fireEvent.change(screen.getByDisplayValue(/Member â€” Can manage/), { target: { value: 'viewer' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send Invite' }));
     await waitFor(() =>
       expect(api.workspaces.addMember).toHaveBeenCalledWith(1, {
@@ -496,15 +496,15 @@ describe('Workspaces route', () => {
   it('leaves the workspace as a non-owner member and maps non-Error delete failures', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     mockOf(useAuth).mockReturnValue({
-      user: { id: 1, email: 'me@acme.com', name: 'Me', role: 'admin' as const },
+      user: { id: 1, email: 'me@acme.com', name: 'Me', isOperator: true as const },
       loading: false,
     });
     mockOf(api.workspaces.get).mockResolvedValue({
       ...mockWs,
-      myRole: 'admin' as const,
+      myisOperator: true as const,
       members: [
         { id: 20, userId: 99, role: 'owner' as const, createdAt: '2026-01-01', email: 'boss@acme.com', name: 'Boss' },
-        { id: 21, userId: 1, role: 'admin' as const, createdAt: '2026-01-01', email: 'me@acme.com', name: 'Me' },
+        { id: 21, userId: 1, isOperator: true as const, createdAt: '2026-01-01', email: 'me@acme.com', name: 'Me' },
       ],
     } as never);
     renderWithProviders(<Workspaces />);
@@ -528,7 +528,7 @@ describe('Workspaces route', () => {
 
   it('renders static badges and no removal buttons for a viewer', async () => {
     mockOf(useAuth).mockReturnValue({
-      user: { id: 3, email: 'view@acme.com', name: 'Viewer', role: 'member' as const },
+      user: { id: 3, email: 'view@acme.com', name: 'Viewer', isOperator: false as const },
       loading: false,
     });
     mockOf(api.workspaces.get).mockResolvedValue({
@@ -537,7 +537,7 @@ describe('Workspaces route', () => {
       memberCount: undefined,
       members: [
         { id: 30, userId: 9, role: 'owner' as const, createdAt: '2026-01-01', email: 'boss@acme.com', name: 'Boss' },
-        { id: 31, userId: 8, role: 'admin' as const, createdAt: '2026-01-01', email: 'ops@acme.com', name: 'Ops' },
+        { id: 31, userId: 8, isOperator: true as const, createdAt: '2026-01-01', email: 'ops@acme.com', name: 'Ops' },
         { id: 32, userId: 3, role: 'viewer' as const, createdAt: '2026-01-01', email: 'view@acme.com', name: null },
         // A pending/ghost member without name or email still renders a row.
         { id: 33, userId: 4, role: 'viewer' as const, createdAt: '2026-01-01', email: null, name: null },
@@ -546,7 +546,7 @@ describe('Workspaces route', () => {
 
     renderWithProviders(<Workspaces />);
     // Every role renders as a static badge (owner indigo, admin emerald,
-    // viewer neutral) — no role dropdowns for a viewer.
+    // viewer neutral) â€” no role dropdowns for a viewer.
     await screen.findByText('Boss');
     expect(screen.getAllByRole('combobox').length).toBe(1); // only the workspace switcher
     // A viewer still sees Leave on their OWN row (isMe), but no Remove

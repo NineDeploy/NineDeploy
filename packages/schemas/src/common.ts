@@ -97,6 +97,31 @@ export const repoRelativePath = z
 /** Same rules as {@link repoRelativePath}; named for the build-context field. */
 export const repoBaseDir = repoRelativePath;
 
+/**
+ * Absolute path inside a container (e.g. `/data`, `/var/lib/uploads`).
+ * Rejected: empty, relative, paths containing NUL, parent-relative segments,
+ * or a leading double slash (Docker treats `//` as the named-volume named
+ * bind-mount form which is not what we want here).
+ */
+export const containerPath = z
+  .string()
+  .min(1)
+  .max(1024)
+  .regex(/^\/[^/].*|^\/$/, 'must be an absolute path starting with a single "/"');
+
+/**
+ * Docker named-volume name. Lowercase letters, digits, underscores, hyphens
+ * and dots; must start with alnum; max 64 chars (the volume driver limit
+ * on most filesystems). The managed prefixes `nd-svc-` / `nd-db-` are
+ * accepted; clients sending a non-managed name attach a pre-existing volume
+ * they have created out-of-band.
+ */
+export const dockerVolumeName = z
+  .string()
+  .min(1)
+  .max(64)
+  .regex(/^[a-z0-9][a-z0-9_.-]*$/i, 'invalid docker volume name');
+
 /** Cursor-style pagination params. */
 export const pagination = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(25),

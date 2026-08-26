@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+﻿import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { consumeResetToken, issueResetToken, RESET_TTL_MS, pruneResetTokens } from '../../src/lib/passwordReset.js';
 import { hashPassword, sha256, verifyPassword } from '../../src/lib/crypto.js';
 import { createFakeDb } from '../helpers.js';
@@ -7,7 +7,7 @@ import type { User } from '@ninedeploy/db';
 vi.mock('../../src/lib/notifier.js', () => ({ notifyEvent: vi.fn() }));
 
 const user = {
-  id: 1, email: 'a@b.c', name: null, role: 'admin', passwordHash: 'x',
+  id: 1, email: 'a@b.c', name: null, isOperator: true, passwordHash: 'x',
   tokenVersion: 3, createdAt: new Date(), updatedAt: new Date(),
 } as unknown as User;
 

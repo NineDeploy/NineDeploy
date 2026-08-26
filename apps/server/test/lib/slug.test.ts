@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+﻿import { describe, expect, it } from 'vitest';
 import { slugify } from '../../src/lib/slug.js';
 
 describe('slugify', () => {

@@ -5,6 +5,7 @@ import type { BuildConfig } from '@ninedeploy/db';
 import { buildEnv, capture, run, sleep } from '../../lib/exec.js';
 import { ensureDockerImage, pullDockerImage } from '../../lib/dockerPull.js';
 import { NETWORK } from '../proxy.js';
+import { ensureServiceBridge } from '../../lib/serviceBridge.js';
 import { buildProbeUrl, safeProbePath } from '../../lib/probeUrl.js';
 import { writeSecretFile, type SecretFile } from '../../lib/secretFile.js';
 import { repoRelative, resolveInRepo } from '../../lib/repoPath.js';
@@ -419,7 +420,13 @@ export const dockerBuilder: Builder = {
       }
     }
 
-    const args = ['run', '-d', '--name', name, '--restart', safeRestartPolicy(buildConfig?.restartPolicy), '--network', NETWORK];
+    // Model B: each service runs on its own `nd-svc-<slug>` bridge. Traefik is
+    // attached to it (see `ensureServiceBridge`) so the proxy can still reach
+    // the service by name; other services cannot, because they are not on
+    // this bridge. The shared `ninedeploy` mesh is no longer a fan-in point
+    // for app traffic — only Traefik + the probe container still live there.
+    const bridge = await ensureServiceBridge(service.slug, log);
+    const args = ['run', '-d', '--name', name, '--restart', safeRestartPolicy(buildConfig?.restartPolicy), '--network', bridge];
     // NOTE: no `-p` host port is published at all. Public traffic enters
     // exclusively through Traefik, which reaches the container by name over the
     // shared network; healthchecks probe the container's network IP directly

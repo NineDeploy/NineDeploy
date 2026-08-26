@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+﻿import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { authRoutes } from '../src/modules/auth.js';
 import { asUser, buildTestApp, createFakeDb, userRow } from './helpers.js';
 
@@ -30,7 +30,7 @@ const notifierMocks = vi.hoisted(() => ({
 }));
 vi.mock('../src/lib/notifier.js', () => notifierMocks);
 
-// L-10: the routes no longer call verifyTotp directly — they go through
+// L-10: the routes no longer call verifyTotp directly â€” they go through
 // `consumeTotpCode`, which needs the matched STEP so it can refuse a replay.
 // A fresh step per call keeps these tests about the routes; the single-use
 // rule itself is proved in test/lib/totpReplay.test.ts.
@@ -105,15 +105,15 @@ describe('auth two-factor routes', () => {
       db: createFakeDb({ findFirst: { users: twoFactorUser({ totpEnabled: true }) }, update: { users: [userRow({ id: 1 })] } }),
     });
     await app.register(authRoutes);
-    // No password → rejected; a bare stolen token must not be able to
+    // No password â†’ rejected; a bare stolen token must not be able to
     // regenerate the secret (which also flips 2FA off).
     const bare = await app.inject({ method: 'POST', url: '/2fa/setup', headers: asUser() });
     expect(bare.statusCode).toBe(400);
-    // Wrong password → 401.
+    // Wrong password â†’ 401.
     cryptoMocks.verifyPassword.mockResolvedValueOnce(false);
     const wrong = await app.inject({ method: 'POST', url: '/2fa/setup', headers: asUser(), payload: { password: 'nope' } });
     expect(wrong.statusCode).toBe(401);
-    // Correct password → a fresh pending secret.
+    // Correct password â†’ a fresh pending secret.
     const ok = await app.inject({ method: 'POST', url: '/2fa/setup', headers: asUser(), payload: { password: GOOD } });
     expect(ok.statusCode).toBe(200);
     expect(ok.json()).toHaveProperty('secret');

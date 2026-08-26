@@ -5,11 +5,11 @@ export const menuRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('onRequest', app.authenticate);
 
   app.get('/', async (req) => {
-    const userRole = req.user!.role as 'admin' | 'member';
+    const isOperator = req.user!.isOperator;
     const query = req.query as { slot?: MenuSlot };
 
     if (query.slot) {
-      const items = req.kernel.menuRegistry.getItemsForSlot(query.slot, userRole);
+      const items = req.kernel.menuRegistry.getItemsForSlot(query.slot, isOperator);
       return { slot: query.slot, items };
     }
 
@@ -18,7 +18,7 @@ export const menuRoutes: FastifyPluginAsync = async (app) => {
 
     for (const item of allItems) {
       if (!slots[item.slot]) {
-        slots[item.slot] = req.kernel.menuRegistry.getItemsForSlot(item.slot, userRole);
+        slots[item.slot] = req.kernel.menuRegistry.getItemsForSlot(item.slot, isOperator);
       }
     }
 

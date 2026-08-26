@@ -2,6 +2,7 @@ import { eq } from 'drizzle-orm';
 import { deployments, jobRuns, scheduledJobs, services, type DB } from '@ninedeploy/db';
 import { run } from './exec.js';
 import { audit } from './audit.js';
+import { backupServiceVolumes } from '../modules/volumeBackups.js';
 
 const MAX_OUTPUT = 60_000; // ~60 KB of captured output per run
 
@@ -9,7 +10,8 @@ const MAX_OUTPUT = 60_000; // ~60 KB of captured output per run
  * Execute one scheduled job now (used by both the cron scheduler and the
  * run-now route). `deploy` jobs enqueue a deployment (trigger: schedule);
  * `exec` jobs run a command inside the service's runtime container with the
- * output + exit code recorded on a job_runs row.
+ * output + exit code recorded on a job_runs row; `backup` jobs snapshot
+ * every volume currently attached to the service.
  */
 export async function runJob(db: DB, jobId: number): Promise<void> {
   const job = await db.query.scheduledJobs.findFirst({ where: eq(scheduledJobs.id, jobId) });
@@ -28,6 +30,20 @@ export async function runJob(db: DB, jobId: number): Promise<void> {
       message: `Scheduled job: ${job.name}`,
     });
     void audit(db, null, 'job.deploy', job.name);
+    return;
+  }
+
+  if (job.kind === 'backup') {
+    // Snapshot the service's primary volume (when set) plus every row in
+    // `service_volume_attachments`. The route path takes a single volume;
+    // the scheduled sweep iterates the full set.
+    const sink = (line: string) => console.log(`[scheduled backup] ${line}`);
+    try {
+      const result = await backupServiceVolumes({ db } as never, svc.id, sink);
+      void audit(db, null, result.failed > 0 ? 'job.backup_failed' : 'job.backup', `${job.name} (${result.created} ok, ${result.failed} failed)`);
+    } catch (err) {
+      void audit(db, null, 'job.backup_failed', `${job.name}: ${err instanceof Error ? err.message : String(err)}`);
+    }
     return;
   }
 

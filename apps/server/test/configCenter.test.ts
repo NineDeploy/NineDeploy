@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+﻿import { describe, expect, it } from 'vitest';
 import { configCenterRoutes } from '../src/modules/configCenter.js';
 import { asUser, buildTestApp, createFakeDb } from './helpers.js';
 
@@ -90,7 +90,7 @@ describe('Config Center HTTP API', () => {
     const setRes1 = await app.inject({
       method: 'POST',
       url: '/system.site_name',
-      headers: asUser({ role: 'admin' }),
+      headers: asUser({ isOperator: true }),
       payload: { value: 'Production NineDeploy' },
     });
     expect(setRes1.statusCode).toBe(200);
@@ -98,7 +98,7 @@ describe('Config Center HTTP API', () => {
     const setRes2 = await app.inject({
       method: 'POST',
       url: '/plugin:smtp:password',
-      headers: asUser({ role: 'admin' }),
+      headers: asUser({ isOperator: true }),
       payload: { value: 'super-secret-pass', isSecret: true },
     });
     expect(setRes2.statusCode).toBe(200);
@@ -107,7 +107,7 @@ describe('Config Center HTTP API', () => {
     const setResCustomSec = await app.inject({
       method: 'POST',
       url: '/custom.secret_token',
-      headers: asUser({ role: 'admin' }),
+      headers: asUser({ isOperator: true }),
       payload: { value: 'top-secret-val', isSecret: true },
     });
     expect(setResCustomSec.statusCode).toBe(200);
@@ -116,18 +116,18 @@ describe('Config Center HTTP API', () => {
     const setRes3 = await app.inject({
       method: 'POST',
       url: '/custom.analytics_id',
-      headers: asUser({ role: 'admin' }),
+      headers: asUser({ isOperator: true }),
       payload: { value: 'UA-12345', tags: ['analytics'] },
     });
     expect(setRes3.statusCode).toBe(200);
 
-    // 3. L-12: the listing is admin-only now. Masking secrets was not enough —
+    // 3. L-12: the listing is admin-only now. Masking secrets was not enough â€”
     // the non-secret entries still describe how the whole instance is wired,
     // and a member has no operator role to use them for.
     const memberListRes = await app.inject({
       method: 'GET',
       url: '/',
-      headers: asUser({ role: 'member' }),
+      headers: asUser({ isOperator: false }),
     });
     expect(memberListRes.statusCode).toBe(403);
 
@@ -135,7 +135,7 @@ describe('Config Center HTTP API', () => {
     const adminRevealRes = await app.inject({
       method: 'GET',
       url: '/?reveal=true',
-      headers: asUser({ role: 'admin' }),
+      headers: asUser({ isOperator: true }),
     });
     expect(adminRevealRes.statusCode).toBe(200);
     const adminEntries = adminRevealRes.json().entries;
@@ -146,7 +146,7 @@ describe('Config Center HTTP API', () => {
     const filterCatRes = await app.inject({
       method: 'GET',
       url: '/?category=general',
-      headers: asUser({ role: 'admin' }),
+      headers: asUser({ isOperator: true }),
     });
     expect(filterCatRes.statusCode).toBe(200);
     expect(filterCatRes.json().entries.every((e: any) => e.category === 'general')).toBe(true);
@@ -155,17 +155,17 @@ describe('Config Center HTTP API', () => {
     const filterPluginRes = await app.inject({
       method: 'GET',
       url: '/?pluginId=smtp',
-      headers: asUser({ role: 'admin' }),
+      headers: asUser({ isOperator: true }),
     });
     expect(filterPluginRes.statusCode).toBe(200);
     expect(filterPluginRes.json().entries.every((e: any) => e.pluginId === 'smtp')).toBe(true);
 
-    // 7. Get specific key — admin-only, same L-12 rule as the listing:
+    // 7. Get specific key â€” admin-only, same L-12 rule as the listing:
     // instance configuration is an operator concern.
     const getPubRes = await app.inject({
       method: 'GET',
       url: '/system.site_name',
-      headers: asUser({ role: 'admin' }),
+      headers: asUser({ isOperator: true }),
     });
     expect(getPubRes.statusCode).toBe(200);
     expect(getPubRes.json().value).toBe('Production NineDeploy');
@@ -174,7 +174,7 @@ describe('Config Center HTTP API', () => {
     const getPubMemberRes = await app.inject({
       method: 'GET',
       url: '/system.site_name',
-      headers: asUser({ role: 'member' }),
+      headers: asUser({ isOperator: false }),
     });
     expect(getPubMemberRes.statusCode).toBe(403);
 
@@ -182,7 +182,7 @@ describe('Config Center HTTP API', () => {
     const getDefaultOnlyRes = await app.inject({
       method: 'GET',
       url: '/system.default_only',
-      headers: asUser({ role: 'admin' }),
+      headers: asUser({ isOperator: true }),
     });
     expect(getDefaultOnlyRes.statusCode).toBe(200);
     expect(getDefaultOnlyRes.json().value).toBe('Default Value');
@@ -192,25 +192,25 @@ describe('Config Center HTTP API', () => {
     const getNoCatRes = await app.inject({
       method: 'GET',
       url: '/system.no_cat',
-      headers: asUser({ role: 'admin' }),
+      headers: asUser({ isOperator: true }),
     });
     expect(getNoCatRes.statusCode).toBe(200);
     expect(getNoCatRes.json().category).toBe('general');
     expect(getNoCatRes.json().tags).toEqual([]);
 
-    // Get secret as member — refused before the handler can mask anything.
+    // Get secret as member â€” refused before the handler can mask anything.
     const getSecretMemberRes = await app.inject({
       method: 'GET',
       url: '/plugin:smtp:password',
-      headers: asUser({ role: 'member' }),
+      headers: asUser({ isOperator: false }),
     });
     expect(getSecretMemberRes.statusCode).toBe(403);
 
-    // Get custom secret as member — same refusal.
+    // Get custom secret as member â€” same refusal.
     const getCustomSecMemberRes = await app.inject({
       method: 'GET',
       url: '/custom.secret_token',
-      headers: asUser({ role: 'member' }),
+      headers: asUser({ isOperator: false }),
     });
     expect(getCustomSecMemberRes.statusCode).toBe(403);
 
@@ -218,15 +218,15 @@ describe('Config Center HTTP API', () => {
     const getSecretAdminRes = await app.inject({
       method: 'GET',
       url: '/plugin:smtp:password',
-      headers: asUser({ role: 'admin' }),
+      headers: asUser({ isOperator: true }),
     });
     expect(getSecretAdminRes.statusCode).toBe(200);
-    expect(getSecretAdminRes.json().value).toBe('••••••••');
+    expect(getSecretAdminRes.json().value).toBe('â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢');
 
     const getSecretAdminRevealRes = await app.inject({
       method: 'GET',
       url: '/plugin:smtp:password?reveal=true',
-      headers: asUser({ role: 'admin' }),
+      headers: asUser({ isOperator: true }),
     });
     expect(getSecretAdminRevealRes.statusCode).toBe(200);
     expect(getSecretAdminRevealRes.json().value).toBe('super-secret-pass');
@@ -235,7 +235,7 @@ describe('Config Center HTTP API', () => {
     const missingRes = await app.inject({
       method: 'GET',
       url: '/nonexistent.key',
-      headers: asUser({ role: 'admin' }),
+      headers: asUser({ isOperator: true }),
     });
     expect(missingRes.statusCode).toBe(404);
 
@@ -243,7 +243,7 @@ describe('Config Center HTTP API', () => {
     const delRes = await app.inject({
       method: 'DELETE',
       url: '/system.site_name',
-      headers: asUser({ role: 'admin' }),
+      headers: asUser({ isOperator: true }),
     });
     expect(delRes.statusCode).toBe(200);
 
@@ -251,7 +251,7 @@ describe('Config Center HTTP API', () => {
     const memberSetRes = await app.inject({
       method: 'POST',
       url: '/system.site_name',
-      headers: asUser({ role: 'member' }),
+      headers: asUser({ isOperator: false }),
       payload: { value: 'Hacked' },
     });
     expect(memberSetRes.statusCode).toBe(403);
@@ -308,18 +308,18 @@ describe('Config Center HTTP API', () => {
     const setRes = await app.inject({
       method: 'POST',
       url: '/plugin:smtp:password',
-      headers: asUser({ role: 'admin' }),
+      headers: asUser({ isOperator: true }),
       payload: { value: 'real-smtp-secret', isSecret: true },
     });
     expect(setRes.statusCode).toBe(200);
 
-    // Saving the displayed mask back must be refused — the old code silently
-    // replaced the real credential with '••••••••'.
+    // Saving the displayed mask back must be refused â€” the old code silently
+    // replaced the real credential with 'â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢'.
     const maskRes = await app.inject({
       method: 'POST',
       url: '/plugin:smtp:password',
-      headers: asUser({ role: 'admin' }),
-      payload: { value: '••••••••', isSecret: true },
+      headers: asUser({ isOperator: true }),
+      payload: { value: 'â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢', isSecret: true },
     });
     expect(maskRes.statusCode).toBe(400);
     expect(maskRes.json().error.code).toBe('masked_secret_rejected');
@@ -329,14 +329,14 @@ describe('Config Center HTTP API', () => {
     const keepRes = await app.inject({
       method: 'POST',
       url: '/plugin:smtp:password',
-      headers: asUser({ role: 'admin' }),
+      headers: asUser({ isOperator: true }),
       payload: { isSecret: true, description: 'updated description' },
     });
     expect(keepRes.statusCode).toBe(200);
     const revealRes = await app.inject({
       method: 'GET',
       url: '/?reveal=true',
-      headers: asUser({ role: 'admin' }),
+      headers: asUser({ isOperator: true }),
     });
     const revealed = revealRes.json().entries.find((e: any) => e.key === 'plugin:smtp:password');
     expect(revealed.value).toBe('real-smtp-secret');

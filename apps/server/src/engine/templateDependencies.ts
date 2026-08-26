@@ -9,7 +9,7 @@ import {
 import { eq } from 'drizzle-orm';
 import { encrypt, randomToken } from '../lib/crypto.js';
 import { getTemplates } from '../templates/registry.js';
-import { defaultPort, ENGINES, startDatabase } from './database.js';
+import { attachDatabaseToServiceBridges, defaultPort, ENGINES, startDatabase } from './database.js';
 
 export type TemplateDependencyResult = { database: Database; alreadyAttached: boolean } | null;
 
@@ -84,6 +84,9 @@ export async function reconcileTemplateDependencies(
   log(`Ensuring ${template.dbEngine} dependency ${database.slug} is running …`);
   try {
     await startDatabase(database, log);
+    // Model B: the DB must also live on the service's per-slug bridge so the
+    // app can reach it by name without being able to reach other services.
+    await attachDatabaseToServiceBridges(database, [service.slug], log);
     await db.update(databases).set({
       status: 'running',
       internalHost: database.containerName,

@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from 'node:fs';
+﻿import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const rootFile = (path: string) => readFileSync(new URL(`../../../${path}`, import.meta.url), 'utf8');
@@ -23,7 +23,7 @@ describe('L-14: GitHub Actions are pinned to immutable commits', () => {
     const uses = [...body.matchAll(/^\s*(?:-\s*)?uses:\s*(\S+)/gm)].map((m) => m[1]!);
     expect(uses.length).toBeGreaterThan(0);
     for (const ref of uses) {
-      // A local composite action (./.github/…) has no upstream to pin.
+      // A local composite action (./.github/â€¦) has no upstream to pin.
       if (ref.startsWith('./')) continue;
       expect(ref, `${file}: ${ref}`).toMatch(/^[\w.-]+\/[\w.-]+(\/[\w.-]+)*@[0-9a-f]{40}$/);
     }
@@ -37,7 +37,7 @@ describe('L-14: GitHub Actions are pinned to immutable commits', () => {
 describe('L-15: the installer never pipes remote code into a root shell', () => {
   const installer = rootFile('install.sh');
 
-  it('has no `curl … | sudo sh` / `| sudo bash` construct left', () => {
+  it('has no `curl â€¦ | sudo sh` / `| sudo bash` construct left', () => {
     const lines = installer.split('\n').filter((l) => !l.trimStart().startsWith('#'));
     for (const line of lines) {
       expect(line, line).not.toMatch(/curl[^|]*\|\s*sudo\s+(sh|bash)/);

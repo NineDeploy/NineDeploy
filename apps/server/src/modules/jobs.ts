@@ -1,4 +1,4 @@
-import { and, desc, eq } from 'drizzle-orm';
+﻿import { and, desc, eq } from 'drizzle-orm';
 import { jobRuns, scheduledJobs } from '@ninedeploy/db';
 import { jobCreate, jobPatch } from '@ninedeploy/schemas';
 import type { FastifyPluginAsync } from 'fastify';
@@ -51,10 +51,10 @@ export const jobRoutes: FastifyPluginAsync = async (app) => {
     const input = jobCreate.parse(req.body ?? {});
     assertCron(input.cron);
     if (input.kind === 'exec' && !input.command) throw badRequest('command is required for exec jobs');
-    // Exec jobs run arbitrary commands inside the container — admin-only,
+    // Exec jobs run arbitrary commands inside the container â€” admin-only,
     // consistent with the exec WS route and the volume file manager.
-    if (input.kind === 'exec' && req.user?.role !== 'admin') {
-      throw forbidden('Admin access required');
+    if (input.kind === 'exec' && !req.user?.isOperator) {
+      throw forbidden('Operator access required');
     }
 
     const [row] = await app.db
@@ -95,9 +95,13 @@ export const jobRoutes: FastifyPluginAsync = async (app) => {
     if (input.command !== undefined) values.command = input.command.trim() || null;
     if (input.enabled !== undefined) values.enabled = input.enabled;
     // Creating, switching to, or editing an exec job means arbitrary container
-    // commands — admin-only.
-    if ((values.kind === 'exec' || existingJob.kind === 'exec') && req.user?.role !== 'admin') {
-      throw forbidden('Admin access required');
+    // commands â€” admin-only. Backup jobs are also admin-only: they create
+    // host-level files (`sibling container + tar` to the data dir) and
+    // optionally push to remote storage.
+    const isExecLike = values.kind === 'exec' || existingJob.kind === 'exec';
+    const isBackup = values.kind === 'backup' || existingJob.kind === 'backup';
+    if ((isExecLike || isBackup) && !req.user?.isOperator) {
+      throw forbidden('Operator access required');
     }
     const [row] = await app.db
       .update(scheduledJobs)
@@ -127,8 +131,8 @@ export const jobRoutes: FastifyPluginAsync = async (app) => {
       where: and(eq(scheduledJobs.id, jobId), eq(scheduledJobs.serviceId, id)),
     });
     if (!job) throw notFound('Job not found');
-    if (job.kind === 'exec' && req.user?.role !== 'admin') {
-      throw forbidden('Admin access required');
+    if ((job.kind === 'exec' || job.kind === 'backup') && !req.user?.isOperator) {
+      throw forbidden('Operator access required');
     }
     await runJob(app.db, jobId);
     void audit(app.db, req.user!.id, 'job.run', job.name);
@@ -142,7 +146,7 @@ export const jobRoutes: FastifyPluginAsync = async (app) => {
     const jobId = parseId((req.params as { jobId: string }).jobId);
     // Owning the service is not enough: `jobId` must belong to THIS service.
     // Without this, any member who owns any service could read every job's
-    // captured output by iterating jobId — including admin-only `exec` jobs,
+    // captured output by iterating jobId â€” including admin-only `exec` jobs,
     // whose output is up to 60 KB of arbitrary in-container command results.
     const job = await app.db.query.scheduledJobs.findFirst({
       where: and(eq(scheduledJobs.id, jobId), eq(scheduledJobs.serviceId, id)),

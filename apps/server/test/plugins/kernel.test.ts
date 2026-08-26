@@ -1,4 +1,4 @@
-import Fastify from 'fastify';
+﻿import Fastify from 'fastify';
 import { describe, expect, it, vi } from 'vitest';
 import kernelPlugin from '../../src/plugins/kernel.js';
 import { createFakeDb } from '../helpers.js';

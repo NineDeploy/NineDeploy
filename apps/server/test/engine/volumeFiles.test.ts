@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+﻿import { describe, expect, it, vi } from 'vitest';
 
 const execMocks = vi.hoisted(() => ({
   run: vi.fn(async () => undefined),
@@ -15,7 +15,7 @@ describe('engine/volumeFiles guard', () => {
   });
 
   it('refuses non-managed volume names at the choke point', async () => {
-    // A name like `/` would make `-v /:/v` catastrophic — every operation
+    // A name like `/` would make `-v /:/v` catastrophic â€” every operation
     // must reject it, not just the route-level callers.
     await expect(volumeFiles.listVolumeDir('/', '')).rejects.toThrow('non-managed volume');
     await expect(volumeFiles.readVolumeFile('evil', 'a')).rejects.toThrow('non-managed volume');

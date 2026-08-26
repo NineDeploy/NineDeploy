@@ -2,7 +2,6 @@ import { eq } from 'drizzle-orm';
 import { buildConfigs, type DB } from '@ninedeploy/db';
 import { forbidden } from './errors.js';
 import type { AuthedUser } from './resourceAccess.js';
-import { isAdmin } from './resourceAccess.js';
 
 /**
  * Which parts of a service definition amount to code execution on the HOST,
@@ -53,25 +52,25 @@ export function hostPrivilegeReasons(input: PrivilegeInput): string[] {
   return reasons;
 }
 
-/** Throw 403 (listing the reasons) unless the caller is an admin. */
+/** Throw 403 (listing the reasons) unless the caller is an operator. */
 export function assertMayUseHostPrivilege(user: AuthedUser, input: PrivilegeInput): void {
-  if (isAdmin(user)) return;
+  if (user.isOperator) return;
   const reasons = hostPrivilegeReasons(input);
   if (reasons.length === 0) return;
-  throw forbidden(`Admin access required: ${reasons.join('; ')}.`);
+  throw forbidden(`Operator access required: ${reasons.join('; ')}.`);
 }
 
 /**
  * Same decision for an ALREADY STORED service — used on the deploy path, so a
- * definition that predates this rule (or was created by an admin) cannot be
- * redeployed by a member to obtain the same host execution.
+ * definition that predates this rule (or was created by an operator) cannot be
+ * redeployed by a non-operator to obtain the same host execution.
  */
 export async function assertMayDeployStoredService(
   db: DB,
   user: AuthedUser,
   service: { id: number; type: string; dockerSocket?: boolean | null },
 ): Promise<void> {
-  if (isAdmin(user)) return;
+  if (user.isOperator) return;
   const build = await db.query.buildConfigs.findFirst({ where: eq(buildConfigs.serviceId, service.id) });
   assertMayUseHostPrivilege(user, {
     type: service.type,

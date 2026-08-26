@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+﻿import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDb, runMigrations, users, type DB } from '@ninedeploy/db';
 import { eq } from 'drizzle-orm';
 import { totpAt } from '../../src/lib/totp.js';
@@ -7,7 +7,7 @@ import { totpAt } from '../../src/lib/totp.js';
  * L-10 regression: a TOTP code is single-use.
  *
  * Runs against a REAL in-memory SQLite with the real migrations, because the
- * whole point of the fix is a conditional UPDATE — a fake db that ignores
+ * whole point of the fix is a conditional UPDATE â€” a fake db that ignores
  * WHERE clauses would report success no matter what the code did.
  */
 
@@ -31,7 +31,7 @@ async function freshDb(): Promise<DB> {
   await db.insert(users).values({
     email: 'u@example.com',
     passwordHash: 'x',
-    role: 'admin',
+    isOperator: true,
     totpEnabled: true,
     totpSecretEncrypted: SECRET,
   });
@@ -55,7 +55,7 @@ describe('consumeTotpCode', () => {
   it('REFUSES the same code a second time inside its validity window', async () => {
     const code = totpAt(SECRET, NOW);
     expect(await consumeTotpCode(db, user, code, NOW)).toBe(true);
-    // Same instant, and 29 seconds later — still inside the ±1-step window
+    // Same instant, and 29 seconds later â€” still inside the Â±1-step window
     // where the old `verifyTotp` would have said yes.
     expect(await consumeTotpCode(db, user, code, NOW)).toBe(false);
     expect(await consumeTotpCode(db, user, code, NOW + 29_000)).toBe(false);

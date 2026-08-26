@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+﻿import { describe, expect, it } from 'vitest';
 import { encrypt } from '../src/lib/crypto.js';
 import { envRoutes } from '../src/modules/env.js';
 import { asUser, buildTestApp, createFakeDb, envVarRow } from './helpers.js';

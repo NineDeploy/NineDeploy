@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+﻿import { afterEach, describe, expect, it, vi } from 'vitest';
 import { getVaultConfig, hasVaultRef, resolveVaultRefs, setVaultConfig, testVault } from '../../src/lib/vault.js';
 import { createFakeDb } from '../helpers.js';
 

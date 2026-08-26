@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+﻿import { describe, expect, it, vi } from 'vitest';
 import { HookPipeline } from '../../src/kernel/hookPipeline.js';
 import type { KernelContext } from '../../src/kernel/types.js';
 

@@ -71,17 +71,54 @@ export const composeBuilder: Builder = {
 
     log(`Bringing up compose project ${project} (${composeFile}) …`);
 
+    // Materialise a per-deploy override file that adds the user-attached
+    // volumes to the main service. Compose merges -f files left-to-right, so
+    // the override WINS over the user's compose for any duplicate key — that
+    // is the desired behaviour (operators may not have set the volume
+    // themselves, and the override is the source of truth for attachments).
+    // Without any attachments this is a no-op and the file is omitted.
+    const overrides = ctx.volumeAttachments ?? [];
+    let overrideFile: string | null = null;
+    if (overrides.length > 0) {
+      overrideFile = path.join(workDir, '.ninedeploy.compose.override.yml');
+      const services: Record<string, { volumes: string[] }> = {
+        [composeService]: { volumes: overrides.map((a) => `${a.volumeName}:${a.containerPath}${a.readOnly ? ':ro' : ''}`) },
+      };
+      // YAML by hand for two known keys — pulling in a YAML dep just to emit
+      // this is not worth the install. `yaml.dump` is JS string-safe because
+      // volume names / container paths are validated against strict regexes
+      // upstream.
+      const volumesTopLevel: Record<string, object> = {};
+      for (const a of overrides) volumesTopLevel[a.volumeName] = { external: true };
+      const body =
+        `services:\n` +
+        Object.entries(services)
+          .map(([svc, def]) => `  ${svc}:\n    volumes:\n${def.volumes.map((v) => `      - "${v}"`).join('\n')}\n`)
+          .join('') +
+        `volumes:\n` +
+        Object.entries(volumesTopLevel)
+          .map(([n]) => `  ${n}:\n    external: true\n`)
+          .join('');
+      writeFileSync(overrideFile, body, { mode: 0o600 });
+      log(`Wrote ${overrides.length} volume attachment(s) into ${path.basename(overrideFile)}`);
+    }
+
     // Stop the previous project revision first — no blue-green for compose.
     // Always pass -f: with a non-default compose file, plain `down` would look
     // at docker-compose.yml and miss the real project.
+    const downArgs = ['compose', '-p', project, '-f', composeFile];
+    if (overrideFile) downArgs.push('-f', overrideFile);
+    downArgs.push('down', '--remove-orphans');
     await run(
       'docker',
-      ['compose', '-p', project, '-f', composeFile, 'down', '--remove-orphans'],
+      downArgs,
       { cwd: workDir, heartbeatMs: DEPLOY_HEARTBEAT_MS, heartbeatLabel: `Stopping previous Compose project ${project}` },
       log,
     ).catch(() => undefined);
 
-    const args = ['compose', '-p', project, '-f', composeFile, 'up', '-d', '--build', '--remove-orphans'];
+    const args = ['compose', '-p', project, '-f', composeFile];
+    if (overrideFile) args.push('-f', overrideFile);
+    args.push('up', '-d', '--build', '--remove-orphans');
     // Compose reads project env vars from the working directory's .env — we
     // write one temporarily so services see runtime secrets.
     const dotEnv = path.join(workDir, '.env');
@@ -100,6 +137,11 @@ export const composeBuilder: Builder = {
         unlinkSync(dotEnv);
       } catch {
         /* no .env written */
+      }
+      try {
+        if (overrideFile) unlinkSync(overrideFile);
+      } catch {
+        /* best-effort cleanup */
       }
     }
     await applyBootRestartPolicy(project, composeFile, workDir, log);

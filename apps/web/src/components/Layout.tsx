@@ -1,19 +1,19 @@
 import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
-  Activity, Building2, ChevronLeft, ChevronRight, Clock, Cloud, Container, Database, FolderKanban, Globe, HardDrive,
-  Info, KeyRound, Layers, LayoutDashboard, Moon, Network, Shield, type LucideIcon,
+  Activity, Building2, ChevronLeft, ChevronRight, Clock, Cloud, Container, Database, Globe, HardDrive,
+  FileCode, Info, KeyRound, Layers, LayoutDashboard, Moon, Network, Shield, type LucideIcon,
   Rocket, Search, Server, Settings as SettingsIcon, Sparkles, Sun, Users, X,
 } from 'lucide-react';
 import { Link, Outlet, useLocation } from 'react-router';
 import { useAuth } from '../lib/auth.js';
 import { api, getToken } from '../lib/api.js';
-import { useProjectScope } from '../lib/projects.js';
 import { useTheme } from '../lib/theme.js';
 import { Logo } from './Logo.js';
 import { cn } from './ui.js';
 import { CommandPalette } from './CommandPalette.js';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher.js';
+import { TopBarFilters } from './TopBarFilters.js';
 import { ModeToggle } from './ModeToggle.js';
 import { useExperienceMode } from '../lib/mode.js';
 import { installPanelAutofillGuard } from '../lib/autofill.js';
@@ -43,6 +43,7 @@ const GROUPS: NavGroup[] = [
   {
     id: 'deploy', label: 'Deploy', icon: Rocket, items: [
       { to: '/hub', label: 'Hub', icon: Sparkles },
+      { to: '/manifest-creator', label: 'Manifest Creator', icon: FileCode },
       { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
       { to: '/services', label: 'Services', icon: Server },
     ],
@@ -260,7 +261,7 @@ export function Layout() {
         <header className="flex h-12 shrink-0 items-center justify-between border-b border-white/[0.06] px-5">
           <div className="flex items-center gap-2 text-sm">
             <WorkspaceSwitcher />
-            <ProjectSwitcher />
+            <TopBarFilters />
             <span className="font-medium text-slate-300">{currentGroup?.label ?? 'NineDeploy'}</span>
             {currentItem && (
               <>
@@ -312,28 +313,13 @@ export function Layout() {
   );
 }
 
-// ── Global project switcher (top bar) ─────────────────────────────────────
-function ProjectSwitcher() {
-  const { projects, selectedId, select } = useProjectScope();
-  return (
-    <label className="relative flex items-center" title="Scope pages to a project">
-      <FolderKanban size={13} className="pointer-events-none absolute left-2 text-slate-500" />
-      <select
-        aria-label="Project scope"
-        value={selectedId ?? ''}
-        onChange={(e) => select(e.target.value === '' ? null : Number(e.target.value))}
-        className="h-7 appearance-none rounded-lg bg-white/[0.04] pl-7 pr-6 text-xs font-medium text-slate-300 ring-1 ring-inset ring-white/10 transition hover:bg-white/[0.08] focus:outline-none focus:ring-2 focus:ring-indigo-400/60"
-      >
-        <option value="">All projects</option>
-        {projects.map((p) => (
-          <option key={p.id} value={p.id}>
-            {p.name}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
-}
+// ── Legacy project switcher — replaced by TopBarFilters (3 chip groups) ───
+void function _ProjectSwitcherRemoved() {
+  /* The single-select <select> used to live here. Replaced by the chip-based
+   * `TopBarFilters` (workspace / project / label, multi-select, persisted)
+   * — see components/TopBarFilters.tsx. Kept as a no-op here so the diff
+   * against upstream stays a rename rather than a removal. */
+};
 
 // ── Activity drawer (live WebSocket events) ───────────────────────────────
 interface AppEvent { id: number; action: string; entity: string | null; ts: string }

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
+﻿import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { DockerDashboard } from '../src/routes/Docker.js';
@@ -23,7 +23,7 @@ vi.mock('../src/lib/api.js', () => apiMock);
 
 // The inspector section is admin-gated; the role is mutable per test.
 const authState = vi.hoisted(() => ({
-  user: { id: 1, role: 'admin' as string, email: 'admin@test', name: 'Admin' },
+  user: { id: 1, isOperator: true, email: 'admin@test', name: 'Admin' },
 }));
 vi.mock('../src/lib/auth.js', () => ({
   AuthProvider: ({ children }: { children?: React.ReactNode }) => children,
@@ -78,7 +78,7 @@ describe('DockerDashboard', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    authState.user = { id: 1, role: 'admin', email: 'admin@test', name: 'Admin' };
+    authState.user = { id: 1, isOperator: true, email: 'admin@test', name: 'Admin' };
     apiMock.api.system.resources.mockResolvedValue(resources as never);
     apiMock.api.system.dockerEvents.mockResolvedValue(events as never);
     apiMock.api.stats.snapshot.mockResolvedValue(stats as never);
@@ -105,7 +105,7 @@ describe('DockerDashboard', () => {
     renderDashboard();
     expect(await screen.findByText('7')).toBeInTheDocument();
     expect(screen.getByText('12')).toBeInTheDocument();
-    expect(screen.getByText(/9 active · 3 reclaimable/)).toBeInTheDocument();
+    expect(screen.getByText(/9 active Â· 3 reclaimable/)).toBeInTheDocument();
     expect(screen.getByText('ninedeploy')).toBeInTheDocument();
     expect(screen.getAllByText('nginx').length).toBeGreaterThan(0);
     expect(await screen.findByText('nd-web-3')).toBeInTheDocument();
@@ -164,7 +164,7 @@ describe('DockerDashboard', () => {
 
   it('submits manual container name to inspect', async () => {
     renderDashboard();
-    const input = screen.getByPlaceholderText('Inspect container name…');
+    const input = screen.getByPlaceholderText('Inspect container nameâ€¦');
     fireEvent.change(input, { target: { value: 'custom-db-1' } });
     const allInspectBtns = screen.getAllByRole('button', { name: /inspect/i });
     const formSubmitBtn = allInspectBtns[0]!;
@@ -224,11 +224,11 @@ describe('DockerDashboard', () => {
   });
 
   it('hides the inspector behind an admin gate for members', async () => {
-    authState.user = { id: 5, role: 'member', email: 'm@test', name: 'Member' };
+    authState.user = { id: 5, isOperator: false, email: 'm@test', name: 'Member' };
     renderDashboard();
     expect(await screen.findByText('nd-web-1')).toBeInTheDocument();
     expect(screen.getByText(/Admin access required for the inspector/)).toBeInTheDocument();
-    expect(screen.queryByPlaceholderText('Inspect container name…')).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText('Inspect container nameâ€¦')).not.toBeInTheDocument();
   });
 
   it('ignores an inspector submit with an empty container name', async () => {
@@ -236,7 +236,7 @@ describe('DockerDashboard', () => {
     await screen.findByText('nd-web-1');
     const formSubmitBtn = screen.getAllByRole('button', { name: /inspect/i })[0]!;
     fireEvent.click(formSubmitBtn);
-    // No selection happens — the compose endpoint is not called.
+    // No selection happens â€” the compose endpoint is not called.
     expect(apiMock.api.containers.compose).not.toHaveBeenCalled();
   });
 });

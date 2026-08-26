@@ -1,15 +1,26 @@
 import { z } from 'zod';
-import { envVarName, gitBranch, gitRepoUrl, httpPath, repoBaseDir, repoRelativePath, slug } from './common.js';
+import { containerPath, dockerVolumeName, envVarName, gitBranch, gitRepoUrl, httpPath, repoBaseDir, repoRelativePath, slug } from './common.js';
 
 export const serviceType = z.enum(['pm2', 'docker', 'compose']);
 export const buildPack = z.enum(['auto', 'nixpacks', 'dockerfile']);
+
+/** Optional project/workspace/label tag IDs for new service creation. */
+const tagIds = z.array(z.number().int().positive()).optional();
 
 export const createService = z.object({
   /** Bundled/remote Hub template ID. The server resolves privileged template
    * settings (cmd, Docker socket and database env mapping) from the trusted
    * registry; clients cannot submit those settings directly. */
   templateId: z.string().min(1).max(100).optional(),
-  projectId: z.number().int().positive().optional(),
+  /**
+   * Project / workspace / label tagging (N-N). `tagProjectIds` replaces the
+   * removed `projectId` field. `tagWorkspaceIds` defaults to all workspaces
+   * the caller belongs to when omitted (so a freshly-created service is
+   * visible from the operator's workspaces). `tagLabelIds` is optional.
+   */
+  tagProjectIds: tagIds,
+  tagWorkspaceIds: tagIds,
+  tagLabelIds: tagIds,
   name: z.string().min(1).max(100),
   slug: slug.optional(), // derived from name if omitted
   /** Resume an idle, caller-owned service left by an interrupted Hub deploy. */
@@ -58,7 +69,12 @@ export type CreateService = z.infer<typeof createService>;
  * still applies `.default()` values for absent keys, which would silently
  * rewrite `type` back to 'docker' and `branch` to 'main' on every PATCH. */
 export const updateService = z.object({
-  projectId: z.number().int().positive().optional(),
+  // Tag updates are usually handled by `PUT /v1/services/:id/tags`; these
+  // convenience fields let a single PATCH reassign tags together with other
+  // service edits without an extra round-trip.
+  tagProjectIds: tagIds,
+  tagWorkspaceIds: tagIds,
+  tagLabelIds: tagIds,
   name: z.string().min(1).max(100).optional(),
   slug: slug.optional(),
   type: serviceType.optional(),
@@ -103,7 +119,24 @@ export type UpdateServiceInput = z.input<typeof updateService>;
 
 export const service = z.object({
   id: z.number().int(),
-  projectId: z.number().int().nullable(),
+  /**
+   * Project / workspace / label tag lists (N-N). The legacy single
+   * `projectId` field is gone; consumers compose the three arrays to decide
+   * what shows up in the top-bar filter chips.
+   */
+  projectIds: z.array(z.number().int()),
+  workspaceIds: z.array(z.number().int()),
+  labelIds: z.array(z.number().int()),
+  /** Resolved display objects — present on detail responses, may be omitted on list. */
+  projects: z
+    .array(z.object({ id: z.number().int(), name: z.string(), slug: z.string() }))
+    .optional(),
+  workspaces: z
+    .array(z.object({ id: z.number().int(), name: z.string(), slug: z.string() }))
+    .optional(),
+  labels: z
+    .array(z.object({ id: z.number().int(), name: z.string(), color: z.string() }))
+    .optional(),
   serverId: z.number().int().nullable().optional(),
   name: z.string(),
   slug: z.string(),
@@ -348,6 +381,54 @@ export const envVar = z.object({
 });
 export type EnvVar = z.infer<typeof envVar>;
 
+// ── Service volume attachments ────────────────────────────────────────────
+// A service can attach additional named Docker volumes in addition to its
+// `volumeMount` primary. Either an existing managed volume (by name) or a
+// fresh one created on demand. The volume persists across redeploys and
+// container recreations — detaching only removes the link, not the data.
+/** Create a new attachment. Exactly one of `volumeName` or `create.label`
+ *  must be present — the former attaches an existing managed volume, the
+ *  latter provisions a new one (system-generated name) and immediately
+ *  attaches it. */
+export const createServiceVolumeAttachment = z
+  .object({
+    // Attach an existing managed volume (must start with nd-svc- / nd-db-).
+    volumeName: dockerVolumeName.optional(),
+    // Provision a new named volume on attach. The label is a short
+    // human-friendly suffix (e.g. "uploads"); the server prepends the
+    // service-prefix to produce a unique managed name.
+    create: z.object({ label: z.string().min(1).max(40).regex(/^[a-z0-9][a-z0-9-]*$/i, 'invalid label') }).optional(),
+    containerPath: containerPath,
+    readOnly: z.boolean().optional(),
+  })
+  .refine((v) => Boolean(v.volumeName) !== Boolean(v.create?.label), {
+    message: 'Provide exactly one of volumeName or create.label',
+  });
+export type CreateServiceVolumeAttachmentInput = z.input<typeof createServiceVolumeAttachment>;
+
+/** PATCH shape — path and readOnly are optional, but at least one must change. */
+export const updateServiceVolumeAttachment = z
+  .object({
+    containerPath: containerPath.optional(),
+    readOnly: z.boolean().optional(),
+  })
+  .refine((v) => v.containerPath !== undefined || v.readOnly !== undefined, {
+    message: 'Provide at least one of containerPath or readOnly',
+  });
+export type UpdateServiceVolumeAttachmentInput = z.input<typeof updateServiceVolumeAttachment>;
+
+/** API representation of a service's volume attachment. */
+export const serviceVolumeAttachment = z.object({
+  id: z.number().int(),
+  serviceId: z.number().int(),
+  volumeName: z.string(),
+  containerPath: z.string(),
+  readOnly: z.boolean(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+export type ServiceVolumeAttachment = z.infer<typeof serviceVolumeAttachment>;
+
 // ── Resource limits ───────────────────────────────────────────────────────
 export const setLimits = z.object({
   cpuShares: z.number().int().min(0).max(262144).nullable().optional(),
@@ -425,15 +506,26 @@ export type TopologyGraph = z.infer<typeof topologyGraph>;
 // ── Backups + storage ──────────────────────────────────────────────────────
 export const backup = z.object({
   id: z.number().int(),
+  // Exactly one of (databaseId, volumeName) is set — encoded by `scope`.
   databaseId: z.number().int().nullable(),
+  volumeName: z.string().nullable(),
+  scope: z.enum(['db', 'volumes']),
   status: z.string(),
   sizeBytes: z.number().int(),
+  hasRemoteCopy: z.boolean().optional(),
   createdAt: z.string().datetime(),
 });
 export type Backup = z.infer<typeof backup>;
 
 export const backupWithDb = backup.extend({ databaseName: z.string().nullable() });
 export type BackupWithDb = z.infer<typeof backupWithDb>;
+
+/** Create a new volume backup. The `volumeName` is the route param; the
+ *  body only carries the `label` for human-friendly file naming. */
+export const createVolumeBackup = z.object({
+  label: z.string().min(1).max(80).optional(),
+});
+export type CreateVolumeBackupInput = z.input<typeof createVolumeBackup>;
 
 // ── Template hub ───────────────────────────────────────────────────────────
 export const templateSummary = z.object({

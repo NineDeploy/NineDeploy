@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+﻿import { describe, expect, it, vi } from 'vitest';
 import { settings } from '@ninedeploy/db';
 import { getSetting, getSettingJson, getSettingString, setSetting, setSettingJson, setSettingString } from '../../src/lib/settings.js';
 

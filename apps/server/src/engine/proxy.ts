@@ -7,6 +7,7 @@ import { capture, run, sleep } from '../lib/exec.js';
 import { getSettingString } from '../lib/settings.js';
 import { decrypt, encrypt } from '../lib/crypto.js';
 import { ensureDockerImage } from '../lib/dockerPull.js';
+import { reapTraefikNetworks } from '../lib/serviceBridge.js';
 
 export const TRAEFIK_CONTAINER = 'ninedeploy-traefik';
 // Stay on Traefik v3 major — minor/patch updates are pulled automatically.
@@ -356,6 +357,10 @@ async function ensureTraefikUnlocked(
       {},
       log,
     );
+    // Model B: re-attach Traefik to every per-slug bridge that exists right
+    // now. A Traefik restart must not silently lose routing to services that
+    // joined their private bridges while the previous instance was down.
+    await reapTraefikNetworks(log);
     await sleep(1000);
 
     // `docker run -d` only confirms that the container process was created.

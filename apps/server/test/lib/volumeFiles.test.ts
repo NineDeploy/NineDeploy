@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+﻿import { describe, expect, it, vi } from 'vitest';
 import {
   isManagedVolume,
   safeRelPath,
@@ -81,10 +81,10 @@ describe('volume file operations (docker sidecar)', () => {
     execMocks.capture.mockResolvedValue([
       'symbolic link|1|1786886400|./alink',        // neither dir nor regular file
       'regular file|||',                             // unparsable size + missing mtime/name
-      'regular file|not-a-number|0|./nofile',       // unparsable size → 0
+      'regular file|not-a-number|0|./nofile',       // unparsable size â†’ 0
       'regular file|5|1786886400|./ok.txt',
       'directory|4096|1786886400|./with|pipe',  // '|' in the name: rest joins back
-      'directory|junk|1786886400|./badsize',   // dir with unparsable size → 0
+      'directory|junk|1786886400|./badsize',   // dir with unparsable size â†’ 0
     ].join('\n'));
     const entries = await listVolumeDir('nd-svc-web-data', '');
     expect(entries).toEqual([

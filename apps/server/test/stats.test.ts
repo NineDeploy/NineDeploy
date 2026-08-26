@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+﻿import { describe, expect, it } from 'vitest';
 import { metricRoutes, statsRoutes } from '../src/modules/stats.js';
 import { asUser, buildTestApp, createFakeDb, dbRow, metricRow, svcRow } from './helpers.js';
 
@@ -68,14 +68,14 @@ describe('stats routes', () => {
       stats: { containers, host: { cpuCores: 8 } },
     });
     await app.register(statsRoutes);
-    const res = await app.inject({ method: 'GET', url: '/', headers: asUser({ id: 7, role: 'member' }) });
+    const res = await app.inject({ method: 'GET', url: '/', headers: asUser({ id: 7, isOperator: false }) });
     expect(res.statusCode).toBe(200);
     expect(res.json().containers.map((entry: { refId: number }) => entry.refId)).toEqual([1]);
   });
 });
 
 describe('metric routes', () => {
-  it('returns cpu points by default (storage pct×100 → display %)', async () => {
+  it('returns cpu points by default (storage pctÃ—100 â†’ display %)', async () => {
     const app = await buildTestApp({
       db: createFakeDb({ findMany: { metrics: [metricRow({ value: 325, ts: new Date('2026-01-01T00:01:00Z') })] }, findFirst: { services: svcRow({ id: 1 }) } }),
     });
@@ -136,7 +136,7 @@ describe('metric routes', () => {
       db: createFakeDb({ findFirst: { services: svcRow({ id: 1, ownerUserId: 9 }) } }),
     });
     await app.register(metricRoutes);
-    const res = await app.inject({ method: 'GET', url: '/1/metrics', headers: asUser({ id: 7, role: 'member' }) });
+    const res = await app.inject({ method: 'GET', url: '/1/metrics', headers: asUser({ id: 7, isOperator: false }) });
     expect(res.statusCode).toBe(404);
   });
 });

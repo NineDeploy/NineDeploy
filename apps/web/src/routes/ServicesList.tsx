@@ -3,7 +3,7 @@ import { useMemo, useState } from 'react';
 import { Cpu, GitBranch, HardDrive, MemoryStick, Plus, Search, Server } from 'lucide-react';
 import { Link } from 'react-router';
 import { api } from '../lib/api.js';
-import { useProjectScope } from '../lib/projects.js';
+import { useTagScope } from '../lib/projects.js';
 import { Button, Card, EmptyState, ErrorCard, Input, PageHeader, Skeleton, StatusBadge } from '../components/ui.js';
 import { DeployWizard } from '../components/DeployWizard.js';
 import { ServiceDomainLauncher } from '../components/ServiceDomainLauncher.js';
@@ -12,10 +12,20 @@ export function ServicesList() {
   const [wizard, setWizard] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'running' | 'stopped' | 'errored'>('all');
-  const { selectedId } = useProjectScope();
+  // The top-bar `TopBarFilters` chip groups drive these query parameters.
+  // Empty arrays mean "no constraint" — the server returns every service
+  // the caller is allowed to see, just like the unfiltered legacy mode.
+  const { workspaceIds, projectIds, labelIds } = useTagScope();
+  const buildQuery = (): string => {
+    const params: string[] = [];
+    if (workspaceIds.length > 0) params.push(`tagWorkspaceIds=${workspaceIds.join(',')}`);
+    if (projectIds.length > 0) params.push(`tagProjectIds=${projectIds.join(',')}`);
+    if (labelIds.length > 0) params.push(`tagLabelIds=${labelIds.join(',')}`);
+    return params.length > 0 ? `?${params.join('&')}` : '';
+  };
   const { data: services, isLoading, isError, error, refetch } = useQuery({
-    queryKey: ['services', selectedId],
-    queryFn: () => api.services.list(selectedId != null ? `?projectId=${selectedId}` : ''),
+    queryKey: ['services', workspaceIds, projectIds, labelIds],
+    queryFn: () => api.services.list(buildQuery()),
   });
 
   const snapshot = useQuery({

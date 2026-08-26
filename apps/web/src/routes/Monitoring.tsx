@@ -454,7 +454,7 @@ export function Monitoring() {
       </div>
 
       {/* Alert Rules Section */}
-      <AlertRulesCard isAdmin={me?.role === 'admin'} />
+      <AlertRulesCard isAdmin={me?.isOperator === true} />
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+﻿import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dashboardRoutes } from '../src/modules/dashboard.js';
 import { asUser, buildTestApp, createFakeDb, depRow, svcRow } from './helpers.js';
 
@@ -118,7 +118,7 @@ describe('dashboard routes', () => {
   it('falls back to the traefik mesh probe when the host cannot route bridge IPs', async () => {
     // Docker Desktop case: direct fetch to the bridge IP times out, but the
     // same request from inside the mesh (exec wget in the traefik container)
-    // succeeds — the service must read healthy.
+    // succeeds â€” the service must read healthy.
     const fetchMock = vi.fn(async () => { throw new Error('route unreachable'); }) as unknown as typeof fetch;
     vi.stubGlobal('fetch', fetchMock);
     // Reset the persistent implementation leaked from the previous test.
@@ -294,7 +294,7 @@ describe('dashboard member scoping', () => {
   it("a member's dashboard contains only their own services", async () => {
     const app = await buildTestApp({ db: scopedDb() });
     await app.register(dashboardRoutes);
-    const res = await app.inject({ method: 'GET', url: '/', headers: asUser({ id: 7, role: 'member' }) });
+    const res = await app.inject({ method: 'GET', url: '/', headers: asUser({ id: 7, isOperator: false }) });
     expect(res.statusCode).toBe(200);
     const body = res.json();
     expect(body.stats.services).toBe(1);
@@ -304,7 +304,7 @@ describe('dashboard member scoping', () => {
     expect(res.body).not.toContain('victim-billing-api');
   });
 
-  it('constrains the recent-deploys query to the member’s own service ids', async () => {
+  it('constrains the recent-deploys query to the memberâ€™s own service ids', async () => {
     // The fake db ignores predicates, so assert the where-clause itself
     // carries the service_id scoping (mirrors the M-2 regression pattern).
     let deployWhere: unknown;
@@ -315,7 +315,7 @@ describe('dashboard member scoping', () => {
       }),
     });
     await app.register(dashboardRoutes);
-    const res = await app.inject({ method: 'GET', url: '/', headers: asUser({ id: 7, role: 'member' }) });
+    const res = await app.inject({ method: 'GET', url: '/', headers: asUser({ id: 7, isOperator: false }) });
     expect(res.statusCode).toBe(200);
     expect(columnsIn(deployWhere)).toContain('service_id');
     expect(res.json().recentDeploys[0]).toMatchObject({ serviceId: 70, serviceName: 'mine' });
@@ -330,7 +330,7 @@ describe('dashboard member scoping', () => {
       }),
     });
     await app.register(dashboardRoutes);
-    const res = await app.inject({ method: 'GET', url: '/', headers: asUser({ id: 1, role: 'admin' }) });
+    const res = await app.inject({ method: 'GET', url: '/', headers: asUser({ id: 1, isOperator: true }) });
     expect(res.statusCode).toBe(200);
     const body = res.json();
     expect(body.stats.services).toBe(2);

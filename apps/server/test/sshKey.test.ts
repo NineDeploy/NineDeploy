@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+﻿import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { generateDeployKeyPair } from '../src/lib/sshKey.js';
 import { capture } from '../src/lib/exec.js';
 
@@ -54,7 +54,7 @@ describe('generateDeployKeyPair', () => {
 /**
  * Sanity check: if the host has `ssh-keygen` (typical for any Linux/macOS dev
  * machine), the library actually runs it end-to-end. Skipped on platforms
- * without the binary — this is a developer-machine convenience test, not a
+ * without the binary â€” this is a developer-machine convenience test, not a
  * CI gate.
  */
 describe('generateDeployKeyPair (real ssh-keygen, dev-only)', () => {

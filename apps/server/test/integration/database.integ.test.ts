@@ -1,7 +1,7 @@
-/**
+﻿/**
  * Integration test: verifies the real database.ts backup/restore path against a
  * live PostgreSQL container (the exact code that previously had ZERO end-to-end
- * verification — only mocked argv assertions).
+ * verification â€” only mocked argv assertions).
  *
  * These tests are EXCLUDED from the default `vitest run` (see vitest.config
  * `exclude: ['test/integration/**']`) and require a reachable Docker daemon.
@@ -32,7 +32,7 @@ describe.skipIf(!ENABLED)('database backup/restore (real PostgreSQL container)',
     container = await new PostgreSqlContainer('postgres:16')
       .withUsername('nine') // matches ENGINES.postgres.username()
       .withDatabase('app') // matches ENGINES.postgres.dbName()
-      // NOTE: no leading/trailing spaces — the image's pg_isready health check
+      // NOTE: no leading/trailing spaces â€” the image's pg_isready health check
       // authenticates with this password and fails to become healthy otherwise.
       .withPassword('integ-test-pw!9')
       .start();

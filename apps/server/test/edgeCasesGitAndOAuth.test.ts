@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+﻿import { describe, expect, it, vi } from 'vitest';
 import {
   generateOAuthState,
   verifyOAuthState,
@@ -10,7 +10,7 @@ import {
   revokeAllSessions,
 } from '../src/lib/sessions.js';
 
-describe('Edge Cases — OAuth & OIDC CSRF State Protection', () => {
+describe('Edge Cases â€” OAuth & OIDC CSRF State Protection', () => {
   it('generates tamper-proof signed state parameters and verifies them', () => {
     const state = generateOAuthState('google-sso', '/dashboard');
     expect(state).toContain('.');
@@ -41,7 +41,7 @@ describe('Edge Cases — OAuth & OIDC CSRF State Protection', () => {
   });
 });
 
-describe('Edge Cases — Session Token Issuance & Refresh Rotation', () => {
+describe('Edge Cases â€” Session Token Issuance & Refresh Rotation', () => {
   it('issues session tokens and handles database insert errors gracefully', async () => {
     const user = { id: 1, tokenVersion: 1 };
     const mockDb = {

@@ -1,4 +1,4 @@
-import { randomBytes, timingSafeEqual } from 'node:crypto';
+﻿import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { and, eq, gt, isNull } from 'drizzle-orm';
 import {
   type DB,
@@ -119,18 +119,17 @@ async function resolveInviteAuthority(
   db: DB,
   workspaceId: number,
   userId: number,
-  userRole: 'admin' | 'member',
+  isOperator: boolean,
 ): Promise<CallerMembership | null> {
   const ws = await db.query.workspaces.findFirst({ where: eq(workspaces.id, workspaceId) });
   if (!ws) return null;
   const membership = await db.query.workspaceMembers.findFirst({
     where: and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, userId)),
   });
-  const isAdmin = userRole === 'admin';
   const isOwner = ws.ownerId === userId;
   const isMemberAdmin = membership?.role === 'owner' || membership?.role === 'admin';
-  if (!isAdmin && !isOwner && !isMemberAdmin) return null;
-  return { role: (membership?.role as WorkspaceRole | undefined) ?? (isOwner ? 'owner' : 'admin'), isAdmin };
+  if (!isOperator && !isOwner && !isMemberAdmin) return null;
+  return { role: (membership?.role as WorkspaceRole | undefined) ?? (isOwner ? 'owner' : 'admin'), isAdmin: isOperator || isMemberAdmin };
 }
 
 function serializeInvitation(
@@ -197,7 +196,7 @@ export async function findPendingInvitationByToken(
     (await db.query.workspaceInvitations.findFirst({ where: eq(workspaceInvitations.token, sha256(token)) })) ??
     // Legacy rows (created before hashing) still hold the cleartext token.
     // Accept them once and rewrite the row to the hash so the fallback is
-    // self-retiring — outstanding emailed links keep working across the
+    // self-retiring â€” outstanding emailed links keep working across the
     // upgrade without leaving plaintext tokens in storage.
     (await db.query.workspaceInvitations.findFirst({ where: eq(workspaceInvitations.token, token) }));
   if (!row) return null;
@@ -247,7 +246,7 @@ export async function acceptInvitationsForUser(
       where: and(eq(workspaceMembers.workspaceId, inv.workspaceId), eq(workspaceMembers.userId, user.id)),
     });
     if (existing) {
-      // Already a member — just mark the invite consumed so it doesn't stick around.
+      // Already a member â€” just mark the invite consumed so it doesn't stick around.
       await db
         .update(workspaceInvitations)
         .set({ acceptedAt: now, acceptedByUserId: user.id, updatedAt: now })
@@ -269,7 +268,7 @@ export async function acceptInvitationsForUser(
 }
 
 /**
- * Authenticated invitation routes — mounted at /v1/workspaces/:id/invitations
+ * Authenticated invitation routes â€” mounted at /v1/workspaces/:id/invitations
  * (and listing/management endpoints). These require a logged-in user and
  * workspace ownership/admin authority. Routes inside are written WITHOUT the
  * `/workspaces` prefix so the registration prefix can be applied.
@@ -292,7 +291,7 @@ export const invitationRoutes: FastifyPluginAsync = async (app) => {
       const ws = await app.db.query.workspaces.findFirst({ where: eq(workspaces.id, workspaceId) });
       if (!ws) throw notFound('Workspace not found');
 
-      const authority = await resolveInviteAuthority(app.db, workspaceId, req.user!.id, req.user!.role);
+      const authority = await resolveInviteAuthority(app.db, workspaceId, req.user!.id, req.user!.isOperator);
       if (!authority) throw forbidden('Admin or Owner role required to invite workspace members');
 
       // If the address is already a registered user, signal that the caller
@@ -336,7 +335,7 @@ export const invitationRoutes: FastifyPluginAsync = async (app) => {
   /** List invitations for a workspace (pending + recent history). */
   app.get('/:id/invitations', async (req) => {
     const workspaceId = parseId((req.params as { id: string }).id);
-    const authority = await resolveInviteAuthority(app.db, workspaceId, req.user!.id, req.user!.role);
+    const authority = await resolveInviteAuthority(app.db, workspaceId, req.user!.id, req.user!.isOperator);
     if (!authority) throw forbidden('Only workspace members can view invitations');
 
     const rows = await app.db.query.workspaceInvitations.findMany({
@@ -363,7 +362,7 @@ export const invitationRoutes: FastifyPluginAsync = async (app) => {
   app.delete('/:id/invitations/:inviteId', async (req) => {
     const workspaceId = parseId((req.params as { id: string }).id);
     const inviteId = parseId((req.params as { inviteId: string }).inviteId);
-    const authority = await resolveInviteAuthority(app.db, workspaceId, req.user!.id, req.user!.role);
+    const authority = await resolveInviteAuthority(app.db, workspaceId, req.user!.id, req.user!.isOperator);
     if (!authority) throw forbidden('Admin or Owner role required to revoke invitations');
 
     const inv = await app.db.query.workspaceInvitations.findFirst({
@@ -384,7 +383,7 @@ export const invitationRoutes: FastifyPluginAsync = async (app) => {
 };
 
 /**
- * Authenticated accept route — mounted standalone (no prefix) so the public
+ * Authenticated accept route â€” mounted standalone (no prefix) so the public
  * path /v1/invitations/:token/accept lands here. Auth required: the caller's
  * email must match the address the invite was sent to.
  */
@@ -429,7 +428,7 @@ export const acceptInvitationRoutes: FastifyPluginAsync = async (app) => {
       app.db,
       req.user!.id,
       'workspace.invitation.accept',
-      `${inv.email} → workspace #${inv.workspaceId} as ${inv.role}`,
+      `${inv.email} â†’ workspace #${inv.workspaceId} as ${inv.role}`,
     );
 
     return { ok: true, workspaceId: inv.workspaceId, role: inv.role as WorkspaceRole };

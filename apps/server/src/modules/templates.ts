@@ -3,6 +3,7 @@ import {
   deployments,
   envVars,
   services,
+  workspaceMembers,
   type Service,
 } from '@ninedeploy/db';
 import { deployTemplate, type DeployTemplate } from '@ninedeploy/schemas';
@@ -13,9 +14,10 @@ import { getTemplates, type Template } from '../templates/registry.js';
 import { encrypt, randomToken } from '../lib/crypto.js';
 import { badRequest, notFound } from '../lib/errors.js';
 import { assertMayUseHostPrivilege } from '../lib/hostPrivilege.js';
-import { isAdmin, type AuthedUser } from '../lib/resourceAccess.js';
+import type { AuthedUser } from '../lib/resourceAccess.js';
 import { assertMayPublishPort } from '../lib/hostPort.js';
 import { slugify } from '../lib/slug.js';
+import { applyDefaultTags, replaceServiceTags } from './serviceTags.js';
 
 const summary = (t: Template) => ({
   id: t.id,
@@ -34,9 +36,13 @@ type ProvisionStage = {
   message: string;
 };
 
-function sameTemplateService(service: Service, template: Template, ownerUserId: number, projectId: number | null): boolean {
+/**
+ * A template-deployed service is "the same template" if every template-controlled
+ * field matches. Project membership is no longer in the comparison (tags are
+ * N-N now and an empty/refreshed set is a valid re-deploy).
+ */
+function sameTemplateService(service: Service, template: Template, ownerUserId: number): boolean {
   return service.ownerUserId === ownerUserId
-    && service.projectId === projectId
     && service.type === 'docker'
     && service.image === template.image
     && service.port === template.port
@@ -91,7 +97,10 @@ async function prepareTemplateService(
   user: AuthedUser,
 ): Promise<{ service: Service; generatedSecrets: Array<{ key: string; value: string }>; stages: ProvisionStage[] }> {
   const ownerUserId = user.id;
-  const projectId = input.projectId ?? null;
+  // The legacy `input.projectId` was the single FK on `services`. Templates
+  // now use the N-N tag system; the request body still accepts `projectId`
+  // (singular) for back-compat and we map it to the new join table.
+  const inputProjectIds = input.projectId != null ? [input.projectId] : [];
   const name = input.name ?? template.name;
   const requestedSlug = input.name ? slugify(name) : `${slugify(template.name)}-${Date.now().toString(36).slice(-4)}`;
   const stages: ProvisionStage[] = [];
@@ -104,7 +113,7 @@ async function prepareTemplateService(
   // slug instead of reporting theirs — the caller gets a working service and
   // learns nothing. A collision with a service they CAN see keeps the explicit
   // error, because that one is actionable.
-  if (service && service.ownerUserId !== ownerUserId && !isAdmin(user)) {
+  if (service && service.ownerUserId !== ownerUserId && !user.isOperator) {
     let attempt = 0;
     do {
       slug = `${requestedSlug}-${randomToken(3).slice(0, 4)}`;
@@ -113,7 +122,7 @@ async function prepareTemplateService(
     if (service) throw badRequest('Could not allocate a free service slug — try a different name');
   }
   if (service) {
-    if (!input.reuseExisting || !sameTemplateService(service, template, ownerUserId, projectId)) {
+    if (!input.reuseExisting || !sameTemplateService(service, template, ownerUserId)) {
       throw badRequest(`A service with slug '${slug}' already exists`, 'slug_taken');
     }
     const trusted = {
@@ -133,7 +142,6 @@ async function prepareTemplateService(
     stages.push({ id: 'service', status: 'success', message: 'Existing interrupted service reconciled' });
   } else {
     const [created] = await app.db.insert(services).values({
-      projectId,
       ownerUserId,
       name,
       slug,
@@ -158,9 +166,31 @@ async function prepareTemplateService(
     stages.push({ id: 'service', status: 'success', message: 'Service configuration created' });
   }
 
+  // Apply tag scope: every workspace the caller belongs to (so the new
+  // service is visible from all of their workspaces), plus the project's
+  // membership if one was passed on the request.
+  if (inputProjectIds.length > 0) {
+    // Single-project deployment: tag the service into the named project.
+    const workspaceIds = await defaultWorkspaceIdsForUser(app.db, user);
+    await replaceServiceTags(app.db, service.id, inputProjectIds, workspaceIds, []);
+  } else {
+    await applyDefaultTags(app.db, user, service.id);
+  }
+
   const generatedSecrets = await reconcileEnvironment(app, service.id, template, input.env ?? []);
   stages.push({ id: 'environment', status: 'success', message: 'Environment and secrets reconciled' });
   return { service, generatedSecrets, stages };
+}
+
+async function defaultWorkspaceIdsForUser(db: import('@ninedeploy/db').DB, user: { id: number; isOperator: boolean }): Promise<number[]> {
+  if (user.isOperator) {
+    const rows = await db.query.workspaces.findMany();
+    return rows.map((w) => w.id);
+  }
+  const ms = await db.query.workspaceMembers.findMany({
+    where: eq(workspaceMembers.userId, user.id),
+  });
+  return ms.map((m) => m.workspaceId);
 }
 
 /** Template hub: list, detail, canonical retry-safe one-click provisioning. */

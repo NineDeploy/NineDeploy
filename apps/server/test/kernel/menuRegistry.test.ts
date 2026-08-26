@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+﻿import { describe, expect, it } from 'vitest';
 import { MenuRegistry } from '../../src/kernel/menuRegistry.js';
 
 describe('MenuRegistry', () => {

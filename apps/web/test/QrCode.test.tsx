@@ -1,11 +1,11 @@
-import { render, screen, waitFor } from '@testing-library/react';
+﻿import { render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { QrCode } from '../src/components/QrCode.js';
 
 describe('QrCode component', () => {
   it('renders a placeholder when value is empty', () => {
     render(<QrCode value="" />);
-    expect(screen.getByText('Generating QR…')).toBeInTheDocument();
+    expect(screen.getByText('Generating QRâ€¦')).toBeInTheDocument();
   });
 
   it('renders a QR code image when value is provided', async () => {
@@ -18,7 +18,7 @@ describe('QrCode component', () => {
     const QRCode = (await import('qrcode')).default;
     const spy = vi.spyOn(QRCode, 'toDataURL').mockRejectedValueOnce(new Error('Canvas error'));
     render(<QrCode value="bad-value" />);
-    expect(screen.getAllByText('Generating QR…').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('Generating QRâ€¦').length).toBeGreaterThanOrEqual(1);
     spy.mockRestore();
   });
 

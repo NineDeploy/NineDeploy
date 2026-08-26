@@ -1,4 +1,4 @@
-import { vi } from 'vitest';
+﻿import { vi } from 'vitest';
 import type { ReactNode } from 'react';
 
 /**
@@ -10,7 +10,7 @@ import type { ReactNode } from 'react';
  *     vi.mock('../src/lib/api.js', async () => (await import('./apiMock.js')).createFakeApiModule());
  *
  * If that factory awaits `./helpers.js` instead, the run DEADLOCKS: helpers
- * imports `src/lib/workspace.tsx`, which imports `src/lib/api.js` — the module
+ * imports `src/lib/workspace.tsx`, which imports `src/lib/api.js` â€” the module
  * whose factory is still executing. Vitest waits for the factory, the factory
  * waits for the import, and the file never finishes collecting (it reports
  * "no tests" and hangs until killed). Importing this file instead breaks the
@@ -92,7 +92,7 @@ export function createFakeApiModule() {
     tunnels: { list: vi.fn(), create: vi.fn(), remove: vi.fn() },
     activity: { list: vi.fn() },
     alerts: { list: vi.fn(), create: vi.fn(), update: vi.fn(), remove: vi.fn() },
-    users: { list: vi.fn(), create: vi.fn(), setRole: vi.fn(), remove: vi.fn(), resetPassword: vi.fn(), resetLink: vi.fn() },
+    users: { list: vi.fn(), create: vi.fn(), remove: vi.fn(), resetPassword: vi.fn(), resetLink: vi.fn() },
     settings: {
       get: vi.fn(),
       setAllowRegistration: vi.fn(),
@@ -115,6 +115,8 @@ export function createFakeApiModule() {
     sources: { list: vi.fn().mockResolvedValue([]), create: vi.fn(), update: vi.fn(), remove: vi.fn() },
     insights: { analyze: vi.fn(), get: vi.fn().mockResolvedValue(null), refresh: vi.fn() },
     projects: { list: vi.fn().mockResolvedValue([]), create: vi.fn(), update: vi.fn(), remove: vi.fn() },
+    labels: { list: vi.fn().mockResolvedValue([]), create: vi.fn(), update: vi.fn(), remove: vi.fn() },
+    serviceTags: { get: vi.fn().mockResolvedValue({ serviceId: 0, projects: [], workspaces: [], labels: [] }), set: vi.fn() },
     webhooks: { list: vi.fn(), create: vi.fn(), remove: vi.fn() },
     databases: {
       list: vi.fn().mockResolvedValue([]),
@@ -223,7 +225,7 @@ export function createFakeApiModule() {
 export function createAuthMock() {
   // `useAuth` resolves to a signed-out session by default. It used to be a bare
   // vi.fn() returning undefined, which is fine for a component that ignores the
-  // result but crashes anything doing `const { user } = useAuth()` — including
+  // result but crashes anything doing `const { user } = useAuth()` â€” including
   // WorkspaceProvider, which every rendered route sits inside.
   return {
     AuthProvider: ({ children }: { children?: ReactNode }) => <>{children}</>,

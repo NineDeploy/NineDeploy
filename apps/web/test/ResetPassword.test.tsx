@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+﻿import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { screen, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ResetPassword } from '../src/routes/ResetPassword.js';
@@ -6,12 +6,12 @@ import { api } from '../src/lib/api.js';
 import { mockOf, renderWithProviders } from './helpers.js';
 
 vi.mock('../src/lib/api.js', async () => {
-  // Must be './apiMock.js', not './helpers.js' — see the note in apiMock.ts.
+  // Must be './apiMock.js', not './helpers.js' â€” see the note in apiMock.ts.
   const { createFakeApiModule } = await import('./apiMock.js');
   return createFakeApiModule();
 });
 
-// Dummy fixtures — not credentials (test-only values).
+// Dummy fixtures â€” not credentials (test-only values).
 const NEW_PW = 'fresh-pass-123';
 const TOKEN = 'token-1234567890abcdef';
 
@@ -95,7 +95,7 @@ describe('ResetPassword', () => {
     renderWithProviders(<ResetPassword />);
     await fill(user);
     await user.click(screen.getByRole('button', { name: /Set new password/ }));
-    expect(await screen.findByText('Please wait…')).toBeInTheDocument();
+    expect(await screen.findByText('Please waitâ€¦')).toBeInTheDocument();
   });
 
   it('submits via form enter without clicking the button', async () => {

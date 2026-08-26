@@ -1,4 +1,4 @@
-import { EventEmitter } from 'node:events';
+﻿import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockSpawn = vi.hoisted(() => vi.fn());
@@ -123,7 +123,7 @@ describe('run', () => {
     const sink = vi.fn();
     const promise = run('cmd', [], {}, sink);
 
-    // "a\n\nb" → 'a' emitted now, 'b' is a partial line buffered until close.
+    // "a\n\nb" â†’ 'a' emitted now, 'b' is a partial line buffered until close.
     child.stdout.emit('data', Buffer.from('a\n\nb'));
     emitClose(child, 0);
 
@@ -175,7 +175,7 @@ describe('run', () => {
     );
 
     await vi.advanceTimersByTimeAsync(1000);
-    expect(sink).toHaveBeenCalledWith('Still working: Pulling application image (1s elapsed) …');
+    expect(sink).toHaveBeenCalledWith('Still working: Pulling application image (1s elapsed) â€¦');
     expect(sink.mock.calls.flat().join(' ')).not.toContain('must-not-leak');
 
     child.stdout.emit('data', Buffer.from('activity without a newline'));
@@ -183,7 +183,7 @@ describe('run', () => {
     await vi.advanceTimersByTimeAsync(999);
     expect(sink).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
-    expect(sink).toHaveBeenCalledWith('Still working: Pulling application image (2s elapsed) …');
+    expect(sink).toHaveBeenCalledWith('Still working: Pulling application image (2s elapsed) â€¦');
 
     emitClose(child, 0);
     await promise;
@@ -205,7 +205,7 @@ describe('run', () => {
   });
 });
 
-describe('run — timeout & tree-kill', () => {
+describe('run â€” timeout & tree-kill', () => {
   beforeEach(() => {
     mockSpawn.mockReset();
   });
@@ -267,7 +267,7 @@ describe('run — timeout & tree-kill', () => {
   it('skips signalling when the child has no pid', async () => {
     vi.useFakeTimers();
     const killSpy = vi.spyOn(process, 'kill').mockReturnValue(true);
-    const child = makeChild(); // no pid → guard returns early
+    const child = makeChild(); // no pid â†’ guard returns early
     mockSpawn.mockReturnValue(child);
 
     const promise = run('stuck', [], { timeoutMs: 500 }, vi.fn());
@@ -339,7 +339,7 @@ describe('capture', () => {
     const child = makeChild();
     mockSpawn.mockReturnValue(child);
     const promise = capture('docker', ['stats']);
-    // No stderr data emitted → errOut is empty.
+    // No stderr data emitted â†’ errOut is empty.
     emitClose(child, 2);
     await expect(promise).rejects.toThrow('`docker stats` exited 2');
   });

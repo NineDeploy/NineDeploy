@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+﻿import { describe, expect, it } from 'vitest';
 import { healthRoutes } from '../src/modules/health.js';
 import { VERSION } from '../src/version.js';
 import { buildTestApp, createFakeDb } from './helpers.js';

@@ -1,4 +1,4 @@
-import { once } from 'node:events';
+﻿import { once } from 'node:events';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import websocket from '@fastify/websocket';
 import { afterEach, vi } from 'vitest';
@@ -9,7 +9,7 @@ import rawBodyPlugin from '../src/plugins/rawBody.js';
 import { NineDeployKernel } from '../src/kernel/kernel.js';
 import { config } from '../src/config.js';
 
-// ── Drizzle table name extraction ─────────────────────────────────────────
+// â”€â”€ Drizzle table name extraction â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const NAME_SYMBOL = Symbol.for('drizzle:Name');
 
 /** Resolve a drizzle table object (or anything) to its SQL table name. */
@@ -48,8 +48,8 @@ export interface FakeDbOpts {
 /**
  * Build a chainable fake Drizzle DB. Every query family is keyed by table
  * name and falls back to empty/happy-path defaults:
- *   findMany → [], findFirst → undefined, select → [], counts → [],
- *   insert(...).returning() → [values], update(...).returning() → [set].
+ *   findMany â†’ [], findFirst â†’ undefined, select â†’ [], counts â†’ [],
+ *   insert(...).returning() â†’ [values], update(...).returning() â†’ [set].
  */
 export function createFakeDb(opts: FakeDbOpts = {}): DB {
   const resolveRows = (v: RowsResolver | undefined, fallback: Row[], ...args: unknown[]): Promise<Row[]> => {
@@ -117,7 +117,7 @@ export function createFakeDb(opts: FakeDbOpts = {}): DB {
       // `.limit(...)` and `.orderBy(...)` all resolve to the configured rows,
       // mirroring drizzle's query-builder shapes.
       const chain: Record<string, unknown> = {};
-      // biome-ignore lint/suspicious/noThenProperty: intentional thenable — the fake DB query result must be awaitable by the code under test.
+      // biome-ignore lint/suspicious/noThenProperty: intentional thenable â€” the fake DB query result must be awaitable by the code under test.
       chain.then = (ok: (v: unknown) => unknown, rej?: (e: Error) => unknown) =>
         error ? (rej ?? (() => {}))(error) : ok(rows);
       for (const step of ['where', 'leftJoin', 'innerJoin', 'limit', 'orderBy']) {
@@ -140,7 +140,7 @@ export function createFakeDb(opts: FakeDbOpts = {}): DB {
           returning: () => rows(),
           // Settings-style upserts resolve like a plain insert in the fake.
           onConflictDoUpdate: () => rows(),
-          // biome-ignore lint/suspicious/noThenProperty: intentional thenable — the fake DB insert result must be awaitable by the code under test.
+          // biome-ignore lint/suspicious/noThenProperty: intentional thenable â€” the fake DB insert result must be awaitable by the code under test.
           then: (ok, rej) => {
             rows().then(ok, rej);
             return undefined;
@@ -162,7 +162,7 @@ export function createFakeDb(opts: FakeDbOpts = {}): DB {
             then: (ok: (v?: unknown) => unknown, rej?: (e: Error) => unknown) => unknown;
           } = {
             returning: () => rows(),
-            // biome-ignore lint/suspicious/noThenProperty: intentional thenable — the fake DB update result must be awaitable by the code under test.
+            // biome-ignore lint/suspicious/noThenProperty: intentional thenable â€” the fake DB update result must be awaitable by the code under test.
             then: (ok, rej) => {
               rows().then(ok, rej);
               return undefined;
@@ -184,7 +184,7 @@ export function createFakeDb(opts: FakeDbOpts = {}): DB {
           then: (ok: (v?: unknown) => unknown, _rej?: (e: Error) => unknown) => unknown;
         } = {
           returning: () => rows(),
-          // biome-ignore lint/suspicious/noThenProperty: intentional thenable — the fake DB delete result must be awaitable by the code under test.
+          // biome-ignore lint/suspicious/noThenProperty: intentional thenable â€” the fake DB delete result must be awaitable by the code under test.
           then: (ok) => {
             rows().then(() => ok(undefined));
             return undefined;
@@ -196,7 +196,7 @@ export function createFakeDb(opts: FakeDbOpts = {}): DB {
   };
 
   const run = () => ({
-    // biome-ignore lint/suspicious/noThenProperty: intentional thenable — the fake DB run result must be awaitable by the code under test.
+    // biome-ignore lint/suspicious/noThenProperty: intentional thenable â€” the fake DB run result must be awaitable by the code under test.
     then: (ok: (v?: unknown) => unknown, rej: (e: Error) => unknown) =>
       opts.runError ? rej(new Error('db unavailable')) : ok(undefined),
   });
@@ -205,12 +205,12 @@ export function createFakeDb(opts: FakeDbOpts = {}): DB {
   return {
     ...dbish,
     // Drizzle-style transaction: runs the callback against the same fake db
-    // (single-connection fake — no isolation semantics needed for route tests).
+    // (single-connection fake â€” no isolation semantics needed for route tests).
     transaction: async <T>(fn: (tx: typeof dbish) => Promise<T>): Promise<T> => fn(dbish),
   } as unknown as DB;
 }
 
-// ── Fastify test app ──────────────────────────────────────────────────────
+// â”€â”€ Fastify test app â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface TestAppOpts {
   db?: DB;
@@ -227,7 +227,7 @@ export interface TestAppOpts {
  *   - `user` request decoration (null) + an `authenticate` pre-handler that
  *     reads the `x-test-user` header (throws 401 when absent)
  *   - `db` (fake) and `stats` decorations
- *   - the same error envelope app.ts produces (ZodError → 400, HttpError → status)
+ *   - the same error envelope app.ts produces (ZodError â†’ 400, HttpError â†’ status)
  */
 export async function buildTestApp(opts: TestAppOpts = {}): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
@@ -238,14 +238,23 @@ export async function buildTestApp(opts: TestAppOpts = {}): Promise<FastifyInsta
   app.decorate('authenticate', async (req: FastifyRequest, reply: FastifyReply) => {
     const header = req.headers['x-test-user'];
     if (!header) throw unauthorized();
-    // Role comes from an `x-test-role` header (default 'admin' so existing tests
-    // that don't care about RBAC keep working as privileged users).
+    // `x-test-operator` overrides the role-derived default so tests can pin
+    // the new `isOperator` flag directly (e.g. operator-vs-member cases that
+    // don't care about a specific workspace seat). The legacy `x-test-role`
+    // still works for older call sites.
+    const explicit = req.headers['x-test-operator'];
     const role = (req.headers['x-test-role'] === 'member' ? 'member' : 'admin') as 'admin' | 'member';
-    req.user = { id: Number(header), role };
+    const isOperator =
+      explicit === 'true' ? true : explicit === 'false' ? false : role === 'admin';
+    req.user = { id: Number(header), role, isOperator };
     void reply;
   });
   app.decorate('requireAdmin', async (req: FastifyRequest) => {
-    if (req.user?.role !== 'admin') throw forbidden('Admin access required');
+    if (req.user?.isOperator !== true) throw forbidden('Admin access required');
+  });
+  // The new operator check (legacy `requireAdmin` is kept as an alias).
+  app.decorate('requireOperator', async (req: FastifyRequest) => {
+    if (req.user?.isOperator !== true) throw forbidden('Operator access required');
   });
   const testDb = opts.db ?? createFakeDb();
   app.decorate('db', testDb);
@@ -280,7 +289,7 @@ export async function buildTestApp(opts: TestAppOpts = {}): Promise<FastifyInsta
  * Every app `buildTestApp` hands out, closed after the test that made it.
  *
  * Files that build one Fastify instance per test used to leave all of them
- * open — 50+ live servers, each with its own kernel, plugin state and (in the
+ * open â€” 50+ live servers, each with its own kernel, plugin state and (in the
  * websocket tests) sockets, all still attached to the worker's event loop and
  * still able to emit through its IPC channel. On Windows that reliably wedged
  * the fork partway through a large file: the run reported N of M tests and
@@ -294,17 +303,20 @@ afterEach(async () => {
   await Promise.all(apps.map((a) => a.close().catch(() => undefined)));
 });
 
-// ── Request/WS helpers ────────────────────────────────────────────────────
+// â”€â”€ Request/WS helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /** Headers that make the test `authenticate` stub resolve to a user id. */
 export const asUser = (
-  idOrOpts: number | { id?: number; role?: 'admin' | 'member' } = 1,
+  idOrOpts: number | { id?: number; role?: 'admin' | 'member'; isOperator?: boolean } = 1,
 ): Record<string, string> => {
   if (typeof idOrOpts === 'object' && idOrOpts !== null) {
-    return {
+    const role = idOrOpts.role ?? (idOrOpts.isOperator === false ? 'member' : 'admin');
+    const headers: Record<string, string> = {
       'x-test-user': String(idOrOpts.id ?? 1),
-      'x-test-role': idOrOpts.role ?? 'admin',
+      'x-test-role': role,
     };
+    if (idOrOpts.isOperator !== undefined) headers['x-test-operator'] = String(idOrOpts.isOperator);
+    return headers;
   }
   return { 'x-test-user': String(idOrOpts), 'x-test-role': 'admin' };
 };
@@ -344,7 +356,7 @@ export async function waitFor(pred: () => boolean, timeoutMs = 2000): Promise<vo
   }
 }
 
-// ── Row fixtures (mirror packages/db/src/schema.ts shapes) ────────────────
+// â”€â”€ Row fixtures (mirror packages/db/src/schema.ts shapes) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const NOW = new Date('2026-01-01T00:00:00.000Z');
 
@@ -353,7 +365,7 @@ export const userRow = (over: Record<string, unknown> = {}) => ({
   email: 'admin@example.com',
   passwordHash: 'hash',
   name: 'Admin',
-  role: 'admin',
+  isOperator: true,
   tokenVersion: 0,
   createdAt: NOW,
   updatedAt: NOW,
@@ -374,7 +386,7 @@ export const sessionRow = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-/** Record every payload written through db.update(...) — for asserting which
+/** Record every payload written through db.update(...) â€” for asserting which
  * statuses a code path actually persisted, independent of the fake's resolvers. */
 export function trackStatusUpdates(db: ReturnType<typeof createFakeDb>) {
   const updates: Array<Record<string, unknown>> = [];

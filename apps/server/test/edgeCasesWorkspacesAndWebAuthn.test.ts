@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+﻿import { describe, expect, it, vi } from 'vitest';
 import {
   ensureDefaultWorkspace,
 } from '../src/modules/workspaces.js';
@@ -6,7 +6,7 @@ import {
   beginRegistration,
 } from '../src/lib/webauthn.js';
 
-describe('Edge Cases — Workspaces Multi-tenancy & Auto-provisioning', () => {
+describe('Edge Cases â€” Workspaces Multi-tenancy & Auto-provisioning', () => {
   it('provisions a default workspace when none exists and resolves slug collisions', async () => {
     let insertedWorkspace: any = null;
     let insertedMember: any = null;
@@ -68,7 +68,7 @@ describe('Edge Cases — Workspaces Multi-tenancy & Auto-provisioning', () => {
   });
 });
 
-describe('Edge Cases — WebAuthn / Passkeys Registration & Challenge Store', () => {
+describe('Edge Cases â€” WebAuthn / Passkeys Registration & Challenge Store', () => {
   it('generates registration options with Relying Party identity matching publicUrl', async () => {
     const user = { id: 1, email: 'admin@nine.io', name: 'Admin User' };
     const existingCreds: any[] = [];

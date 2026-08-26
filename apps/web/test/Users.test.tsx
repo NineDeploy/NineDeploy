@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+﻿import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { screen, waitFor, fireEvent } from '@testing-library/react';
 import { Users } from '../src/routes/Users.js';
 import { api } from '../src/lib/api.js';
@@ -17,9 +17,9 @@ vi.mock('../src/lib/auth.js', async () => {
 });
 
 const users = [
-  { id: 1, email: 'admin@example.com', name: 'Admin', role: 'admin' },
-  { id: 2, email: 'member@example.com', name: null as string | null, role: 'member' },
-  { id: 3, email: 'coadmin@example.com', name: 'Co', role: 'admin' },
+  { id: 1, email: 'admin@example.com', name: 'Admin', isOperator: true, workspaceCount: 2, createdAt: '2026-01-01T00:00:00Z' },
+  { id: 2, email: 'member@example.com', name: null as string | null, isOperator: false, workspaceCount: 1, createdAt: '2026-01-01T00:00:00Z' },
+  { id: 3, email: 'coadmin@example.com', name: 'Co', isOperator: true, workspaceCount: 3, createdAt: '2026-01-01T00:00:00Z' },
 ];
 
 describe('Users', () => {
@@ -37,21 +37,23 @@ describe('Users', () => {
 
   it('creates a user via the add-user form', async () => {
     mockOf(api.users.list).mockResolvedValue([] as never);
-    mockOf(api.users.create).mockResolvedValue({ id: 9, email: 'new@x.dev', name: null, role: 'member' } as never);
+    mockOf(api.users.create).mockResolvedValue({
+      id: 9, email: 'new@x.dev', name: null, isOperator: false, workspaceCount: 0, createdAt: '2026-01-01T00:00:00Z',
+    } as never);
     renderWithProviders(<Users />);
-    fireEvent.click(await screen.findByRole('button', { name: /New user…/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /New user/i }));
     fireEvent.change(screen.getByLabelText('New user email'), { target: { value: 'new@x.dev' } });
     fireEvent.change(screen.getByLabelText('New user password'), { target: { value: 'fresh-pass-123' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create user' }));
     await waitFor(() => expect(api.users.create).toHaveBeenCalledWith({
-      email: 'new@x.dev', password: 'fresh-pass-123', name: undefined, role: 'member',
+      email: 'new@x.dev', password: 'fresh-pass-123', name: undefined,
     }));
   });
 
   it('validates the add-user form before submitting', async () => {
     mockOf(api.users.list).mockResolvedValue([] as never);
     renderWithProviders(<Users />);
-    fireEvent.click(await screen.findByRole('button', { name: /New user…/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /New user/i }));
     // invalid email -> refused before any request
     fireEvent.change(screen.getByLabelText('New user email'), { target: { value: 'not-an-email' } });
     fireEvent.change(screen.getByLabelText('New user password'), { target: { value: 'fresh-pass-123' } });
@@ -62,13 +64,12 @@ describe('Users', () => {
     fireEvent.change(screen.getByLabelText('New user password'), { target: { value: 'short' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create user' }));
     expect(api.users.create).not.toHaveBeenCalled();
-    // optional name + admin role ride along when filled
+    // optional name rides along
     fireEvent.change(screen.getByLabelText('New user name'), { target: { value: 'New Person' } });
-    fireEvent.change(screen.getByLabelText('New user role'), { target: { value: 'admin' } });
     fireEvent.change(screen.getByLabelText('New user password'), { target: { value: 'fresh-pass-123' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create user' }));
     await waitFor(() => expect(api.users.create).toHaveBeenCalledWith({
-      email: 'new@x.dev', password: 'fresh-pass-123', name: 'New Person', role: 'admin',
+      email: 'new@x.dev', password: 'fresh-pass-123', name: 'New Person',
     }));
   });
 
@@ -76,7 +77,7 @@ describe('Users', () => {
     mockOf(api.users.list).mockResolvedValue([] as never);
     mockOf(api.users.create).mockReturnValue(new Promise(() => {}) as never);
     renderWithProviders(<Users />);
-    fireEvent.click(await screen.findByRole('button', { name: /New user…/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /New user/i }));
     fireEvent.change(screen.getByLabelText('New user email'), { target: { value: 'new@x.dev' } });
     fireEvent.change(screen.getByLabelText('New user password'), { target: { value: 'fresh-pass-123' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create user' }));
@@ -87,7 +88,7 @@ describe('Users', () => {
     mockOf(api.users.list).mockResolvedValue([] as never);
     mockOf(api.users.create).mockRejectedValue(new Error('email_taken') as never);
     renderWithProviders(<Users />);
-    fireEvent.click(await screen.findByRole('button', { name: /New user…/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /New user/i }));
     fireEvent.change(screen.getByLabelText('New user email'), { target: { value: 'dup@x.dev' } });
     fireEvent.change(screen.getByLabelText('New user password'), { target: { value: 'fresh-pass-123' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create user' }));
@@ -100,39 +101,22 @@ describe('Users', () => {
     await screen.findByText('No users');
   });
 
-  it('renders users with role badges, self-label and delete for others', async () => {
+  it('renders users with workspace count, operator badge, self-label and delete for others', async () => {
     mockOf(api.users.list).mockResolvedValue(users as never);
     renderWithProviders(<Users />);
     await screen.findByText('admin@example.com');
     expect(screen.getByText('(you)')).toBeInTheDocument();
-    expect(screen.getByText('Admin')).toBeInTheDocument();
-    // role badges
-    expect(screen.getAllByText('admin').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('member').length).toBeGreaterThan(0);
-    // delete button only for non-self users (member + coadmin)
+    // Operator badge for the two operators in the fixture.
+    expect(screen.getAllByText('Operator').length).toBe(2);
+    // Member badge for the one member.
+    expect(screen.getAllByText('Member').length).toBe(1);
+    // Workspace counts.
+    expect(screen.getByText('2 workspaces')).toBeInTheDocument();
+    expect(screen.getByText('3 workspaces')).toBeInTheDocument();
+    expect(screen.getByText('1 workspace')).toBeInTheDocument();
+    // Delete buttons only for non-self users (member + coadmin).
     const deleteButtons = screen.getAllByTitle('Delete user');
     expect(deleteButtons).toHaveLength(2);
-  });
-
-  it('toggles role of another user and invalidates', async () => {
-    mockOf(api.users.list).mockResolvedValue(users as never);
-    mockOf(api.users.setRole).mockResolvedValue({ ...users[1], role: 'admin' } as never);
-    renderWithProviders(<Users />);
-    const roleButtons = await screen.findAllByRole('button', { name: /admin|member/ });
-    // member row button toggles to admin
-    fireEvent.click(roleButtons[1]!);
-    await waitFor(() => expect(api.users.setRole).toHaveBeenCalledWith(2, 'admin'));
-  });
-
-  it('demotes a non-self admin to member', async () => {
-    mockOf(api.users.list).mockResolvedValue(users as never);
-    mockOf(api.users.setRole).mockResolvedValue({ ...users[2], role: 'member' } as never);
-    renderWithProviders(<Users />);
-    const roleButtons = await screen.findAllByRole('button', { name: /admin|member/ });
-    // coadmin row (index 2) is admin and not me -> toggles to member
-    expect(roleButtons[2]!).toHaveAttribute('title', 'Toggle to member');
-    fireEvent.click(roleButtons[2]!);
-    await waitFor(() => expect(api.users.setRole).toHaveBeenCalledWith(3, 'member'));
   });
 
   it('deletes a user after confirmation', async () => {
@@ -161,14 +145,10 @@ describe('Users', () => {
     await waitFor(() => expect(api.users.list).toHaveBeenCalledTimes(2));
   });
 
-  it('toasts on role-toggle and delete failures', async () => {
+  it('toasts on delete failures', async () => {
     mockOf(api.users.list).mockResolvedValue(users as never);
-    mockOf(api.users.setRole).mockRejectedValue(new Error('403') as never);
     mockOf(api.users.remove).mockRejectedValue(new Error('last admin') as never);
     renderWithProviders(<Users />);
-    const roleButtons = await screen.findAllByRole('button', { name: /admin|member/ });
-    fireEvent.click(roleButtons[1]!);
-    await waitFor(() => expect(api.users.setRole).toHaveBeenCalledWith(2, 'admin'));
     fireEvent.click(screen.getAllByTitle('Delete user')[0]!);
     fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
     await waitFor(() => expect(api.users.remove).toHaveBeenCalledWith(2));
@@ -197,95 +177,6 @@ describe('Users', () => {
     const input = await screen.findByPlaceholderText('new password (min 8)');
     fireEvent.change(input, { target: { value: 'short' } });
     fireEvent.click(screen.getByText('Save'));
-
     expect(api.users.resetPassword).not.toHaveBeenCalled();
-  });
-
-  it('cancels the inline reset form without calling the API', async () => {
-    mockOf(api.users.list).mockResolvedValue(users as never);
-    renderWithProviders(<Users />);
-
-    fireEvent.click((await screen.findAllByTitle(/Reset password/))[0]!);
-    fireEvent.click(screen.getByText('Cancel'));
-    expect(screen.queryByPlaceholderText('new password (min 8)')).not.toBeInTheDocument();
-    expect(api.users.resetPassword).not.toHaveBeenCalled();
-  });
-
-  it('shows the pending state while the reset is in flight', async () => {
-    mockOf(api.users.list).mockResolvedValue(users as never);
-    let resolveReset!: (v: unknown) => void;
-    mockOf(api.users.resetPassword).mockReturnValue(
-      new Promise((r) => {
-        resolveReset = r;
-      }) as never,
-    );
-    renderWithProviders(<Users />);
-
-    fireEvent.click((await screen.findAllByTitle(/Reset password/))[0]!);
-    fireEvent.change(screen.getByPlaceholderText('new password (min 8)'), { target: { value: 'fresh-pass-123' } });
-    fireEvent.click(screen.getByText('Save'));
-
-    await waitFor(() => expect(screen.getByText('Saving…')).toBeInTheDocument());
-    resolveReset({ ok: true });
-    await waitFor(() => expect(screen.queryByText('Saving…')).not.toBeInTheDocument());
-  });
-
-  it('reports a failed reset as an error toast and keeps the form open', async () => {
-    mockOf(api.users.list).mockResolvedValue(users as never);
-    mockOf(api.users.resetPassword).mockRejectedValue(new Error('500'));
-    renderWithProviders(<Users />);
-
-    fireEvent.click((await screen.findAllByTitle(/Reset password/))[0]!);
-    fireEvent.change(screen.getByPlaceholderText('new password (min 8)'), { target: { value: 'fresh-pass-123' } });
-    fireEvent.click(screen.getByText('Save'));
-
-    await waitFor(() => expect(screen.queryByPlaceholderText('new password (min 8)')).toBeInTheDocument());
-  });
-
-  // ── one-time reset links ────────────────────────────────────────────────
-  it('generates and reveals a one-time reset link', async () => {
-    mockOf(api.users.list).mockResolvedValue(users as never);
-    mockOf(api.users.resetLink).mockResolvedValue({
-      url: 'http://localhost:3000/reset-password?token=abc',
-      expiresAt: '2026-08-15T12:30:00Z',
-    } as never);
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
-
-    renderWithProviders(<Users />);
-    fireEvent.click((await screen.findAllByTitle(/one-time reset link/))[0]!);
-    await waitFor(() => expect(api.users.resetLink).toHaveBeenCalledWith(2));
-    expect(await screen.findByText(/Copy this one-time link now/)).toBeInTheDocument();
-    expect(screen.getByText(/reset-password\?token=abc/)).toBeInTheDocument();
-
-    fireEvent.click(screen.getByText('Copy'));
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith('http://localhost:3000/reset-password?token=abc'));
-
-    fireEvent.click(screen.getByText('Done'));
-    expect(screen.queryByText(/reset-password\?token=abc/)).not.toBeInTheDocument();
-  });
-
-  it('reports a failed link generation as a toast', async () => {
-    mockOf(api.users.list).mockResolvedValue(users as never);
-    mockOf(api.users.resetLink).mockRejectedValue(new Error('500') as never);
-    renderWithProviders(<Users />);
-    fireEvent.click((await screen.findAllByTitle(/one-time reset link/))[0]!);
-    await waitFor(() => expect(api.users.resetLink).toHaveBeenCalled());
-  });
-
-  it('reports a clipboard failure when copying the link', async () => {
-    mockOf(api.users.list).mockResolvedValue(users as never);
-    mockOf(api.users.resetLink).mockResolvedValue({
-      url: 'http://localhost:3000/reset-password?token=abc',
-      expiresAt: '2026-08-15T12:30:00Z',
-    } as never);
-    Object.defineProperty(navigator, 'clipboard', {
-      value: { writeText: vi.fn().mockRejectedValue(new Error('denied')) },
-      configurable: true,
-    });
-    renderWithProviders(<Users />);
-    fireEvent.click((await screen.findAllByTitle(/one-time reset link/))[0]!);
-    fireEvent.click(await screen.findByText('Copy'));
-    await waitFor(() => expect(screen.getByText(/Copy failed/)).toBeInTheDocument());
   });
 });

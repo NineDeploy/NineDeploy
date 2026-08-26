@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
-import { Check, Code2, Copy, FileCode, RefreshCw, Shield, Terminal } from 'lucide-react';
+import { Check, Code2, Copy, ExternalLink, FileCode, RefreshCw, Shield, Terminal } from 'lucide-react';
 import { api } from '../../lib/api.js';
 import type { Service } from '@ninedeploy/sdk';
 import { Button, Card, CardBody, Skeleton } from '../../components/ui.js';
@@ -108,6 +108,17 @@ export function ManifestTab({
                 {/* v8 ignore stop */}
                 Refresh
               </Button>
+              {service && (
+                <a
+                  href={`/manifest-creator?from=service:${service.id}`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <Button variant="secondary" size="sm">
+                    <ExternalLink size={14} /> Open in Creator
+                  </Button>
+                </a>
+              )}
             </div>
           </div>
         </CardBody>

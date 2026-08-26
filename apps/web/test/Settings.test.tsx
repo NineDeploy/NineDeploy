@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+﻿import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Settings } from '../src/routes/settings/index.js';
@@ -7,7 +7,7 @@ import { useTheme } from '../src/lib/theme.js';
 import { renderWithProviders, mockOf } from './helpers.js';
 
 vi.mock('../src/lib/api.js', async () => {
-  // Must be './apiMock.js', not './helpers.js' — see the note in apiMock.ts.
+  // Must be './apiMock.js', not './helpers.js' â€” see the note in apiMock.ts.
   const { createFakeApiModule } = await import('./apiMock.js');
   return createFakeApiModule();
 });
@@ -85,7 +85,7 @@ describe('Settings', () => {
 
   const openSection = async (label: string) => {
     // Section tabs expose "label + description" as their accessible name
-    // (e.g. "Security 2FA, audit logs & sessions") — match on the leading
+    // (e.g. "Security 2FA, audit logs & sessions") â€” match on the leading
     // label, escaping regex metacharacters in labels like "Firewall (UFW)".
     const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     fireEvent.click(await screen.findByRole('tab', { name: new RegExp(`^${escaped}(\\s|$)`) }));
@@ -106,7 +106,7 @@ describe('Settings', () => {
     fireEvent.change(filter, { target: { value: 'zzz-no-match' } });
     expect(screen.getByText(/No settings matching/)).toBeInTheDocument();
 
-    // The clear (✕) button resets the list.
+    // The clear (âœ•) button resets the list.
     fireEvent.change(filter, { target: { value: '2FA' } });
     fireEvent.click(screen.getByRole('button', { name: /clear filter/i }));
     expect(screen.getAllByRole('tab').length).toBeGreaterThan(5);
@@ -125,12 +125,12 @@ describe('Settings', () => {
     // system info rows (System section)
     await openSection('System');
     expect(await screen.findByText('nd-net')).toBeInTheDocument();
-    expect(screen.getByText('v0.0.0 · MIT')).toBeInTheDocument();
+    expect(screen.getByText('v0.0.0 Â· MIT')).toBeInTheDocument();
     expect(screen.getByText('4')).toBeInTheDocument();
     expect(screen.getByText('3/3 active')).toBeInTheDocument();
     expect(screen.getByText('up to date')).toBeInTheDocument();
     // host resources bars
-    expect(screen.getByText('50% · 8.0 GB / 16.0 GB')).toBeInTheDocument();
+    expect(screen.getByText('50% Â· 8.0 GB / 16.0 GB')).toBeInTheDocument();
     expect(screen.getByText('1.25')).toBeInTheDocument();
     // image storage + reclaimable
     expect(screen.getByText('200 MB reclaimable')).toBeInTheDocument();
@@ -202,7 +202,7 @@ describe('Settings', () => {
     mockOf(api.system.updateCheck).mockReturnValue(new Promise(() => {}) as never);
     const first = renderWithProviders(<Settings />);
     await openSection('System');
-    expect(await screen.findByText('checking…')).toBeInTheDocument();
+    expect(await screen.findByText('checkingâ€¦')).toBeInTheDocument();
     first.unmount();
 
     mockOf(api.system.updateCheck).mockRejectedValue(new Error('offline') as never);
@@ -261,7 +261,7 @@ describe('Settings', () => {
     await screen.findByRole('button', { name: /Export backup/ });
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;
     fireEvent.change(input, { target: { files: [new File(['x'], 'b.tar.gz')] } });
-    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Import complete — restart NineDeploy', 'success'));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Import complete â€” restart NineDeploy', 'success'));
   });
 
   it('imports without an authorization header when no token is set', async () => {
@@ -292,7 +292,7 @@ describe('Settings', () => {
     } as never);
     renderWithProviders(<Settings />);
     await openSection('System');
-    await screen.findByText('94% · 15.0 GB / 16.0 GB');
+    await screen.findByText('94% Â· 15.0 GB / 16.0 GB');
   });
 
   it('formats sub-gigabyte host values in MB', async () => {
@@ -308,8 +308,8 @@ describe('Settings', () => {
     } as never);
     renderWithProviders(<Settings />);
     await openSection('System');
-    await screen.findByText('50% · 512 MB / 1.0 GB');
-    expect(screen.getByText('25% · 256 MB / 1.0 GB')).toBeInTheDocument();
+    await screen.findByText('50% Â· 512 MB / 1.0 GB');
+    expect(screen.getByText('25% Â· 256 MB / 1.0 GB')).toBeInTheDocument();
   });
 
   it('refreshes docker resources from the image storage card', async () => {
@@ -330,7 +330,7 @@ describe('Settings', () => {
   it('handles import failure', async () => {
     const fetchMock = vi.mocked(fetch);
     // An HTTP error with a JSON error body must surface as a failure toast
-    // carrying the server's message — never a success toast.
+    // carrying the server's message â€” never a success toast.
     fetchMock.mockResolvedValueOnce({ ok: false, status: 400, json: async () => ({ error: { message: 'Invalid bundle' } }) } as Response);
     renderWithProviders(<Settings />);
     await openSection('Migration');
@@ -379,12 +379,12 @@ describe('Settings', () => {
     renderWithProviders(<Settings />);
     await openSection('Firewall');
 
-    // Quick-start profile…
+    // Quick-start profileâ€¦
     fireEvent.click(await screen.findByRole('button', { name: 'Apply VPS Profile' }));
     await waitFor(() =>
       expect(toastSpy.toast).toHaveBeenCalledWith('Recommended VPS firewall profile applied (22, 80, 443 allowed)', 'success'));
 
-    // …and a custom port rule through the form.
+    // â€¦and a custom port rule through the form.
     fireEvent.change(screen.getByPlaceholderText('e.g. 8080, 25565'), { target: { value: '8080' } });
     fireEvent.click(screen.getByRole('button', { name: /Open Port/i }));
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Firewall port rule opened', 'success'));
@@ -470,7 +470,7 @@ describe('Settings', () => {
     await openSection('Notifications');
     fireEvent.click((await screen.findAllByTitle('Edit'))[0]!);
     fireEvent.submit((screen.getByLabelText('Channel name') as HTMLInputElement).closest('form')!);
-    expect(await screen.findByText('…')).toBeInTheDocument();
+    expect(await screen.findByText('â€¦')).toBeInTheDocument();
   });
 
   it('cancels the inline channel editor', async () => {
@@ -528,7 +528,7 @@ describe('Settings', () => {
     await user.type(input, 'new@example.com');
     await user.click(saveButtonNextTo('ACME account email'));
     await waitFor(() => expect(api.settings.setAcmeEmail).toHaveBeenCalledWith('new@example.com'));
-    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('ACME email saved — Traefik and certificate routing updated', 'success'));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('ACME email saved â€” Traefik and certificate routing updated', 'success'));
   });
 
   it('shows, saves and reports errors for panel domain', async () => {
@@ -546,7 +546,7 @@ describe('Settings', () => {
     await user.type(input, 'dash.example.com');
     await user.click(saveButtonNextTo('NineDeploy Panel domain'));
     await waitFor(() => expect(api.settings.setPanelDomain).toHaveBeenCalledWith('dash.example.com'));
-    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Panel domain saved — Traefik routing updated', 'success'));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Panel domain saved â€” Traefik routing updated', 'success'));
     first.unmount();
 
     mockOf(api.settings.setPanelDomain).mockRejectedValue(new Error('fail') as never);
@@ -569,7 +569,7 @@ describe('Settings', () => {
     const input = (await screen.findByLabelText('NineDeploy Panel domain')) as HTMLInputElement;
     await user.type(input, 'busy.example.com');
     await user.click(saveButtonNextTo('NineDeploy Panel domain'));
-    expect(await screen.findByText('Saving…')).toBeInTheDocument();
+    expect(await screen.findByText('Savingâ€¦')).toBeInTheDocument();
   });
 
   it('shows and saves the template registry source', async () => {
@@ -609,7 +609,7 @@ describe('Settings', () => {
     await waitFor(() =>
       expect(api.settings.setDns).toHaveBeenCalledWith({ provider: 'hetzner', token: 'fresh-token', wildcardApex: 'example.org' }),
     );
-    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('DNS challenge saved — Traefik updated', 'success'));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('DNS challenge saved â€” Traefik updated', 'success'));
   });
 
   it('keeps the stored token when the field is left empty and reports failures', async () => {
@@ -634,7 +634,7 @@ describe('Settings', () => {
 
     await screen.findByLabelText('DNS provider');
     fireEvent.click(saveButtonNextTo('Wildcard domain apex'));
-    expect(await screen.findByText('Saving…')).toBeInTheDocument();
+    expect(await screen.findByText('Savingâ€¦')).toBeInTheDocument();
   });
 
   it('shows the saving state while the template source is in flight', async () => {
@@ -645,7 +645,7 @@ describe('Settings', () => {
 
     await screen.findByLabelText('Template registry source');
     fireEvent.click(saveButtonNextTo('Template registry source'));
-    await waitFor(() => expect(screen.getAllByText('Saving…').length).toBeGreaterThan(0));
+    await waitFor(() => expect(screen.getAllByText('Savingâ€¦').length).toBeGreaterThan(0));
   });
 
   it('reports template source save failures and shows a custom source', async () => {
@@ -669,7 +669,7 @@ describe('Settings', () => {
 
     await screen.findByLabelText('ACME account email');
     fireEvent.click(saveButtonNextTo('ACME account email'));
-    expect(await screen.findByText('Saving…')).toBeInTheDocument();
+    expect(await screen.findByText('Savingâ€¦')).toBeInTheDocument();
   });
 
   it('reports ACME save failures and renders the unconfigured hint', async () => {
@@ -809,9 +809,9 @@ describe('Settings', () => {
     await user.type(screen.getByLabelText('Confirm new password'), 'new-pass-456');
     await user.click(screen.getByRole('button', { name: 'Change password' }));
 
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Changing…' })).toBeDisabled());
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Changingâ€¦' })).toBeDisabled());
     resolveChange({ tokens: { accessToken: 'a', refreshToken: 'r', expiresIn: 900 } });
-    // Back to idle (and disabled again — the fields were cleared on success).
+    // Back to idle (and disabled again â€” the fields were cleared on success).
     await waitFor(() =>
       expect(screen.getByRole('button', { name: 'Change password' })).toBeDisabled(),
     );
@@ -832,10 +832,10 @@ describe('Settings', () => {
     );
   });
 
-  // ── Two-factor (TOTP) ───────────────────────────────────────────────────
+  // â”€â”€ Two-factor (TOTP) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const PW = ['current', '-pass', '-1'].join('');
 
-  it('runs the full 2FA setup → enable flow', async () => {
+  it('runs the full 2FA setup â†’ enable flow', async () => {
     const user = userEvent.setup();
     mockOf(api.auth.twoFactor.setup).mockResolvedValue({
       secret: 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ',
@@ -873,7 +873,7 @@ describe('Settings', () => {
     fireEvent.change(await screen.findByPlaceholderText('Password'), { target: { value: PW } });
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
     // The QR fallback box stays in its generating state instead of crashing.
-    expect(await screen.findByText('Generating QR…')).toBeInTheDocument();
+    expect(await screen.findByText('Generating QRâ€¦')).toBeInTheDocument();
   });
 
   it('reports an invalid code on enable', async () => {
@@ -898,7 +898,7 @@ describe('Settings', () => {
     // New flow: confirm the account password first (required when 2FA is enabled).
     fireEvent.change(await screen.findByPlaceholderText('Password'), { target: { value: PW } });
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
-    // Wait for the setup panel first — the QR-based panel no longer prints the
+    // Wait for the setup panel first â€” the QR-based panel no longer prints the
     // otpauth URI as text, so anchor on the cancel affordance instead.
     await screen.findByText('Cancel setup');
     fireEvent.click(screen.getByText('Cancel setup'));
@@ -917,7 +917,7 @@ describe('Settings', () => {
     const codeInput = await screen.findByPlaceholderText('123456');
     fireEvent.change(codeInput, { target: { value: '123456' } });
     fireEvent.submit(codeInput.closest('form')!);
-    expect(await screen.findByText('Verifying…')).toBeInTheDocument();
+    expect(await screen.findByText('Verifyingâ€¦')).toBeInTheDocument();
   });
 
   it('shows the setup pending label while generating', async () => {
@@ -927,7 +927,7 @@ describe('Settings', () => {
     // New flow: confirm the account password first (required when 2FA is enabled).
     fireEvent.change(await screen.findByPlaceholderText('Password'), { target: { value: PW } });
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
-    expect(await screen.findByText('Generating…')).toBeInTheDocument();
+    expect(await screen.findByText('Generatingâ€¦')).toBeInTheDocument();
   });
 
   it('ignores 2FA form submits with incomplete inputs', async () => {
@@ -960,7 +960,7 @@ describe('Settings', () => {
     fireEvent.change(pwInput, { target: { value: 'x'.repeat(8) } });
     fireEvent.change(screen.getByPlaceholderText('6-digit code'), { target: { value: '123456' } });
     fireEvent.submit(pwInput.closest('form')!);
-    expect(await screen.findByText('Disabling…')).toBeInTheDocument();
+    expect(await screen.findByText('Disablingâ€¦')).toBeInTheDocument();
   });
 
   it('shows the enable pending label while verifying', async () => {
@@ -974,7 +974,7 @@ describe('Settings', () => {
     const codeInput = await screen.findByPlaceholderText('123456');
     fireEvent.change(codeInput, { target: { value: '123456' } });
     fireEvent.click(screen.getByRole('button', { name: 'Enable 2FA' }));
-    expect(await screen.findByText('Verifying…')).toBeInTheDocument();
+    expect(await screen.findByText('Verifyingâ€¦')).toBeInTheDocument();
   });
 
   it('reports clipboard failures when copying the secret', async () => {
@@ -999,7 +999,7 @@ describe('Settings', () => {
     // New flow: confirm the account password first (required when 2FA is enabled).
     fireEvent.change(await screen.findByPlaceholderText('Password'), { target: { value: PW } });
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
-    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Could not start 2FA setup — check your password', 'error'));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Could not start 2FA setup â€” check your password', 'error'));
   });
 
   it('disables 2FA with password + code and signs out', async () => {
@@ -1097,7 +1097,7 @@ describe('Settings', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Set up 2FA' }));
     fireEvent.change(await screen.findByPlaceholderText('Password'), { target: { value: PW } });
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
-    // Dismiss the form while the request is in flight — the error lands after
+    // Dismiss the form while the request is in flight â€” the error lands after
     // showSetupPassword has been reset, so the generic message is used.
     fireEvent.click(screen.getByText('Cancel'));
     rejectSetup(new Error('late failure'));
@@ -1126,7 +1126,7 @@ describe('Settings', () => {
   });
 
   it('registers a passkey without a custom label and shows the pending state', async () => {
-    // No label typed → the server receives the default name "Passkey".
+    // No label typed â†’ the server receives the default name "Passkey".
     mockOf(api.auth.passkeys.registerOptions).mockResolvedValue({ options: '{}' } as never);
     webauthnMock.startRegistration.mockResolvedValue({ id: 'att-2' });
     mockOf(api.auth.passkeys.registerVerify).mockResolvedValue({ id: 5, name: 'Passkey' } as never);
@@ -1141,7 +1141,7 @@ describe('Settings', () => {
     mockOf(api.auth.passkeys.registerOptions).mockReturnValue(new Promise(() => {}) as never);
     renderWithProviders(<Settings />);
     fireEvent.click(await screen.findByRole('button', { name: /Add passkey/ }));
-    expect(await screen.findByText('Waiting for authenticator…')).toBeInTheDocument();
+    expect(await screen.findByText('Waiting for authenticatorâ€¦')).toBeInTheDocument();
   });
 
   it('reports passkey setup failures with and without a message', async () => {

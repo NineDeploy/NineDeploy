@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+﻿import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Monitoring } from '../src/routes/Monitoring.js';
@@ -18,9 +18,9 @@ vi.mock('../src/lib/api.js', () => apiMock);
 
 const authMock = vi.hoisted(() => ({
   // helpers.tsx wraps rendered routes in AuthProvider, so the mock has to
-  // export one — a passthrough is enough since useAuth is stubbed here.
+  // export one â€” a passthrough is enough since useAuth is stubbed here.
   AuthProvider: ({ children }: { children?: React.ReactNode }) => children,
-  useAuth: vi.fn(() => ({ user: { id: 1, role: 'admin' } })),
+  useAuth: vi.fn(() => ({ user: { id: 1, isOperator: true } })),
 }));
 
 vi.mock('../src/lib/auth.js', () => authMock);
@@ -39,9 +39,9 @@ const snapshot = {
   containers: [
     { kind: 'service' as const, refId: 1, refName: 'api', name: 'nd-api', engine: null, cpuPct: 12.5, memMb: 256, memLimitMb: 512 },
     { kind: 'database' as const, refId: 2, refName: 'db', name: 'nd-db', engine: 'postgres', cpuPct: 0.25, memMb: 64, memLimitMb: 0 },
-    // 90% of its limit → the critical (rose) memory zone.
+    // 90% of its limit â†’ the critical (rose) memory zone.
     { kind: 'service' as const, refId: 3, refName: 'hot', name: 'nd-hot', engine: null, cpuPct: 5, memMb: 900, memLimitMb: 1000 },
-    // 70% of its limit → the warning (amber) memory zone.
+    // 70% of its limit â†’ the warning (amber) memory zone.
     { kind: 'service' as const, refId: 4, refName: 'warm', name: 'nd-warm', engine: null, cpuPct: 5, memMb: 700, memLimitMb: 1000 },
   ],
 };
@@ -49,7 +49,7 @@ const snapshot = {
 describe('Monitoring', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    authMock.useAuth.mockReturnValue({ user: { id: 1, role: 'admin' } });
+    authMock.useAuth.mockReturnValue({ user: { id: 1, isOperator: true } });
     apiMock.api.stats.snapshot.mockResolvedValue(snapshot as never);
     apiMock.api.stats.metrics.mockResolvedValue({ points: [] } as never);
     apiMock.api.alerts.list.mockResolvedValue([] as never);
@@ -74,9 +74,9 @@ describe('Monitoring', () => {
     expect(await screen.findAllByText('Service')).toHaveLength(3);
     expect(screen.getAllByText('postgres').length).toBeGreaterThan(0);
     expect(screen.getAllByText('900 MB').length).toBeGreaterThan(0);
-    // The memory-limit column shows the configured ceiling (and '—' when unset).
+    // The memory-limit column shows the configured ceiling (and 'â€”' when unset).
     expect(screen.getAllByText('1000 MB').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('—').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('â€”').length).toBeGreaterThan(0);
   });
 
   it('selects the local node and resets the type filter from the cluster bar', async () => {
@@ -109,7 +109,7 @@ describe('Monitoring', () => {
     apiMock.api.stats.snapshot.mockResolvedValue({ host: null, containers: [] } as never);
     renderWithProviders(<Monitoring />);
     expect(await screen.findByText('No workloads found')).toBeInTheDocument();
-    expect(screen.getAllByText('—').length).toBeGreaterThan(0); // cpu/mem/disk values
+    expect(screen.getAllByText('â€”').length).toBeGreaterThan(0); // cpu/mem/disk values
   });
 
   it('formats sub-gigabyte and zero byte host values', async () => {
@@ -126,7 +126,7 @@ describe('Monitoring', () => {
     } as never);
     renderWithProviders(<Monitoring />);
     await screen.findByText('536.9 MB / 1.1 GB');
-    // diskUsedBytes is 0 → formatBytes renders '0 B' as the used portion.
+    // diskUsedBytes is 0 â†’ formatBytes renders '0 B' as the used portion.
     expect(screen.getByText(/0 B\s*\/\s*/)).toBeInTheDocument();
   });
 
@@ -144,7 +144,7 @@ describe('Monitoring', () => {
     expect(screen.getAllByText('postgres').length).toBeGreaterThan(0);
     // service sparkline renders an svg
     expect(document.querySelectorAll('svg').length).toBeGreaterThan(0);
-    // limits form for service — mem is prefilled with the current limit (512)
+    // limits form for service â€” mem is prefilled with the current limit (512)
     const cpuInput = screen.getAllByPlaceholderText('cpu shares')[0]!;
     const memInput = screen.getAllByPlaceholderText('mem MB')[0]!;
     expect(memInput).toHaveValue('512');
@@ -174,7 +174,7 @@ describe('Monitoring', () => {
     const cpuInput = screen.getAllByPlaceholderText('cpu shares')[0]!;
     await userEvent.type(cpuInput, '256');
     fireEvent.submit(cpuInput.closest('form')!);
-    expect(await screen.findByText('Saving…')).toBeInTheDocument();
+    expect(await screen.findByText('Savingâ€¦')).toBeInTheDocument();
   });
 
   it('toasts on alert rule create/delete and limit-save failures', async () => {
@@ -324,7 +324,7 @@ describe('Monitoring', () => {
     await screen.findByPlaceholderText('rule name');
     await userEvent.type(screen.getByPlaceholderText('rule name'), 'cert-renew');
     await userEvent.selectOptions(screen.getByDisplayValue('cpu %'), 'cert-expiry');
-    // The scope select is disabled for cert-expiry — must submit host-wide.
+    // The scope select is disabled for cert-expiry â€” must submit host-wide.
     fireEvent.submit(screen.getByPlaceholderText('rule name').closest('form')!);
     await waitFor(() =>
       expect(apiMock.api.alerts.create).toHaveBeenCalledWith(expect.objectContaining({ metric: 'cert-expiry', serviceId: null, durationWindows: 2 })),
@@ -355,7 +355,7 @@ describe('Monitoring', () => {
     ] as never);
     renderWithProviders(<Monitoring />);
     await screen.findByText('warming');
-    expect(screen.getAllByText('—').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('â€”').length).toBeGreaterThan(0);
   });
 
   it('renders an error card with retry when the rules query fails', async () => {
@@ -386,11 +386,11 @@ describe('Monitoring', () => {
     await screen.findByPlaceholderText('rule name');
     await userEvent.type(screen.getByPlaceholderText('rule name'), 'slow');
     fireEvent.submit(screen.getByPlaceholderText('rule name').closest('form')!);
-    expect(await screen.findByText('…')).toBeInTheDocument();
+    expect(await screen.findByText('â€¦')).toBeInTheDocument();
   });
 
   it('hides the create form from members', async () => {
-    authMock.useAuth.mockReturnValue({ user: { id: 2, role: 'member' } });
+    authMock.useAuth.mockReturnValue({ user: { id: 2, isOperator: false } });
     apiMock.api.stats.snapshot.mockResolvedValue(snapshot as never);
     apiMock.api.alerts.list.mockResolvedValue([] as never);
     renderWithProviders(<Monitoring />);
@@ -415,7 +415,7 @@ describe('Monitoring', () => {
     // Filter by Hot tab
     fireEvent.click(screen.getByRole('button', { name: /Hot/i }));
     // Search input filtering
-    const searchInput = screen.getByPlaceholderText('Search workloads…');
+    const searchInput = screen.getByPlaceholderText('Search workloadsâ€¦');
     fireEvent.change(searchInput, { target: { value: 'non-existent' } });
     expect(await screen.findByText('No workloads found')).toBeInTheDocument();
   });

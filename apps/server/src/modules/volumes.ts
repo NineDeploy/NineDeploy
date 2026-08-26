@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
-import { databases, services } from '@ninedeploy/db';
+import { databases, services, serviceVolumeAttachments } from '@ninedeploy/db';
 import { volumeFileWrite, volumePathCreate } from '@ninedeploy/schemas';
 import { audit } from '../lib/audit.js';
 import { removeVolume } from '../engine/database.js';
@@ -28,11 +28,18 @@ interface VolumeOwner {
 /**
  * Resolve the owner (service/database) of a managed volume name, if any.
  * Callers guarantee the name starts with nd-svc-/nd-db-; anything else is
- * ownerless (orphan) by definition.
+ * ownerless (orphan) by definition. Also consults the
+ * `service_volume_attachments` table so user-attached volumes (which do
+ * not have to follow the legacy `nd-svc-<slug>-data` naming) resolve to
+ * the right owning service.
  */
 async function volumeOwner(db: FastifyInstance['db'], name: string): Promise<VolumeOwner | null> {
-  const [svcs, dbs] = await Promise.all([db.select().from(services), db.select().from(databases)]);
-  const owner = resolveVolumeOwner(svcs, dbs, name);
+  const [svcs, dbs, atts] = await Promise.all([
+    db.select().from(services),
+    db.select().from(databases),
+    db.select().from(serviceVolumeAttachments),
+  ]);
+  const owner = resolveVolumeOwner(svcs, dbs, name, atts);
   if (!owner) return null;
   return { kind: owner.kind, id: owner.refId, name: owner.name, engine: owner.engine, containerName: owner.containerName };
 }

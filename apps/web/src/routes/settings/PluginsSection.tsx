@@ -24,7 +24,7 @@ import { useExperienceMode } from '../../lib/mode.js';
 export function PluginsSection() {
   const { user } = useAuth();
   const { isSimple } = useExperienceMode();
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = user?.isOperator === true;
   const queryClient = useQueryClient();
 
   const [isInstallModalOpen, setIsInstallModalOpen] = useState(false);

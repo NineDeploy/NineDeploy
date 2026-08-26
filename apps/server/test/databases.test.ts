@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+﻿import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -261,7 +261,7 @@ describe('databases routes', () => {
 
   it('tolerates backup files that are missing or cannot be unlinked', async () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), 'nd-dbdel-'));
-    const locked = path.join(dir, 'not-a-file'); // a directory — unlink throws EISDIR
+    const locked = path.join(dir, 'not-a-file'); // a directory â€” unlink throws EISDIR
     mkdirSync(locked);
     try {
       const app = await buildTestApp({

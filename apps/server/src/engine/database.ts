@@ -6,6 +6,7 @@ import type { Database } from '@ninedeploy/db';
 import { createBackupCipher, createBackupDecipher, decrypt } from '../lib/crypto.js';
 import { ensureDockerImage, pullDockerImage } from '../lib/dockerPull.js';
 import { capture, run } from '../lib/exec.js';
+import { connectContainerToServiceBridge, ensureServiceBridge } from '../lib/serviceBridge.js';
 import { writeSecretFile } from '../lib/secretFile.js';
 import { NETWORK } from './proxy.js';
 
@@ -384,6 +385,27 @@ export async function startDatabase(d: Database, log: (line: string) => void): P
       return;
     }
     throw startError;
+  }
+}
+
+/**
+ * Join a running managed database to the per-slug bridge of every service it
+ * is attached to. The DB stays on the shared `ninedeploy` mesh as a baseline
+ * (so the operator can still reach it for management even when no service is
+ * up); the per-slug bridges are added on top.
+ *
+ * `serviceSlugs` should come from the caller's view of the database's
+ * current attachments. Passing an empty array is a no-op.
+ */
+export async function attachDatabaseToServiceBridges(
+  d: Database,
+  serviceSlugs: string[],
+  log: (line: string) => void,
+): Promise<void> {
+  if (!d.containerName || serviceSlugs.length === 0) return;
+  for (const slug of serviceSlugs) {
+    await ensureServiceBridge(slug, log);
+    await connectContainerToServiceBridge(d.containerName, slug, log);
   }
 }
 

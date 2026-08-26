@@ -71,7 +71,7 @@ export function Workspaces() {
     refetchInterval: 15_000,
   });
 
-  const isOwner = detail?.myRole === 'owner' || user?.role === 'admin';
+  const isOwner = detail?.myRole === 'owner' || user?.isOperator === true;
   const isAdmin = isOwner || detail?.myRole === 'admin';
 
   const inviteMutation = useMutation({

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+﻿import { describe, expect, it } from 'vitest';
 import { menuRoutes } from '../src/modules/menus.js';
 import { asUser, buildTestApp, createFakeDb } from './helpers.js';
 
@@ -43,7 +43,7 @@ describe('Menus HTTP API', () => {
     const adminRes = await app.inject({
       method: 'GET',
       url: '/',
-      headers: asUser({ role: 'admin' }),
+      headers: asUser({ isOperator: true }),
     });
     expect(adminRes.statusCode).toBe(200);
     const adminData = adminRes.json();
@@ -57,7 +57,7 @@ describe('Menus HTTP API', () => {
     const memberRes = await app.inject({
       method: 'GET',
       url: '/',
-      headers: asUser({ role: 'member' }),
+      headers: asUser({ isOperator: false }),
     });
     expect(memberRes.statusCode).toBe(200);
     const memberData = memberRes.json();
@@ -69,7 +69,7 @@ describe('Menus HTTP API', () => {
     const slotRes = await app.inject({
       method: 'GET',
       url: '/?slot=sidebar:main',
-      headers: asUser({ role: 'admin' }),
+      headers: asUser({ isOperator: true }),
     });
     expect(slotRes.statusCode).toBe(200);
     expect(slotRes.json().items).toHaveLength(3);

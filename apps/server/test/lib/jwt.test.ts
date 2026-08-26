@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+﻿import { describe, expect, it } from 'vitest';
 import { SignJWT } from 'jose';
 import { config } from '../../src/config.js';
 import { signAccessToken, signRefreshToken, ttlSeconds, verifyJwt } from '../../src/lib/jwt.js';

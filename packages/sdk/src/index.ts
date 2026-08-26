@@ -7,6 +7,10 @@ import type {
   ApiToken,
   PasskeyCredential,
   Attachment,
+  CreateServiceVolumeAttachmentInput,
+  CreateVolumeBackupInput,
+  ServiceVolumeAttachment,
+  UpdateServiceVolumeAttachmentInput,
   Backup,
   BackupWithDb,
   CreateApiToken,
@@ -35,6 +39,9 @@ import type {
   DomainPatch,
   DomainEntry,
   EnvVar,
+  Label,
+  CreateLabelInput,
+  LabelPatchInput,
   Login,
   ManagedDatabase,
   DatabaseDetail,
@@ -49,6 +56,8 @@ import type {
   Register,
   RepoInsights,
   Service,
+  ServiceTags,
+  SetServiceTagsInput,
   Session,
   SetLimitsInput,
   Source,
@@ -101,6 +110,15 @@ import { NineDeployError } from './errors.js';
 
 export { NineDeployError };
 export type * from '@ninedeploy/schemas';
+export {
+  detectProjectKind,
+  formatManifestYaml,
+  ManifestParseError,
+  ManifestValidationError,
+  parseManifestYaml,
+  starterManifest,
+} from './manifest.js';
+export type { ProjectKind } from './manifest.js';
 
 /**
  * Minimal structural fetch type so the SDK is isomorphic (browser + Node)
@@ -227,7 +245,11 @@ export interface NineDeployClient {
     removeMember: (id: number, memberId: number) => Promise<{ ok: boolean }>;
   };
   services: {
-    /** `query` is appended verbatim, e.g. `?projectId=3` (project scoping). */
+    /**
+     * `query` is appended verbatim. Use `?tagWorkspaceIds=1,2&tagProjectIds=3`
+     * to scope the list by tag (each dimension ANDs, members within a
+     * dimension OR). The legacy `?projectId=` query is no longer accepted.
+     */
     list: (query?: string) => Promise<Service[]>;
     get: (id: number) => Promise<Service>;
     create: (input: CreateServiceInput) => Promise<Service>;
@@ -240,6 +262,19 @@ export interface NineDeployClient {
     clone: (id: number, input?: { name?: string; slug?: string }) => Promise<Service>;
     exportUrl: (id: number) => string;
     importBundle: (bundle: unknown) => Promise<{ ok: boolean; serviceId: number; slug: string; message: string }>;
+  };
+  labels: {
+    /** `query` is appended verbatim, e.g. `?workspaceId=1`. */
+    list: (query?: string) => Promise<Label[]>;
+    create: (input: CreateLabelInput) => Promise<Label>;
+    update: (id: number, input: LabelPatchInput) => Promise<Label>;
+    remove: (id: number) => Promise<{ ok: boolean }>;
+  };
+  serviceTags: {
+    /** Read the project's / workspace's / label memberships of a service. */
+    get: (serviceId: number) => Promise<ServiceTags>;
+    /** Replace the membership in a single round-trip. Empty arrays clear. */
+    set: (serviceId: number, input: SetServiceTagsInput) => Promise<ServiceTags>;
   };
   deploys: {
     trigger: (serviceId: number, input?: TriggerDeploy) => Promise<{ deploymentId: number }>;
@@ -300,7 +335,16 @@ export interface NineDeployClient {
     dockerEvents: (minutes?: number) => Promise<{ events: Array<{ time: string; type: string; action: string; name: string }> }>;
   };
   networks: {
-    list: () => Promise<{ networks: Array<{ name: string; driver: string; members: string[] }>; remote: number | null }>;
+    list: () => Promise<{
+      networks: Array<{
+        name: string;
+        driver: string;
+        members: string[];
+        /** True when the network is reserved by NineDeploy (cannot be removed). */
+        isManaged?: boolean;
+      }>;
+      remote: number | null;
+    }>;
     create: (input: { name: string; driver?: 'bridge' | 'overlay'; serverId?: number | null }) => Promise<{ ok: boolean; name: string }>;
     remove: (name: string, serverId?: number) => Promise<{ ok: boolean }>;
     attach: (input: { network: string; container: string; serverId?: number | null }) => Promise<{ ok: boolean }>;
@@ -358,17 +402,26 @@ export interface NineDeployClient {
   };
   users: {
     list: () => Promise<PublicUser[]>;
-    /** Admin-only: create a user directly (no registration flow needed). */
+    /**
+     * Operator-only: create a user directly (no registration flow needed).
+     * The new account has no workspace memberships — an existing owner/admin
+     * must invite it into at least one workspace before it can act.
+     */
     create: (input: UserCreate) => Promise<PublicUser>;
-    setRole: (id: number, role: 'admin' | 'member') => Promise<PublicUser>;
+    /**
+     * Operator-only: delete a user. The `users.role` column was removed when
+     * authorization became workspace-only; the legacy `setRole` is gone with
+     * it. Role changes go through `workspaces.updateMemberRole`.
+     */
     remove: (id: number) => Promise<void>;
-    /** Admin reset of another user's password (revokes their sessions). */
+    /** Operator reset of another user's password (revokes their sessions). */
     resetPassword: (id: number, input: PasswordReset) => Promise<{ ok: boolean }>;
     /** Mint a one-time reset link for a user (returned exactly once). */
     resetLink: (id: number) => Promise<{ url: string; expiresAt: string }>;
   };
   projects: {
-    list: () => Promise<ProjectEntry[]>;
+    /** `query` is appended verbatim, e.g. `?workspaceId=2` (workspace scoping). */
+    list: (query?: string) => Promise<ProjectEntry[]>;
     create: (input: CreateProjectInput) => Promise<ProjectEntry>;
     update: (id: number, input: ProjectPatchInput) => Promise<ProjectEntry>;
     remove: (id: number) => Promise<{ ok: boolean }>;
@@ -438,6 +491,27 @@ export interface NineDeployClient {
   attachments: {
     list: (serviceId: number) => Promise<Attachment[]>;
     create: (serviceId: number, input: { databaseId: number; envAlias?: string; reuseExisting?: boolean }) => Promise<Attachment>;
+    remove: (serviceId: number, attachmentId: number) => Promise<void>;
+  };
+  /** Per-volume backup history. The base URL is `/v1/volumes/:name/backups`;
+   *  restore + download go through the same path. The global `/v1/backups`
+   *  list/delete are exposed as `backups` below. */
+  volumeBackups: {
+    list: (volumeName: string) => Promise<Backup[]>;
+    create: (volumeName: string, input: CreateVolumeBackupInput) => Promise<Backup>;
+    restore: (volumeName: string, backupId: number) => Promise<{ ok: boolean }>;
+    downloadUrl: (volumeName: string, backupId: number) => string;
+  };
+  /** Per-service additional volume attachments. Distinct from the instance-wide
+   * `volumes` namespace (which lists every Docker volume on the host). The
+   * list endpoint returns runtime-computed metadata (size, in-use, sharing);
+   * the create/update endpoints return the database row only. */
+  serviceVolumes: {
+    list: (serviceId: number) => Promise<Array<ServiceVolumeAttachment & { sizeBytes: number; inUse: boolean; sharedWith: number }>>;
+    /** Attach an existing managed volume or create a new one and attach it. */
+    create: (serviceId: number, input: CreateServiceVolumeAttachmentInput) => Promise<{ attachment: ServiceVolumeAttachment; deploymentId: number }>;
+    update: (serviceId: number, attachmentId: number, input: UpdateServiceVolumeAttachmentInput) => Promise<{ attachment: ServiceVolumeAttachment; deploymentId: number }>;
+    /** Detach. The underlying Docker volume is NOT deleted (data persists). */
     remove: (serviceId: number, attachmentId: number) => Promise<void>;
   };
   env: {
@@ -748,7 +822,17 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
       logs: (id) => get<{ lines: string }>(`/v1/services/${id}/logs`),
       clone: (id, input) => send<Service>('POST', `/v1/services/${id}/clone`, input ?? {}),
       exportUrl: (id) => `/v1/services/${id}/export`,
-      importBundle: (bundle) => send('POST', '/v1/services/import', bundle),
+      importBundle: (bundle) => send<{ ok: boolean; serviceId: number; slug: string; message: string }>('POST', '/v1/services/import', bundle),
+    },
+    labels: {
+      list: (query) => get<Label[]>(`/v1/labels${query ?? ''}`),
+      create: (input) => send<Label>('POST', '/v1/labels', input),
+      update: (id, input) => send<Label>('PATCH', `/v1/labels/${id}`, input),
+      remove: (id) => send<{ ok: boolean }>('DELETE', `/v1/labels/${id}`),
+    },
+    serviceTags: {
+      get: (id) => get<ServiceTags>(`/v1/services/${id}/tags`),
+      set: (id, input) => send<ServiceTags>('PUT', `/v1/services/${id}/tags`, input),
     },
     deploys: {
       trigger: (serviceId, input) =>
@@ -885,7 +969,6 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
     users: {
       list: () => get<PublicUser[]>('/v1/users'),
       create: (input) => send<PublicUser>('POST', '/v1/users', input),
-      setRole: (id, role) => send<PublicUser>('PATCH', `/v1/users/${id}/role`, { role }),
       resetPassword: (id, input) => send<{ ok: boolean }>('PATCH', `/v1/users/${id}/password`, input),
       resetLink: (id) => send<{ url: string; expiresAt: string }>('POST', `/v1/users/${id}/reset-link`),
       remove: async (id) => {
@@ -893,7 +976,7 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
       },
     },
     projects: {
-      list: () => get<ProjectEntry[]>('/v1/projects'),
+      list: (query) => get<ProjectEntry[]>(`/v1/projects${query ?? ''}`),
       create: (input) => send<ProjectEntry>('POST', '/v1/projects', input),
       update: (id, input) => send<ProjectEntry>('PATCH', `/v1/projects/${id}`, input),
       remove: (id) => send<{ ok: boolean }>('DELETE', `/v1/projects/${id}`),
@@ -964,6 +1047,28 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
       remove: async (serviceId, attachmentId) => {
         await request(`/v1/services/${serviceId}/attachments/${attachmentId}`, { method: 'DELETE' });
       },
+    },
+    serviceVolumes: {
+      list: (serviceId) => get<Array<ServiceVolumeAttachment & { sizeBytes: number; inUse: boolean; sharedWith: number }>>(`/v1/services/${serviceId}/volumes`),
+      create: (serviceId, input) =>
+        send<{ attachment: ServiceVolumeAttachment; deploymentId: number }>('POST', `/v1/services/${serviceId}/volumes`, input),
+      update: (serviceId, attachmentId, input) =>
+        send<{ attachment: ServiceVolumeAttachment; deploymentId: number }>(
+          'PATCH',
+          `/v1/services/${serviceId}/volumes/${attachmentId}`,
+          input,
+        ),
+      remove: async (serviceId, attachmentId) => {
+        await request(`/v1/services/${serviceId}/volumes/${attachmentId}`, { method: 'DELETE' });
+      },
+    },
+    volumeBackups: {
+      list: (volumeName) => get<Backup[]>(`/v1/volumes/${volumeName}/backups`),
+      create: (volumeName, input) =>
+        send<Backup>('POST', `/v1/volumes/${volumeName}/backups`, input),
+      restore: (volumeName, backupId) =>
+        send<{ ok: boolean }>('POST', `/v1/volumes/${volumeName}/backups/${backupId}/restore`),
+      downloadUrl: (volumeName, backupId) => `/v1/volumes/${volumeName}/backups/${backupId}/download`,
     },
     env: {
       list: (serviceId) => get<EnvVar[]>(`/v1/services/${serviceId}/env`),

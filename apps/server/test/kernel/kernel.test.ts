@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+﻿import { describe, expect, it, vi } from 'vitest';
 import { NineDeployKernel } from '../../src/kernel/index.js';
 import type { KernelPlugin } from '../../src/kernel/types.js';
 import { createFakeDb } from '../helpers.js';

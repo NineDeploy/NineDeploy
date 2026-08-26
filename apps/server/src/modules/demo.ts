@@ -6,6 +6,8 @@ import {
   deployments,
   envVars,
   projects,
+  serviceProjects,
+  serviceWorkspaces,
   services,
 } from '@ninedeploy/db';
 import { encrypt, randomToken } from '../lib/crypto.js';
@@ -85,7 +87,6 @@ export const demoRoutes: FastifyPluginAsync = async (app) => {
       const [insertedDocker] = await app.db
         .insert(services)
         .values({
-          projectId: project.id,
           name: 'Next.js Docker App',
           slug: 'nextjs-docker-app',
           type: 'docker',
@@ -142,6 +143,19 @@ export const demoRoutes: FastifyPluginAsync = async (app) => {
       void audit(app.db, userId, 'service.create', dockerSvc.name);
     }
 
+    // Tag the docker service into the demo project and the caller's personal
+    // workspace (or every workspace for operators).
+    if (dockerSvc) {
+      const personalWs = await app.db.query.workspaces.findFirst({
+        where: (w, { eq: eqOp, and: andOp }) => andOp(eqOp(w.ownerId, userId), eqOp(w.slug, `personal-${String(userId)}`)),
+      });
+      const wsIds = personalWs ? [personalWs.id] : (await app.db.query.workspaces.findMany()).map((w) => w.id);
+      await app.db.insert(serviceProjects).values({ serviceId: dockerSvc.id, projectId: project.id });
+      for (const wsId of wsIds) {
+        await app.db.insert(serviceWorkspaces).values({ serviceId: dockerSvc.id, workspaceId: wsId });
+      }
+    }
+
     createdServices.push({
       id: dockerSvc.id,
       name: dockerSvc.name,
@@ -159,7 +173,6 @@ export const demoRoutes: FastifyPluginAsync = async (app) => {
       const [insertedPm2] = await app.db
         .insert(services)
         .values({
-          projectId: project.id,
           name: 'Next.js PM2 Service',
           slug: 'nextjs-pm2-service',
           type: 'pm2',
@@ -225,6 +238,19 @@ export const demoRoutes: FastifyPluginAsync = async (app) => {
       });
 
       void audit(app.db, userId, 'service.create', pm2Svc.name);
+    }
+
+    // Mirror the docker tagging for the PM2 service so a seed populates
+    // both services with the same visible audience.
+    if (pm2Svc) {
+      const personalWs = await app.db.query.workspaces.findFirst({
+        where: (w, { eq: eqOp, and: andOp }) => andOp(eqOp(w.ownerId, userId), eqOp(w.slug, `personal-${String(userId)}`)),
+      });
+      const wsIds = personalWs ? [personalWs.id] : (await app.db.query.workspaces.findMany()).map((w) => w.id);
+      await app.db.insert(serviceProjects).values({ serviceId: pm2Svc.id, projectId: project.id });
+      for (const wsId of wsIds) {
+        await app.db.insert(serviceWorkspaces).values({ serviceId: pm2Svc.id, workspaceId: wsId });
+      }
     }
 
     createdServices.push({

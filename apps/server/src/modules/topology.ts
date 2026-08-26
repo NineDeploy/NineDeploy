@@ -54,16 +54,23 @@ export const topologyRoutes: FastifyPluginAsync = async (app) => {
       ),
       ...dbs.map((database) => database.containerName ?? `nd-db-${database.name}`),
     ]);
-    const visibleNets = isAdmin ? nets : nets.filter((network) => network.name === NETWORK);
+    const visibleSlugs = new Set(svcs.map((service) => service.slug));
+    const visibleNets = isAdmin
+      ? nets
+      : nets.filter((network) =>
+          network.name === NETWORK ||
+          (network.name.startsWith('nd-svc-') && visibleSlugs.has(network.name.slice('nd-svc-'.length))),
+        );
     const networks = await Promise.all(
-      visibleNets.map(async (n) => ({
-        ...n,
-        containers: n.name === NETWORK
-          ? (await networkMembers(n.name).catch(() => [] as string[])).filter(
-              (container) => isAdmin || allowedContainers.has(container),
-            )
-          : [],
-      })),
+      visibleNets.map(async (n) => {
+        // Show member lists on every managed bridge we can see — `network
+        // inspect` is fast and the operator has already proven admin via the
+        // `ninedeploy`/per-slug allow-list.
+        const containers = (await networkMembers(n.name).catch(() => [] as string[])).filter(
+          (container) => isAdmin || allowedContainers.has(container) || container === TRAEFIK_CONTAINER,
+        );
+        return { ...n, containers };
+      }),
     );
     const gatewayRunning = await containerRunning(TRAEFIK_CONTAINER);
 

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+﻿import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { containerRoutes } from '../src/modules/containers.js';
 import { asUser, buildTestApp, createFakeDb } from './helpers.js';
 
@@ -38,7 +38,7 @@ describe('containerRoutes', () => {
     const res = await app.inject({
       method: 'GET',
       url: '/nd-svc-web-1/files?path=/app',
-      headers: asUser({ role: 'admin' }),
+      headers: asUser({ isOperator: true }),
     });
 
     expect(res.statusCode).toBe(200);
@@ -56,7 +56,7 @@ describe('containerRoutes', () => {
     const resDefault = await app.inject({
       method: 'GET',
       url: '/nd-svc-web-1/files',
-      headers: asUser({ role: 'admin' }),
+      headers: asUser({ isOperator: true }),
     });
     expect(resDefault.statusCode).toBe(200);
     expect(resDefault.json()).toEqual({ path: '/', entries: [] });
@@ -74,7 +74,7 @@ describe('containerRoutes', () => {
     const res = await app.inject({
       method: 'GET',
       url: '/nd-svc-web-1/files/content?path=/app/index.js',
-      headers: asUser({ role: 'admin' }),
+      headers: asUser({ isOperator: true }),
     });
 
     expect(res.statusCode).toBe(200);
@@ -97,7 +97,7 @@ describe('containerRoutes', () => {
     const res = await app.inject({
       method: 'PUT',
       url: '/nd-svc-web-1/files',
-      headers: asUser({ role: 'admin' }),
+      headers: asUser({ isOperator: true }),
       payload: { path: '/app/config.json', contentBase64: 'e30=' },
     });
 
@@ -119,7 +119,7 @@ describe('containerRoutes', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/nd-svc-web-1/files/dir',
-      headers: asUser({ role: 'admin' }),
+      headers: asUser({ isOperator: true }),
       payload: { path: '/app/logs' },
     });
 
@@ -140,7 +140,7 @@ describe('containerRoutes', () => {
     const res = await app.inject({
       method: 'DELETE',
       url: '/nd-svc-web-1/files?path=/app/temp.log',
-      headers: asUser({ role: 'admin' }),
+      headers: asUser({ isOperator: true }),
     });
 
     expect(res.statusCode).toBe(200);
@@ -159,7 +159,7 @@ describe('containerRoutes', () => {
     const res = await app.inject({
       method: 'GET',
       url: '/-invalid-name/files',
-      headers: asUser({ role: 'admin' }),
+      headers: asUser({ isOperator: true }),
     });
     expect(res.statusCode).toBe(400);
     expect(res.json().error.message).toContain('invalid container');
@@ -173,7 +173,7 @@ describe('containerRoutes', () => {
     const resNul = await app.inject({
       method: 'GET',
       url: '/nd-svc-web-1/files?path=a%00b',
-      headers: asUser({ role: 'admin' }),
+      headers: asUser({ isOperator: true }),
     });
     expect(resNul.statusCode).toBe(400);
     expect(resNul.json().error.message).toContain('invalid path');
@@ -182,7 +182,7 @@ describe('containerRoutes', () => {
     const resReadRoot = await app.inject({
       method: 'GET',
       url: '/nd-svc-web-1/files/content?path=/',
-      headers: asUser({ role: 'admin' }),
+      headers: asUser({ isOperator: true }),
     });
     expect(resReadRoot.statusCode).toBe(400);
     expect(resReadRoot.json().error.message).toContain('invalid file path');
@@ -191,7 +191,7 @@ describe('containerRoutes', () => {
     const resWriteRoot = await app.inject({
       method: 'PUT',
       url: '/nd-svc-web-1/files',
-      headers: asUser({ role: 'admin' }),
+      headers: asUser({ isOperator: true }),
       payload: { path: '/', contentBase64: 'e30=' },
     });
     expect(resWriteRoot.statusCode).toBe(400);
@@ -201,7 +201,7 @@ describe('containerRoutes', () => {
     const resMkdirRoot = await app.inject({
       method: 'POST',
       url: '/nd-svc-web-1/files/dir',
-      headers: asUser({ role: 'admin' }),
+      headers: asUser({ isOperator: true }),
       payload: { path: '/' },
     });
     expect(resMkdirRoot.statusCode).toBe(400);
@@ -211,7 +211,7 @@ describe('containerRoutes', () => {
     const resDeleteRoot = await app.inject({
       method: 'DELETE',
       url: '/nd-svc-web-1/files?path=/',
-      headers: asUser({ role: 'admin' }),
+      headers: asUser({ isOperator: true }),
     });
     expect(resDeleteRoot.statusCode).toBe(400);
     expect(resDeleteRoot.json().error.message).toContain('cannot delete root directory');
@@ -224,7 +224,7 @@ describe('containerRoutes', () => {
     const res = await app.inject({
       method: 'GET',
       url: '/nd-svc-web-1/files',
-      headers: asUser({ role: 'member' }),
+      headers: asUser({ isOperator: false }),
     });
     expect(res.statusCode).toBe(403);
   });

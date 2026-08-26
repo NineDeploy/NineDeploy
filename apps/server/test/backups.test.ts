@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+﻿import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -68,7 +68,7 @@ describe('database backup routes', () => {
 
   it('lists backups for a database', async () => {
     // The route now resolves the database through the access choke-point
-    // before listing, so it must exist in the fixture — see authzRegression M-1.
+    // before listing, so it must exist in the fixture â€” see authzRegression M-1.
     const app = await buildTestApp({
       db: createFakeDb({
         findFirst: { databases: dbRow({ id: 1 }) },

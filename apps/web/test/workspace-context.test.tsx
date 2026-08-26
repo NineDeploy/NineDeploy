@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+﻿import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -7,12 +7,12 @@ import { api } from '../src/lib/api.js';
 import { mockOf } from './helpers.js';
 
 vi.mock('../src/lib/api.js', async () => {
-  // Must be './apiMock.js', not './helpers.js' — see the note in apiMock.ts.
+  // Must be './apiMock.js', not './helpers.js' â€” see the note in apiMock.ts.
   const { createFakeApiModule } = await import('./apiMock.js');
   return createFakeApiModule();
 });
 
-const fakeUser = { id: 1, email: 'admin@example.com', role: 'admin' as const, name: 'Admin', createdAt: '2026-01-01' };
+const fakeUser = { id: 1, email: 'admin@example.com', isOperator: true as const, name: 'Admin', createdAt: '2026-01-01' };
 vi.mock('../src/lib/auth.js', () => ({
   AuthProvider: ({ children }: { children?: React.ReactNode }) => children, useAuth: () => ({ user: fakeUser }),
 }));
@@ -41,7 +41,7 @@ describe('WorkspaceContext and WorkspaceProvider', () => {
   it('loads workspaces and sets initial workspace', async () => {
     const mockWorkspaces = [
       { id: 1, name: 'Workspace One', slug: 'ws-1', ownerId: 1, myRole: 'owner' as const, memberCount: 1, projectCount: 2, createdAt: '2026-01-01', updatedAt: '2026-01-01' },
-      { id: 2, name: 'Workspace Two', slug: 'ws-2', ownerId: 2, myRole: 'member' as const, memberCount: 3, projectCount: 0, createdAt: '2026-01-01', updatedAt: '2026-01-01' },
+      { id: 2, name: 'Workspace Two', slug: 'ws-2', ownerId: 2, myisOperator: false as const, memberCount: 3, projectCount: 0, createdAt: '2026-01-01', updatedAt: '2026-01-01' },
     ];
     mockOf(api.workspaces.list).mockResolvedValueOnce(mockWorkspaces as never);
 
@@ -71,7 +71,7 @@ describe('WorkspaceContext and WorkspaceProvider', () => {
 
     const { result } = renderHook(() => useWorkspace(), { wrapper: createWrapper() });
 
-    // The stored id wins over the list order — no auto-switch to the first.
+    // The stored id wins over the list order â€” no auto-switch to the first.
     await waitFor(() => {
       expect(result.current.workspaces).toHaveLength(2);
       expect(result.current.currentWorkspace?.id).toBe(2);

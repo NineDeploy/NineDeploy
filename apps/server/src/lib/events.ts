@@ -17,13 +17,13 @@ export interface AppEvent {
 /**
  * Delivery rule for the real-time stream.
  *
- * Operators see the whole instance; everyone else sees only what they did
- * themselves. System events (actorUserId === null) are operator-only — a
- * member has no way to prove they are the subject of one, so the safe default
- * is to withhold it.
+ * Operators (owner/admin in at least one workspace) see the whole instance;
+ * everyone else sees only what they did themselves. System events
+ * (actorUserId === null) are operator-only — a member has no way to prove
+ * they are the subject of one, so the safe default is to withhold it.
  */
-export function canReceiveEvent(event: AppEvent, user: { id: number; role: 'admin' | 'member' }): boolean {
-  if (user.role === 'admin') return true;
+export function canReceiveEvent(event: AppEvent, user: { id: number; isOperator: boolean }): boolean {
+  if (user.isOperator) return true;
   return event.actorUserId !== null && event.actorUserId === user.id;
 }
 

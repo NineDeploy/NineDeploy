@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+﻿import { describe, expect, it, vi } from 'vitest';
 import { activityRoutes } from '../src/modules/activity.js';
 import { asUser, auditRow, buildTestApp, createFakeDb } from './helpers.js';
 
@@ -27,7 +27,7 @@ describe('activity routes', () => {
   it('rejects non-admin users because audit rows have no tenant scope', async () => {
     const app = await buildTestApp();
     await app.register(activityRoutes);
-    const res = await app.inject({ method: 'GET', url: '/', headers: asUser({ role: 'member' }) });
+    const res = await app.inject({ method: 'GET', url: '/', headers: asUser({ isOperator: false }) });
     expect(res.statusCode).toBe(403);
   });
 

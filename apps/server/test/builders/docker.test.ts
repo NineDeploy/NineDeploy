@@ -90,7 +90,15 @@ describe('dockerBuilder.buildAndRun', () => {
     h.run.mockReset();
     h.run.mockResolvedValue(undefined);
     h.capture.mockReset();
-    h.capture.mockResolvedValue('running');
+    // Default: container is running, the per-slug bridge exists, and Traefik
+    // is already attached to it — so `ensureServiceBridge` short-circuits and
+    // tests that count `run` calls only see the actual `docker run -d` flow.
+    h.capture.mockImplementation(async (_cmd: string, args: string[]) => {
+      const argv = args as string[];
+      if (argv[0] === 'network' && argv[1] === 'ls') return 'nd-svc-web'; // bridge present
+      if (argv[0] === 'inspect' && argv[1] === 'ninedeploy-traefik') return '{"nd-svc-web":{}}';
+      return 'running';
+    });
     h2.reset();
   });
 
@@ -137,7 +145,7 @@ describe('dockerBuilder.buildAndRun', () => {
     const runArgs = h.run.mock.calls.at(-1)![1] as unknown[];
     expect(runArgs).toEqual(
       [
-        'run', '-d', '--name', 'web-3', '--restart', 'unless-stopped', '--network', 'ninedeploy',
+        'run', '-d', '--name', 'web-3', '--restart', 'unless-stopped', '--network', 'nd-svc-web',
         '--cpu-shares', '512', '--memory', '256m',
         '-v', 'nd-svc-web-data:/data',
         '--env-file', expect.any(String),
@@ -154,7 +162,7 @@ describe('dockerBuilder.buildAndRun', () => {
     h.run.mockRejectedValueOnce('network down').mockResolvedValueOnce(undefined);
     const ctx = makeCtx({ service: { slug: 'web', image: 'nginx:1.25', port: 3000, cpuShares: 0, memLimitMb: 0, volumeMount: null, healthPath: '/health' } });
 
-    await dockerBuilder.buildAndRun(ctx as never);
+    const runtime = await dockerBuilder.buildAndRun(ctx as never);
 
     expect(ctx.log).toHaveBeenCalledWith(expect.stringContaining('pull failed, using local image nginx:1.25 (network down)'));
   });
@@ -248,7 +256,7 @@ describe('dockerBuilder.buildAndRun', () => {
 
     const runArgs = h.run.mock.calls.at(-1)![1] as unknown[];
     expect(runArgs).toEqual([
-      'run', '-d', '--name', 'x-3', '--restart', 'unless-stopped', '--network', 'ninedeploy', 'ninedeploy/x:abc',
+      'run', '-d', '--name', 'x-3', '--restart', 'unless-stopped', '--network', 'nd-svc-x', 'ninedeploy/x:abc',
     ]);
   });
 
@@ -401,7 +409,12 @@ describe('dockerBuilder.buildAndRun', () => {
   });
 
   it('tolerates a failing digest inspect (imageDigest left undefined)', async () => {
-    h.capture.mockRejectedValue(new Error('inspect failed'));
+    h.capture.mockImplementation(async (_cmd: string, args: string[]) => {
+      const argv = args as string[];
+      if (argv[0] === 'network' && argv[1] === 'ls') return 'nd-svc-web';
+      if (argv[0] === 'inspect' && argv[1] === 'ninedeploy-traefik') return '{"nd-svc-web":{}}';
+      throw new Error('inspect failed');
+    });
     const ctx = makeCtx({ service: { slug: 'web', image: 'nginx:1.25', port: 3000, cpuShares: 0, memLimitMb: 0, volumeMount: null, healthPath: '/health' } });
 
     const runtime = await dockerBuilder.buildAndRun(ctx as never);

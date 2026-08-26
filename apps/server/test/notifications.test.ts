@@ -1,10 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+﻿import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { decrypt, encrypt } from '../src/lib/crypto.js';
 import { notificationRoutes } from '../src/modules/notifications.js';
 import { asUser, buildTestApp, channelRow, createFakeDb, notifLogRow } from './helpers.js';
 
 describe('notification routes', () => {
-  // These tests stub global fetch — no real outbound traffic happens. The
+  // These tests stub global fetch â€” no real outbound traffic happens. The
   // egress guard cannot know that and DNS-resolves the fixture hostnames
   // (h.example.com), which do not resolve; allow private egress for the
   // stubbed calls.
@@ -116,7 +116,7 @@ describe('notification routes', () => {
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ id: 5, name: 'ops-renamed', hasTarget: true });
     expect(setPatch).toMatchObject({ name: 'ops-renamed' });
-    // The target is stored encrypted — a later read must decrypt it back.
+    // The target is stored encrypted â€” a later read must decrypt it back.
     expect(typeof setPatch?.targetEncrypted).toBe('string');
     expect(decrypt(setPatch?.targetEncrypted as string)).toBe('https://hooks.example.com/new');
     // Fields not present in the request are omitted from the UPDATE, not blanked.

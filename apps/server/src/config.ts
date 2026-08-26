@@ -55,4 +55,6 @@ export const config = {
   // JSON endpoint returning {"tag_name": "vX.Y.Z", ...} (GitHub Releases format).
   // Set NINEDEPLOY_UPDATE_CHECK_URL=disabled to turn update checks off.
   updateCheckUrl: env.NINEDEPLOY_UPDATE_CHECK_URL ?? 'https://api.github.com/repos/NineDeploy/NineDeploy/releases/latest',
+  /** How many volume backups to keep per volume (1-100). */
+  volumeBackupRetainCount: env.NINEDEPLOY_BACKUP_VOLUME_RETAIN_COUNT,
 } as const;

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+﻿import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import Fastify from 'fastify';
@@ -81,7 +81,7 @@ describe('backup scheduler plugin', () => {
       // disk (gets unlinked), rows[8] does not.
       rows.push({ id: i + 1, databaseId: 1, scope: 'scheduled', path: i === 7 ? stalePath : missingPath, createdAt: new Date() });
     }
-    // A MANUAL backup is never pruned by the scheduler — even far past the
+    // A MANUAL backup is never pruned by the scheduler â€” even far past the
     // retention window it must survive.
     const manualPath = path.join(tmp, 'manual.dump');
     writeFileSync(manualPath, 'manual');
@@ -230,7 +230,7 @@ describe('backup scheduler plugin', () => {
 
   it('skips the remote upload when the insert returns no row', async () => {
     vi.useFakeTimers();
-    // insert().returning() resolves to [] — uploadBackup must not be called.
+    // insert().returning() resolves to [] â€” uploadBackup must not be called.
     const select = vi.fn(() => ({ from: vi.fn(async () => [{ id: 1, slug: 'a', name: 'A', status: 'running' }]) }));
     const insert = vi.fn(() => ({
       values: vi.fn(() => ({ returning: vi.fn(async () => []) })),

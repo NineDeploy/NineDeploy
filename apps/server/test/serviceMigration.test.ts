@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+﻿import { describe, expect, it } from 'vitest';
 import { encrypt } from '../src/lib/crypto.js';
 import { serviceMigrationRoutes } from '../src/modules/serviceMigration.js';
 import { asUser, buildTestApp, createFakeDb, dbRow, svcRow } from './helpers.js';

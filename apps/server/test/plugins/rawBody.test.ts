@@ -1,4 +1,4 @@
-import Fastify from 'fastify';
+﻿import Fastify from 'fastify';
 import { describe, expect, it } from 'vitest';
 
 const rawBodyPlugin = (await import('../../src/plugins/rawBody.js')).default;

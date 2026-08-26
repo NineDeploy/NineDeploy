@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+﻿import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '../src/app.js';
 import { issueSessionTokens } from '../src/lib/sessions.js';
@@ -23,14 +23,24 @@ describe('OIDC and OAuth2 SSO endpoints', () => {
 
     const [admin] = await app.db
       .insert(users)
-      .values({ email: 'admin@oidc.test', passwordHash: 'hash', name: 'Admin', role: 'admin' })
+      .values({ email: 'admin@oidc.test', passwordHash: 'hash', name: 'Admin' })
       .returning();
+    // The global `users.role` column was removed. Operators are inferred from
+    // workspace membership (owner/admin). For the test to use the admin
+    // token as an operator, we need an actual workspace seat.
+    const [adminWs] = await app.db
+      .insert(workspaces)
+      .values({ name: 'Admin', slug: 'admin', ownerId: admin.id })
+      .returning();
+    await app.db
+      .insert(workspaceMembers)
+      .values({ workspaceId: adminWs.id, userId: admin.id, role: 'owner' });
     const adminSession = await issueSessionTokens(app.db, admin);
     adminToken = adminSession.accessToken;
 
     const [member] = await app.db
       .insert(users)
-      .values({ email: 'member@oidc.test', passwordHash: 'hash', name: 'Member', role: 'member' })
+      .values({ email: 'member@oidc.test', passwordHash: 'hash', name: 'Member' })
       .returning();
     const memberSession = await issueSessionTokens(app.db, member);
     memberToken = memberSession.accessToken;
@@ -78,7 +88,7 @@ describe('OIDC and OAuth2 SSO endpoints', () => {
           scopes: 'openid profile email',
           enabled: true,
           autoEnroll: true,
-          defaultRole: 'member',
+          defaultisOperator: false,
         },
       });
       expect(res.statusCode).toBe(200);
@@ -218,7 +228,7 @@ describe('OIDC and OAuth2 SSO endpoints', () => {
           scopes: 'openid email profile',
           enabled: true,
           autoEnroll: true,
-          defaultRole: 'member',
+          defaultisOperator: false,
         },
         {
           name: 'GitHub SSO',
@@ -229,7 +239,7 @@ describe('OIDC and OAuth2 SSO endpoints', () => {
           scopes: 'read:user user:email',
           enabled: true,
           autoEnroll: true,
-          defaultRole: 'member',
+          defaultisOperator: false,
         },
         {
           name: 'Disabled SSO',
@@ -239,7 +249,7 @@ describe('OIDC and OAuth2 SSO endpoints', () => {
           clientSecretEncrypted: encrypt('enc'),
           enabled: false,
           autoEnroll: false,
-          defaultRole: 'member',
+          defaultisOperator: false,
         },
       ]);
     });
@@ -399,7 +409,7 @@ describe('OIDC and OAuth2 SSO endpoints', () => {
     it('refuses to auto-enroll an UNVERIFIED SSO email, even for a pending invitation', async () => {
       // Attack: an admin invites victim@corp.test; the attacker controls an
       // IdP account whose (unverified) email claims that address. Before the
-      // fix, the unverified guard only covered existing local accounts — the
+      // fix, the unverified guard only covered existing local accounts â€” the
       // auto-enroll path created a fresh account and auto-accepted the
       // invitation, handing over the workspace.
       const [admin] = await app.db.query.users.findMany({ where: eq(users.email, 'admin@oidc.test') });
@@ -410,7 +420,7 @@ describe('OIDC and OAuth2 SSO endpoints', () => {
       await app.db.insert(workspaceInvitations).values({
         workspaceId: victimWs.id,
         email: 'victim@corp.test',
-        role: 'admin',
+        isOperator: true,
         token: sha256('unverified-invite-token'),
         invitedByUserId: admin.id,
         expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
@@ -444,10 +454,10 @@ describe('OIDC and OAuth2 SSO endpoints', () => {
       });
 
       expect(res.statusCode).toBe(403);
-      // No account was created for the claimed address…
+      // No account was created for the claimed addressâ€¦
       const squatter = await app.db.query.users.findFirst({ where: eq(users.email, 'victim@corp.test') });
       expect(squatter).toBeUndefined();
-      // …and the invitation is still pending, not accepted.
+      // â€¦and the invitation is still pending, not accepted.
       const stillPending = await app.db.query.workspaceInvitations.findFirst({
         where: eq(workspaceInvitations.email, 'victim@corp.test'),
       });
@@ -551,7 +561,7 @@ describe('OIDC and OAuth2 SSO endpoints', () => {
         url: '/v1/auth/oidc/google/callback',
         payload: { code: 'valid_code', state },
       });
-      // Rejected — either by the userinfo fetch (IdP says unverified) or by the
+      // Rejected â€” either by the userinfo fetch (IdP says unverified) or by the
       // link guard. Either way NO session may be issued for the victim account.
       expect(res.statusCode).toBeGreaterThanOrEqual(400);
       expect(JSON.stringify(res.body)).not.toContain('accessToken');
@@ -623,7 +633,7 @@ describe('OIDC and OAuth2 SSO endpoints', () => {
       });
 
       expect(res.statusCode).toBe(200);
-      expect(res.json().user.role).toBe('admin');
+      expect(res.json().user.isOperator).toBe(true);
     });
 
     it('handles successful GitHub login and redirects with tokens in URL hash fragment', async () => {
@@ -689,7 +699,7 @@ describe('OIDC and OAuth2 SSO endpoints', () => {
           clientSecretEncrypted: encrypt('enc'),
           enabled: true,
           autoEnroll: false,
-          defaultRole: 'member',
+          defaultisOperator: false,
         })
         .returning();
 

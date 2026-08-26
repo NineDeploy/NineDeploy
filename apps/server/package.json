@@ -28,6 +28,7 @@
     "fastify": "^5.12.1",
     "fastify-plugin": "^6.0.0",
     "jose": "^6.2.10",
+    "js-yaml": "^4.3.1",
     "nodemailer": "^9.0.5",
     "pm2": "^7.0.3",
     "simple-git": "^3.36.0",
@@ -35,9 +36,10 @@
   },
   "devDependencies": {
     "@testcontainers/postgresql": "^12.1.0",
+    "@testing-library/user-event": "^14.6.6",
+    "@types/js-yaml": "^4.0.9",
     "@types/node": "^26.2.0",
     "@types/nodemailer": "^8.0.1",
-    "@testing-library/user-event": "^14.6.6",
     "testcontainers": "^12.1.0",
     "tsx": "^4.23.12",
     "typescript": "^7.0.2"

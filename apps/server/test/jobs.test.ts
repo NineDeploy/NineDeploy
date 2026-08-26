@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+﻿import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { jobRoutes } from '../src/modules/jobs.js';
 import { runJob } from '../src/lib/jobRunner.js';
 import { asUser, buildTestApp, createFakeDb, jobRow, svcRow, userRow } from './helpers.js';
@@ -245,7 +245,7 @@ describe('jobs routes', () => {
 
   it('lists run history', async () => {
     // The route resolves the job (scoped to this service) before reading its
-    // runs, so the job row is part of the fixture — see authzRegression M-2.
+    // runs, so the job row is part of the fixture â€” see authzRegression M-2.
     const app = await appWith({
       findFirst: { services: svcRow(), scheduledJobs: jobRow({ id: 3 }) },
       findMany: {

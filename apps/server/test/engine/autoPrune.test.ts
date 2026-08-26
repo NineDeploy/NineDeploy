@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+﻿import { describe, expect, it, vi } from 'vitest';
 import { executeAutoPrune, getAutoPruneStatus, getDiskUsage, parseReclaimedBytes, saveAutoPruneConfig } from '../../src/engine/autoPrune.js';
 import { createFakeDb } from '../helpers.js';
 

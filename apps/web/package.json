@@ -13,6 +13,7 @@
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
+    "@ninedeploy/schemas": "workspace:*",
     "@ninedeploy/sdk": "workspace:*",
     "@simplewebauthn/browser": "^13.3.0",
     "@tanstack/react-query": "^5.102.2",

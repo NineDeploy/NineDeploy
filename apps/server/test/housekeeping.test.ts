@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+﻿import { describe, expect, it, vi } from 'vitest';
 import { housekeepingRoutes } from '../src/modules/housekeeping.js';
 import { asUser, buildTestApp, createFakeDb } from './helpers.js';
 
@@ -74,7 +74,7 @@ describe('housekeeping and auto-prune API', () => {
     const app = await buildTestApp({ db: createFakeDb() });
     await app.register(housekeepingRoutes);
 
-    const res = await app.inject({ method: 'GET', url: '/prune/config', headers: asUser({ role: 'member' }) });
+    const res = await app.inject({ method: 'GET', url: '/prune/config', headers: asUser({ isOperator: false }) });
     expect(res.statusCode).toBe(403);
   });
 });

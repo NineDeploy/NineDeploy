@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+﻿import { describe, expect, it } from 'vitest';
 import { alertRoutes } from '../src/modules/alerts.js';
 import { asUser, buildTestApp, createFakeDb, tableName } from './helpers.js';
 

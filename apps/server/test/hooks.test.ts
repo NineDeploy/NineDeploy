@@ -1,4 +1,4 @@
-import { createHmac } from 'node:crypto';
+﻿import { createHmac } from 'node:crypto';
 import { describe, expect, it, } from 'vitest';
 import { encrypt } from '../src/lib/crypto.js';
 import { hookReceiveRoutes, webhookMgmtRoutes } from '../src/modules/hooks.js';
@@ -42,7 +42,7 @@ describe('webhook receiver', () => {
     });
     await app.register(hookReceiveRoutes);
     const res = await app.inject({ method: 'POST', url: '/1', payload: {} });
-    // Without the rawBody plugin the signature cannot match → 401.
+    // Without the rawBody plugin the signature cannot match â†’ 401.
     expect(res.statusCode).toBe(401);
   });
 
@@ -120,7 +120,7 @@ describe('webhook receiver', () => {
   });
 
   it('drops its own insert when a concurrent duplicate won the race (post-hoc dedup)', async () => {
-    // Pre-check sees nothing, the insert lands — then the post-hoc guard finds
+    // Pre-check sees nothing, the insert lands â€” then the post-hoc guard finds
     // older active deployments for the same commit and deletes ours.
     const mine = depRow({ id: 99, trigger: 'webhook', commitSha: 'deadbeef', status: 'queued' });
     const winner = depRow({ id: 42, trigger: 'webhook', commitSha: 'deadbeef', status: 'running' });

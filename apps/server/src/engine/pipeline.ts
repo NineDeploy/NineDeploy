@@ -1,6 +1,6 @@
 import path from 'node:path';
-import { and, eq } from 'drizzle-orm';
-import { buildConfigs, databaseAttachments, databases, type DB, deployments, domains, envVars, services, sources } from '@ninedeploy/db';
+import { and, eq, inArray } from 'drizzle-orm';
+import { buildConfigs, databaseAttachments, databases, type DB, deployments, domains, envVars, services, serviceProjects, serviceVolumeAttachments, sources } from '@ninedeploy/db';
 import { config } from '../config.js';
 import { decrypt } from '../lib/crypto.js';
 import { checkoutCommit, type CloneCreds } from '../lib/git.js';
@@ -18,6 +18,8 @@ import { agentOp } from '../lib/agentClient.js';
 import { getBundledTemplates } from '../templates/registry.js';
 import type { BuildContext, Builder, DeployRuntime } from './types.js';
 import { reconcileTemplateDependencies } from './templateDependencies.js';
+import { applyManifestToService } from '../lib/applyManifestToService.js';
+import { loadNinedeployManifest } from '../lib/ninedeployManifest.js';
 
 const builders: Record<string, Builder> = { docker: dockerBuilder, pm2: pm2Builder, compose: composeBuilder };
 const DEPLOY_HEARTBEAT_MS = 20_000;
@@ -63,10 +65,18 @@ async function loadRuntimeEnv(db: DB, service: typeof services.$inferSelect): Pr
   const env: Record<string, string> = {};
   const managedDatabaseKeys = new Set<string>();
 
-  // Project-scope shared env (lowest precedence).
-  if (service.projectId != null) {
+  // Project-scope shared env (lowest precedence). Services now carry N-N
+  // project links via `service_projects`; the env lookup is the union of every
+  // linked project's `env_vars` (scope='project').
+  const projectLinks = await db.query.serviceProjects.findMany({
+    where: eq(serviceProjects.serviceId, service.id),
+  });
+  if (projectLinks.length > 0) {
     const shared = await db.query.envVars.findMany({
-      where: and(eq(envVars.scope, 'project'), eq(envVars.scopeKey, service.projectId)),
+      where: and(
+        eq(envVars.scope, 'project'),
+        inArray(envVars.scopeKey, projectLinks.map((p) => p.projectId)),
+      ),
     });
     for (const r of shared) env[r.key] = decrypt(r.valueEncrypted);
   }
@@ -272,6 +282,29 @@ export async function runDeployment(db: DB, deploymentId: number): Promise<void>
       } catch (err) {
         log(`warning: repository analysis failed: ${msg(err)}`);
       }
+
+      // `.ninedeploy` operational side: after a successful checkout, push the
+      // manifest's routes/database/alerts into the service config so the panel
+      // reflects what the repo declares. Idempotent — re-running an unchanged
+      // manifest is a no-op. Best-effort: a stale manifest must never fail
+      // the deploy itself.
+      try {
+        const loaded = loadNinedeployManifest(workDir);
+        if (loaded) {
+          log(
+            `📋 .ninedeploy loaded (${loaded.relativePath}) — applying operational sections`,
+          );
+          const applyResult = await applyManifestToService(db, service.id, loaded.manifest);
+          log(
+            `📋 .ninedeploy applied: routes=${applyResult.routesUpserted}, alerts=${applyResult.alertsUpserted}, dbAttached=${applyResult.databaseAttached}`,
+          );
+          for (const w of applyResult.warnings) {
+            log(`📋 .ninedeploy note: ${w}`);
+          }
+        }
+      } catch (err) {
+        log(`warning: .ninedeploy apply failed: ${msg(err)}`);
+      }
     }
     log('##[stage:PREPARE:success]');
 
@@ -313,6 +346,14 @@ export async function runDeployment(db: DB, deploymentId: number): Promise<void>
       agentCall: service.serverId
         ? (op, params, sink) => agentOp(db, service.serverId!, op, params, sink)
         : undefined,
+      // Additional named-volume attachments. Loaded fresh on every deploy so
+      // a mid-flight attach (before this deployment claims its slot) is
+      // reflected in the next run, but NOT in any already-queued deployment
+      // (the deployment row pins the configuration snapshot).
+      volumeAttachments: await db
+        .select()
+        .from(serviceVolumeAttachments)
+        .where(eq(serviceVolumeAttachments.serviceId, service.id)),
       log,
     };
 

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+﻿import { describe, expect, it, vi } from 'vitest';
 import { logDrainRoutes } from '../src/modules/logDrains.js';
 import { encrypt } from '../src/lib/crypto.js';
 import { asUser, buildTestApp, createFakeDb, drainRow } from './helpers.js';
@@ -345,7 +345,7 @@ describe('log drains API', () => {
     const app = await buildTestApp({ db: createFakeDb() });
     await app.register(logDrainRoutes);
 
-    const res = await app.inject({ method: 'GET', url: '/', headers: asUser({ role: 'member' }) });
+    const res = await app.inject({ method: 'GET', url: '/', headers: asUser({ isOperator: false }) });
     expect(res.statusCode).toBe(403);
   });
 });

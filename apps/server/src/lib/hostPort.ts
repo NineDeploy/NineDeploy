@@ -1,7 +1,6 @@
 import { config } from '../config.js';
 import { forbidden } from './errors.js';
 import type { AuthedUser } from './resourceAccess.js';
-import { isAdmin } from './resourceAccess.js';
 
 /**
  * L-6: `publishedPort` becomes `docker run -p <port>:<containerPort>` on the
@@ -36,6 +35,9 @@ export function reservedHostPorts(): number[] {
 /**
  * Throw unless `user` may bind `port` on the host.
  * `null`/`undefined` means "no host port", which is always allowed.
+ *
+ * After the team overhaul, the operator-equivalent check is "is the user
+ * owner/admin in at least one workspace" (`user.isOperator`).
  */
 export function assertMayPublishPort(user: AuthedUser, port: number | null | undefined): void {
   if (port === null || port === undefined) return;
@@ -45,10 +47,10 @@ export function assertMayPublishPort(user: AuthedUser, port: number | null | und
       `Host port ${port} is reserved by NineDeploy (panel, Traefik or SSH) and cannot be published by a service.`,
     );
   }
-  if (isAdmin(user)) return;
+  if (user.isOperator) return;
   if (port < 1024) {
     throw forbidden(
-      `Admin access required: host ports below 1024 are privileged. Publish on ${port + 1024} or above, or route the service through a domain instead.`,
+      `Operator access required: host ports below 1024 are privileged. Publish on ${port + 1024} or above, or route the service through a domain instead.`,
     );
   }
 }

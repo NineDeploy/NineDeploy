@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+﻿import { describe, expect, it } from 'vitest';
 import { iso, isoDate, listResponse } from '../src/lib/serialize.js';
 
 describe('iso', () => {

@@ -3,12 +3,11 @@ import { z } from 'zod';
 /**
  * Zod schemas for management/admin endpoints that previously used ad-hoc
  * `as { ... }` casts. Centralising them gives consistent 400 validation errors.
+ *
+ * The legacy `rolePatch` (admin/member) was removed when the global
+ * `users.role` column was dropped. Workspace role changes are now served by
+ * `workspaceMemberRoleUpdate` in workspaces.ts.
  */
-
-export const rolePatch = z.object({
-  role: z.enum(['admin', 'member']),
-});
-export type RolePatch = z.infer<typeof rolePatch>;
 
 // ── Update check (admin) ───────────────────────────────────────────────────
 export const updateCheckResult = z.object({
@@ -259,7 +258,7 @@ export interface ServerBootstrapResult {
 export const jobCreate = z.object({
   name: z.string().trim().min(1).max(100),
   cron: z.string().trim().min(1).max(120),
-  kind: z.enum(['deploy', 'exec']).default('deploy'),
+  kind: z.enum(['deploy', 'exec', 'backup']).default('deploy'),
   command: z.unknown().optional().transform((v) => (typeof v === 'string' ? v.trim() : '')),
   enabled: z.unknown().optional().transform((v) => v !== false),
 });
@@ -269,7 +268,7 @@ export type JobCreate = z.infer<typeof jobCreate>;
 export const jobPatch = z.object({
   name: z.string().optional(),
   cron: z.string().optional(),
-  kind: z.enum(['deploy', 'exec']).optional(),
+  kind: z.enum(['deploy', 'exec', 'backup']).optional(),
   command: z.string().optional(),
   enabled: z.boolean().optional(),
 });

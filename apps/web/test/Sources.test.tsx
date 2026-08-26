@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+﻿import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Sources } from '../src/routes/Sources.js';
@@ -6,7 +6,7 @@ import { api } from '../src/lib/api.js';
 import { renderWithProviders, mockOf } from './helpers.js';
 
 vi.mock('../src/lib/api.js', async () => {
-  // Must be './apiMock.js', not './helpers.js' — see the note in apiMock.ts.
+  // Must be './apiMock.js', not './helpers.js' â€” see the note in apiMock.ts.
   const { createFakeApiModule } = await import('./apiMock.js');
   return createFakeApiModule();
 });
@@ -49,7 +49,7 @@ describe('Sources', () => {
     renderWithProviders(<Sources />);
     fireEvent.click(await screen.findByRole('button', { name: /New source/ }));
     await userEvent.type(await screen.findByPlaceholderText('github-personal'), 'x');
-    await userEvent.type(screen.getByPlaceholderText('ghp_… / github_pat_…'), 'tok');
+    await userEvent.type(screen.getByPlaceholderText('ghp_â€¦ / github_pat_â€¦'), 'tok');
     fireEvent.click(screen.getByRole('button', { name: /Save source/ }));
     await waitFor(() => expect(api.sources.create).toHaveBeenCalled());
     const buttons = screen.getAllByRole('button');
@@ -78,7 +78,7 @@ describe('Sources', () => {
     await user.click(await screen.findByRole('button', { name: /New source/ }));
     await user.type(await screen.findByPlaceholderText('github-personal'), 'my-src');
     await user.selectOptions(screen.getByRole('combobox'), 'gitlab');
-    await user.type(screen.getByPlaceholderText('glpat-…'), 'glpat_token');
+    await user.type(screen.getByPlaceholderText('glpat-â€¦'), 'glpat_token');
     await user.click(screen.getByRole('button', { name: /Save source/ }));
     await waitFor(() => expect(api.sources.create).toHaveBeenCalledWith({ name: 'my-src', type: 'gitlab', token: 'glpat_token', deployKey: undefined }));
     expect(screen.queryByPlaceholderText('github-personal')).not.toBeInTheDocument();
@@ -91,7 +91,7 @@ describe('Sources', () => {
     renderWithProviders(<Sources />);
     await user.click(await screen.findByRole('button', { name: /New source/ }));
     await user.type(await screen.findByPlaceholderText('github-personal'), 'ssh-src');
-    // The SSH key field is gated by the auth-method radio — pick "SSH deploy key"
+    // The SSH key field is gated by the auth-method radio â€” pick "SSH deploy key"
     // first, otherwise the key textarea is unmounted.
     await user.click(screen.getByRole('button', { name: /SSH deploy key/ }));
     await user.type(screen.getByPlaceholderText('-----BEGIN OPENSSH PRIVATE KEY-----'), 'PRIVATE KEY');
@@ -135,9 +135,9 @@ describe('Sources', () => {
     renderWithProviders(<Sources />);
     await user.click(await screen.findByRole('button', { name: /New source/ }));
     await user.type(await screen.findByPlaceholderText('github-personal'), 'x');
-    await user.type(screen.getByPlaceholderText('ghp_… / github_pat_…'), 'tok');
+    await user.type(screen.getByPlaceholderText('ghp_â€¦ / github_pat_â€¦'), 'tok');
     await user.click(screen.getByRole('button', { name: /Save source/ }));
-    expect(await screen.findByText('Saving…')).toBeInTheDocument();
+    expect(await screen.findByText('Savingâ€¦')).toBeInTheDocument();
   });
 
   it('does not submit when name or credentials are missing', async () => {
@@ -182,7 +182,7 @@ describe('Sources', () => {
     // only credential input we need to fill (no PAT placeholder to confuse
     // the test).
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'registry' } });
-    const passwordField = await screen.findByPlaceholderText('dckr_pat_… / password');
+    const passwordField = await screen.findByPlaceholderText('dckr_pat_â€¦ / password');
     await user.type(passwordField, 'regpass');
     const userField = await screen.findByPlaceholderText('dockerhub-user');
     await user.type(userField, 'ci-bot');

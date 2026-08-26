@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+﻿import { describe, expect, it } from 'vitest';
 import { createService, serverSshBootstrap } from '@ninedeploy/schemas';
 import { mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -82,7 +82,7 @@ describe('M-6: secretEquals compares in constant time', () => {
   });
 });
 
-// ── L-1 · SSH destination operands ─────────────────────────────────────────
+// â”€â”€ L-1 Â· SSH destination operands â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('L-1: SSH user/host cannot become an ssh option', () => {
   const base = { name: 'node', host: '10.0.0.5', sshKey: 'k' };
@@ -110,7 +110,7 @@ describe('L-1: SSH user/host cannot become an ssh option', () => {
   });
 });
 
-// ── L-13 · build paths stay inside the repository ──────────────────────────
+// â”€â”€ L-13 Â· build paths stay inside the repository â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('L-13: the schema rejects paths that climb out of the repo', () => {
   const svc = (build: Record<string, unknown>) =>
@@ -124,7 +124,7 @@ describe('L-13: the schema rejects paths that climb out of the repo', () => {
   });
 
   it('still accepts the leading-slash convention, which means "repo root"', () => {
-    // `/app` is an existing, documented value — rejecting it here would break
+    // `/app` is an existing, documented value â€” rejecting it here would break
     // real configurations. Containment is enforced at the sink instead (the
     // next describe block), which is where the escape actually happened.
     expect(svc({ baseDir: '/' }).success).toBe(true);
@@ -135,7 +135,7 @@ describe('L-13: the schema rejects paths that climb out of the repo', () => {
   });
 });
 
-// ── L-13 (sink) · build paths are re-anchored on the repo ──────────────────
+// â”€â”€ L-13 (sink) Â· build paths are re-anchored on the repo â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('L-13: build paths cannot escape the checkout', () => {
   const workDir = '/data/repos/42';

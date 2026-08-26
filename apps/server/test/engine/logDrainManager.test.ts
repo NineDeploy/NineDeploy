@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+﻿import { describe, expect, it, vi } from 'vitest';
 import { dispatchLogToDrain, formatLogPayload, testLogDrainConnection } from '../../src/engine/logDrainManager.js';
 
 describe('logDrainManager engine', () => {

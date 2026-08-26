@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+﻿import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -364,7 +364,7 @@ describe('pm2 lifecycle helpers', () => {
     const out = path.join(dir, 'out.log');
     const err = path.join(dir, 'err.log');
     writeFileSync(out, `${Array.from({ length: 320 }, (_, i) => `out-${i}`).join('\n')}\n`);
-    // No trailing newline — exercises the branch that skips the blank-line trim.
+    // No trailing newline â€” exercises the branch that skips the blank-line trim.
     writeFileSync(err, 'boom');
     h.pm2.describe.mockImplementationOnce((_n: string, cb: (err: Error | null, desc?: unknown[]) => void) =>
       cb(null, [{ name: 'api-1', pm2_env: { pm_out_log_path: out, pm_err_log_path: err } }]));

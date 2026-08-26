@@ -1,5 +1,5 @@
 import { count, desc, eq, inArray } from 'drizzle-orm';
-import { databases, deployments, domains, services, webhooks } from '@ninedeploy/db';
+import { databases, deployments, domains, services, serviceWorkspaces, webhooks, workspaceMembers } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { visibleDatabaseIds } from '../lib/resourceAccess.js';
 import { capture } from '../lib/exec.js';
@@ -9,6 +9,39 @@ import { buildProbeUrl, safeProbePath } from '../lib/probeUrl.js';
 import { ensureDockerImage } from '../lib/dockerPull.js';
 
 const NETNS_PROBE_IMAGE = 'curlimages/curl:latest';
+
+/**
+ * The set of service ids a non-operator may see: services they own, plus
+ * services tagged into a workspace they belong to. Used by the dashboard
+ * (and reusable by other "list everything" endpoints) to keep the same
+ * scoping rules that `loadServiceForUser` enforces one-row-at-a-time.
+ */
+async function visibleServiceIdSet(
+  db: import('@ninedeploy/db').DB,
+  userId: number,
+  userWorkspaceIds: number[],
+): Promise<Set<number>> {
+  if (userWorkspaceIds.length === 0) {
+    // Fast path: no workspace membership → only owned services.
+    const owned = await db
+      .select({ id: services.id })
+      .from(services)
+      .where(eq(services.ownerUserId, userId));
+    return new Set(owned.map((s) => s.id));
+  }
+  // Two sources: owner_user_id match, or service_workspaces ∩ user's workspaces.
+  const [owned, tagged] = await Promise.all([
+    db.select({ id: services.id }).from(services).where(eq(services.ownerUserId, userId)),
+    db
+      .select({ id: serviceWorkspaces.serviceId })
+      .from(serviceWorkspaces)
+      .where(inArray(serviceWorkspaces.workspaceId, userWorkspaceIds)),
+  ]);
+  const set = new Set<number>();
+  for (const r of owned) set.add(r.id);
+  for (const r of tagged) set.add(r.id);
+  return set;
+}
 
 interface HealthStatus {
   serviceId: number;
@@ -129,34 +162,42 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
 
   app.get('/', async (req) => {
     const user = req.user!;
-    // Scope every list/count to what the caller may see — admins get the
-    // whole instance, members only their own services plus databases visible
-    // through ownership/workspace membership (same rule as stats.ts). Without
-    // this, any member's dashboard mapped every other tenant's services,
-    // databases, domains, webhooks and recent deployments.
-    const [allServices, allDbs, visibleDbIds] = await Promise.all([
+    // Scope every list/count to what the caller may see — operators get the
+    // whole instance, members only their own services PLUS services tagged
+    // into workspaces they belong to. Without this, any member's dashboard
+    // mapped every other tenant's services, databases, domains, webhooks and
+    // recent deployments.
+    const [allServices, allDbs, visibleDbIds, userWsMemberships] = await Promise.all([
       app.db.select().from(services),
       app.db.select().from(databases),
       visibleDatabaseIds(app.db, user),
+      app.db.select({ id: workspaceMembers.workspaceId }).from(workspaceMembers).where(eq(workspaceMembers.userId, user.id)),
     ]);
-    const scopedServices = user.role === 'admin' ? allServices : allServices.filter((s) => s.ownerUserId === user.id);
+    const userWsIds = userWsMemberships.map((w) => w.id);
+    // Services the user can see: either owned by them, or tagged into a
+    // workspace they belong to, or (for operators) everything.
+    const visibleServiceIds = user.isOperator
+      ? new Set(allServices.map((s) => s.id))
+      : await visibleServiceIdSet(app.db, user.id, userWsIds);
+    const scopedServices = allServices.filter((s) => visibleServiceIds.has(s.id));
     const scopedDbs = visibleDbIds === null ? allDbs : allDbs.filter((d) => visibleDbIds.includes(d.id));
-    const svcIds = Array.from(new Set(scopedServices.map((s) => s.id)));
+    const svcIds = Array.from(visibleServiceIds);
 
     // Aggregate counts. Service/database totals come from the scoped arrays;
     // the rest are queried restricted to the scoped service ids (an empty
     // scope short-circuits to zero rather than issuing an `IN ()` query).
-    const emptyScope = user.role !== 'admin' && svcIds.length === 0;
+    const operatorScope = user.isOperator;
+    const emptyScope = !operatorScope && svcIds.length === 0;
     const [depCount, domCount, hookCount] = emptyScope
       ? [[{ n: 0 }], [{ n: 0 }], [{ n: 0 }]]
       : await Promise.all([
-          user.role === 'admin'
+          operatorScope
             ? app.db.select({ n: count() }).from(deployments)
             : app.db.select({ n: count() }).from(deployments).where(inArray(deployments.serviceId, svcIds)),
-          user.role === 'admin'
+          operatorScope
             ? app.db.select({ n: count() }).from(domains)
             : app.db.select({ n: count() }).from(domains).where(inArray(domains.serviceId, svcIds)),
-          user.role === 'admin'
+          operatorScope
             ? app.db.select({ n: count() }).from(webhooks)
             : app.db.select({ n: count() }).from(webhooks).where(inArray(webhooks.serviceId, svcIds)),
         ]);
@@ -172,7 +213,7 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
     const recentDeploys = emptyScope
       ? []
       : await app.db.query.deployments.findMany({
-          ...(user.role !== 'admin' ? { where: inArray(deployments.serviceId, svcIds) } : {}),
+          ...(operatorScope ? {} : { where: inArray(deployments.serviceId, svcIds) }),
           orderBy: desc(deployments.id),
           limit: 5,
         });

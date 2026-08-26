@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Cpu, GitPullRequest, Layers, Settings } from 'lucide-react';
+import { Cpu, GitPullRequest, Layers, Settings, Tag } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import type { Service } from '@ninedeploy/sdk';
 import { api } from '../../lib/api.js';
@@ -7,15 +7,82 @@ import { useAuth } from '../../lib/auth.js';
 import { toInt } from '../../lib/format.js';
 import { useToast } from '../../components/Toast.js';
 import { Button, Card, CardBody, Field, Input, Select, Skeleton } from '../../components/ui.js';
+import { ServiceTagsCard } from './ServiceTagsCard.js';
 
 /** Service fields, build configuration, lifecycle hooks, PR previews, and resource limits. */
 export function SettingsTab({ serviceId, svc }: { serviceId: number; svc: Service }) {
   return (
     <div className="mt-5 space-y-5">
       <SettingsCard serviceId={serviceId} />
+      <TagsCard serviceId={serviceId} svc={svc} />
       <PreviewEnvironmentsCard svc={svc} />
       <LimitsCard svc={svc} />
     </div>
+  );
+}
+
+/**
+ * Project / workspace / label tags for a service. The same component used
+ * by the top-bar filter chips, just anchored to a single service. Read-only
+ * for non-operators (members can see which tags apply, but not change them).
+ */
+function TagsCard({ serviceId }: { serviceId: number; svc: Service }) {
+  // Fetch the resolved tag rows from the dedicated tags endpoint so the
+  // editor sees the same names / slugs / colors the rest of the UI uses.
+  // The service detail response is a leaner subset.
+  const { data: tags } = useQuery({
+    queryKey: ['service-tags', serviceId],
+    queryFn: () => api.serviceTags.get(serviceId),
+  });
+  const initial = {
+    projects: (tags?.projects ?? []).map((p) => ({
+      id: p.id,
+      workspaceId: null as number | null,
+      workspaceName: null as string | null,
+      name: p.name,
+      slug: p.slug,
+      description: null as string | null,
+      serviceCount: 0,
+      databaseCount: 0,
+      createdAt: '',
+      updatedAt: '',
+    })),
+    workspaces: (tags?.workspaces ?? []).map((w) => ({
+      id: w.id,
+      name: w.name,
+      slug: w.slug,
+      description: null as string | null,
+      ownerId: 0,
+      myRole: 'viewer' as const,
+      serviceCount: 0,
+      projectCount: 0,
+      memberCount: 0,
+      createdAt: '',
+      updatedAt: '',
+    })),
+    labels: (tags?.labels ?? []).map((l) => ({
+      id: l.id,
+      workspaceId: null as number | null,
+      name: l.name,
+      color: l.color,
+      serviceCount: 0,
+      createdAt: '',
+      updatedAt: '',
+    })),
+  };
+  return (
+    <Card>
+      <CardBody>
+        <div className="mb-3 flex items-center gap-2">
+          <Tag size={14} className="text-slate-400" />
+          <h2 className="text-sm font-semibold text-slate-200">Tags</h2>
+          <span className="text-xs text-slate-500">
+            Where this service appears in the workspace, which project groups it, and the labels that classify it.
+          </span>
+        </div>
+        <ServiceTagsCard serviceId={serviceId} initial={initial} />
+      </CardBody>
+    </Card>
   );
 }
 
@@ -24,7 +91,7 @@ function SettingsCard({ serviceId }: { serviceId: number }) {
   const qc = useQueryClient();
   const { toast } = useToast();
   const { user } = useAuth();
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = user?.isOperator === true;
   const service = useQuery({ queryKey: ['service', serviceId], queryFn: () => api.services.get(serviceId) });
   // Credential list is admin-only server-side; members see the attached name
   // read-only instead of a select that would 403 on load.

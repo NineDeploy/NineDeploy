@@ -141,7 +141,15 @@ export const backupRoutes: FastifyPluginAsync = async (app) => {
     const bid = num((req.params as { bid: string }).bid);
     const b = await app.db.query.backups.findFirst({ where: eq(backups.id, bid) });
     if (!b || !existsSync(b.path)) throw notFound('Backup not found');
-    // Backups are encrypted at rest — hand the user the PLAINTEXT dump.
+    // DB backups: encrypted at rest — hand the user the PLAINTEXT dump.
+    // Volume backups: stored as plain tar.gz — stream the file directly.
+    if (b.scope === 'volumes') {
+      const { readFileSync } = await import('node:fs');
+      return reply
+        .type('application/gzip')
+        .header('content-disposition', `attachment; filename="${path.basename(b.path)}"`)
+        .send(readFileSync(b.path));
+    }
     return reply
       .type('application/octet-stream')
       .header('content-disposition', `attachment; filename="${path.basename(b.path)}"`)

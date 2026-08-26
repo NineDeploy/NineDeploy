@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+﻿import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { sourcesRoutes } from '../src/modules/sources.js';
 import { encrypt } from '../src/lib/crypto.js';
 import { asUser, buildTestApp, createFakeDb, sourceRow } from './helpers.js';
@@ -550,7 +550,7 @@ describe('POST /:id/generate-deploy-key', () => {
     const res = await app.inject({ method: 'POST', url: '/1/generate-deploy-key', headers: asUser() });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ publicKey: 'ssh-ed25519 AAAAfake ninedeploy@github-personal', fingerprint: 'SHA256:abc123' });
-    // The response MUST NOT contain the private key — it lives only in the
+    // The response MUST NOT contain the private key â€” it lives only in the
     // encrypted column.
     expect(res.body).not.toContain('PRIVATE KEY');
     expect(h.generateDeployKeyPair).toHaveBeenCalledWith('ninedeploy@github-personal');

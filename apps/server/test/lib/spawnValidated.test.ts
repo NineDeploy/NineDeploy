@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+﻿import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { spawnValidated } from '../../src/lib/spawnValidated.js';
 
 const childMocks = vi.hoisted(() => {

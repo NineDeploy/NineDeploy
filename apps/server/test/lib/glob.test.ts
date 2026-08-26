@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+﻿import { describe, expect, it } from 'vitest';
 import { globToRegExp, matchesAny, parseWatchPaths } from '../../src/lib/glob.js';
 
 describe('globToRegExp', () => {

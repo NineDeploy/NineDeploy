@@ -179,4 +179,36 @@ describe('topology routes', () => {
     expect(body.networks).toEqual([]);
     expect(body.gateway.running).toBe(false);
   });
+
+  it('renders per-slug bridges with their members (Model B)', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        select: {
+          services: [svcRow({ id: 2, name: 'api', slug: 'api', status: 'running', runtimeId: 'api-7', port: 3000 })],
+          databases: [dbRow({ id: 3, name: 'pg', slug: 'pg', engine: 'postgres' })],
+          database_attachments: [attachmentRow({ serviceId: 2, databaseId: 3, envAlias: 'DATABASE_URL' })],
+          domains: [],
+        },
+      }),
+    });
+    await app.register(topologyRoutes);
+    execMocks.capture.mockImplementation((_cmd: string, args: string[]) => {
+      const joined = args.join(' ');
+      if (joined.startsWith('volume ls')) return 'nd-svc-api-data\nnd-db-pg-data\n';
+      if (joined.startsWith('network ls')) return 'ninedeploy\tbridge\nnd-svc-api\tbridge\n';
+      // Per-slug bridge: app + its attached DB.
+      if (joined.startsWith('network inspect nd-svc-api')) return 'api-7 nd-db-pg ';
+      // Shared mesh: only Traefik (the legacy model would also include api-7).
+      if (joined.startsWith('network inspect ninedeploy')) return 'ninedeploy-traefik ';
+      if (joined.startsWith('ps --filter name=^ninedeploy-traefik$')) return 'abc123\n';
+      return '';
+    });
+    const res = await app.inject({ method: 'GET', url: '/', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    // Two bridges: shared mesh (Traefik only) and per-slug (app + db).
+    const byName = Object.fromEntries((body.networks as Array<{ name: string; containers: string[] }>).map((n) => [n.name, n.containers]));
+    expect(byName['ninedeploy']).toEqual(['ninedeploy-traefik']);
+    expect(byName['nd-svc-api']).toEqual(['api-7', 'nd-db-pg']);
+  });
 });

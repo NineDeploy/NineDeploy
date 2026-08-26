@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+﻿import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Networks } from '../src/routes/Networks.js';
@@ -6,7 +6,7 @@ import { api } from '../src/lib/api.js';
 import { renderWithProviders, mockOf } from './helpers.js';
 
 vi.mock('../src/lib/api.js', async () => {
-  // Must be './apiMock.js', not './helpers.js' — see the note in apiMock.ts.
+  // Must be './apiMock.js', not './helpers.js' â€” see the note in apiMock.ts.
   const { createFakeApiModule } = await import('./apiMock.js');
   return createFakeApiModule();
 });
@@ -19,7 +19,7 @@ vi.mock('../src/components/Toast.js', async () => {
 
 const nets = {
   networks: [
-    { name: 'ninedeploy', driver: 'bridge', members: ['nd-web-3'] },
+    { name: 'ninedeploy', driver: 'bridge', members: ['nd-svc-api-1'], isManaged: true },
     { name: 'back-tier', driver: 'bridge', members: [] },
   ],
 };
@@ -70,7 +70,7 @@ describe('Networks', () => {
     await screen.findByText('back-tier');
     fireEvent.click(screen.getAllByRole('button', { name: /Attach/ })[0]!);
     await user.type(screen.getByPlaceholderText('my-app-42'), 'nd-api-2');
-    // The attach-card submit is the FIRST exact-"Attach" button — the form
+    // The attach-card submit is the FIRST exact-"Attach" button â€” the form
     // card renders above the network list.
     fireEvent.click(screen.getAllByRole('button', { name: /^Attach$/ })[0]!);
     await waitFor(() => expect(api.networks.attach).toHaveBeenCalledWith({ network: 'ninedeploy', container: 'nd-api-2' }));
@@ -78,7 +78,7 @@ describe('Networks', () => {
 
     fireEvent.click(screen.getByTitle('Detach'));
     await waitFor(() =>
-      expect(api.networks.detach).toHaveBeenCalledWith({ network: 'ninedeploy', container: 'nd-web-3' }),
+      expect(api.networks.detach).toHaveBeenCalledWith({ network: 'ninedeploy', container: 'nd-svc-api-1' }),
     );
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Container detached', 'success'));
   });
@@ -126,7 +126,7 @@ describe('Networks', () => {
     renderWithProviders(<Networks />);
     await screen.findByText('back-tier');
 
-    // Delete failure (non-Error → generic).
+    // Delete failure (non-Error â†’ generic).
     fireEvent.click(screen.getAllByRole('button', { name: /Delete/ })[0]!);
     fireEvent.click(screen.getAllByRole('button', { name: 'Delete' }).at(-1)!);
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Delete failed', 'error'));
@@ -145,13 +145,13 @@ describe('Networks', () => {
     renderWithProviders(<Networks />);
     await screen.findByText('back-tier');
 
-    // Attach failure (non-Error → generic).
+    // Attach failure (non-Error â†’ generic).
     fireEvent.click(screen.getAllByRole('button', { name: /Attach/ })[0]!);
     await user.type(screen.getByPlaceholderText('my-app-42'), 'nd-api-2');
     fireEvent.click(screen.getAllByRole('button', { name: /^Attach$/ })[0]!);
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Attach failed', 'error'));
 
-    // Detach failure (Error → its message).
+    // Detach failure (Error â†’ its message).
     fireEvent.click(screen.getByTitle('Detach'));
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('docker api down', 'error'));
   });
@@ -179,19 +179,19 @@ describe('Networks', () => {
     renderWithProviders(<Networks />);
     await screen.findByText('back-tier');
 
-    // create failure (Error → err.message)
+    // create failure (Error â†’ err.message)
     fireEvent.click(screen.getByRole('button', { name: /New network/ }));
     await user.type(screen.getByPlaceholderText('my-network'), 'front-tier');
     fireEvent.click(screen.getByRole('button', { name: 'Create' }));
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('name taken', 'error'));
 
-    // attach failure (Error → err.message)
+    // attach failure (Error â†’ err.message)
     fireEvent.click(screen.getAllByRole('button', { name: /Attach/ })[0]!);
     await user.type(screen.getByPlaceholderText('my-app-42'), 'nd-api-2');
     fireEvent.click(screen.getAllByRole('button', { name: /^Attach$/ })[0]!);
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('no such container', 'error'));
 
-    // detach failure (non-Error → generic message)
+    // detach failure (non-Error â†’ generic message)
     fireEvent.click(screen.getByTitle('Detach'));
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Detach failed', 'error'));
   });
@@ -201,7 +201,7 @@ describe('Networks', () => {
     renderWithProviders(<Networks />);
     await screen.findByText('back-tier');
 
-    // Driver select change → overlay.
+    // Driver select change â†’ overlay.
     fireEvent.click(screen.getByRole('button', { name: /New network/ }));
     await user.type(screen.getByPlaceholderText('my-network'), 'mesh-net');
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'overlay' } });
@@ -234,6 +234,74 @@ describe('Networks', () => {
     renderWithProviders(<Networks />);
     await screen.findByText('back-tier');
     expect(screen.getAllByRole('button', { name: /Delete/ })).toHaveLength(1); // back-tier only
-    expect(screen.getByText('managed')).toBeInTheDocument();
+    expect(screen.getAllByText('managed').length).toBeGreaterThan(0);
+  });
+
+  it('tags managed containers in the member list with a managed badge', async () => {
+    renderWithProviders(<Networks />);
+    await screen.findByText('back-tier');
+    // nd-svc-api-1 starts with the managed container prefix → should be tagged.
+    const badge = screen.getByTitle('NineDeploy-managed container');
+    expect(badge).toBeInTheDocument();
+    expect(badge).toHaveTextContent('managed');
+  });
+
+  it('warns in the attach form when the typed container name looks managed', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<Networks />);
+    await screen.findByText('back-tier');
+    fireEvent.click(screen.getAllByRole('button', { name: /Attach/ })[0]!);
+    // User-owned container → no warning.
+    await user.type(screen.getByPlaceholderText('my-app-42'), 'user-nginx-1');
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    // Managed container → warning appears.
+    await user.clear(screen.getByPlaceholderText('my-app-42'));
+    await user.type(screen.getByPlaceholderText('my-app-42'), 'nd-svc-api-1');
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/looks like a NineDeploy-managed container/);
+  });
+
+  it('previews the affected containers in the delete confirmation dialog', async () => {
+    mockOf(api.networks.list).mockResolvedValue({
+      networks: [
+        { name: 'tier', driver: 'bridge', members: ['user-app-1', 'nd-svc-api-1'], isManaged: false },
+      ],
+    } as never);
+    renderWithProviders(<Networks />);
+    await screen.findByText('tier');
+    fireEvent.click(screen.getByRole('button', { name: /Delete/ }));
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toHaveTextContent('Containers that will lose connectivity');
+    expect(dialog).toHaveTextContent('user-app-1');
+    expect(dialog).toHaveTextContent('nd-svc-api-1');
+  });
+
+  it('omits the member preview when the network has no containers attached', async () => {
+    renderWithProviders(<Networks />);
+    await screen.findByText('back-tier');
+    fireEvent.click(screen.getByRole('button', { name: /Delete/ }));
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toHaveTextContent(/will be removed/);
+    expect(dialog).not.toHaveTextContent('Containers that will lose connectivity');
+  });
+
+  it('lists managed members in the delete dialog with a managed badge', async () => {
+    mockOf(api.networks.list).mockResolvedValue({
+      networks: [
+        { name: 'tier', driver: 'bridge', members: ['user-app-1', 'nd-svc-api-1', 'ninedeploy-traefik'] },
+      ],
+    } as never);
+    renderWithProviders(<Networks />);
+    await screen.findByText('tier');
+    fireEvent.click(screen.getByRole('button', { name: /Delete/ }));
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toHaveTextContent('Containers that will lose connectivity');
+    // Each listed container appears, with the managed tag for the two that
+    // match the managed prefixes.
+    expect(dialog).toHaveTextContent('user-app-1');
+    expect(dialog).toHaveTextContent('nd-svc-api-1');
+    expect(dialog).toHaveTextContent('ninedeploy-traefik');
+    const managedBadges = dialog.querySelectorAll('.text-amber-300');
+    expect(managedBadges.length).toBe(2);
   });
 });

@@ -54,3 +54,7 @@ apps/server/Python/*
 .commandcode/
 security-report/
 .claude/settings.json
+
+
+*.txt
+*.tar.gz

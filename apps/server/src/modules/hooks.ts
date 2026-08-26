@@ -12,6 +12,7 @@ import { dockerBuilder } from '../engine/builders/docker.js';
 import { pm2Builder } from '../engine/builders/pm2.js';
 import { composeBuilder } from '../engine/builders/compose.js';
 import { writeDynamicConfig } from '../engine/proxy.js';
+import { getServiceTags, replaceServiceTags } from './serviceTags.js';
 
 async function stopRuntimeFor(service: { runtimeId: string | null; type: string }) {
   if (!service.runtimeId) return;
@@ -115,7 +116,6 @@ export const hookReceiveRoutes: FastifyPluginAsync = async (app) => {
         const [created] = await app.db
           .insert(services)
           .values({
-            projectId: parent.projectId,
             ownerUserId: parent.ownerUserId,
             name: `${parent.name} (PR #${pr.prNumber})`,
             slug: previewSlug,
@@ -160,6 +160,16 @@ export const hookReceiveRoutes: FastifyPluginAsync = async (app) => {
 
         // Copy parent service-scoped env vars
         if (targetService) {
+          // Inherit the parent's tag memberships (project + workspace + label)
+          // so a preview deploy is visible to the same audiences as the parent.
+          const parentTags = await getServiceTags(app.db, parent.id);
+          await replaceServiceTags(
+            app.db,
+            targetService.id,
+            parentTags.projects.map((p) => p.id),
+            parentTags.workspaces.map((w) => w.id),
+            parentTags.labels.map((l) => l.id),
+          );
           const parentEnvs = await app.db.query.envVars.findMany({ where: eq(envVars.serviceId, parent.id) });
           for (const env of parentEnvs) {
             await app.db.insert(envVars).values({

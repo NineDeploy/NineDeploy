@@ -49,6 +49,7 @@ import {
   webhooksAdd, webhooksList, webhooksRemove, webhooksShow,
 } from './commands/webhooks.js';
 import { deployFromGithub } from './commands/deploy.js';
+import { manifestApply, manifestInit, manifestShow, manifestValidate } from './commands/manifest.js';
 
 const program = new Command();
 
@@ -399,6 +400,29 @@ fw.command('deny <port>')
   .option('-c, --comment <text>', 'Rule description/comment')
   .action((port: string, opts: any) => firewallAddRule(getClient(), port, { ...opts, action: 'deny' }));
 fw.command('rm <id>').description('Delete a firewall rule by ID').action((id: string) => firewallDeleteRule(getClient(), id));
+
+// ── .ninedeploy manifest (project-side) ───────────────────────────────────
+// Lives at the end of the command list so the sidebar/help shows it last;
+// operators discover it after they've explored services/sources/etc.
+const manifest = program
+  .command('manifest')
+  .description('Manage the .ninedeploy file in this repo');
+manifest
+  .command('init')
+  .description('Scaffold a starter .ninedeploy based on detected project kind')
+  .action(() => manifestInit(process.cwd()));
+manifest
+  .command('validate')
+  .description('Parse + schema-check the .ninedeploy in the current directory')
+  .action(() => manifestValidate(process.cwd()));
+manifest
+  .command('show')
+  .description('Print a human-readable summary of the parsed manifest')
+  .action(() => manifestShow(process.cwd()));
+manifest
+  .command('apply <serviceId>')
+  .description('Apply the manifest to a service (placeholder — wired in the next release)')
+  .action((serviceId: string) => manifestApply(getClient(), process.cwd(), Number(serviceId)));
 
 // ── Banner on bare `ninedeploy` ───────────────────────────────────────────
 if (process.argv.length <= 2) {

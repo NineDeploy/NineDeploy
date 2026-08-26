@@ -313,7 +313,7 @@ export const traefikRoutes: FastifyPluginAsync = async (app) => {
   // empty rather than 403 so the shared UI page degrades gracefully.
   app.get('/traefik', { preHandler: [app.authenticate] }, async (req) => {
     const status = await getTraefikContainerInfo();
-    if (req.user!.role !== 'admin') {
+    if (!req.user!.isOperator) {
       return {
         status,
         certificates: [],

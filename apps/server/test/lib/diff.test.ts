@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+﻿import { describe, expect, it } from 'vitest';
 import { diffLines, renderDiff } from '../../src/lib/diff.js';
 
 describe('lib/diff', () => {

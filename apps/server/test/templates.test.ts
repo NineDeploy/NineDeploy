@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+﻿import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { templateRoutes } from '../src/modules/templates.js';
 import { asUser, buildTestApp, createFakeDb, dbRow, depRow, svcRow } from './helpers.js';
 
@@ -520,7 +520,7 @@ describe('template routes', () => {
 
     const res = await app.inject({ method: 'POST', url: '/grafana/deploy', headers: asUser(), payload: { name: 'Grafana' } });
 
-    // The caller here is an ADMIN, who can see the colliding service — so the
+    // The caller here is an ADMIN, who can see the colliding service â€” so the
     // explicit, actionable error stays.
     expect(res.statusCode).toBe(400);
     expect(res.json()).toMatchObject({ error: { code: 'slug_taken' } });
@@ -551,7 +551,7 @@ describe('template routes', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/grafana/deploy',
-      headers: asUser({ id: 5, role: 'member' }),
+      headers: asUser({ id: 5, isOperator: false }),
       payload: { name: 'Grafana' },
     });
 
@@ -561,7 +561,7 @@ describe('template routes', () => {
     expect(JSON.stringify(res.json())).not.toContain('slug_taken');
     expect(inserted).toHaveLength(1);
     // The collision-avoidance suffix is a base64url token (3 random bytes), so
-    // it may contain `-` or `_` — match any URL-safe character after the dash.
+    // it may contain `-` or `_` â€” match any URL-safe character after the dash.
     expect(String(inserted[0]!['slug'])).toMatch(/^grafana-[A-Za-z0-9_-]+$/);
     expect(String(inserted[0]!['slug'])).not.toBe('grafana');
   });

@@ -31,7 +31,7 @@ export function Hub() {
 
   const queryClient = useQueryClient();
   const { user } = useAuth();
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = user?.isOperator === true;
 
   const [installingId, setInstallingId] = useState<string | null>(null);
 

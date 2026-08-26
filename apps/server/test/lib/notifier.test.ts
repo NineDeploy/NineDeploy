@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+﻿import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { notificationLog } from '@ninedeploy/db';
 import { notifyEvent, parseEmailTarget, sendSystemEmail, withRetry } from '../../src/lib/notifier.js';
 import { encrypt } from '../../src/lib/crypto.js';
@@ -98,7 +98,7 @@ describe('notifyEvent', () => {
       'https://hooks.example.com/hook',
       expect.objectContaining({
         method: 'POST',
-        body: JSON.stringify({ event: 'deploy.completed', entity: 'web', ts: event.ts, message: '🚀 deploy completed: web' }),
+        body: JSON.stringify({ event: 'deploy.completed', entity: 'web', ts: event.ts, message: 'ðŸš€ deploy completed: web' }),
       }),
     );
     expect(insert).toHaveBeenCalledWith(notificationLog);
@@ -199,7 +199,7 @@ describe('notifyEvent', () => {
 
     expect(fetchMock).toHaveBeenCalledWith(
       'https://discord.com/api/webhooks/x',
-      expect.objectContaining({ body: JSON.stringify({ content: '🚀 deploy completed: web' }) }),
+      expect.objectContaining({ body: JSON.stringify({ content: 'ðŸš€ deploy completed: web' }) }),
     );
     expect(lastValues()).toHaveBeenCalledWith(expect.objectContaining({ status: 'sent' }));
   });
@@ -227,7 +227,7 @@ describe('notifyEvent', () => {
     await notifyEvent(db, event);
     expect(fetchMock).toHaveBeenCalledWith(
       'https://hooks.slack.com/services/T/B/x',
-      expect.objectContaining({ body: JSON.stringify({ text: '🚀 deploy completed: web' }) }),
+      expect.objectContaining({ body: JSON.stringify({ text: 'ðŸš€ deploy completed: web' }) }),
     );
     expect(lastValues()).toHaveBeenCalledWith(expect.objectContaining({ status: 'sent', attempts: 1 }));
   });
@@ -254,7 +254,7 @@ describe('notifyEvent', () => {
     await notifyEvent(db, event);
     expect(fetchMock).toHaveBeenCalledWith(
       'https://ntfy.sh/my-alerts',
-      expect.objectContaining({ headers: { 'Content-Type': 'text/plain' }, body: '🚀 deploy completed: web' }),
+      expect.objectContaining({ headers: { 'Content-Type': 'text/plain' }, body: 'ðŸš€ deploy completed: web' }),
     );
   });
 
@@ -336,7 +336,7 @@ describe('notifyEvent', () => {
     ];
     const { db } = makeDb(channels);
     await notifyEvent(db, { id: 2, action: 'service.created', entity: 'blog', ts: event.ts });
-    expect(fetchMock.mock.calls[0]![1]!.body).toContain('🖥️ service created: blog');
+    expect(fetchMock.mock.calls[0]![1]!.body).toContain('ðŸ–¥ï¸ service created: blog');
   });
 
   it('formats actions without a dot, unknown subjects, and a null entity', async () => {
@@ -346,9 +346,9 @@ describe('notifyEvent', () => {
     ];
     const { db } = makeDb(channels);
     await notifyEvent(db, { id: 3, action: 'custom', entity: null, ts: event.ts });
-    // verb falls back to the whole action, subject is not in the emoji map (•),
+    // verb falls back to the whole action, subject is not in the emoji map (â€¢),
     // and a null entity produces no suffix.
-    expect(fetchMock.mock.calls[0]![1]!.body).toContain('• custom custom');
+    expect(fetchMock.mock.calls[0]![1]!.body).toContain('â€¢ custom custom');
   });
 
   it('HTML-escapes a hostile entity so Telegram parse_mode cannot break', async () => {
@@ -380,7 +380,7 @@ describe('notifyEvent', () => {
     await pending;
     const init = fetchMock.mock.calls[0]![1] as RequestInit;
     expect(init.signal).toBeInstanceOf(AbortSignal);
-    // The aborted dispatch failed fast and was recorded — it did not hang.
+    // The aborted dispatch failed fast and was recorded â€” it did not hang.
     expect(lastValues()).toHaveBeenCalledWith(expect.objectContaining({ status: 'failed' }));
   });
 
@@ -423,7 +423,7 @@ describe('notifyEvent', () => {
     ];
     const { db } = makeDb(channels);
     await notifyEvent(db, { id: 6, action: 'alert.fired', entity: 'high-cpu', ts: event.ts });
-    expect(fetchMock.mock.calls[0]![1]!.body).toContain('🔔 alert fired: high-cpu');
+    expect(fetchMock.mock.calls[0]![1]!.body).toContain('ðŸ”” alert fired: high-cpu');
   });
 });
 

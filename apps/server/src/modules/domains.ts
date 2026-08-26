@@ -8,7 +8,6 @@ import { createDnsRecord, deleteDnsRecord, detectPublicIp, getDnsRecordsConfig }
 import { loadServiceForUser } from '../lib/serviceAccess.js';
 import { conflict, notFound, parseId as num } from '../lib/errors.js';
 import { getSettingString } from '../lib/settings.js';
-import { isAdmin } from '../lib/resourceAccess.js';
 import { challengeRecordName, checkOwnershipRecord, newChallengeToken, requiresOwnershipProof } from '../lib/domainVerification.js';
 
 /** Normalise a hostname for comparison: DNS is case-insensitive and the
@@ -133,7 +132,7 @@ export const domainsRoutes: FastifyPluginAsync = async (app) => {
     // until its owner proves control of the DNS zone. Until then the row is
     // `pending`, and `writeDynamicConfig` skips it — so a first-come claim on
     // someone else's domain never receives their traffic.
-    const needsProof = requiresOwnershipProof(hostname, isAdmin(req.user!));
+    const needsProof = requiresOwnershipProof(hostname, req.user!.isOperator);
     const verificationToken = needsProof ? newChallengeToken() : null;
 
     const [d] = await app.db

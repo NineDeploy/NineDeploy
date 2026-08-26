@@ -176,7 +176,13 @@ export interface MenuItemDefinition {
 export interface IMenuRegistry {
   registerMenuItem(item: MenuItemDefinition): () => void;
   unregisterMenuItem(id: string): boolean;
-  getItemsForSlot(slot: MenuSlot, userRole?: 'admin' | 'member'): MenuItemDefinition[];
+  /**
+   * @param isOperator true when the caller is owner/admin in at least one
+   * workspace. Replaces the legacy `userRole: 'admin' | 'member'` parameter
+   * — the global role enum is gone, plugin menu gating now keys off the
+   * boolean operator flag.
+   */
+  getItemsForSlot(slot: MenuSlot, isOperator?: boolean): MenuItemDefinition[];
   getAllItems(): MenuItemDefinition[];
   getPluginMenus(pluginId: string): MenuItemDefinition[];
   purgePluginMenus(pluginId: string): number;

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+﻿import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { screen, waitFor, fireEvent } from '@testing-library/react';
 import { Traefik } from '../src/routes/Traefik.js';
 import { renderWithProviders } from './helpers.js';
@@ -9,7 +9,7 @@ vi.mock('../src/components/Toast.js', async () => {
   return { ...actual, useToast: () => toastSpy };
 });
 
-const userState = { user: { id: 1, email: 'admin@nine.local', role: 'admin' } };
+const userState = { user: { id: 1, email: 'admin@nine.local', isOperator: true } };
 vi.mock('../src/lib/auth.js', () => ({
   AuthProvider: ({ children }: { children?: React.ReactNode }) => children, useAuth: () => userState,
 }));
@@ -48,7 +48,7 @@ const mockInfo = {
 describe('Traefik route', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    userState.user = { id: 1, email: 'admin@nine.local', role: 'admin' };
+    userState.user = { id: 1, email: 'admin@nine.local', isOperator: true };
     authedFetchMock.mockImplementation((url: string) => {
       if (url.includes('/v1/traefik/logs')) {
         return Promise.resolve({
@@ -135,7 +135,7 @@ describe('Traefik route', () => {
     expect(await screen.findByText('app-router')).toBeInTheDocument();
     expect(screen.getByText('Host(`app.example.com`)')).toBeInTheDocument();
     expect(screen.getByText('websecure')).toBeInTheDocument();
-    expect(screen.getByText('→ app-service')).toBeInTheDocument();
+    expect(screen.getByText('â†’ app-service')).toBeInTheDocument();
 
     // Backend Services
     expect(screen.getByText('Backend Services')).toBeInTheDocument();
@@ -268,12 +268,12 @@ describe('Traefik route', () => {
     expect(await screen.findByText('Traefik Running')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: /Restart/ }));
-    expect(await screen.findByText('Restarting…')).toBeInTheDocument();
+    expect(await screen.findByText('Restartingâ€¦')).toBeInTheDocument();
     resolveRestart({ ok: true, json: () => Promise.resolve({ ok: true }) });
     await screen.findByText('Restart');
 
     fireEvent.click(screen.getByRole('button', { name: /Backup Certs/ }));
-    expect(await screen.findByText('Backing up…')).toBeInTheDocument();
+    expect(await screen.findByText('Backing upâ€¦')).toBeInTheDocument();
     resolveBackup({ ok: true, json: () => Promise.resolve({ ok: true }) });
     await screen.findByText('Backup Certs');
   });
@@ -301,7 +301,7 @@ describe('Traefik route', () => {
   });
 
   it('hides admin buttons when user is non-admin', async () => {
-    userState.user = { id: 2, email: 'user@nine.local', role: 'viewer' };
+    userState.user = { id: 2, email: 'user@nine.local', isOperator: false };
     renderWithProviders(<Traefik />);
     expect(await screen.findByText('Traefik Running')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Restart/ })).toBeNull();
@@ -331,10 +331,10 @@ describe('Traefik route', () => {
     });
 
     renderWithProviders(<Traefik />);
-    expect(await screen.findByText('→ v3.1.0')).toBeInTheDocument();
+    expect(await screen.findByText('â†’ v3.1.0')).toBeInTheDocument();
     const updateBtn = screen.getByRole('button', { name: /Update to v3.1.0/ });
     fireEvent.click(updateBtn);
-    expect(await screen.findByText('Updating…')).toBeInTheDocument();
+    expect(await screen.findByText('Updatingâ€¦')).toBeInTheDocument();
     resolveUpdate({ ok: true, json: () => Promise.resolve({ ok: true, newVersion: '3.1.0' }) });
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Traefik updated to v3.1.0', 'success'));
   });

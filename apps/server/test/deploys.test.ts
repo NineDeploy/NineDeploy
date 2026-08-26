@@ -1,5 +1,5 @@
-import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
-// ws client (transitive dep of @fastify/websocket) — needed for `.terminate()`,
+﻿import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+// ws client (transitive dep of @fastify/websocket) â€” needed for `.terminate()`,
 // which abruptly destroys the connection and triggers the server socket error.
 import { WebSocket as WsClient } from '../../../node_modules/.pnpm/ws@8.21.3/node_modules/ws';
 import { logBus } from '../src/engine/logs.js';
@@ -10,7 +10,7 @@ const authMocks = vi.hoisted(() => ({
   // 'valid' = admin session; 'member' = non-admin (used for the RBAC test).
   resolveUser: vi.fn(
     async (_db: unknown, token: string) =>
-      token === 'valid' ? { id: 1, role: 'admin' as const } : token === 'member' ? { id: 2, role: 'member' as const } : null,
+      token === 'valid' ? { id: 1, isOperator: true as const } : token === 'member' ? { id: 2, isOperator: false as const } : null,
   ),
 }));
 vi.mock('../src/lib/auth.js', () => authMocks);
@@ -212,7 +212,7 @@ describe('deploys routes', () => {
     expect(res.statusCode).toBe(404);
   });
 
-  // ── cancel ────────────────────────────────────────────────────────────────
+  // â”€â”€ cancel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   it('cancels a queued deployment', async () => {
     const app = await buildTestApp({
       db: createFakeDb({
@@ -352,7 +352,7 @@ describe('deploys routes', () => {
     const ws = await openWs(wsUrl(port, '/services/9/deploys/99/logs'), 'ninedeploy.bearer.valid');
     sockets.push(ws);
     const messages = collectMessages(ws);
-    // No log file exists for deployment 99 → no backlog replay.
+    // No log file exists for deployment 99 â†’ no backlog replay.
     await new Promise((r) => setTimeout(r, 100));
     expect(messages).toEqual([]);
     ws.close();
@@ -360,7 +360,7 @@ describe('deploys routes', () => {
   });
 
   it('opens a container exec terminal over websocket', async () => {
-    // python3 pty probe unavailable → legacy pipe mode
+    // python3 pty probe unavailable â†’ legacy pipe mode
     execMocks.capture.mockRejectedValue(new Error('no python3'));
     const app = await buildTestApp({
       websocket: true,
@@ -494,8 +494,8 @@ describe('deploys routes', () => {
     });
     sockets.push(ws as unknown as WebSocket);
     await waitFor(() => childProc.children.length === 1);
-    // Write an invalid WebSocket frame (reserved opcode) → protocol error on
-    // the server socket → its 'error' handler runs child.kill().
+    // Write an invalid WebSocket frame (reserved opcode) â†’ protocol error on
+    // the server socket â†’ its 'error' handler runs child.kill().
     (ws as unknown as { _socket: { write: (b: Buffer) => void } })._socket.write(
       Buffer.from([0x0f, 0x80, 0x00, 0x00]),
     );

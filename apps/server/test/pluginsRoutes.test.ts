@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+﻿import { describe, expect, it } from 'vitest';
 import { pluginRoutes } from '../src/modules/plugins.js';
 import { asUser, buildTestApp, createFakeDb } from './helpers.js';
 
@@ -124,7 +124,7 @@ describe('Plugins HTTP API', () => {
     const listRes = await app.inject({
       method: 'GET',
       url: '/',
-      headers: asUser({ role: 'member' }),
+      headers: asUser({ isOperator: false }),
     });
     expect(listRes.statusCode).toBe(200);
     const plugins = listRes.json().plugins;
@@ -135,7 +135,7 @@ describe('Plugins HTTP API', () => {
     const disableRes = await app.inject({
       method: 'POST',
       url: '/test-notifier/disable',
-      headers: asUser({ role: 'admin' }),
+      headers: asUser({ isOperator: true }),
     });
     expect(disableRes.statusCode).toBe(200);
     expect(disableRes.json()).toEqual({ ok: true, id: 'test-notifier', status: 'disabled' });
@@ -144,7 +144,7 @@ describe('Plugins HTTP API', () => {
     const disableExistingRes = await app.inject({
       method: 'POST',
       url: '/test-notifier/disable',
-      headers: asUser({ role: 'admin' }),
+      headers: asUser({ isOperator: true }),
     });
     expect(disableExistingRes.statusCode).toBe(200);
 
@@ -155,7 +155,7 @@ describe('Plugins HTTP API', () => {
     const disableNewRes = await app.inject({
       method: 'POST',
       url: '/unregistered-plugin/disable',
-      headers: asUser({ role: 'admin' }),
+      headers: asUser({ isOperator: true }),
     });
     expect(disableNewRes.statusCode).toBe(200);
 
@@ -163,7 +163,7 @@ describe('Plugins HTTP API', () => {
     const enableRes = await app.inject({
       method: 'POST',
       url: '/test-notifier/enable',
-      headers: asUser({ role: 'admin' }),
+      headers: asUser({ isOperator: true }),
     });
     expect(enableRes.statusCode).toBe(200);
     expect(enableRes.json()).toEqual({ ok: true, id: 'test-notifier', status: 'active' });
@@ -172,7 +172,7 @@ describe('Plugins HTTP API', () => {
     const enableNewRes = await app.inject({
       method: 'POST',
       url: '/brand-new-plugin/enable',
-      headers: asUser({ role: 'admin' }),
+      headers: asUser({ isOperator: true }),
     });
     expect(enableNewRes.statusCode).toBe(200);
 
@@ -180,7 +180,7 @@ describe('Plugins HTTP API', () => {
     const memberMutateRes = await app.inject({
       method: 'POST',
       url: '/test-notifier/disable',
-      headers: asUser({ role: 'member' }),
+      headers: asUser({ isOperator: false }),
     });
     expect(memberMutateRes.statusCode).toBe(403);
 
@@ -188,7 +188,7 @@ describe('Plugins HTTP API', () => {
     const marketplaceRes = await app.inject({
       method: 'GET',
       url: '/marketplace',
-      headers: asUser({ role: 'member' }),
+      headers: asUser({ isOperator: false }),
     });
     expect(marketplaceRes.statusCode).toBe(200);
     const catalogJson = marketplaceRes.json();
@@ -199,7 +199,7 @@ describe('Plugins HTTP API', () => {
     const installRes = await app.inject({
       method: 'POST',
       url: '/install',
-      headers: asUser({ role: 'admin' }),
+      headers: asUser({ isOperator: true }),
       payload: { source: 'marketplace', target: 's3-backups' },
     });
     expect(installRes.statusCode).toBe(200);
@@ -209,7 +209,7 @@ describe('Plugins HTTP API', () => {
     const installInvalidRes = await app.inject({
       method: 'POST',
       url: '/install',
-      headers: asUser({ role: 'admin' }),
+      headers: asUser({ isOperator: true }),
       payload: { source: 'unknown-source', target: '' },
     });
     expect(installInvalidRes.statusCode).toBe(400);
@@ -218,7 +218,7 @@ describe('Plugins HTTP API', () => {
     const installNotFoundRes = await app.inject({
       method: 'POST',
       url: '/install',
-      headers: asUser({ role: 'admin' }),
+      headers: asUser({ isOperator: true }),
       payload: { source: 'marketplace', target: 'ghost-pkg' },
     });
     expect(installNotFoundRes.statusCode).toBe(400);
@@ -227,7 +227,7 @@ describe('Plugins HTTP API', () => {
     const inspectRes = await app.inject({
       method: 'GET',
       url: '/active-in-db/inspect',
-      headers: asUser({ role: 'member' }),
+      headers: asUser({ isOperator: false }),
     });
     expect(inspectRes.statusCode).toBe(200);
     expect(inspectRes.json()).toMatchObject({
@@ -242,7 +242,7 @@ describe('Plugins HTTP API', () => {
     const inspectKernelRes = await app.inject({
       method: 'GET',
       url: '/kernel-only-addon/inspect',
-      headers: asUser({ role: 'member' }),
+      headers: asUser({ isOperator: false }),
     });
     expect(inspectKernelRes.statusCode).toBe(200);
     expect(inspectKernelRes.json()).toMatchObject({
@@ -256,7 +256,7 @@ describe('Plugins HTTP API', () => {
     const inspectManifestRes = await app.inject({
       method: 'GET',
       url: '/manifest-plugin/inspect',
-      headers: asUser({ role: 'member' }),
+      headers: asUser({ isOperator: false }),
     });
     expect(inspectManifestRes.statusCode).toBe(200);
     expect(inspectManifestRes.json()).toMatchObject({
@@ -273,7 +273,7 @@ describe('Plugins HTTP API', () => {
     const inspectDbRes = await app.inject({
       method: 'GET',
       url: '/offline-plugin/inspect',
-      headers: asUser({ role: 'member' }),
+      headers: asUser({ isOperator: false }),
     });
     expect(inspectDbRes.statusCode).toBe(200);
     expect(inspectDbRes.json()).toMatchObject({
@@ -287,7 +287,7 @@ describe('Plugins HTTP API', () => {
     const inspectNotFoundRes = await app.inject({
       method: 'GET',
       url: '/non-existent-plugin/inspect',
-      headers: asUser({ role: 'member' }),
+      headers: asUser({ isOperator: false }),
     });
     expect(inspectNotFoundRes.statusCode).toBe(404);
 
@@ -295,7 +295,7 @@ describe('Plugins HTTP API', () => {
     const reloadRes = await app.inject({
       method: 'POST',
       url: '/active-in-db/reload',
-      headers: asUser({ role: 'admin' }),
+      headers: asUser({ isOperator: true }),
     });
     expect(reloadRes.statusCode).toBe(200);
     expect(reloadRes.json()).toEqual({ ok: true, id: 'active-in-db', status: 'active' });
@@ -304,7 +304,7 @@ describe('Plugins HTTP API', () => {
     const reloadKernelRes = await app.inject({
       method: 'POST',
       url: '/kernel-only-addon/reload',
-      headers: asUser({ role: 'admin' }),
+      headers: asUser({ isOperator: true }),
     });
     expect(reloadKernelRes.statusCode).toBe(200);
     expect(reloadKernelRes.json()).toEqual({ ok: true, id: 'kernel-only-addon', status: 'active' });
@@ -313,7 +313,7 @@ describe('Plugins HTTP API', () => {
     const reloadNotFoundRes = await app.inject({
       method: 'POST',
       url: '/non-existent-plugin/reload',
-      headers: asUser({ role: 'admin' }),
+      headers: asUser({ isOperator: true }),
     });
     expect(reloadNotFoundRes.statusCode).toBe(404);
 
@@ -321,7 +321,7 @@ describe('Plugins HTTP API', () => {
     const uninstallRes = await app.inject({
       method: 'POST',
       url: '/s3-backups/uninstall',
-      headers: asUser({ role: 'admin' }),
+      headers: asUser({ isOperator: true }),
     });
     expect(uninstallRes.statusCode).toBe(200);
     expect(uninstallRes.json()).toEqual({ ok: true, id: 's3-backups' });
@@ -330,7 +330,7 @@ describe('Plugins HTTP API', () => {
     const uninstallNotFoundRes = await app.inject({
       method: 'POST',
       url: '/ghost-plugin/uninstall',
-      headers: asUser({ role: 'admin' }),
+      headers: asUser({ isOperator: true }),
     });
     expect(uninstallNotFoundRes.statusCode).toBe(400);
 

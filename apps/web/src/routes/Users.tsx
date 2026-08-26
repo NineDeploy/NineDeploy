@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { KeyRound, Link2 as LinkIcon, Shield, Trash2, UserPlus, Users as UsersIcon } from 'lucide-react';
+import { KeyRound, Link2 as LinkIcon, ShieldCheck, Trash2, UserPlus, Users as UsersIcon, Building2 } from 'lucide-react';
 import { useState } from 'react';
 import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.js';
@@ -7,6 +7,14 @@ import { useToast } from '../components/Toast.js';
 import { Card, ConfirmDialog, EmptyState, ErrorCard, PageHeader, Skeleton, cn } from '../components/ui.js';
 import { formatDateTime, useCopy } from '../lib/format.js';
 
+/**
+ * People view (post team-overhaul).
+ *
+ * The legacy "Role" column is gone — there is no global `users.role` anymore.
+ * Every user is an operator when they own/admin at least one workspace; the
+ * column now shows that badge plus how many workspaces they belong to. Role
+ * changes go through the workspace membership page (`/workspaces`).
+ */
 export function Users() {
   const qc = useQueryClient();
   const { user: me } = useAuth();
@@ -14,19 +22,17 @@ export function Users() {
   const { copy } = useCopy();
   const list = useQuery({ queryKey: ['users'], queryFn: () => api.users.list() });
 
-  // ── Admin user creation ──────────────────────────────────────────────────
+  // ── Operator user creation ───────────────────────────────────────────────
   const [showAdd, setShowAdd] = useState(false);
   const [addEmail, setAddEmail] = useState('');
   const [addName, setAddName] = useState('');
   const [addPassword, setAddPassword] = useState('');
-  const [addRole, setAddRole] = useState<'admin' | 'member'>('member');
   const createUser = useMutation({
     mutationFn: () =>
       api.users.create({
         email: addEmail.trim(),
         password: addPassword,
         name: addName.trim() || undefined,
-        role: addRole,
       }),
     onSuccess: (u) => {
       qc.invalidateQueries({ queryKey: ['users'] });
@@ -34,8 +40,7 @@ export function Users() {
       setAddEmail('');
       setAddName('');
       setAddPassword('');
-      setAddRole('member');
-      toast(`User ${u.email} created`, 'success');
+      toast(`User ${u.email} created — invite them into a workspace from /workspaces`, 'success');
     },
     onError: () => toast('Could not create the user (email taken?)', 'error'),
   });
@@ -50,14 +55,7 @@ export function Users() {
     }
     createUser.mutate();
   };
-  const setRole = useMutation({
-    mutationFn: ({ id, role }: { id: number; role: 'admin' | 'member' }) => api.users.setRole(id, role),
-    onSuccess: (_res, vars) => {
-      qc.invalidateQueries({ queryKey: ['users'] });
-      toast(`Role changed to ${vars.role}`, 'success');
-    },
-    onError: () => toast('Could not change the role', 'error'),
-  });
+
   const remove = useMutation({
     mutationFn: (id: number) => api.users.remove(id),
     onSuccess: () => {
@@ -67,7 +65,7 @@ export function Users() {
     onError: () => toast('Could not delete the user', 'error'),
   });
 
-  // ── Admin password reset ────────────────────────────────────────────────
+  // ── Operator password reset ────────────────────────────────────────────
   const [resetFor, setResetFor] = useState<number | null>(null);
   const [resetPw, setResetPw] = useState('');
   const resetPassword = useMutation({
@@ -88,7 +86,7 @@ export function Users() {
     resetPassword.mutate({ id: resetFor as number, newPassword: resetPw });
   };
 
-  // ── One-time reset link (works without an email channel) ────────────────
+  // ── One-time reset link (works without an email channel) ──────────────
   const [revealedLink, setRevealedLink] = useState<{ url: string; expiresAt: string } | null>(null);
   const [pendingDelete, setPendingDelete] = useState<{ id: number; email: string } | null>(null);
   const resetLink = useMutation({
@@ -106,8 +104,8 @@ export function Users() {
     <div className="max-w-3xl">
       <PageHeader
         icon={<UsersIcon size={18} />}
-        title="Users"
-        subtitle="Manage team members and roles."
+        title="People"
+        subtitle="Manage operators and team members. Roles live in workspaces, not here."
       />
 
       {revealedLink && (
@@ -132,7 +130,7 @@ export function Users() {
         </Card>
       )}
 
-      {/* Add-user form (admin) */}
+      {/* Add-user form (operator) */}
       <Card className="mb-4">
         <div className="p-4">
           <div className="flex items-center justify-between gap-3">
@@ -157,12 +155,6 @@ export function Users() {
               <input value={addPassword} onChange={(e) => setAddPassword(e.target.value)}
                 type="password" placeholder="password (min 8)" aria-label="New user password"
                 className="w-44 rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-1.5 text-xs outline-none focus:border-indigo-500" />
-              <select value={addRole} onChange={(e) => setAddRole(e.target.value as 'admin' | 'member')}
-                aria-label="New user role"
-                className="rounded-lg border border-slate-700 bg-slate-900/60 px-2 py-1.5 text-xs outline-none focus:border-indigo-500">
-                <option value="member">member</option>
-                <option value="admin">admin</option>
-              </select>
               <button type="button" onClick={submitCreate} disabled={createUser.isPending}
                 className="rounded-lg bg-[var(--nd-accent)] px-4 py-1.5 text-xs font-semibold text-black transition hover:brightness-110 disabled:opacity-50">
                 {createUser.isPending ? 'Creating…' : 'Create user'}
@@ -184,7 +176,8 @@ export function Users() {
             <thead>
               <tr className="border-b border-white/5 text-left text-xs uppercase tracking-wide text-slate-500">
                 <th className="px-5 py-3 font-medium">User</th>
-                <th className="px-5 py-3 font-medium">Role</th>
+                <th className="px-5 py-3 font-medium">Workspaces</th>
+                <th className="px-5 py-3 font-medium">Access</th>
                 <th className="px-5 py-3" />
               </tr>
             </thead>
@@ -207,18 +200,24 @@ export function Users() {
                       </div>
                     </td>
                     <td className="px-5 py-3">
-                      <button type="button"
-                        onClick={() => setRole.mutate({ id: u.id, role: u.role === 'admin' ? 'member' : 'admin' })}
-                        disabled={isMe}
+                      <span className="inline-flex items-center gap-1.5 text-xs text-slate-300">
+                        <Building2 size={11} className="text-slate-500" />
+                        {u.workspaceCount} {u.workspaceCount === 1 ? 'workspace' : 'workspaces'}
+                      </span>
+                    </td>
+                    <td className="px-5 py-3">
+                      <span
                         className={cn(
-                          'inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset transition',
-                          u.role === 'admin' ? 'bg-indigo-500/15 text-indigo-300 ring-indigo-500/20' : 'bg-slate-500/15 text-slate-300 ring-slate-500/20',
-                          isMe ? 'cursor-default opacity-60' : 'hover:brightness-125',
+                          'inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset',
+                          u.isOperator
+                            ? 'bg-indigo-500/15 text-indigo-300 ring-indigo-500/20'
+                            : 'bg-slate-500/15 text-slate-300 ring-slate-500/20',
                         )}
-                        title={isMe ? 'Cannot change your own role' : `Toggle to ${u.role === 'admin' ? 'member' : 'admin'}`}
+                        title={u.isOperator ? 'Owner/admin in at least one workspace' : 'No operator role'}
                       >
-                        <Shield size={11} /> {u.role}
-                      </button>
+                        {u.isOperator ? <ShieldCheck size={11} /> : null}
+                        {u.isOperator ? 'Operator' : 'Member'}
+                      </span>
                     </td>
                     <td className="px-5 py-3 text-right">
                       <div className="flex items-center justify-end gap-3">
@@ -286,14 +285,14 @@ export function Users() {
         </Card>
       )}
       <p className="mt-3 text-xs text-slate-600">
-        Admins can create users directly above, or new users can self-register at{' '}
-        <code className="text-slate-400">/v1/auth/register</code> (when open registration is enabled). Toggle role badges to promote/demote. The last admin cannot be removed.
+        New users are created without any workspace membership. Open{' '}
+        <code className="text-slate-400">/workspaces</code> to invite them into a workspace and pick a role.
       </p>
 
       <ConfirmDialog
         open={pendingDelete != null}
         title="Delete user"
-        message={`Delete ${pendingDelete?.email}? Their sessions are revoked and their deployments stay owned by the admins.`}
+        message={`Delete ${pendingDelete?.email}? Their sessions are revoked. Workspace memberships and ownership of deployed services are removed.`}
         confirmLabel="Delete"
         onConfirm={() => pendingDelete && remove.mutate(pendingDelete.id)}
         onClose={() => setPendingDelete(null)}

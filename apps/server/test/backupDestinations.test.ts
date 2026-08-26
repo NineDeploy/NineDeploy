@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+﻿import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { backupDestinationRoutes } from '../src/modules/backupDestinations.js';
 import { asUser, buildTestApp, createFakeDb } from './helpers.js';
 
@@ -39,7 +39,7 @@ describe('backup destinations routes', () => {
   });
 
   it('requires admin', async () => {
-    const app = await appWith({ findFirst: { users: { id: 2, role: 'member' } } });
+    const app = await appWith({ findFirst: { users: { id: 2, isOperator: false } } });
     const res = await app.inject({ method: 'GET', url: '/backup-destinations', headers: asMember() });
     expect(res.statusCode).toBe(403);
   });

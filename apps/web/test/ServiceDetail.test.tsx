@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+﻿import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { screen, waitFor, fireEvent, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Route, Routes } from 'react-router';
@@ -7,7 +7,7 @@ import { api, getToken } from '../src/lib/api.js';
 import { renderRoute, renderWithProviders, mockOf } from './helpers.js';
 
 vi.mock('../src/lib/api.js', async () => {
-  // Must be './apiMock.js', not './helpers.js' — see the note in apiMock.ts.
+  // Must be './apiMock.js', not './helpers.js' â€” see the note in apiMock.ts.
   const { createFakeApiModule } = await import('./apiMock.js');
   return createFakeApiModule();
 });
@@ -18,7 +18,7 @@ vi.mock('../src/lib/useDeployLogs.js', () => ({
 
 // H-3: lifecycle hooks execute on the host, so the API admits admins only and
 // the settings form must not offer them to a member. Role is mutable per test.
-const authMock = vi.hoisted(() => ({ user: { id: 1, role: 'admin', email: 'a@test', name: 'A' } }));
+const authMock = vi.hoisted(() => ({ user: { id: 1, isOperator: true, email: 'a@test', name: 'A' } }));
 vi.mock('../src/lib/auth.js', () => ({ AuthProvider: ({ children }: { children?: React.ReactNode }) => children, useAuth: () => authMock }));
 
 const toastSpy = vi.hoisted(() => ({ toast: vi.fn() }));
@@ -110,7 +110,7 @@ const webhooks = [
 describe('ServiceDetail', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    authMock.user = { id: 1, role: 'admin', email: 'a@test', name: 'A' };
+    authMock.user = { id: 1, isOperator: true, email: 'a@test', name: 'A' };
     toastSpy.toast.mockClear();
     vi.stubGlobal('confirm', vi.fn(() => true));
     vi.stubGlobal('fetch', vi.fn());
@@ -139,7 +139,7 @@ describe('ServiceDetail', () => {
 
   const openTab = async (label: string) => {
     // Tab labels carry suffixes ("Activity Logs", "Network & Domains",
-    // "Danger Zone", …) — match on the leading word the tests use.
+    // "Danger Zone", â€¦) â€” match on the leading word the tests use.
     const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     fireEvent.click(await screen.findByRole('tab', { name: new RegExp(`^${escaped}(\\s|$)`) }));
   };
@@ -153,7 +153,7 @@ describe('ServiceDetail', () => {
   it('renders the repository analysis card and refreshes it', async () => {
     mockOf(api.insights.get).mockResolvedValue({
       framework: {
-        id: 'next', name: 'Next.js', emoji: '▲', category: 'ssr', port: 3000,
+        id: 'next', name: 'Next.js', emoji: 'â–²', category: 'ssr', port: 3000,
         installCmd: 'pnpm install', buildCmd: 'pnpm build', startCmd: 'pnpm start',
         env: [{ key: 'NODE_ENV', value: 'production' }], notes: [],
       },
@@ -182,7 +182,7 @@ describe('ServiceDetail', () => {
     expect(screen.getAllByText('ssr').length).toBeGreaterThan(0);
     expect(screen.getByText('Dockerfile')).toBeInTheDocument();
     expect(screen.getByText('monorepo')).toBeInTheDocument();
-    expect(screen.getByText('40 prod · 9 dev')).toBeInTheDocument();
+    expect(screen.getByText('40 prod Â· 9 dev')).toBeInTheDocument();
     expect(screen.getByText('next build')).toBeInTheDocument();
     expect(screen.getByText('abcdef123456')).toBeInTheDocument();
 
@@ -210,7 +210,7 @@ describe('ServiceDetail', () => {
     fireEvent.click(buildChip);
     // Clicking a stage without a marker is a no-op (no crash, no scroll).
     fireEvent.click(screen.getByRole('button', { name: /^Cleanup/ }));
-    expect(screen.queryByText('Connecting…')).not.toBeInTheDocument();
+    expect(screen.queryByText('Connectingâ€¦')).not.toBeInTheDocument();
   });
 
   it('clones the service and reports clone failures', async () => {
@@ -293,7 +293,7 @@ describe('ServiceDetail', () => {
     // While loading, the card says so.
     mockOf(api.insights.get).mockReturnValue(new Promise(() => {}) as never);
     renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
-    expect(await screen.findByText('Loading analysis…')).toBeInTheDocument();
+    expect(await screen.findByText('Loading analysisâ€¦')).toBeInTheDocument();
   });
 
   it('renders service header with status, auto URL and deploy actions', async () => {
@@ -319,8 +319,8 @@ describe('ServiceDetail', () => {
     // deployments + the live log live under the Deploys tab (active = latest)
     await openTab('Deploys');
     expect(await screen.findByText(/Deployment #5/)).toBeInTheDocument();
-    // commitSha fallback: deploy #4 has null commitSha -> '—'
-    expect(screen.getAllByText('—').length).toBeGreaterThan(0);
+    // commitSha fallback: deploy #4 has null commitSha -> 'â€”'
+    expect(screen.getAllByText('â€”').length).toBeGreaterThan(0);
     // cards live under the Environment tab
     await openTab('Environment');
     expect(screen.getByTestId('env-card')).toBeInTheDocument();
@@ -339,7 +339,7 @@ describe('ServiceDetail', () => {
     mockOf(api.deploys.trigger).mockReturnValue(new Promise(() => {}) as never);
     renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
     fireEvent.click(await screen.findByRole('button', { name: 'Deploy' }));
-    expect(await screen.findByText('Triggering…')).toBeInTheDocument();
+    expect(await screen.findByText('Triggeringâ€¦')).toBeInTheDocument();
   });
 
   it('polls faster while the service is deploying', async () => {
@@ -412,16 +412,16 @@ describe('ServiceDetail', () => {
     renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
     await openTab('Deploys');
     await screen.findByText((_content, el) => el?.textContent === 'line one\nline two');
-    expect(screen.queryByText('Connecting…')).not.toBeInTheDocument();
+    expect(screen.queryByText('Connectingâ€¦')).not.toBeInTheDocument();
   });
 
   it('renders an empty log panel when open with no lines', async () => {
     mockOf((await import('../src/lib/useDeployLogs.js')).useDeployLogs).mockReturnValue({ lines: '', open: true });
     renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
     await openTab('Deploys');
-    // open=true with empty lines renders '' instead of 'Connecting…'
+    // open=true with empty lines renders '' instead of 'Connectingâ€¦'
     await screen.findByText(/Deployment #5/);
-    expect(screen.queryByText('Connecting…')).not.toBeInTheDocument();
+    expect(screen.queryByText('Connectingâ€¦')).not.toBeInTheDocument();
   });
 
   it('opens and closes the exec terminal', async () => {
@@ -500,7 +500,7 @@ describe('ServiceDetail', () => {
     expect(await screen.findByText('No webhooks. Create one and add it to GitHub/GitLab.')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /New/ }));
     await waitFor(() => expect(api.webhooks.create).toHaveBeenCalledWith(1, undefined));
-    expect(await screen.findByText('Copy these now — the secret is shown only once.')).toBeInTheDocument();
+    expect(await screen.findByText('Copy these now â€” the secret is shown only once.')).toBeInTheDocument();
     expect(screen.getByText('https://hook.example.com/3')).toBeInTheDocument();
     expect(screen.getByText('newsecret')).toBeInTheDocument();
     // copy the URL from the revealed row
@@ -580,12 +580,12 @@ describe('ServiceDetail', () => {
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Cancel failed', 'error'));
   });
 
-  it('toggles the www→apex redirect from the network tab', async () => {
+  it('toggles the wwwâ†’apex redirect from the network tab', async () => {
     mockOf(api.domains.update).mockResolvedValue(domains[0] as never);
     renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
     await openTab('Network');
     const wwwBadge = await screen.findByText('www');
-    expect(wwwBadge).toHaveAttribute('title', 'Redirect www. to the apex host — click to enable');
+    expect(wwwBadge).toHaveAttribute('title', 'Redirect www. to the apex host â€” click to enable');
     fireEvent.click(wwwBadge);
     await waitFor(() => expect(api.domains.update).toHaveBeenCalledWith(1, 1, { redirectWww: true }));
     mockOf(api.domains.update).mockRejectedValue(new Error('x') as never);
@@ -610,7 +610,7 @@ describe('ServiceDetail', () => {
     renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
     await openTab('Network');
     const badge = await screen.findByText('www');
-    expect(badge).toHaveAttribute('title', 'www→apex redirect on — click to disable');
+    expect(badge).toHaveAttribute('title', 'wwwâ†’apex redirect on â€” click to disable');
   });
 
   it('configures domain security middlewares from the security drawer', async () => {
@@ -780,7 +780,7 @@ describe('ServiceDetail', () => {
     await screen.findByText('Danger zone');
     await user.type(screen.getByLabelText('Confirm service name'), service.name);
     fireEvent.click(screen.getByRole('button', { name: /Delete service/i }));
-    expect(await screen.findByText('Deleting…')).toBeInTheDocument();
+    expect(await screen.findByText('Deletingâ€¦')).toBeInTheDocument();
   });
 
   it('keeps the delete button disabled for a mismatched name', async () => {
@@ -949,7 +949,7 @@ describe('ServiceDetail', () => {
         }),
       ),
     );
-    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Settings saved — redeploy to apply', 'success'));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Settings saved â€” redeploy to apply', 'success'));
   });
 
   it('reports settings save failures', async () => {
@@ -976,7 +976,7 @@ describe('ServiceDetail', () => {
     await user.type(memInput, '1024');
     await user.click(screen.getByRole('button', { name: /Save limits/ }));
     await waitFor(() => expect(api.limits.setService).toHaveBeenCalledWith(1, { cpuShares: 2048, memLimitMb: 1024 }));
-    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Limits saved — applied on next deploy', 'success'));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Limits saved â€” applied on next deploy', 'success'));
   });
 
   it('saves PR preview environments settings and handles field changes', async () => {
@@ -1040,7 +1040,7 @@ describe('ServiceDetail', () => {
 
     const saveBtn = screen.getByRole('button', { name: /Save PR preview settings/ });
     await user.click(saveBtn);
-    expect(screen.getByText('Saving…')).toBeInTheDocument();
+    expect(screen.getByText('Savingâ€¦')).toBeInTheDocument();
 
     expect(api.services.update).toHaveBeenCalledWith(1, {
       previewDeploymentsEnabled: true,
@@ -1080,7 +1080,7 @@ describe('ServiceDetail', () => {
     renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
     await openTab('Network');
     const badge = await screen.findByText('HTTP');
-    expect(badge).toHaveAttribute('title', 'HTTPS off — click to issue a certificate');
+    expect(badge).toHaveAttribute('title', 'HTTPS off â€” click to issue a certificate');
     expect(screen.getByRole('link', { name: /app\.example\.com/ })).toHaveAttribute('href', 'http://app.example.com/api');
     expect(screen.getByText('/api')).toBeInTheDocument();
     fireEvent.click(badge);
@@ -1107,7 +1107,7 @@ describe('ServiceDetail', () => {
     renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
     // Overview: runtime card shows the not-deployed / fallback values.
     expect(await screen.findByText('not deployed')).toBeInTheDocument();
-    expect(screen.getAllByText('—').length).toBeGreaterThanOrEqual(3);
+    expect(screen.getAllByText('â€”').length).toBeGreaterThanOrEqual(3);
     expect(screen.getAllByText('unlimited').length).toBe(2);
     expect(screen.getAllByText('nginx:latest').length).toBeGreaterThanOrEqual(2);
     // Settings: build config defaults when no build row exists.
@@ -1136,7 +1136,7 @@ describe('ServiceDetail', () => {
     renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
     await openTab('Settings');
     fireEvent.click(await screen.findByRole('button', { name: /Save settings/ }));
-    expect(await screen.findByText('Saving…')).toBeInTheDocument();
+    expect(await screen.findByText('Savingâ€¦')).toBeInTheDocument();
   });
 
   it('shows the service-filtered activity trail (server-side ?entity=)', async () => {
@@ -1185,7 +1185,7 @@ describe('ServiceDetail', () => {
     renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
     await openTab('Settings');
     fireEvent.click(await screen.findByRole('button', { name: /Save limits/ }));
-    expect(await screen.findByText('Saving…')).toBeInTheDocument();
+    expect(await screen.findByText('Savingâ€¦')).toBeInTheDocument();
   });
 
   it('exports the bundle from the activity tab and reports failures', async () => {
@@ -1229,12 +1229,12 @@ describe('ServiceDetail', () => {
     expect(document.querySelector('.animate-pulse')).not.toBeNull();
     first.unmount();
 
-    // First recorded deployment — nothing to compare against.
+    // First recorded deployment â€” nothing to compare against.
     mockOf(api.deploys.configDiff).mockResolvedValueOnce({ previousDeploymentId: null, changed: false, diff: '' } as never);
     renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
     await openTab('Deploys');
     fireEvent.click(await screen.findByText('Config diff vs previous deploy'));
-    expect(await screen.findByText('First recorded deployment — nothing to compare against.')).toBeInTheDocument();
+    expect(await screen.findByText('First recorded deployment â€” nothing to compare against.')).toBeInTheDocument();
   });
 
   it('renders an unchanged and a changed config diff', async () => {
@@ -1243,7 +1243,7 @@ describe('ServiceDetail', () => {
     const first = renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
     await openTab('Deploys');
     fireEvent.click(await screen.findByText('Config diff vs previous deploy'));
-    expect(await screen.findByText('No changes against #4 — same build config and env keys.')).toBeInTheDocument();
+    expect(await screen.findByText('No changes against #4 â€” same build config and env keys.')).toBeInTheDocument();
     first.unmount();
 
     // Changed: the diff lines render with add/remove colouring.
@@ -1281,8 +1281,8 @@ describe('ServiceDetail', () => {
       const { unmount } = renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
       await openTab('Danger');
       expect(await screen.findByText(c.expected)).toBeInTheDocument();
-      // inUse=false -> the '· in use' suffix is omitted
-      expect(screen.queryByText(/· in use/)).not.toBeInTheDocument();
+      // inUse=false -> the 'Â· in use' suffix is omitted
+      expect(screen.queryByText(/Â· in use/)).not.toBeInTheDocument();
       unmount();
     }
   });
@@ -1400,7 +1400,7 @@ describe('ServiceDetail', () => {
 
     const { unmount } = renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
     await openTab('Network');
-    expect(await screen.findByText('→ :8080')).toBeInTheDocument();
+    expect(await screen.findByText('â†’ :8080')).toBeInTheDocument();
 
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: /Change Port/i }));
@@ -1408,11 +1408,11 @@ describe('ServiceDetail', () => {
     fireEvent.change(portInput, { target: { value: '9000' } });
     fireEvent.submit(portInput.closest('form')!);
 
-    expect(await screen.findByRole('button', { name: /Saving…/i })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /Savingâ€¦/i })).toBeInTheDocument();
     resolveUpdate({ id: 1, publishedPort: 9000 });
 
     await waitFor(() => {
-      expect(screen.queryByRole('button', { name: /Saving…/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /Savingâ€¦/i })).not.toBeInTheDocument();
     });
     unmount();
   });
@@ -1508,7 +1508,7 @@ describe('ServiceDetail', () => {
 
   it('renders sparse analysis facts with compose and no commit metadata', async () => {
     mockOf(api.insights.get).mockResolvedValue({
-      framework: { id: 'node', name: 'Node.js', emoji: '⬢', category: 'runtime', port: 4000, installCmd: 'npm i', buildCmd: null, startCmd: 'node .', env: [], notes: [] },
+      framework: { id: 'node', name: 'Node.js', emoji: 'â¬¢', category: 'runtime', port: 4000, installCmd: 'npm i', buildCmd: null, startCmd: 'node .', env: [], notes: [] },
       language: 'JavaScript',
       packageManager: null,
       nodeVersion: null,
@@ -1538,9 +1538,9 @@ describe('ServiceDetail', () => {
     renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
     await screen.findByRole('heading', { name: 'api' });
     fireEvent.click(screen.getByTitle('Clone service configuration and environment variables'));
-    expect(await screen.findByText('Cloning…')).toBeInTheDocument();
+    expect(await screen.findByText('Cloningâ€¦')).toBeInTheDocument();
     hold.resolve({ id: 9, name: 'api-clone' });
-    await waitFor(() => expect(screen.queryByText('Cloning…')).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText('Cloningâ€¦')).not.toBeInTheDocument());
   });
 
   it('opens tabs from the URL query and gates the terminal on a runtime container', async () => {
@@ -1569,7 +1569,7 @@ describe('ServiceDetail', () => {
     await waitFor(() =>
       expect(api.services.update).toHaveBeenCalledWith(1, { port: 8080 }));
     await waitFor(() =>
-      expect(toastSpy.toast).toHaveBeenCalledWith('Container port :8080 saved — Traefik routing updated', 'success'));
+      expect(toastSpy.toast).toHaveBeenCalledWith('Container port :8080 saved â€” Traefik routing updated', 'success'));
 
     // An invalid port shows the inline hint and blocks submission.
     await user.clear(port);
@@ -1595,7 +1595,7 @@ describe('ServiceDetail', () => {
     await user.clear(port);
     await user.type(port, '8081');
     fireEvent.click(screen.getByRole('button', { name: 'Save Port' }));
-    expect(await screen.findByText('Saving…')).toBeInTheDocument();
+    expect(await screen.findByText('Savingâ€¦')).toBeInTheDocument();
   });
 
   it('shows zero live usage for an online service without container stats', async () => {
@@ -1644,6 +1644,6 @@ describe('ServiceDetail', () => {
     // placeholders, and a held refresh shows the pending label.
     expect((await screen.findAllByText('Offline')).length).toBeGreaterThanOrEqual(2);
     fireEvent.click(screen.getByRole('button', { name: 'Analyze now' }));
-    expect(await screen.findByText('Analyzing…')).toBeInTheDocument();
+    expect(await screen.findByText('Analyzingâ€¦')).toBeInTheDocument();
   });
 });

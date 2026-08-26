@@ -1,4 +1,4 @@
-import Fastify from 'fastify';
+﻿import Fastify from 'fastify';
 import { describe, expect, it, vi } from 'vitest';
 import { signAccessToken, signRefreshToken } from '../../src/lib/jwt.js';
 import { apiTokens } from '@ninedeploy/db';
@@ -8,15 +8,25 @@ const authPlugin = (await import('../../src/plugins/auth.js')).default;
 
 function makeDb(
   rows: Array<{ userId: number; expiresAt: Date | null } | undefined>,
-  user?: { id: number; role: 'admin' | 'member'; tokenVersion?: number },
+  user?: { id: number; isOperator?: boolean; tokenVersion?: number },
 ) {
   const findFirst = vi.fn(async () => (rows.length ? rows[0] : undefined));
   const userFindFirst = vi.fn(async () => (user ? { tokenVersion: 0, ...user } : undefined));
+  const workspaceMembersFindMany = vi.fn(async () =>
+    // If the user is an operator, return an owner membership; otherwise empty.
+    user?.isOperator
+      ? [{ workspaceId: 1, userId: user.id, role: 'owner', createdAt: new Date(), updatedAt: new Date() }]
+      : [],
+  );
   const update = vi.fn(() => ({
     set: vi.fn(() => ({ where: vi.fn(async () => undefined) })),
   }));
   return {
-    query: { apiTokens: { findFirst }, users: { findFirst: userFindFirst } },
+    query: {
+      apiTokens: { findFirst },
+      users: { findFirst: userFindFirst },
+      workspaceMembers: { findMany: workspaceMembersFindMany },
+    },
     update,
     findFirst,
     set: () => undefined,
@@ -52,7 +62,7 @@ describe('auth plugin', () => {
   });
 
   it('sets req.user for a valid access JWT and skips the token stamp', async () => {
-    const db = makeDb([], { id: 42, role: 'admin' });
+    const db = makeDb([], { id: 42, isOperator: true });
     const app = await buildApp(db);
     const token = await signAccessToken(42, 0);
     const res = await app.inject({
@@ -61,7 +71,7 @@ describe('auth plugin', () => {
       headers: { authorization: `Bearer ${token}` },
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ user: { id: 42, role: 'admin' } });
+    expect(res.json()).toEqual({ user: { id: 42, isOperator: true } });
     expect(db.update).not.toHaveBeenCalled();
     await app.close();
   });
@@ -90,7 +100,7 @@ describe('auth plugin', () => {
   });
 
   it('resolves an API token through the db and stamps lastUsedAt', async () => {
-    const db = makeDb([{ userId: 7, expiresAt: null }], { id: 7, role: 'admin' });
+    const db = makeDb([{ userId: 7, expiresAt: null }], { id: 7, isOperator: true });
     const app = await buildApp(db);
     const res = await app.inject({
       method: 'GET',
@@ -98,7 +108,7 @@ describe('auth plugin', () => {
       headers: { authorization: 'Bearer api-token-no-dots' },
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ user: { id: 7, role: 'admin' } });
+    expect(res.json()).toEqual({ user: { id: 7, isOperator: true } });
     expect(db.findFirst).toHaveBeenCalled();
     expect(db.update).toHaveBeenCalledWith(apiTokens);
     const setFn = db.update.mock.results[0]!.value.set;
@@ -135,7 +145,7 @@ describe('auth plugin', () => {
   });
 
   it('requireAdmin allows an admin through', async () => {
-    const db = makeDb([], { id: 1, role: 'admin' });
+    const db = makeDb([], { id: 1, isOperator: true });
     const app = await buildApp(db);
     const token = await signAccessToken(1, 0);
     const res = await app.inject({ method: 'DELETE', url: '/admin', headers: { authorization: `Bearer ${token}` } });
@@ -144,7 +154,7 @@ describe('auth plugin', () => {
   });
 
   it('requireAdmin rejects a member with 403', async () => {
-    const db = makeDb([], { id: 2, role: 'member' });
+    const db = makeDb([], { id: 2, isOperator: false });
     const app = await buildApp(db);
     const token = await signAccessToken(2, 0);
     const res = await app.inject({ method: 'DELETE', url: '/admin', headers: { authorization: `Bearer ${token}` } });

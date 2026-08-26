@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+﻿import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Volumes } from '../src/routes/Volumes.js';
@@ -6,7 +6,7 @@ import { api } from '../src/lib/api.js';
 import { renderWithProviders, mockOf } from './helpers.js';
 
 vi.mock('../src/lib/api.js', async () => {
-  // Must be './apiMock.js', not './helpers.js' — see the note in apiMock.ts.
+  // Must be './apiMock.js', not './helpers.js' â€” see the note in apiMock.ts.
   const { createFakeApiModule } = await import('./apiMock.js');
   return createFakeApiModule();
 });
@@ -59,7 +59,7 @@ describe('Volumes', () => {
     } as never);
     renderWithProviders(<Volumes />);
     await screen.findByText('No volumes');
-    expect(screen.getByText((_, el) => el?.textContent === '0 volumes · 0 B used')).toBeInTheDocument();
+    expect(screen.getByText((_, el) => el?.textContent === '0 volumes Â· 0 B used')).toBeInTheDocument();
     // Docker resources card with metrics
     expect(screen.getByText('ninedeploy')).toBeInTheDocument();
     expect(screen.getByText('3/5 active')).toBeInTheDocument();
@@ -80,8 +80,8 @@ describe('Volumes', () => {
     expect(screen.getByText('100 B')).toBeInTheDocument();
     expect(screen.getByText('Retained')).toBeInTheDocument();
     expect(screen.getByText('no active owner')).toBeInTheDocument();
-    expect(screen.getAllByText('attached · stopped').length).toBe(2);
-    expect(screen.getByText('retained · reusable')).toBeInTheDocument();
+    expect(screen.getAllByText('attached Â· stopped').length).toBe(2);
+    expect(screen.getByText('retained Â· reusable')).toBeInTheDocument();
     // Owned volumes deep-link to their owner's detail page.
     expect(screen.getByRole('link', { name: /DB/ })).toHaveAttribute('href', '/databases/5');
     expect(screen.getByRole('link', { name: /Service/ })).toHaveAttribute('href', '/services/7');
@@ -126,7 +126,7 @@ describe('Volumes', () => {
     mockOf(api.system.resources).mockResolvedValue({} as never);
     renderWithProviders(<Volumes />);
     await screen.findByText('busy');
-    expect(screen.getByText('in use · locked')).toBeInTheDocument();
+    expect(screen.getByText('in use Â· locked')).toBeInTheDocument();
     expect(screen.queryByTitle('Delete volume (destructive)')).not.toBeInTheDocument();
   });
 
@@ -148,7 +148,7 @@ describe('Volumes', () => {
     ] as never);
     mockOf(api.system.resources).mockResolvedValue({} as never);
     renderWithProviders(<Volumes />);
-    const lock = await screen.findByTitle('Attached to a running workload — stop it first');
+    const lock = await screen.findByTitle('Attached to a running workload â€” stop it first');
     expect(lock).toBeInTheDocument();
   });
 

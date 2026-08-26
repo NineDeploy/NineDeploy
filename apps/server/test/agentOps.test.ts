@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+﻿import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { runOp } from '../src/agent.js';
 
 const spawnMock = vi.hoisted(() => vi.fn(async () => 0));
