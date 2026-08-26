@@ -31,12 +31,18 @@ const mysqlTemplate = {
 const service = (over: Record<string, unknown> = {}) => svcRow({
   id: 7,
   ownerUserId: 1,
-  projectId: 2,
   name: 'WordPress',
   slug: 'wordpress',
   templateId: 'wordpress',
   ...over,
 }) as never;
+
+/**
+ * Services link to projects through `service_projects` now, so the managed
+ * database this template provisions inherits the service's *first* linked
+ * project rather than a `services.projectId` column.
+ */
+const linkedToProject2 = { serviceProjects: [{ serviceId: 7, projectId: 2 }] };
 
 describe('template dependency recovery', () => {
   beforeEach(() => {
@@ -73,6 +79,7 @@ describe('template dependency recovery', () => {
         },
       },
       update: { databases: (value) => { updates.push(value as Record<string, unknown>); return [value as Record<string, unknown>]; } },
+      findMany: linkedToProject2,
     });
     const log = vi.fn();
 
@@ -88,7 +95,7 @@ describe('template dependency recovery', () => {
   it('restarts an owned attached database without duplicating its attachment', async () => {
     const existing = dbRow({ id: 11, ownerUserId: 1, projectId: 2, engine: 'mysql' });
     const db = createFakeDb({
-      findMany: { database_attachments: [{ serviceId: 7, databaseId: 11 }] },
+      findMany: { database_attachments: [{ serviceId: 7, databaseId: 11 }], ...linkedToProject2 },
       findFirst: { databases: existing },
       insert: { database_attachments: () => { throw new Error('must not duplicate'); } },
     });
@@ -108,7 +115,7 @@ describe('template dependency recovery', () => {
     const retained = dbRow({ id: 12, slug: 'wordpress-db', ownerUserId: 1, projectId: 2, engine: 'mysql' });
     let calls = 0;
     const db = createFakeDb({
-      findMany: { database_attachments: [{ serviceId: 7, databaseId: 99 }] },
+      findMany: { database_attachments: [{ serviceId: 7, databaseId: 99 }], ...linkedToProject2 },
       findFirst: { databases: () => (++calls === 1 ? dbRow({ id: 99, engine: 'postgres' }) : retained) },
     });
     await expect(reconcileTemplateDependencies(db, service(), vi.fn())).resolves.toMatchObject({

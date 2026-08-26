@@ -47,6 +47,7 @@ backups
 .zcode/
 # test coverage artifacts
 coverage
+.cov-tmp
 .mimosa/
 
 .dfmt/

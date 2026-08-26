@@ -10,7 +10,7 @@ Deploy apps from Git or container registries with zero downtime, automatic rollb
 [![Version](https://img.shields.io/badge/Version-0.3.0-blue.svg)](./CHANGELOG.md)
 [![TypeScript](https://img.shields.io/badge/TypeScript-7-blue.svg)](https://www.typescriptlang.org)
 [![Docker](https://img.shields.io/badge/Docker-required-blue.svg)](https://docker.com)
-[![Tests](https://img.shields.io/badge/Tests-4397%20passing-brightgreen.svg)](https://github.com/NineDeploy/NineDeploy)
+[![Tests](https://img.shields.io/badge/Tests-4405%20passing-brightgreen.svg)](https://github.com/NineDeploy/NineDeploy)
 [![CI](https://github.com/NineDeploy/NineDeploy/actions/workflows/ci.yml/badge.svg)](https://github.com/NineDeploy/NineDeploy/actions/workflows/ci.yml)
 
 [Website](https://ninedeploy.com) • [Documentation](./docs/QUICKSTART.md) • [1-Click Templates](https://ninedeploy.com/templates) • [Changelog](https://ninedeploy.com/changelog)
@@ -122,7 +122,7 @@ For in-depth guides, operational workflows, and configuration references:
 - ♻️ **Durable Deployment Recovery**: Worker-owned Hub provisioning survives browser disconnects and server restarts, then idempotently resumes template databases, attachments, environment reconciliation, and application deployment.
 - 🤖 **Native AI Superpowers**: Built-in 35-tool Model Context Protocol (MCP) server enables AI coding agents (Claude, Cursor, Antigravity, Cline) to query logs, trigger builds, and manage resources, with an optional fail-closed read-only mode.
 - 🌐 **Automated Ingress & Tunnels**: Built-in Traefik with automated wildcard Let's Encrypt certificates and zero-configuration Cloudflare Tunnels for NAT-restricted nodes.
-- 💯 **Enforced Coverage Gates**: 4,397 Vitest specs run in CI. `db`, `schemas`, `sdk` and the CLI hold a strict 100% gate; the web dashboard enforces 99% statements and the server 95%, so a regression fails the build rather than sliding through.
+- 💯 **Enforced Coverage Gates**: 4,405 Vitest specs run in CI. `db`, `schemas`, `sdk` and the CLI hold a strict 100% gate; the web dashboard enforces 99% statements and the server 95%, so a regression fails the build rather than sliding through.
 
 ---
 

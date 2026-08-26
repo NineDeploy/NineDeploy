@@ -17,6 +17,8 @@ const releases = [
       {
         t: "Upgrade & Correctness Fixes",
         items: [
+          "Implemented the three managed-volume helpers the backup routes imported but that were never written — the server package did not build without them",
+          "Finished the service tagging migration in the services API, which still read the removed single-project column",
           "Fixed an upgrade that blocked every install from 0.2.2 onward: a column added at boot collided with its own later migration and the panel would not start",
           "Restored 90 source files whose non-ASCII characters had been double-encoded, and the workspace role fields a bad rename had renamed away",
           "A label created from the top-bar filter no longer disappears the moment it is added",

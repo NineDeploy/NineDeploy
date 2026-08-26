@@ -128,7 +128,7 @@ export function Home() {
                 self-hosted PaaS
               </span>
               <span className="tag font-bold">v0.3.0</span>
-              <span className="tag">4,397 tests in CI</span>
+              <span className="tag">4,405 tests in CI</span>
             </div>
             <h1 className="text-5xl md:text-7xl font-bold leading-[0.95] tracking-tight">
               Ship like you
@@ -289,7 +289,7 @@ export function Home() {
         {[
           { icon: LayoutGrid, k: 15, suffix: "", v: "runtime-certified templates" },
           { icon: Boxes, k: 41, suffix: "", v: "tables, one SQLite file" },
-          { icon: RotateCcw, k: 4397, suffix: "", v: "tests in CI" },
+          { icon: RotateCcw, k: 4405, suffix: "", v: "tests in CI" },
           { icon: KeyRound, k: 95, suffix: "%+", v: "enforced coverage floor" },
         ].map((s, i) => (
           <Reveal key={s.v} delay={i * 60}>
