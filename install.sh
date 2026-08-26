@@ -1257,21 +1257,74 @@ if [ "$(uname -s)" = "Linux" ] && command -v systemctl &>/dev/null; then
   sudo systemctl enable ninedeploy
   sudo systemctl restart ninedeploy
 
-  # Readiness gate: give the API 60s to answer /health before declaring
+  # Everything the operator would otherwise have to go and collect by hand.
+  # A readiness failure is the single most common place an install ends, and
+  # "inspect journalctl" costs a round trip that the installer can spend for
+  # them — it already knows the unit name, the port and the data directory.
+  dump_service_diagnostics() {
+    echo ""
+    warn "── systemd unit ────────────────────────────────────────────────"
+    systemctl --no-pager --full status ninedeploy 2>&1 | head -20 || true
+    echo ""
+    warn "── last 60 log lines (journalctl -u ninedeploy) ─────────────────"
+    sudo journalctl -u ninedeploy -n 60 --no-pager 2>&1 || true
+    echo ""
+    warn "── port ${HEALTH_PORT} ─────────────────────────────────────────────────"
+    (ss -ltnp 2>/dev/null || netstat -ltnp 2>/dev/null || true) | grep -E "[:.]${HEALTH_PORT}[[:space:]]" || echo "  nothing is listening on ${HEALTH_PORT}"
+    echo ""
+  }
+
+  # Readiness gate: give the API time to answer /health before declaring
   # success — a failed migration or boot crash surfaces here, not later.
+  #
+  # The window is generous because the first boot after an upgrade also runs
+  # migrations, but a process that is *not running* is never going to answer,
+  # so a crash-loop is called immediately rather than after the full timeout.
   HEALTH_PORT="${NINEDEPLOY_PORT:-3000}"
-  info "Waiting for the API to come up (up to 60s)…"
+  HEALTH_TIMEOUT="${NINEDEPLOY_HEALTH_TIMEOUT:-120}"
+  info "Waiting for the API to come up (up to ${HEALTH_TIMEOUT}s)…"
   if command -v curl &>/dev/null; then
-    for i in $(seq 1 60); do
+    _health_ok=false
+    _crash_strikes=0
+    for i in $(seq 1 "$HEALTH_TIMEOUT"); do
       if curl -fsS -m 2 "http://127.0.0.1:${HEALTH_PORT}/health" >/dev/null 2>&1; then
-        ok "NineDeploy service is healthy (systemd, hardened unit)"
+        _health_ok=true
         break
       fi
+
+      # `Restart=always` means a unit that dies is restarted, so a crashing
+      # server oscillates between active and activating instead of settling
+      # into `failed`. Count consecutive non-active samples: three in a row
+      # is a boot that is not going to succeed, not a slow start.
+      case "$(systemctl is-active ninedeploy 2>/dev/null || echo unknown)" in
+        active)
+          _crash_strikes=0
+          ;;
+        failed)
+          warn "ninedeploy entered the failed state while starting"
+          dump_service_diagnostics
+          fail "Service failed to start. A pre-update backup is in ${DATA_DIR}/upgrade-backups"
+          ;;
+        *)
+          _crash_strikes=$((_crash_strikes + 1))
+          if [ "$_crash_strikes" -ge 3 ]; then
+            warn "ninedeploy is restarting repeatedly — it is crashing on boot"
+            dump_service_diagnostics
+            fail "Service is crash-looping. A pre-update backup is in ${DATA_DIR}/upgrade-backups"
+          fi
+          ;;
+      esac
+
       sleep 1
-      if [ "$i" = "60" ]; then
-        fail "Service did not become healthy in 60s. Inspect: journalctl -u ninedeploy -n 50 (a pre-update backup is in ${DATA_DIR}/upgrade-backups)"
-      fi
     done
+
+    if [ "$_health_ok" = true ]; then
+      ok "NineDeploy service is healthy (systemd, hardened unit)"
+    else
+      warn "The process is running but /health did not answer within ${HEALTH_TIMEOUT}s"
+      dump_service_diagnostics
+      fail "Service did not become healthy in ${HEALTH_TIMEOUT}s. Raise the window with NINEDEPLOY_HEALTH_TIMEOUT=<seconds> if this host is just slow. A pre-update backup is in ${DATA_DIR}/upgrade-backups"
+    fi
   else
     ok "NineDeploy service started (systemd, hardened unit)"
   fi
