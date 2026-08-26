@@ -11,7 +11,14 @@ import { decrypt } from '../lib/crypto.js';
 import { config } from '../config.js';
 import { badRequest, notFound, parseId } from '../lib/errors.js';
 import { loadServiceForUser } from '../lib/serviceAccess.js';
+import { EgressBlockedError } from '../lib/egressGuard.js';
 import { serializeInsights, upsertInsights } from '../engine/repoInsights.js';
+
+/** Map an egress-gate refusal onto a client-comprehensible 400. */
+function toApiError(err: unknown): unknown {
+  if (err instanceof EgressBlockedError) return badRequest(err.message, 'egress_blocked');
+  return err;
+}
 
 /** Resolve clone credentials for a source id — same contract as the pipeline. */
 async function resolveCreds(db: DB, sourceId: number | null | undefined): Promise<CloneCreds | undefined> {
@@ -45,6 +52,8 @@ export const insightsRoutes: FastifyPluginAsync = async (app) => {
       try {
         await checkoutCommit(input.repoUrl, input.branch, undefined, dir, () => undefined, creds);
         return analyzeRepo(dir, input.baseDir);
+      } catch (err) {
+        throw toApiError(err);
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }
@@ -80,7 +89,10 @@ export const serviceInsightsRoutes: FastifyPluginAsync = async (app) => {
     try {
       sha = await checkoutCommit(svc.repoUrl, svc.branch, undefined, workDir, () => undefined, creds);
     } catch (err) {
-      if (!existsSync(path.join(workDir, '.git'))) throw notFound('Repository is not reachable');
+      if (!existsSync(path.join(workDir, '.git'))) {
+        if (err instanceof EgressBlockedError) throw toApiError(err);
+        throw notFound('Repository is not reachable');
+      }
       req.log.warn({ err, serviceId: id }, 'insights refresh fell back to the cached checkout');
     }
     if (!sha) throw notFound('Repository is not reachable');

@@ -18,7 +18,15 @@ export default fp(
     };
 
     fastify.addHook('onReady', async () => {
-      await healTraefik('infra');
+      // A transient docker outage at boot must not crash-exit the panel: the
+      // infra heal stays failed-open and the 5-minute watchdog below is the
+      // recovery path (matching how every other background subsystem treats a
+      // daemon-down moment).
+      try {
+        await healTraefik('infra');
+      } catch (err) {
+        fastify.log.error({ err }, 'traefik bootstrap failed (docker unreachable?) — deferring to the watchdog');
+      }
       await writeDynamicConfig(fastify.db).catch((err) =>
         fastify.log.error({ err }, 'failed to write traefik dynamic config'),
       );

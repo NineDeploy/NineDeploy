@@ -294,7 +294,7 @@ export async function runDeployment(db: DB, deploymentId: number): Promise<void>
           log(
             `📋 .ninedeploy loaded (${loaded.relativePath}) — applying operational sections`,
           );
-          const applyResult = await applyManifestToService(db, service.id, loaded.manifest);
+          const applyResult = await applyManifestToService(db, service.id, loaded.manifest, service.ownerUserId);
           log(
             `📋 .ninedeploy applied: routes=${applyResult.routesUpserted}, alerts=${applyResult.alertsUpserted}, dbAttached=${applyResult.databaseAttached}`,
           );
@@ -430,6 +430,11 @@ export async function runDeployment(db: DB, deploymentId: number): Promise<void>
   // here propagates to the worker tick, which is correct — but the container is
   // already running. Only the post-success side-effects are best-effort. ──────
   const newRuntimeId = runtime!.runtimeId;
+  // In-place redeploys (compose) recreate the runtime under the SAME
+  // deterministic id: once buildAndRun returns, "previous" and "new" are the
+  // same live instance. Retiring that id afterwards would tear down the
+  // deployment that just went live (`docker compose down --remove-orphans`).
+  const inPlaceRedeploy = previous !== undefined && previous.runtimeId === newRuntimeId;
   // Conditional on still being `building`: a cancel that landed between the
   // last checkpoint and the finalize must not be overwritten with `running`.
   // This runs FIRST — otherwise the service row below could end up pointing
@@ -440,20 +445,35 @@ export async function runDeployment(db: DB, deploymentId: number): Promise<void>
     .where(and(eq(deployments.id, deploymentId), eq(deployments.status, 'building')))
     .returning({ id: deployments.id });
   if (finalized.length === 0) {
-    log('⏹ Cancelled just before finalizing — retiring the new container, the previous stays live');
-    await builder.stop(newRuntimeId).catch(() => undefined);
-    if (previous) {
-      await db.update(services).set({ status: 'running', runtimeId: previous.runtimeId }).where(eq(services.id, service.id));
+    if (!inPlaceRedeploy) {
+      log('⏹ Cancelled just before finalizing — retiring the new container, the previous stays live');
+      await builder.stop(newRuntimeId).catch(() => undefined);
+      if (previous) {
+        await db.update(services).set({ status: 'running', runtimeId: previous.runtimeId }).where(eq(services.id, service.id));
+      } else {
+        // First-ever deploy cancelled at the wire: nothing is running.
+        await db.update(services).set({ status: 'idle' }).where(eq(services.id, service.id));
+      }
     } else {
-      // First-ever deploy cancelled at the wire: nothing is running.
-      await db.update(services).set({ status: 'idle' }).where(eq(services.id, service.id));
+      // The swap already happened under a shared runtime id and cannot be
+      // unwound — record reality instead of stopping the live instance.
+      log('⏹ Cancelled just before finalizing — in-place redeploy already applied, live runtime stays up');
+      await db.update(services).set({ status: 'running', runtimeId: newRuntimeId }).where(eq(services.id, service.id));
     }
     return;
   }
-  await db
+  const persisted = await db
     .update(services)
     .set({ status: 'running', runtimeId: newRuntimeId, port: runtime!.port ?? null, commitSha: sha })
-    .where(eq(services.id, service.id));
+    .where(eq(services.id, service.id))
+    .returning({ id: services.id });
+  if (persisted.length === 0) {
+    // The service was deleted while this deploy was building. Nothing tracks
+    // the candidate any more — retire it so it cannot hold its port forever.
+    log('Service row disappeared mid-deploy (deleted) — retiring the orphaned runtime');
+    await builder.stop(newRuntimeId).catch(() => undefined);
+    return;
+  }
 
   // Auto-provision wildcard domain if configured and not already present.
   // Isolated: a failure here must not affect the already-running container.
@@ -485,10 +505,12 @@ export async function runDeployment(db: DB, deploymentId: number): Promise<void>
   } catch (err) {
     log(`proxy warning: ${msg(err)}`);
   }
-  if (previous) {
+  if (previous && !inPlaceRedeploy) {
     // Only retire the previous container once routing has actually flipped to
     // the new one — otherwise we'd stop the still-serving version and cause an
     // outage. If the config write failed, leave the previous container live.
+    // In-place redeploys are excluded above: their "previous" id IS the new
+    // live runtime, and stopping it would delete the fresh deployment.
     if (routingFlipped) {
       log('##[stage:CLEANUP:running] Graceful shutdown of old container instance');
       if (buildConfig?.preStopCmd) {
@@ -510,6 +532,9 @@ export async function runDeployment(db: DB, deploymentId: number): Promise<void>
       log('↩ finalize skipped: routing did not flip, the previous container stays live');
     }
   } else {
+    if (inPlaceRedeploy) {
+      log('In-place redeploy: the live instance carries the new version — nothing to retire');
+    }
     log('##[stage:CLEANUP:success]');
   }
   log('##[stage:COMPLETE:success] Service is live and healthy on production');

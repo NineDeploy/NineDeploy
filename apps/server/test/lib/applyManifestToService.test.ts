@@ -14,6 +14,9 @@ import {
   databaseAttachments,
   domains,
   services,
+  users,
+  workspaceMembers,
+  workspaces,
   type DB,
 } from '@ninedeploy/db';
 import { applyManifestToService } from '../../src/lib/applyManifestToService.js';
@@ -160,21 +163,37 @@ describe('applyManifestToService — routes', () => {
 
 describe('applyManifestToService — database', () => {
   beforeEach(async () => {
+    // Wipe everything the attachment gate reads: leaves first, then parents.
+    await db.delete(databaseAttachments);
+    await db.delete(databases);
+    await db.delete(workspaceMembers);
+    await db.delete(workspaces);
+    await db.delete(users);
     // The drizzle schema declares `ownerUserId` on the `databases` table but
     // the latest migration does not yet add the column on `databases` (only
     // on `services`). Until the schema/migration drift is fixed, we insert
     // via raw SQL so the test does not depend on the missing column.
     const { sql } = await import('drizzle-orm');
     await db.run(sql`INSERT INTO databases (name, slug, engine, status, password_encrypted, volume_name) VALUES ('app-db', 'app-db', 'postgres', 'ready', 'fake-ciphertext', 'nd-db-app-db')`);
+
+    // Operator owner (user 7, an 'owner' seat) → visibleDatabaseIds returns
+    // null = unrestricted, so the legacy attach flows stay green.
+    await db.insert(users).values({ id: 7, email: 'owner@example.com', passwordHash: 'h' });
+    const [ws] = await db.insert(workspaces).values({ name: 'acme', slug: 'acme', ownerId: 7 }).returning();
+    await db.insert(workspaceMembers).values({ workspaceId: ws!.id, userId: 7, role: 'owner' });
+    // A second, seat-less user for cross-owner denial cases.
+    await db.insert(users).values({ id: 8, email: 'other@example.com', passwordHash: 'h' });
   });
 
-  it('attaches a managed database by slug', async () => {
+  it('attaches a managed database by slug when the owner is an operator', async () => {
     const result = await applyManifestToService(
       db,
       serviceId,
       m({ database: { ref: 'app-db', env: 'DATABASE_URL' } }),
+      7,
     );
     expect(result.databaseAttached).toBe(true);
+    expect(result.databaseAccessDenied).toBeNull();
     const attaches = await db
       .select()
       .from(databaseAttachments)
@@ -184,8 +203,8 @@ describe('applyManifestToService — database', () => {
   });
 
   it('is idempotent — re-running the manifest does not create a second attachment', async () => {
-    await applyManifestToService(db, serviceId, m({ database: { ref: 'app-db', env: 'A' } }));
-    await applyManifestToService(db, serviceId, m({ database: { ref: 'app-db', env: 'B' } }));
+    await applyManifestToService(db, serviceId, m({ database: { ref: 'app-db', env: 'A' } }), 7);
+    await applyManifestToService(db, serviceId, m({ database: { ref: 'app-db', env: 'B' } }), 7);
     const attaches = await db
       .select()
       .from(databaseAttachments)
@@ -193,6 +212,31 @@ describe('applyManifestToService — database', () => {
     expect(attaches).toHaveLength(1);
     // The original env alias is preserved — manifest cannot flip an existing alias.
     expect(attaches[0]!.envAlias).toBe('A');
+  });
+
+  it('refuses to attach a managed database invisible to a non-operator owner', async () => {
+    const result = await applyManifestToService(
+      db,
+      serviceId,
+      m({ database: { ref: 'app-db', env: 'DATABASE_URL' } }),
+      8,
+    );
+    expect(result.databaseAttached).toBe(false);
+    expect(result.databaseAccessDenied).toBe('app-db');
+    expect(result.warnings.join('\n')).toMatch(/outside this service's access/);
+    const attaches = await db.select().from(databaseAttachments);
+    expect(attaches).toHaveLength(0);
+  });
+
+  it('refuses manifest-driven attachments when the service has no recorded owner', async () => {
+    const result = await applyManifestToService(
+      db,
+      serviceId,
+      m({ database: { ref: 'app-db', env: 'DATABASE_URL' } }),
+    );
+    expect(result.databaseAttached).toBe(false);
+    expect(result.databaseAccessDenied).toBe('app-db');
+    expect(result.warnings.join('\n')).toMatch(/no recorded owner/);
   });
 
   it('emits a warning and a notFound marker when the slug does not resolve', async () => {

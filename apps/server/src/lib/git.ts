@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { simpleGit, type SimpleGit, type SimpleGitOptions } from 'simple-git';
+import { assertCloneTargetAllowed } from './gitEgress.js';
 
 export interface CloneCreds {
   type?: string; // github | gitlab | gitea | custom
@@ -56,6 +57,9 @@ export async function checkoutCommit(
   if (sha !== undefined && !COMMIT_SHA_RE.test(sha)) {
     throw new Error(`Refusing to check out an invalid commit sha: ${sha.slice(0, 40)}`);
   }
+  // Egress gate (see lib/gitEgress.ts): refuse private-network remotes before
+  // any git operation starts.
+  await assertCloneTargetAllowed(repoUrl);
   const useKey = !!creds?.deployKey && (isSshUrl(repoUrl) || !creds?.token);
   // simple-git refuses `core.sshCommand` unless the caller opts in, because the
   // value is normally attacker-reachable. Here it is not: `keyFile` is derived

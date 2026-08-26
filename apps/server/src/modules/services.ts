@@ -2,6 +2,7 @@ import { and, eq, inArray } from 'drizzle-orm';
 import type { FastifyPluginAsync } from 'fastify';
 import {
   buildConfigs,
+  deployments,
   envVars,
   serviceLabels,
   serviceProjects,
@@ -392,6 +393,16 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
   app.delete('/:id', async (req, reply) => {
     const id = num((req.params as { id: string }).id);
     const svc = await loadServiceForUser(app.db, id, req.user!);
+    // A deployment queued or building for this service keeps writing state
+    // against the row and its candidate runtime. Deleting now would orphan the
+    // mid-flight build's runtime — refuse until the pipeline settles; the user
+    // can cancel first.
+    const activeDeploy = await app.db.query.deployments.findFirst({
+      where: and(eq(deployments.serviceId, id), inArray(deployments.status, ['queued', 'building'])),
+    });
+    if (activeDeploy) {
+      throw conflict('A deployment is queued or building — cancel it or wait for it to finish before deleting');
+    }
     // Row first (a single DELETE is atomic; FK cascade removes the build
     // config, env vars, domains and deployments) — a failed delete must never
     // leave a live row whose runtime has already been destroyed.

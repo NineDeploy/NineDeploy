@@ -1041,8 +1041,12 @@ if [ -f "$INSTALL_DIR/package.json" ]; then
     else
       mkdir -p .data/upgrade-backups
       BACKUP_FILE=".data/upgrade-backups/pre-update-$(date +%Y%m%d-%H%M%S).tar.gz"
+      # The archive contains master.key — the key that decrypts EVERY stored
+      # secret. Tighten the umask for the tar child so the file lands 0600
+      # regardless of the caller's ambient umask, and assert it afterwards.
       # shellcheck disable=SC2086 # deliberate word splitting: one arg per member
-      if TAR_ERR=$(tar -czf "$BACKUP_FILE" $BACKUP_MEMBERS 2>&1); then
+      if TAR_ERR=$(umask 077 && tar -czf "$BACKUP_FILE" $BACKUP_MEMBERS 2>&1); then
+        chmod 600 "$BACKUP_FILE" 2>/dev/null || true
         BACKUP_OK=true
         ok "Pre-update backup saved to $BACKUP_FILE ($(echo "$BACKUP_MEMBERS" | wc -w) file(s))"
       else

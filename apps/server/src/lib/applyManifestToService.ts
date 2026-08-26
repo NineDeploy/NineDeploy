@@ -7,6 +7,7 @@ import {
   type DB,
 } from '@ninedeploy/db';
 import type { NinedeployManifest, Route } from '@ninedeploy/schemas';
+import { isOperator, visibleDatabaseIds } from './resourceAccess.js';
 
 /**
  * Apply a `.ninedeploy` manifest's operational sections onto an existing
@@ -34,6 +35,9 @@ export interface ApplyManifestResult {
   routesRemoved: number;
   databaseAttached: boolean;
   databaseNotFound: string | null;
+  /** Set when a `database.ref` was found but is outside the deploying
+   * service-owner's visibility — the cross-tenant attach is refused. */
+  databaseAccessDenied: string | null;
   alertsUpserted: number;
   warnings: string[];
 }
@@ -42,18 +46,20 @@ export async function applyManifestToService(
   db: DB,
   serviceId: number,
   manifest: NinedeployManifest,
+  ownerUserId?: number | null,
 ): Promise<ApplyManifestResult> {
   const result: ApplyManifestResult = {
     routesUpserted: 0,
     routesRemoved: 0,
     databaseAttached: false,
     databaseNotFound: null,
+    databaseAccessDenied: null,
     alertsUpserted: 0,
     warnings: [],
   };
 
   await syncRoutes(db, serviceId, manifest.routes, result);
-  await attachManagedDatabase(db, serviceId, manifest.database, result);
+  await attachManagedDatabase(db, serviceId, ownerUserId ?? null, manifest.database, result);
   await syncAlertRules(db, serviceId, manifest.alerts, result);
 
   // Recognised-but-not-wired sections: surface so the build log records the
@@ -162,12 +168,13 @@ function toHeaderRows(headers: Record<string, string>): Array<{ name: string; va
 async function attachManagedDatabase(
   db: DB,
   serviceId: number,
+  ownerUserId: number | null,
   ref: NinedeployManifest['database'],
   result: ApplyManifestResult,
 ): Promise<void> {
   if (!ref) return;
   const dbRows = await db
-    .select({ id: databases.id, slug: databases.slug })
+    .select()
     .from(databases)
     .where(eq(databases.slug, ref.ref))
     .limit(1);
@@ -176,6 +183,27 @@ async function attachManagedDatabase(
     result.databaseNotFound = ref.ref;
     result.warnings.push(
       `database.ref="${ref.ref}" does not match any managed database; attach skipped.`,
+    );
+    return;
+  }
+  // Authorization: the manifest comes from the repository, so anyone with
+  // push access could name ANY managed database by its deterministic slug and
+  // have its connection string (password included) injected into this
+  // service's env. Only attach databases visible to the deploying service's
+  // owner — mirroring loadDatabaseForUser, minus any session-based bypass.
+  if (!ownerUserId) {
+    result.databaseAccessDenied = ref.ref;
+    result.warnings.push(
+      `database.ref="${ref.ref}": the deploying service has no recorded owner, so manifest-driven attachments are refused.`,
+    );
+    return;
+  }
+  const ownerIsOperator = await isOperator(db, { id: ownerUserId });
+  const visibleIds = await visibleDatabaseIds(db, { id: ownerUserId, isOperator: ownerIsOperator });
+  if (visibleIds !== null && !visibleIds.includes(dbRow.id)) {
+    result.databaseAccessDenied = ref.ref;
+    result.warnings.push(
+      `database.ref="${ref.ref}" points at a managed database outside this service's access; attach skipped.`,
     );
     return;
   }

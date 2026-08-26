@@ -1,4 +1,9 @@
 import type { LogDrainFormat, LogDrainType } from '@ninedeploy/schemas';
+import { guardedFetch } from '../lib/egressGuard.js';
+
+/** Drains are always addressed by a URL string; the narrower contract keeps
+ * the guarded default assignable while tests may still inject a mock. */
+type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
 export interface LogPayloadEntry {
   timestamp: string;
@@ -76,7 +81,10 @@ export async function dispatchLogToDrain(
     headers?: Record<string, string> | null;
   },
   entry: LogPayloadEntry,
-  fetchImpl: typeof fetch = fetch,
+  // Defaults to guardedFetch (same policy as notification webhooks) — drain
+  // payloads carry raw log lines, which are exactly the exfil channel a
+  // compromised admin credential should not get for free.
+  fetchImpl: FetchLike = guardedFetch,
 ): Promise<{ ok: boolean; status: number; error?: string }> {
   const { body, contentType } = formatLogPayload(drain.type, drain.format, entry);
   const headers: Record<string, string> = {
@@ -115,7 +123,7 @@ export async function testLogDrainConnection(
     apiKey?: string | null;
     headers?: Record<string, string> | null;
   },
-  fetchImpl: typeof fetch = fetch,
+  fetchImpl: FetchLike = guardedFetch,
 ): Promise<{ ok: boolean; latencyMs: number; message?: string }> {
   const start = Date.now();
   const testEntry: LogPayloadEntry = {

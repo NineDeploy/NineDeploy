@@ -82,7 +82,7 @@ describe('webhook receiver', () => {
   it('queues a deployment for a matching github push', async () => {
     const app = await buildTestApp({
       db: createFakeDb({
-        findFirst: { webhooks: hook() },
+        findFirst: { webhooks: hook(), services: svcRow() },
         insert: { deployments: [depRow({ id: 7, trigger: 'webhook' })] },
       }),
       rawBody: true,
@@ -103,7 +103,7 @@ describe('webhook receiver', () => {
     const existing = depRow({ id: 42, trigger: 'webhook', commitSha: 'deadbeef', status: 'running' });
     const app = await buildTestApp({
       db: createFakeDb({
-        findFirst: { webhooks: hook(), deployments: existing },
+        findFirst: { webhooks: hook(), deployments: existing, services: svcRow() },
       }),
       rawBody: true,
     });
@@ -127,7 +127,7 @@ describe('webhook receiver', () => {
     const olderStill = depRow({ id: 50, trigger: 'webhook', commitSha: 'deadbeef', status: 'running' });
     const app = await buildTestApp({
       db: createFakeDb({
-        findFirst: { webhooks: hook() },
+        findFirst: { webhooks: hook(), services: svcRow() },
         insert: { deployments: [mine] },
         findMany: { deployments: [mine, winner, olderStill] },
       }),
@@ -148,7 +148,7 @@ describe('webhook receiver', () => {
   it('queues a push with missing commit metadata', async () => {
     const app = await buildTestApp({
       db: createFakeDb({
-        findFirst: { webhooks: hook() },
+        findFirst: { webhooks: hook(), services: svcRow() },
         insert: { deployments: [depRow({ id: 7, trigger: 'webhook', commitSha: null })] },
       }),
       rawBody: true,
@@ -227,7 +227,7 @@ describe('webhook receiver', () => {
   it('deploys when a changed file matches a watch path', async () => {
     const app = await buildTestApp({
       db: createFakeDb({
-        findFirst: { webhooks: hook({ watchPaths: 'services/api/**' }) },
+        findFirst: { webhooks: hook({ watchPaths: 'services/api/**' }), services: svcRow() },
         insert: { deployments: [depRow({ id: 9, trigger: 'webhook' })] },
       }),
       rawBody: true,
@@ -251,7 +251,7 @@ describe('webhook receiver', () => {
   it('deploys watch-path webhooks when the payload reports no files', async () => {
     const app = await buildTestApp({
       db: createFakeDb({
-        findFirst: { webhooks: hook({ watchPaths: 'services/api/**' }) },
+        findFirst: { webhooks: hook({ watchPaths: 'services/api/**' }), services: svcRow() },
         insert: { deployments: [depRow({ id: 10, trigger: 'webhook' })] },
       }),
       rawBody: true,
@@ -288,7 +288,7 @@ describe('webhook receiver', () => {
   it('accepts gitlab pushes via header token', async () => {
     const app = await buildTestApp({
       db: createFakeDb({
-        findFirst: { webhooks: hook() },
+        findFirst: { webhooks: hook(), services: svcRow() },
         insert: { deployments: [depRow({ id: 7, trigger: 'webhook' })] },
       }),
       rawBody: true,
@@ -307,6 +307,124 @@ describe('webhook receiver', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ ok: true, provider: 'gitlab', deploymentId: 7 });
+  });
+
+  it('refuses a webhook push whose service owner is a non-operator and runs on the host (pm2)', async () => {
+    const app = await buildTestApp({
+      // Owner 7 holds no workspace seat in the fake DB → not an operator; a
+      // pm2 deploy would execute build commands on the host, which is exactly
+      // what assertMayDeployStoredService exists to gate.
+      db: createFakeDb({
+        findFirst: { webhooks: hook(), services: svcRow({ ownerUserId: 7, type: 'pm2' }) },
+      }),
+      rawBody: true,
+    });
+    await app.register(hookReceiveRoutes);
+    const body = JSON.stringify(pushPayload('main'));
+    const res = await app.inject({
+      method: 'POST',
+      url: '/1',
+      headers: { 'content-type': 'application/json', 'x-github-event': 'push', 'x-hub-signature-256': sig(body) },
+      payload: body,
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toMatchObject({ error: { code: 'forbidden', message: expect.stringContaining('PM2') } });
+  });
+
+  it('queues a webhook push when the owner is an operator even for host-executing types (pm2)', async () => {
+    const app = await buildTestApp({
+      // Owner 1 resolves through the default operator membership row.
+      db: createFakeDb({
+        findFirst: { webhooks: hook(), services: svcRow({ ownerUserId: 1, type: 'pm2' }) },
+        insert: { deployments: [depRow({ id: 11, trigger: 'webhook' })] },
+      }),
+      rawBody: true,
+    });
+    await app.register(hookReceiveRoutes);
+    const body = JSON.stringify(pushPayload('main'));
+    const res = await app.inject({
+      method: 'POST',
+      url: '/1',
+      headers: { 'content-type': 'application/json', 'x-github-event': 'push', 'x-hub-signature-256': sig(body) },
+      payload: body,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: true, provider: 'github', deploymentId: 11 });
+  });
+
+  it('skips routing when a preview pattern renders outside the instance wildcard zone', async () => {
+    const parentService = svcRow({
+      id: 1,
+      slug: 'my-app',
+      name: 'My App',
+      repoUrl: 'https://github.com/org/repo.git',
+      previewDeploymentsEnabled: true,
+      // Hostile pattern: renders to a host on ANOTHER party's zone.
+      previewDomainPattern: '*.victim-tld.example',
+      previewMaxActive: 5,
+    });
+    const inserts: Array<{ table: string; values: Record<string, unknown> }> = [];
+    let svcLookup = 0;
+    const db = createFakeDb({
+      findFirst: {
+        webhooks: hook({ serviceId: 1 }),
+        // Call order mirrors the opened/synchronize test: (1) parent lookup,
+        // later probes are the existing-preview search → miss so a NEW preview
+        // is created and routing provisioning actually runs.
+        services: () => {
+          svcLookup++;
+          return svcLookup === 1 ? parentService : undefined;
+        },
+      },
+      findMany: {
+        services: [],
+        envVars: [],
+      },
+      insert: {
+        services: [svcRow({ id: 10, slug: 'my-app-pr-12', prNumber: 12, isEphemeralPreview: true })],
+        deployments: [depRow({ id: 21, serviceId: 10, trigger: 'webhook', commitSha: 'deadbeef' })],
+      },
+    });
+    const origInsert = db.insert.bind(db) as (t: unknown) => { values: (v: Record<string, unknown>) => unknown };
+    (db as unknown as { insert: typeof origInsert }).insert = ((table: unknown) => {
+      const chain = origInsert(table);
+      return {
+        values: (v: Record<string, unknown>) => {
+          inserts.push({ table: String((table as Record<symbol, unknown>)?.[Symbol.for('drizzle:Name')] ?? '?'), values: v });
+          return chain.values(v);
+        },
+      };
+    }) as typeof origInsert;
+    const app = await buildTestApp({ db, rawBody: true });
+    await app.register(hookReceiveRoutes);
+
+    const pr = {
+      action: 'opened',
+      number: 12,
+      pull_request: {
+        number: 12,
+        title: 'feat: x',
+        user: { login: 'bob' },
+        head: { ref: 'feature-x', sha: 'deadbeef', repo: { clone_url: 'https://github.com/org/repo.git' } },
+        base: { repo: { clone_url: 'https://github.com/org/repo.git' } },
+      },
+    };
+    const body = JSON.stringify(pr);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/1',
+      headers: { 'content-type': 'application/json', 'x-github-event': 'pull_request', 'x-hub-signature-256': sig(body) },
+      payload: body,
+    });
+    expect(res.statusCode).toBe(200);
+    // The deploy still queues — only the hostile ROUTING is skipped.
+    expect(res.json()).toMatchObject({
+      ok: true,
+      previewServiceId: 10,
+      deploymentId: 21,
+      previewDomainSkipped: 'pattern_outside_wildcard_zone',
+    });
+    expect(inserts.some((i) => i.table === 'domains')).toBe(false);
   });
 
   it('handles pull request opened and synchronize events by spawning ephemeral preview', async () => {

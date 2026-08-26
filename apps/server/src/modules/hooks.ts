@@ -1,5 +1,5 @@
 import { and, desc, eq, inArray } from 'drizzle-orm';
-import { buildConfigs, deployments, domains, envVars, services, webhooks } from '@ninedeploy/db';
+import { buildConfigs, deployments, domains, envVars, services, webhooks, type DB } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { gitBranch, gitRepoUrl, webhookCreate } from '@ninedeploy/schemas';
 import { config } from '../config.js';
@@ -8,6 +8,8 @@ import { matchesAny, parseWatchPaths } from '../lib/glob.js';
 import { parseId, notFound, unauthorized } from '../lib/errors.js';
 import { isPing, isPullRequest, parsePullRequest, parsePush, verifyWebhook } from '../lib/webhooks.js';
 import { loadServiceForUser } from '../lib/serviceAccess.js';
+import { assertMayDeployStoredService } from '../lib/hostPrivilege.js';
+import { isOperator } from '../lib/resourceAccess.js';
 import { dockerBuilder } from '../engine/builders/docker.js';
 import { pm2Builder } from '../engine/builders/pm2.js';
 import { composeBuilder } from '../engine/builders/compose.js';
@@ -31,6 +33,27 @@ function repositoryIdentity(raw: string): string | null {
   if (!parsed.success) return null;
   const url = new URL(parsed.data);
   return `${url.hostname.toLowerCase()}/${url.pathname.replace(/^\/+|\/+$/g, '').replace(/\.git$/i, '').toLowerCase()}`;
+}
+
+/**
+ * Webhook deliveries carry no panel session — a valid HMAC proves only that
+ * the provider sent the event, not who may start a deploy. Authorize the
+ * triggered deploy against the service OWNER's privileges, so a webhook
+ * managed by a non-operator cannot launch a host-executing deploy (PM2 /
+ * compose / lifecycle hooks / docker-socket templates) they could not have
+ * started from the UI themselves.
+ */
+async function assertWebhookMayDeploy(
+  db: DB,
+  svc: { id: number; type: string; dockerSocket?: boolean | null; ownerUserId: number | null },
+): Promise<void> {
+  const ownerId = svc.ownerUserId;
+  // Legacy rows created before ownership existed have no owner to authorize
+  // against (same convention as assertCanManageService): they predate members
+  // entirely, so defer instead of breaking their webhooks.
+  if (!ownerId) return;
+  const ownerIsOperator = await isOperator(db, { id: ownerId });
+  await assertMayDeployStoredService(db, { id: ownerId, isOperator: ownerIsOperator }, svc);
 }
 
 /** Public webhook receiver — auto-deploys on verified provider push & PR events. */
@@ -98,8 +121,20 @@ export const hookReceiveRoutes: FastifyPluginAsync = async (app) => {
         return { ok: 'skipped', reason: 'external_pr_repository' };
       }
 
+      // Previews inherit the parent's build definition, including host-level
+      // features (PM2 / compose / hooks) — require the owner's deploy
+      // privileges before creating anything or queueing a build.
+      await assertWebhookMayDeploy(app.db, parent);
+
       // Opened / Synchronize / Reopened
       let targetService = existingPreview;
+      // Parent secret env vars deliberately NOT copied into a new preview —
+      // PR-supplied code must never receive production credentials.
+      let secretsNotInherited = 0;
+      // Set when the preview-domain pattern rendered to a host outside the
+      // instance's wildcard zone (or an invalid shape): routing is skipped so
+      // the preview cannot claim hosts it has no claim to.
+      let previewDomainSkipped: string | null = null;
       if (!targetService) {
         // Enforce max active previews cap
         const activePreviews = await app.db.query.services.findMany({
@@ -170,8 +205,14 @@ export const hookReceiveRoutes: FastifyPluginAsync = async (app) => {
             parentTags.workspaces.map((w) => w.id),
             parentTags.labels.map((l) => l.id),
           );
+          // Preview code arrives from a PR branch, so production secrets must
+          // not ride along into it: inherit non-secret configuration only.
           const parentEnvs = await app.db.query.envVars.findMany({ where: eq(envVars.serviceId, parent.id) });
           for (const env of parentEnvs) {
+            if (env.isSecret) {
+              secretsNotInherited++;
+              continue;
+            }
             await app.db.insert(envVars).values({
               serviceId: targetService.id,
               scope: 'service',
@@ -182,25 +223,43 @@ export const hookReceiveRoutes: FastifyPluginAsync = async (app) => {
             });
           }
 
-          // Provision preview domain
+          // Provision preview domain. The pattern is member-editable input, so
+          // the RENDERED host must be constrained to this instance's own
+          // wildcard zone with a strict label shape before it lands in Traefik
+          // as an `active` router — an unconstrained pattern like
+          // `*.victim.tld` would otherwise claim traffic for hosts nobody
+          // verified ownership of (routers match by rendered host/regexp).
+          // Rejecting skips ONLY routing; the preview still deploys and serves
+          // on its internal port, so a typo'd pattern degrades gracefully.
           const baseDomain = config.wildcardDomain || 'localhost';
           const pattern = parent.previewDomainPattern || 'pr-{{pr}}-{{slug}}.{{domain}}';
-          const hostname = pattern
+          const rendered = pattern
             .replace(/\{\{pr\}\}/g, String(pr.prNumber))
             .replace(/\{\{slug\}\}/g, parent.slug)
             .replace(/\{\{domain\}\}/g, baseDomain);
+          const lowerHost = rendered.trim().toLowerCase();
+          const zone = `.${baseDomain.toLowerCase()}`;
+          let skipReason: string | null = null;
+          if (!lowerHost.endsWith(zone)) skipReason = 'pattern_outside_wildcard_zone';
+          else if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/.test(lowerHost))
+            skipReason = 'invalid_hostname_shape';
 
-          await app.db.insert(domains).values({
-            serviceId: targetService.id,
-            hostname,
-            path: '/',
-            ssl: false,
-            // Generated inside the instance's own wildcard zone, so there is
-            // no ownership question — but it must be explicit now that only
-            // `active` domains are written into the Traefik config.
-            status: 'active',
-            verifiedAt: new Date(),
-          });
+          if (skipReason) {
+            previewDomainSkipped = skipReason;
+          } else {
+            await app.db.insert(domains).values({
+              serviceId: targetService.id,
+              hostname: lowerHost,
+              path: '/',
+              ssl: false,
+              // Generated inside the instance's own wildcard zone and held to
+              // that zone above, so there is no ownership question — but it
+              // must be explicit now that only `active` domains are written
+              // into the Traefik config.
+              status: 'active',
+              verifiedAt: new Date(),
+            });
+          }
         }
       } else {
         await app.db.update(services).set({ branch: branch.data, commitSha: pr.sha }).where(eq(services.id, targetService.id));
@@ -227,6 +286,10 @@ export const hookReceiveRoutes: FastifyPluginAsync = async (app) => {
         previewServiceId: targetService.id,
         deploymentId: dep?.id,
         prNumber: pr.prNumber,
+        // Auditability: an operator diffing the preview env against production
+        // should not have to discover the secret-inheritance rule by accident.
+        ...(secretsNotInherited > 0 ? { secretsNotInheritedFromParent: secretsNotInherited } : {}),
+        ...(previewDomainSkipped ? { previewDomainSkipped } : {}),
       };
     }
 
@@ -250,6 +313,13 @@ export const hookReceiveRoutes: FastifyPluginAsync = async (app) => {
       const hit = push.changedFiles.some((f) => matchesAny(f, patterns));
       if (!hit) return { ok: 'skipped', reason: 'watch_paths', patterns: patterns.length };
     }
+
+    // Same privilege gate as a manual redeploy: a verified push event must not
+    // restart host-executing service types for tenants whose owner is not an
+    // operator.
+    const pushedService = await app.db.query.services.findFirst({ where: eq(services.id, hook.serviceId) });
+    if (!pushedService) throw notFound('Parent service not found');
+    await assertWebhookMayDeploy(app.db, pushedService);
 
     // Replay dedup: a captured valid push replays indefinitely (the HMAC covers
     // the body, not freshness). Skip when a deployment for this exact commit is

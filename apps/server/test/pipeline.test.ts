@@ -1107,3 +1107,55 @@ describe('runDeployment', () => {
     await runDeployment(db as never, 1);
   });
 });
+
+describe('runDeployment finalize: blue-green vs in-place redeploys', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    logBus.removeAllListeners();
+    h.config.wildcardDomain = '';
+    h.builder.isHealthy.mockImplementation(async () => true);
+    h.builder.stop.mockImplementation(async () => undefined);
+    h.checkoutCommit.mockImplementation(async () => 'sha-1234567');
+    h.writeDynamicConfig.mockImplementation(async () => undefined);
+  });
+
+  afterEach(() => {
+    logBus.removeAllListeners();
+  });
+
+  it('an in-place redeploy (compose) must NOT retire the runtime id that just went live', async () => {
+    const { db, updates } = makeDb();
+    // The service row still carries the deterministic compose runtime id and
+    // buildAndRun recreates containers under that SAME id — "previous" and
+    // "new" are one live instance.
+    baseSetup(db, { type: 'docker', status: 'running', runtimeId: 'ndcmp-stack-api-1' });
+    h.builder.buildAndRun.mockImplementation(async () => ({
+      runtimeId: 'ndcmp-stack-api-1',
+      port: 3000,
+      healthPath: '/',
+    }));
+    const lines = collectLogs(1);
+
+    await runDeployment(db as never, 1);
+
+    expect(h.writeDynamicConfig).toHaveBeenCalled();
+    expect(h.builder.stop).not.toHaveBeenCalled();
+    expect(lines).toContain('In-place redeploy: the live instance carries the new version — nothing to retire');
+    const svcRunning = updates.filter((u) => u.table === services && u.values.status === 'running').at(-1);
+    expect(svcRunning?.values.runtimeId).toBe('ndcmp-stack-api-1');
+  });
+
+  it('blue-green finalizes still retire the previous container after routing flips', async () => {
+    const { db, updates } = makeDb();
+    baseSetup(db, { type: 'docker', status: 'running', runtimeId: 'c-old' });
+    h.builder.buildAndRun.mockImplementation(async () => ({ runtimeId: 'c-new', port: 3000, healthPath: '/' }));
+
+    await runDeployment(db as never, 1);
+
+    expect(h.writeDynamicConfig).toHaveBeenCalled();
+    expect(h.builder.stop).toHaveBeenCalledWith('c-old', { graceSeconds: undefined });
+    expect(h.builder.stop).not.toHaveBeenCalledWith('c-new', expect.anything());
+    const svcRunning = updates.filter((u) => u.table === services && u.values.status === 'running').at(-1);
+    expect(svcRunning?.values.runtimeId).toBe('c-new');
+  });
+});

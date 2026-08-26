@@ -19,6 +19,9 @@ import {
   databaseAttachments,
   domains,
   services,
+  users,
+  workspaceMembers,
+  workspaces,
   type DB,
 } from '@ninedeploy/db';
 import { loadNinedeployManifest } from '../src/lib/ninedeployManifest.js';
@@ -96,6 +99,12 @@ describe('real e2e: applyManifestToService against in-memory DB with real schema
     if (!svc) throw new Error('failed to insert service');
     serviceId = svc.id;
 
+    // The deploying service's owner must resolve through the attachment gate:
+    // an operator owner makes visibleDatabaseIds unrestricted for these tests.
+    await db.insert(users).values({ id: 9, email: 'deploy-owner@example.com', passwordHash: 'h' });
+    const [ws] = await db.insert(workspaces).values({ name: 'acme', slug: 'acme', ownerId: 9 }).returning();
+    await db.insert(workspaceMembers).values({ workspaceId: ws!.id, userId: 9, role: 'owner' });
+
     // Use the Drizzle schema directly — bug #1 (the owner_user_id drift) is
     // fixed by migration 0036, so this works without raw SQL.
     const [dbRow] = await db
@@ -126,7 +135,7 @@ describe('real e2e: applyManifestToService against in-memory DB with real schema
   it('applyManifestToService persists routes to domains table', async () => {
     const loaded = loadNinedeployManifest(FIXTURE_DIR);
     expect(loaded).not.toBeNull();
-    const result = await applyManifestToService(db, serviceId, loaded!.manifest);
+    const result = await applyManifestToService(db, serviceId, loaded!.manifest, 9);
     expect(result.routesUpserted).toBe(1);
     expect(result.databaseAttached).toBe(true);
     expect(result.alertsUpserted).toBe(2);
@@ -174,7 +183,7 @@ describe('real e2e: applyManifestToService against in-memory DB with real schema
         await db.select().from(databaseAttachments).where(eq(databaseAttachments.serviceId, serviceId))
       ).length,
     };
-    await applyManifestToService(db, serviceId, loaded!.manifest);
+    await applyManifestToService(db, serviceId, loaded!.manifest, 9);
     const after = {
       domains: (await db.select().from(domains).where(eq(domains.serviceId, serviceId))).length,
       alerts: (await db.select().from(alertRules).where(eq(alertRules.serviceId, serviceId))).length,
@@ -194,7 +203,7 @@ describe('real e2e: applyManifestToService against in-memory DB with real schema
       ...loaded!.manifest,
       database: { ref: 'does-not-exist', env: 'DATABASE_URL' },
     };
-    const result = await applyManifestToService(db, serviceId, ghostManifest);
+    const result = await applyManifestToService(db, serviceId, ghostManifest, 9);
     expect(result.databaseAttached).toBe(false);
     expect(result.databaseNotFound).toBe('does-not-exist');
     expect(result.warnings.some((w) => w.includes('does-not-exist'))).toBe(true);
