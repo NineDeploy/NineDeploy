@@ -34,7 +34,7 @@ describe('lib/sessions', () => {
     const failing = {
       insert: () => ({
         values: () => ({
-          // biome-ignore lint/suspicious/noThenProperty: intentional thenable â€” mirrors drizzle insert builders.
+          // biome-ignore lint/suspicious/noThenProperty: intentional thenable — mirrors drizzle insert builders.
           then: (_ok: unknown, rej: (e: Error) => unknown) => {
             rej(new Error('db locked'));
             return undefined;
@@ -55,7 +55,7 @@ describe('lib/sessions', () => {
 
   it('refresh refuses to mint tokens for a session revoked mid-flight', async () => {
     // The conditional rotate matches 0 rows (the session was revoked between
-    // the caller's check and the write) â€” no token pair may be issued.
+    // the caller's check and the write) — no token pair may be issued.
     jwtMocks.signAccessToken.mockClear();
     jwtMocks.signRefreshToken.mockClear();
     const db = createFakeDb({ update: { sessions: [] } });

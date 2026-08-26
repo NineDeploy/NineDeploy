@@ -173,11 +173,11 @@ describe('Field', () => {
 
   it('renders the optional hint next to the label', () => {
     render(
-      <Field label="Token" hint="Found under Settings â†’ API">
+      <Field label="Token" hint="Found under Settings → API">
         <input aria-label="Token" />
       </Field>,
     );
-    expect(screen.getByText('Found under Settings â†’ API')).toBeInTheDocument();
+    expect(screen.getByText('Found under Settings → API')).toBeInTheDocument();
   });
 });
 
@@ -773,7 +773,7 @@ describe('KeyValueEditor', () => {
   });
 
   it('uses a "row" label for the delete button when the key is empty', () => {
-    // Add a row, leave the key empty, click delete â€” the aria-label falls
+    // Add a row, leave the key empty, click delete — the aria-label falls
     // back to the literal "Delete row" so screen readers can still announce
     // the action target.
     render(<KeyValueEditor value={{ '': '' }} onChange={() => {}} />);
@@ -871,7 +871,7 @@ describe('ListEditor', () => {
       );
     }
     render(<Controlled />);
-    // Update via the renderer's onBlur â†’ update path.
+    // Update via the renderer's onBlur → update path.
     const nameInput = screen.getByLabelText('name A') as HTMLInputElement;
     await user.clear(nameInput);
     await user.type(nameInput, 'A2');
@@ -950,7 +950,7 @@ describe('ListEditor', () => {
     render(<Controlled />);
     const upButton = screen.getByLabelText('Move up') as HTMLButtonElement;
     expect(upButton.disabled).toBe(true);
-    // Force a click on the disabled button â€” the click handler still
+    // Force a click on the disabled button — the click handler still
     // runs in jsdom, exercising the moveItem branch with a
     // out-of-range target.
     fireEvent.click(upButton);

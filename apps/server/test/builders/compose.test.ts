@@ -41,8 +41,8 @@ describe('composeBuilder.buildAndRun', () => {
   it('brings the project up with env vars in a temporary .env', async () => {
     const runtime = await composeBuilder.buildAndRun(makeCtx() as never);
 
-    // Previous revision torn down first â€” with -f so a non-default compose
-    // file is honored â€” then up --build.
+    // Previous revision torn down first — with -f so a non-default compose
+    // file is honored — then up --build.
     const downCall = h.run.mock.calls.find((c) => (c[1] as string[])[5] === 'down');
     expect(downCall).toBeTruthy();
     expect((downCall![1] as string[])).toEqual(['compose', '-p', 'ndcmp-stack', '-f', 'compose.yaml', 'down', '--remove-orphans']);

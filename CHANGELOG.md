@@ -9,7 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+_Nothing yet._
+
+---
+
+## [0.3.0] - 2026-08-26
+
 ### Added
+- **Tags Across Three Dimensions**: Services carry many projects, workspaces and labels at once (`service_projects`, `service_workspaces`, `service_labels`). The top bar filters by all three — AND across groups, OR within one — and the selection persists per browser under `ninedeploy.tagScope`. A new Projects page manages the flat project list, and a per-service Tags card edits one service's membership in a single round-trip through `PUT /v1/services/:id/tags`.
+- **Per-Service Volume Attachments**: A service can mount any number of managed Docker volumes at explicit container paths, read-only or read-write, with a uniqueness guard on both the path and the volume. Detaching records the change only — the underlying volume is never deleted.
+- **Volume Backups**: Snapshot, restore and download any managed volume through `/v1/volumes/:name/backups`. Snapshots reuse the database-backup destination for off-site copies, prune to a retention cap, and refuse to restore while the owning service is still running.
+- **`.ninedeploy` Manifest**: `ninedeploy manifest {init,validate,show,apply}` scaffolds, schema-checks and prints the repo-side manifest. `validate` runs the same secret scan the server uses and rejects a file carrying credential-shaped values before they reach git history.
+- **Private Repository Deployment From The CLI**: `ninedeploy sources` and `ninedeploy webhooks` manage encrypted source credentials, server-generated SSH deploy keys and auto-deploy webhooks from the terminal.
+- **Workspace Invitations**: Invite an address that has no account yet; the invitation is accepted automatically on the invitee's next login or registration.
 - **Self-Healing Runtime State**: At startup and every 60 seconds the panel compares each local service's desired state with the live runtime and revives anything that should be running — stopped containers are started (Compose sidecars included), a dead PM2 daemon is resurrected from the process dump, and stopped PM2 processes are restarted. A runtime that was deleted is marked `error` for redeploy instead of being reported as `running`, so a reboot, daemon crash or external `docker stop` can no longer leave the panel lying or services dead.
 - **Boot Resilience**: The installer unconditionally enables the Docker daemon at boot (previously only when it installed Docker itself), so pre-existing Docker installations no longer leave Traefik, deployed containers and the panel dead after a reboot. A new `ninedeploy-pm2` systemd unit resurrects bare-metal PM2 deployments at boot from a process dump the server refreshes after every lifecycle change, and Compose deployments apply the `unless-stopped` restart policy to their containers so they survive daemon restarts and reboots.
 - **Streaming Encrypted Backups**: Database dumps are encrypted and decrypted as AES-256-GCM streams, so large backups no longer need to be loaded into server memory for creation, download or restore. Existing encrypted envelopes and legacy plaintext backups remain readable.
@@ -19,12 +31,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Latest Runtime & Toolchain Across The Stack**: Node.js 24 → 26 (latest GA, Aug 2026), pnpm 11.22 → 11.23, plus patch bumps for `jose` (6.2.10), `@tanstack/react-query` (5.102.2), `@biomejs/biome` (2.5.10), `@testing-library/user-event` (14.6.6) and `@types/react-dom` (19.2.5). Dockerfile, docker-compose and CI all pin Node 26; `.nvmrc` added so `nvm use` / `fnm use` always lands on the right major.
 
 ### Changed
+- **Menu Permissions Fail Closed**: `getItemsForSlot` takes an operator boolean rather than a role string, and an item gated on `permission: 'admin'` is hidden when the flag is absent instead of shown to everyone.
+- **Project Env Resolution Follows The Link Table**: Project-scope shared environment variables are the union of every project a service is linked to, replacing the single `services.projectId` lookup.
 - **Visible Installer Progress**: The installer's long silent phases no longer look like a hang. Node.js, Docker and base-package APT installs stream apt's own progress lines (`Get:`/`Unpacking`/`Setting up`) live with a still-working heartbeat, expected durations are printed before the big downloads, and failed APT commands surface their error tail instead of failing silently.
 - **Reusable Health Probes**: Docker readiness checks reuse one supervised `ninedeploy-prober` container instead of creating an ephemeral container for every retry.
 - **Serialized Singleton Lifecycles**: PM2 sessions and Traefik recreation are serialized, preventing concurrent callers from disconnecting active PM2 work or racing to replace the shared proxy container.
 - **Header-Based WebSocket Authentication**: Current dashboard clients carry bearer credentials in the WebSocket subprotocol header instead of query strings, reducing exposure through URLs and proxy history while preserving compatibility for older clients.
 
 ### Fixed
+- **Blocked Upgrade From 0.2.2 And Later**: Releases from `0.2.2` added `databases.owner_user_id` through the server's boot-time self-healing step, before an equivalent SQL migration existed. The new migration then tried to add the same column, so Drizzle's batch migrator aborted the whole upgrade with `duplicate column name: owner_user_id` and the panel never started. The runtime migrator now retries such a batch statement by statement, skipping only objects that already exist and journalling the migration so the upgrade completes.
+- **Disappearing Label Chip**: A label created from the top-bar filter was selected and then immediately pruned, because the tag scope's own label query still held the pre-creation list. Both queries are refreshed before the new chip is applied.
+- **Corrupted Source Encoding**: `0.2.36` shipped 90 files whose non-ASCII characters had been double-encoded — `·` written as `Â·`, em dashes as three characters, and several emoji mangled past a plain round-trip. Comments in the databases, invitations and jobs modules were affected alongside the test suites; every occurrence is restored.
+- **Workspace Role Fields**: A bad rename replaced the `role` field with `isOperator` on workspace members, invitations and SSO provider defaults in the test fixtures, so those suites asserted a contract the API never had. The canonical `role` naming is restored.
 - **Fresh-Install Watchdog False Positive**: The post-install systemd policy check rejected `WatchdogUSec=infinity` — the modern systemd spelling of a *disabled* watchdog on a never-started unit — and aborted the installer at the very end of an otherwise successful fresh installation. `infinity` is now accepted alongside `0`.
 - **Honest Service Lifecycle**: stop/start/restart no longer swallow Docker/PM2 failures while still writing a success status to the database. Starting or restarting a runtime that no longer exists now returns 409 and marks the service `error`, an unreachable Docker daemon returns 503, and stopping an already-gone runtime is treated as the idempotent success it is.
 - **Bounded Clone Slug Generation**: the clone slug-deduplication loop is now bounded, so a pathological collision run cannot spin forever.
@@ -33,6 +51,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Atomic Deployment Claims**: Competing worker slots can no longer claim two queued deployments for the same service at the same time.
 - **Hardened Secret Handling**: Docker environment files escape multiline values, runtime log redaction handles quoted credentials, config secrets require an explicit admin reveal request, webhook token comparison hides secret length, and installer-created `.env` files are restricted to mode `0600`.
 - **Reliable Startup and UI Controls**: Database connection PRAGMAs finish before migrations and application queries begin; CLI reachability checks require the real health endpoint; terminal clearing no longer reconnects the session.
+
+### Verified
+- **Full Suite Green**: 4,397 tests across the workspace pass and every package meets its coverage gate — 100% in `db`, `schemas`, `sdk` and the CLI, 99%+ statements in the web app, 95%+ in the server. New suites cover the Projects page, the top-bar filters, the service Tags card, the volume-backups panel, and the label, service-tag and volume-backup APIs.
+- **Upgrade Recovery Against A Real Database**: The `duplicate column name` recovery path is exercised against an actual `0.2.2`-era SQLite file and pinned by a regression test that reproduces the unjournalled-migration state.
+
+---
 
 ## [0.2.36] - 2026-08-20
 

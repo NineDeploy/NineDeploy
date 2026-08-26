@@ -106,7 +106,7 @@ describe('CommandPalette', () => {
     } as never);
     renderPalette();
     // Query 'b' matches nav "Backups" and service "blog" (label) + database
-    // "Backups" doesn't match pg-main â€” use a broader query to surface all
+    // "Backups" doesn't match pg-main — use a broader query to surface all
     // dynamic results; the test asserts they render alongside nav commands.
     fireEvent.change(screen.getByPlaceholderText(/Search services/), { target: { value: 'b' } });
     await waitFor(() => expect(screen.getByText('blog')).toBeInTheDocument());

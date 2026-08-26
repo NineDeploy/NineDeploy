@@ -33,8 +33,10 @@ describe('domain index routes', () => {
       container: 'c1',
       port: 3000,
     });
-    expect(rows[1]).toMatchObject({ id: 2, serviceId: 99, serviceName: null, container: null, port: null });
-    // No acme.json â†’ no cert info.
+    // The orphan domain (service 99 does not exist) is not listed: the index
+    // joins through the caller's visible-service set rather than left-joining.
+    expect(rows).toHaveLength(1);
+    // No acme.json → no cert info.
     expect(rows[0]).toMatchObject({ certExpiresAt: null });
   });
 
@@ -48,10 +50,12 @@ describe('domain index routes', () => {
           ],
         },
         select: {
-          services: [
-            svcRow({ id: 1, ownerUserId: 7 }),
-            svcRow({ id: 2, ownerUserId: 9 }),
-          ],
+          // Full-row select → the whole inventory; id-only projection → the
+          // owner-scoped re-query, which the fake db cannot filter itself.
+          services: (cols) =>
+            cols === undefined
+              ? [svcRow({ id: 1, ownerUserId: 7 }), svcRow({ id: 2, ownerUserId: 9 })]
+              : [{ id: 1 }],
         },
       }),
     });
@@ -68,7 +72,7 @@ describe('domain index routes', () => {
     const app = await buildTestApp({
       db: createFakeDb({
         findMany: { domains: [domainRow({ id: 1, serviceId: 1, hostname: 'a.example.com' })] },
-        select: { services: [] },
+        select: { services: [svcRow({ id: 1 })] },
       }),
     });
     await app.register(domainIndexRoutes);

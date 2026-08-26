@@ -58,7 +58,7 @@ vi.mock('../src/config.js', () => ({ config: configMock }));
 
 const MEMBER = 7;
 const OWNER = 42;
-/** A service owned by user 42 â€” the "other member" from user 7's perspective. */
+/** A service owned by user 42 — the "other member" from user 7's perspective. */
 const ownedByOther = svcRow({ id: 3, ownerUserId: OWNER, runtimeId: 'nd-svc-web' });
 
 beforeEach(() => {
@@ -76,7 +76,7 @@ describe('K2: service-scoped routes enforce ownership for members', () => {
     await app.register(webhookMgmtRoutes, { prefix: '/services' });
     await app.register(jobRoutes, { prefix: '/services' });
     // attachmentRoutes was missing here, so the /attachments case below was
-    // asserting Fastify's route-not-found 404 rather than the ownership 404 â€”
+    // asserting Fastify's route-not-found 404 rather than the ownership 404 —
     // it would have passed with the access check removed entirely.
     await app.register(attachmentRoutes, { prefix: '/services' });
     return app;
@@ -94,7 +94,7 @@ describe('K2: service-scoped routes enforce ownership for members', () => {
   ];
 
   for (const [label, method, url] of memberCases) {
-    it(`member is denied (404) on another member's service â€” ${label}`, async () => {
+    it(`member is denied (404) on another member's service — ${label}`, async () => {
       const app = await appWith();
       const res = await app.inject({ method, url, headers: asUser({ id: MEMBER, isOperator: false }) });
       expect(res.statusCode, `${method} ${url} by non-owner member`).toBe(404);

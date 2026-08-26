@@ -36,7 +36,7 @@ const TEMPLATE = {
   tagline: 'Workflow automation',
   description: 'd',
   category: 'automation',
-  emoji: 'ðŸ¤–',
+  emoji: '🤖',
   image: 'n8nio/n8n',
   port: 5678,
   volumeMount: '/home/node/.n8n',
@@ -119,7 +119,7 @@ describe('DeployWizard', () => {
     expect(screen.getByRole('option', { name: 'PM2' })).toBeInTheDocument();
   });
 
-  it('hides Compose and PM2 from a member â€” the API returns 403 for both', () => {
+  it('hides Compose and PM2 from a member — the API returns 403 for both', () => {
     authMock.user = { id: 5, isOperator: false, email: 'm@test', name: 'M' };
     renderWizard();
     expect(screen.queryByRole('option', { name: 'Compose' })).not.toBeInTheDocument();
@@ -205,7 +205,7 @@ describe('DeployWizard', () => {
     expect(screen.getByText('app')).toBeInTheDocument();
     expect(screen.getByText(':8080')).toBeInTheDocument();
     expect(screen.getByText('/data')).toBeInTheDocument();
-    expect(screen.getByText('512 shares Â· â€” MB')).toBeInTheDocument();
+    expect(screen.getByText('512 shares · — MB')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: /deploy/i }));
     await waitFor(() =>
@@ -232,7 +232,7 @@ describe('DeployWizard', () => {
     );
     await waitFor(() => expect(apiMock.api.deploys.trigger).toHaveBeenCalledWith(42));
     await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/services/42'));
-    expect(screen.getByText('Deploy started â€” buildingâ€¦')).toBeInTheDocument();
+    expect(screen.getByText('Deploy started — building…')).toBeInTheDocument();
     await waitFor(() => expect(onClose).toHaveBeenCalled());
   });
 
@@ -259,7 +259,7 @@ describe('DeployWizard', () => {
     await user.click(screen.getByRole('button', { name: /continue/i }));
     await user.type(screen.getByPlaceholderText('256'), '256');
     await user.click(screen.getByRole('button', { name: /continue/i }));
-    expect(screen.getByText('â€” shares Â· 256 MB')).toBeInTheDocument();
+    expect(screen.getByText('— shares · 256 MB')).toBeInTheDocument();
   });
 
   it('skips env rows with empty keys during deploy', async () => {
@@ -303,7 +303,7 @@ describe('DeployWizard', () => {
   });
 
   it('delegates the complete required-database pipeline to the durable prepare route', async () => {
-    const tpl = { ...TEMPLATE, dbEngine: 'postgres' as const, requires: 'Umami needs a PostgreSQL database â€” one is provisioned automatically' };
+    const tpl = { ...TEMPLATE, dbEngine: 'postgres' as const, requires: 'Umami needs a PostgreSQL database — one is provisioned automatically' };
     const { onClose } = renderWizard({ template: tpl });
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: /continue/i }));
@@ -378,7 +378,7 @@ describe('DeployWizard', () => {
     expect(screen.getByText('No environment variables.')).toBeInTheDocument();
   });
 
-  it('shows Deployingâ€¦ and disables submit while pending', async () => {
+  it('shows Deploying… and disables submit while pending', async () => {
     const d = deferred();
     apiMock.api.services.create.mockReturnValue(d.promise);
     const user = userEvent.setup();
@@ -389,7 +389,7 @@ describe('DeployWizard', () => {
       await user.click(screen.getByRole('button', { name: /continue/i }));
     }
     await user.click(screen.getByRole('button', { name: /deploy/i }));
-    expect(screen.getByText('Deployingâ€¦')).toBeInTheDocument();
+    expect(screen.getByText('Deploying…')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /deploying/i })).toBeDisabled();
     d.resolve({ id: 42 });
   });
@@ -404,7 +404,7 @@ describe('DeployWizard', () => {
       await user.click(screen.getByRole('button', { name: /continue/i }));
     }
     await user.click(screen.getByRole('button', { name: /deploy/i }));
-    await waitFor(() => expect(screen.getByText('Failed â€” try again')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('Failed — try again')).toBeInTheDocument());
     expect(screen.getByText('boom')).toBeInTheDocument();
   });
 
@@ -498,7 +498,7 @@ describe('DeployWizard', () => {
     await user.type(screen.getByPlaceholderText('256'), '512');
     await user.click(screen.getByRole('button', { name: /continue/i }));
     // Review row: pm2 type appears. The Limits row value is the
-    // `${cpuShares || 'â€”'} shares Â· ${memLimitMb || 'â€”'} MB` template.
+    // `${cpuShares || '—'} shares · ${memLimitMb || '—'} MB` template.
     expect(screen.getAllByText('pm2').length).toBeGreaterThan(0);
     const limitsRow = Array.from(document.querySelectorAll('span.font-medium.text-slate-200')).find(
       (el) => /shares.*MB/.test(el.textContent ?? ''),
@@ -548,12 +548,12 @@ describe('DeployWizard', () => {
   });
 });
 
-describe('DeployWizard â€” repository analysis & Git credential guidance', () => {
+describe('DeployWizard — repository analysis & Git credential guidance', () => {
   const analysis = {
     framework: {
       id: 'next',
       name: 'Next.js',
-      emoji: 'â–²',
+      emoji: '▲',
       category: 'ssr',
       port: 3000,
       installCmd: 'pnpm install',
@@ -608,9 +608,9 @@ describe('DeployWizard â€” repository analysis & Git credential guidance', 
     const user = userEvent.setup();
     renderWizard();
 
-    // No repo URL yet: generic hint pointing at System â†’ Sources.
+    // No repo URL yet: generic hint pointing at System → Sources.
     expect(screen.getByText(/Select a Git credential first/)).toBeInTheDocument();
-    expect(screen.getByText(/System â†’ Sources/)).toBeInTheDocument();
+    expect(screen.getByText(/System → Sources/)).toBeInTheDocument();
 
     // Repo URL without a credential: warn that private repos will fail.
     await fillRepo(user);
@@ -628,10 +628,10 @@ describe('DeployWizard â€” repository analysis & Git credential guidance', 
     expect(screen.getByText('github-app')).toBeInTheDocument();
     expect(screen.getByText(/this repository is/)).toBeInTheDocument();
 
-    // Pick the repo from the credential's listâ€¦
+    // Pick the repo from the credential's list…
     const repoDropdown = (await screen.findByRole('option', { name: /Choose a repo/ })).closest('select')!;
     await user.selectOptions(repoDropdown, 'https://github.com/x/y');
-    // â€¦the URL fills in and the empty name adopts the repo name.
+    // …the URL fills in and the empty name adopts the repo name.
     await waitFor(() =>
       expect((screen.getByPlaceholderText('https://github.com/you/repo') as HTMLInputElement).value)
         .toBe('https://github.com/x/y'));
@@ -668,7 +668,7 @@ describe('DeployWizard â€” repository analysis & Git credential guidance', 
     expect(screen.getByRole('button', { name: /Re-analyze/ })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Apply suggestions/ })).toBeInTheDocument();
     // Monorepo picker is powered by the root analysis.
-    expect(screen.getByText(/Monorepo packages â€” deploy each as its own service/)).toBeInTheDocument();
+    expect(screen.getByText(/Monorepo packages — deploy each as its own service/)).toBeInTheDocument();
     expect(screen.getByText('/ (repo root)')).toBeInTheDocument();
   });
 
@@ -772,7 +772,7 @@ describe('DeployWizard â€” repository analysis & Git credential guidance', 
     // The root pill resets the scope; the base-directory input overrides it manually.
     await user.click(screen.getByRole('button', { name: '/ (repo root)' }));
     await waitFor(() => expect(screen.queryByText(/This service builds/)).not.toBeInTheDocument());
-    const baseDirInput = screen.getByPlaceholderText('/ â€” repo root, or /apps/web for a monorepo sub-app');
+    const baseDirInput = screen.getByPlaceholderText('/ — repo root, or /apps/web for a monorepo sub-app');
     await user.clear(baseDirInput);
     await user.type(baseDirInput, '/apps/worker');
 
@@ -785,15 +785,15 @@ describe('DeployWizard â€” repository analysis & Git credential guidance', 
   });
 });
 
-describe('DeployWizard â€” advanced review and repository-picker variants', () => {
+describe('DeployWizard — advanced review and repository-picker variants', () => {
   // The minimal-analysis preset: no build commands, no env, five detected
-  // files and a framework version â€” exercises every optional branch of the
+  // files and a framework version — exercises every optional branch of the
   // review step and apply-suggestions.
   const bareAnalysis = {
     framework: {
       id: 'node',
       name: 'Node.js',
-      emoji: 'â¬¢',
+      emoji: '⬢',
       category: 'runtime',
       port: 4000,
       installCmd: null,
@@ -822,7 +822,7 @@ describe('DeployWizard â€” advanced review and repository-picker variants',
   beforeEach(() => {
     vi.clearAllMocks();
     authMock.user = { id: 1, isOperator: true, email: 'a@test', name: 'A' };
-    // The REAL storage key (mode.tsx) â€” renders the wizard in advanced mode.
+    // The REAL storage key (mode.tsx) — renders the wizard in advanced mode.
     localStorage.setItem('ninedeploy_experience_mode', 'advanced');
     apiMock.api.sources.list.mockResolvedValue([{ id: 3, name: 'github-app', type: 'github' }]);
     apiMock.api.sources.repos.mockResolvedValue([]);
@@ -849,11 +849,11 @@ describe('DeployWizard â€” advanced review and repository-picker variants',
     expect(screen.getByText('DevOps Pro')).toBeInTheDocument();
     await fillRepo(user);
     expect(await screen.findByText('Node.js', {}, { timeout: 4000 })).toBeInTheDocument();
-    // A start command is missing â€” the plan shows the em-dash placeholder.
-    expect(screen.getAllByText('â€”').length).toBeGreaterThan(0);
+    // A start command is missing — the plan shows the em-dash placeholder.
+    expect(screen.getAllByText('—').length).toBeGreaterThan(0);
     // Five detected files: the first four are listed, the rest elided.
-    expect(screen.getByText(/a\.txt, b\.txt, c\.txt, d\.txtâ€¦/)).toBeInTheDocument();
-    // No suggested env vars at all â€” the block is absent.
+    expect(screen.getByText(/a\.txt, b\.txt, c\.txt, d\.txt…/)).toBeInTheDocument();
+    // No suggested env vars at all — the block is absent.
     expect(screen.queryByText('Suggested env:')).not.toBeInTheDocument();
 
     // Applying a preset without commands only takes the port.
@@ -874,11 +874,11 @@ describe('DeployWizard â€” advanced review and repository-picker variants',
 
     // Review rows: detected framework (version, no package manager), host
     // port, volume and both limits. No build-commands row (none set).
-    expect(screen.getByText('â¬¢ Node.js 22.1.0')).toBeInTheDocument();
+    expect(screen.getByText('⬢ Node.js 22.1.0')).toBeInTheDocument();
     expect(screen.getByText(':4000')).toBeInTheDocument();
     expect(screen.getByText(':8080')).toBeInTheDocument();
     expect(screen.getByText('/data')).toBeInTheDocument();
-    expect(screen.getByText('512 shares Â· 256 MB')).toBeInTheDocument();
+    expect(screen.getByText('512 shares · 256 MB')).toBeInTheDocument();
   });
 
   it('hints at a typed base directory when a monorepo exposes no packages', async () => {
@@ -901,13 +901,13 @@ describe('DeployWizard â€” advanced review and repository-picker variants',
     apiMock.api.insights.analyze.mockResolvedValue({
       ...bareAnalysis,
       monorepo: true,
-      // The field is entirely absent â€” the picker falls back to an empty list.
+      // The field is entirely absent — the picker falls back to an empty list.
       workspacePackages: undefined,
     });
     renderWizard();
     await fillRepo(user);
     expect(await screen.findByText(
-      /workspace config found â€” type a base directory below/,
+      /workspace config found — type a base directory below/,
       {},
       { timeout: 4000 },
     )).toBeInTheDocument();
@@ -961,7 +961,7 @@ describe('DeployWizard â€” advanced review and repository-picker variants',
 
   it('offers branch dropdowns and manual branch entry in every repo-list state', async () => {
     const user = userEvent.setup();
-    // State 1: no credential repos, but the credential knows branches â†’ a
+    // State 1: no credential repos, but the credential knows branches → a
     // plain branch Select appears next to the credential picker.
     apiMock.api.sources.branches.mockResolvedValue(['main', 'dev']);
     const first = renderWizard();
@@ -973,7 +973,7 @@ describe('DeployWizard â€” advanced review and repository-picker variants',
     await user.selectOptions(branchSelect, 'dev');
     first.unmount();
 
-    // State 2: credential repos listed and NO branches â†’ repo dropdown fills
+    // State 2: credential repos listed and NO branches → repo dropdown fills
     // URL/branch, and branch entry degrades to a plain input.
     apiMock.api.sources.repos.mockResolvedValue([
       { name: 'y', fullName: 'x/y', url: 'https://github.com/x/y', defaultBranch: 'trunk', isPrivate: false },
@@ -1027,7 +1027,7 @@ describe('DeployWizard â€” advanced review and repository-picker variants',
     expect(await screen.findByText('Node.js', {}, { timeout: 4000 })).toBeInTheDocument();
     const calls = apiMock.api.insights.analyze.mock.calls.length;
     // Changing the source re-runs the effect, but repo/branch/baseDir (the
-    // analysis key) are unchanged â€” no second request fires.
+    // analysis key) are unchanged — no second request fires.
     const sourceSelect = screen.getAllByRole('combobox')[1]!;
     await user.selectOptions(sourceSelect, '3');
     await new Promise((r) => setTimeout(r, 1200));
@@ -1048,7 +1048,7 @@ describe('DeployWizard â€” advanced review and repository-picker variants',
     await user.selectOptions(sourceSelect, '3');
     const repoDropdown = (await screen.findByRole('option', { name: /Choose a repo/ })).closest('select')!;
     await user.selectOptions(repoDropdown, 'https://github.com/x/noname');
-    // No defaultBranch in the listing â†’ the branch falls back to main.
+    // No defaultBranch in the listing → the branch falls back to main.
     expect(await screen.findByDisplayValue('main')).toBeInTheDocument();
     expect((screen.getByPlaceholderText('my-app') as HTMLInputElement).value).toBe('noname');
     // Clearing the selection clears the URL with it.

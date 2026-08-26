@@ -11,6 +11,12 @@ vi.mock('../src/lib/api.js', async () => {
   return createFakeApiModule();
 });
 
+const toastSpy = vi.hoisted(() => ({ toast: vi.fn() }));
+vi.mock('../src/components/Toast.js', async () => {
+  const actual = await vi.importActual<typeof import('../src/components/Toast.js')>('../src/components/Toast.js');
+  return { ...actual, useToast: () => toastSpy };
+});
+
 vi.mock('../src/lib/auth.js', async () => {
   const { createAuthMock } = await import('./apiMock.js');
   return createAuthMock();
@@ -92,7 +98,12 @@ describe('Users', () => {
     fireEvent.change(screen.getByLabelText('New user email'), { target: { value: 'dup@x.dev' } });
     fireEvent.change(screen.getByLabelText('New user password'), { target: { value: 'fresh-pass-123' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create user' }));
-    await waitFor(() => expect(screen.getByText(/Could not create the user/)).toBeInTheDocument());
+    await waitFor(() =>
+      expect(toastSpy.toast).toHaveBeenCalledWith(
+        expect.stringMatching(/Could not create the user/),
+        'error',
+      ),
+    );
   });
 
   it('shows empty state when there are no users', async () => {
@@ -149,7 +160,9 @@ describe('Users', () => {
     mockOf(api.users.list).mockResolvedValue(users as never);
     mockOf(api.users.remove).mockRejectedValue(new Error('last admin') as never);
     renderWithProviders(<Users />);
-    fireEvent.click(screen.getAllByTitle('Delete user')[0]!);
+    // The rows only exist once the users query resolves - querying
+    // synchronously still finds the loading skeleton.
+    fireEvent.click((await screen.findAllByTitle('Delete user'))[0]!);
     fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
     await waitFor(() => expect(api.users.remove).toHaveBeenCalledWith(2));
   });
@@ -178,5 +191,82 @@ describe('Users', () => {
     fireEvent.change(input, { target: { value: 'short' } });
     fireEvent.click(screen.getByText('Save'));
     expect(api.users.resetPassword).not.toHaveBeenCalled();
+  });
+});
+
+describe('Users one-time reset link', () => {
+  const link = { url: 'https://panel.test/reset/abc', expiresAt: '2026-03-01T00:00:00Z' };
+
+  beforeEach(() => {
+    mockOf(api.users.list).mockResolvedValue(users as never);
+  });
+
+  it('reveals the link, copies it and dismisses the banner', async () => {
+    const writeText = vi.fn(async () => undefined);
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+    mockOf(api.users.resetLink).mockResolvedValue(link as never);
+    renderWithProviders(<Users />);
+
+    fireEvent.click((await screen.findAllByTitle(/Generate a one-time reset link/))[0]!);
+    expect(await screen.findByText(link.url)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('Copy'));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(link.url));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Reset link copied', 'success'));
+
+    fireEvent.click(screen.getByText('Done'));
+    await waitFor(() => expect(screen.queryByText(link.url)).not.toBeInTheDocument());
+  });
+
+  it('tells the operator to select the link manually when the clipboard is blocked', async () => {
+    vi.stubGlobal('navigator', {
+      ...navigator,
+      clipboard: {
+        writeText: async () => {
+          throw new Error('denied');
+        },
+      },
+    });
+    mockOf(api.users.resetLink).mockResolvedValue(link as never);
+    renderWithProviders(<Users />);
+
+    fireEvent.click((await screen.findAllByTitle(/Generate a one-time reset link/))[0]!);
+    fireEvent.click(await screen.findByText('Copy'));
+    await waitFor(() =>
+      expect(toastSpy.toast).toHaveBeenCalledWith('Copy failed — select the link manually', 'error'),
+    );
+  });
+
+  it('reports a failure to mint the link', async () => {
+    mockOf(api.users.resetLink).mockRejectedValue(new Error('nope') as never);
+    renderWithProviders(<Users />);
+
+    fireEvent.click((await screen.findAllByTitle(/Generate a one-time reset link/))[0]!);
+    await waitFor(() =>
+      expect(toastSpy.toast).toHaveBeenCalledWith('Could not generate the reset link', 'error'),
+    );
+  });
+
+  it('cancels an open inline password reset', async () => {
+    renderWithProviders(<Users />);
+
+    fireEvent.click((await screen.findAllByTitle(/Reset password/))[0]!);
+    expect(await screen.findByPlaceholderText('new password (min 8)')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('Cancel'));
+    await waitFor(() =>
+      expect(screen.queryByPlaceholderText('new password (min 8)')).not.toBeInTheDocument(),
+    );
+  });
+
+  it('reports a failed password reset', async () => {
+    mockOf(api.users.resetPassword).mockRejectedValue(new Error('weak') as never);
+    renderWithProviders(<Users />);
+
+    fireEvent.click((await screen.findAllByTitle(/Reset password/))[0]!);
+    fireEvent.change(await screen.findByPlaceholderText('new password (min 8)'), {
+      target: { value: 'fresh-pass-123' },
+    });
+    fireEvent.click(screen.getByText('Save'));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Password reset failed', 'error'));
   });
 });

@@ -3,10 +3,11 @@ import { screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Databases } from '../src/routes/Databases.js';
 import { api } from '../src/lib/api.js';
+import { TagScopeProvider } from '../src/lib/projects.js';
 import { renderWithProviders, mockOf } from './helpers.js';
 
 vi.mock('../src/lib/api.js', async () => {
-  // Must be './apiMock.js', not './helpers.js' â€” see the note in apiMock.ts.
+  // Must be './apiMock.js', not './helpers.js' — see the note in apiMock.ts.
   const { createFakeApiModule } = await import('./apiMock.js');
   return createFakeApiModule();
 });
@@ -185,11 +186,17 @@ describe('Databases', () => {
   });
 
   it('scopes the list to the selected project', async () => {
-    localStorage.setItem('ninedeploy.projectId', '3');
+    // The project filter now lives in the chip-based tag scope
+    // (`ninedeploy.tagScope`), not the legacy single-project key.
+    localStorage.setItem('ninedeploy.tagScope', JSON.stringify({ projectIds: [3] }));
     mockOf(api.databases.list).mockResolvedValue([] as never);
-    renderWithProviders(<Databases />);
+    renderWithProviders(
+      <TagScopeProvider>
+        <Databases />
+      </TagScopeProvider>,
+    );
     await screen.findByText(/No databases/i);
     expect(api.databases.list).toHaveBeenCalledWith('?projectId=3');
-    localStorage.removeItem('ninedeploy.projectId');
+    localStorage.removeItem('ninedeploy.tagScope');
   });
 });

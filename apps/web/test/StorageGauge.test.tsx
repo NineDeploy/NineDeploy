@@ -29,7 +29,7 @@ describe('StorageGauge', () => {
     const { container } = renderWithProviders(<StorageGauge databaseId={3} />, {
       queryClient: createQueryClient(),
     });
-    expect(screen.getByText('â€¦')).toBeInTheDocument();
+    expect(screen.getByText('…')).toBeInTheDocument();
     expect(container.querySelector('.animate-pulse')).not.toBeNull();
   });
 

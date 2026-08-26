@@ -1,6 +1,6 @@
 ﻿/**
  * Integration test: END-TO-END deploy through the real pipeline against a live
- * Docker daemon â€” an image-based service (nginx) is deployed, health checked,
+ * Docker daemon — an image-based service (nginx) is deployed, health checked,
  * blue-green flipped, and rolled back. Gated on RUN_INTEGRATION=1 + Docker.
  * Excluded from coverage runs (see vitest.integration.config.ts).
  */
@@ -36,7 +36,7 @@ if (ENABLED) {
 }
 
 describe.skipIf(!ENABLED || !HOST_CAN_REACH_CONTAINERS)('deploy pipeline (real Docker daemon)', () => {
-  // createDb returns { db, client } â€” migrations run against the drizzle handle.
+  // createDb returns { db, client } — migrations run against the drizzle handle.
   const db = createDb({ url: ':memory:' }).db;
   let serviceId: number;
 

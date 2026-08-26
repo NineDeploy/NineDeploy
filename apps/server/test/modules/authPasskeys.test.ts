@@ -200,7 +200,15 @@ describe('auth passkey routes', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({
-      user: { id: 1, email: 'admin@example.com', name: 'Admin', isOperator: true },
+      // `PublicUser` carries the workspace count and creation date now.
+      user: {
+        id: 1,
+        email: 'admin@example.com',
+        name: 'Admin',
+        isOperator: true,
+        workspaceCount: 0,
+        createdAt: '2026-01-01T00:00:00.000Z',
+      },
       tokens: { accessToken: 'a', refreshToken: 'r', expiresIn: 900 },
     });
   });

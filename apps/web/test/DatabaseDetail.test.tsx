@@ -125,7 +125,7 @@ describe('DatabaseDetail', () => {
     renderRoute(<DatabaseDetail />, { path: '/databases/:id', route: '/databases/1' });
 
     expect(await screen.findByText('prod-postgres')).toBeInTheDocument();
-    expect(screen.getByText('PostgreSQL v16 Â· nd-db-prod-postgres:5432')).toBeInTheDocument();
+    expect(screen.getByText('PostgreSQL v16 · nd-db-prod-postgres:5432')).toBeInTheDocument();
     expect(screen.getByText('postgres://nine:s3cr3t@nd-db-prod-postgres:5432/app')).toBeInTheDocument();
     expect(screen.getAllByText('api-service').length).toBeGreaterThanOrEqual(1);
 
@@ -141,7 +141,7 @@ describe('DatabaseDetail', () => {
 
     const hidePwBtn = screen.getByTitle('Hide password');
     fireEvent.click(hidePwBtn);
-    expect(screen.getByText('â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢')).toBeInTheDocument();
+    expect(screen.getByText('••••••••••••••••')).toBeInTheDocument();
 
     // Copy password
     const copyPwBtn = screen.getByTitle('Copy password');
@@ -479,7 +479,7 @@ describe('DatabaseDetail', () => {
     const frame = await screen.findByTitle('Web Studio');
     expect(frame).toHaveAttribute('src', 'http://localhost:18001');
     expect(screen.getByRole('link', { name: /Open in new tab/i })).toHaveAttribute('href', 'http://localhost:18001');
-    fireEvent.click(screen.getByRole('button', { name: /âœ• Close/i }));
+    fireEvent.click(screen.getByRole('button', { name: /✕ Close/i }));
     await waitFor(() => expect(screen.queryByTitle('Web Studio')).not.toBeInTheDocument());
 
     // Error on launch

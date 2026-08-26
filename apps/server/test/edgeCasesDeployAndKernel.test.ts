@@ -9,7 +9,7 @@ import { hasVaultRef, resolveVaultRefs } from '../src/lib/vault.js';
 import { encrypt } from '../src/lib/crypto.js';
 import type { KernelPlugin } from '../src/kernel/types.js';
 
-describe('Edge Cases â€” Hook Pipeline', () => {
+describe('Edge Cases — Hook Pipeline', () => {
   it('executes hooks in descending priority order and allows payload mutation', async () => {
     const pipeline = new HookPipeline(() => ({} as any));
     const executionOrder: string[] = [];
@@ -77,7 +77,7 @@ describe('Edge Cases â€” Hook Pipeline', () => {
   });
 });
 
-describe('Edge Cases â€” EventBus & Wildcard Multiplexing', () => {
+describe('Edge Cases — EventBus & Wildcard Multiplexing', () => {
   it('dispatches to exact and wildcard listeners simultaneously', () => {
     const bus = new EventBus();
     const received: Array<{ type: string; payload: any }> = [];
@@ -133,7 +133,7 @@ describe('Edge Cases â€” EventBus & Wildcard Multiplexing', () => {
   });
 });
 
-describe('Edge Cases â€” MenuRegistry & RBAC Slot Filtering', () => {
+describe('Edge Cases — MenuRegistry & RBAC Slot Filtering', () => {
   it('filters items by slot and role permission correctly', () => {
     const registry = new MenuRegistry();
 
@@ -163,12 +163,12 @@ describe('Edge Cases â€” MenuRegistry & RBAC Slot Filtering', () => {
     });
 
     // Member view of primary sidebar
-    const memberItems = registry.getItemsForSlot('sidebar:primary', 'member');
+    const memberItems = registry.getItemsForSlot('sidebar:primary', false);
     expect(memberItems).toHaveLength(1);
     expect(memberItems[0]?.id).toBe('user-services');
 
     // Admin view of primary sidebar (sorted by order: 5, then 10)
-    const adminItems = registry.getItemsForSlot('sidebar:primary', 'admin');
+    const adminItems = registry.getItemsForSlot('sidebar:primary', true);
     expect(adminItems).toHaveLength(2);
     expect(adminItems[0]?.id).toBe('user-services');
     expect(adminItems[1]?.id).toBe('admin-dashboard');
@@ -186,7 +186,7 @@ describe('Edge Cases â€” MenuRegistry & RBAC Slot Filtering', () => {
   });
 });
 
-describe('Edge Cases â€” Microkernel Lifecycle & Dependency Resolution', () => {
+describe('Edge Cases — Microkernel Lifecycle & Dependency Resolution', () => {
   it('resolves complex dependency trees topologically', async () => {
     const mockDb = { query: { configEntries: { findMany: vi.fn(async () => []) } } } as any;
     const kernel = new NineDeployKernel(mockDb, {} as any);
@@ -263,8 +263,8 @@ describe('Edge Cases â€” Microkernel Lifecycle & Dependency Resolution', ()
   });
 });
 
-describe('Edge Cases â€” Database Engines & Connection Strings with Special Chars', () => {
-  const specialPassword = 'p@ss:w/o?r#d%123&+= TÃ¼rk!';
+describe('Edge Cases — Database Engines & Connection Strings with Special Chars', () => {
+  const specialPassword = 'p@ss:w/o?r#d%123&+= Türk!';
 
   it('properly encodes connection strings for all 10 supported engines', () => {
     const engines = [
@@ -307,7 +307,7 @@ describe('Edge Cases â€” Database Engines & Connection Strings with Special
   });
 });
 
-describe('Edge Cases â€” Vault Secret Interpolation & Fallbacks', () => {
+describe('Edge Cases — Vault Secret Interpolation & Fallbacks', () => {
   it('detects vault references correctly', () => {
     expect(hasVaultRef('plain-value')).toBe(false);
     expect(hasVaultRef('$' + '{{infisical:DATABASE_URL}}')).toBe(true);
@@ -336,7 +336,7 @@ describe('Edge Cases â€” Vault Secret Interpolation & Fallbacks', () => {
   });
 });
 
-describe('Edge Cases â€” ConfigCenter & Live Reactivity', () => {
+describe('Edge Cases — ConfigCenter & Live Reactivity', () => {
   it('supports typed configs, default fallback, and scoped configs for plugins', async () => {
     vi.stubEnv('NINEDEPLOY_MASTER_KEY', 'b'.repeat(64));
     const entries = new Map<string, any>();

@@ -146,7 +146,7 @@ describe('StaticSection', () => {
     expect(onChange).toHaveBeenLastCalledWith({ spa: true, root: 'public' });
   });
 
-  it('toggles SPA off (spa true â†’ false) and emits with no root', () => {
+  it('toggles SPA off (spa true → false) and emits with no root', () => {
     const onChange = vi.fn();
     render(<StaticSection value={{ spa: true, root: 'dist' }} onChange={onChange} />);
     const switchBtn = screen.getByRole('switch');
@@ -614,7 +614,7 @@ describe('NotificationsSection', () => {
     const onChange = vi.fn();
     render(<NotificationsSection value={undefined} onChange={onChange} />);
     const input = screen.getByPlaceholderText('ops');
-    // Type and press Enter to commit the chip â€” the user-event way.
+    // Type and press Enter to commit the chip — the user-event way.
     await user.type(input, 'ops');
     await user.keyboard('{Enter}');
     // The NotificationsSection always sends a full object with the three
@@ -838,7 +838,7 @@ describe('clear-input branches', () => {
         onChange={onChange}
       />,
     );
-    // The number-input for maxActive also has a clear-input branch â€” set it
+    // The number-input for maxActive also has a clear-input branch — set it
     // to an invalid value (empty) and verify onChange still fires.
     const maxInput = screen.getByDisplayValue('5') as HTMLInputElement;
     fireEvent.change(maxInput, { target: { value: '10' } });

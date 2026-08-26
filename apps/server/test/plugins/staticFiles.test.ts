@@ -62,7 +62,7 @@ describe('registerStaticFiles', () => {
     const log = vi.spyOn(app.log, 'info');
     await registerStaticFiles(app, null);
     expect(log).toHaveBeenCalled();
-    // No static plugin registered â†’ Fastify's default 404 (not the SPA entry).
+    // No static plugin registered → Fastify's default 404 (not the SPA entry).
     const res = await app.inject({ method: 'GET', url: '/' });
     expect(res.statusCode).toBe(404);
     expect(res.body).not.toContain('dashboard-here');
@@ -89,7 +89,7 @@ describe('registerStaticFiles', () => {
     expect(spa.statusCode).toBe(200);
     expect(spa.body).toContain('dashboard-here');
 
-    // API paths never get the SPA entry â€” they keep Fastify's default 404 body.
+    // API paths never get the SPA entry — they keep Fastify's default 404 body.
     for (const url of ['/v1/nope', '/health/extra', '/hooks/x', '/events/y']) {
       const res = await app.inject({ method: 'GET', url });
       expect(res.statusCode).toBe(404);

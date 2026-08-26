@@ -38,7 +38,7 @@ describe('doctorAction', () => {
     vi.mocked(serverRunner.getContainerState).mockResolvedValue({ exists: true, running: true, status: 'running' });
     vi.mocked(configMod.loadConfig).mockReturnValue({ baseUrl: 'http://localhost:3000', token: 'tok123' });
     vi.mocked(serverRunner.isServerReachable).mockResolvedValue(true);
-    (mockClient.auth.me as any).mockResolvedValue({ email: 'admin@nine.io', role: 'admin' });
+    (mockClient.auth.me as any).mockResolvedValue({ email: 'admin@nine.io', isOperator: true });
 
     await doctorAction(mockClient);
 
@@ -46,8 +46,20 @@ describe('doctorAction', () => {
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('2. Docker'));
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('running'));
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('connected'));
-    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('admin@nine.io (admin)'));
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('admin@nine.io (operator)'));
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('All critical checks passed'));
+  });
+
+  it('labels a session without an operator seat as a member', async () => {
+    vi.mocked(serverRunner.isDockerAvailable).mockResolvedValue(true);
+    vi.mocked(serverRunner.getContainerState).mockResolvedValue({ exists: true, running: true, status: 'running' });
+    vi.mocked(configMod.loadConfig).mockReturnValue({ baseUrl: 'http://localhost:3000', token: 'tok123' });
+    vi.mocked(serverRunner.isServerReachable).mockResolvedValue(true);
+    (mockClient.auth.me as any).mockResolvedValue({ email: 'dev@nine.io', isOperator: false });
+
+    await doctorAction(mockClient);
+
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('dev@nine.io (member)'));
   });
 
   it('handles docker not available and stopped container', async () => {
@@ -66,7 +78,7 @@ describe('doctorAction', () => {
     vi.mocked(serverRunner.getContainerState).mockResolvedValueOnce({ exists: true, running: false, status: 'exited' });
     vi.mocked(configMod.loadConfig).mockReturnValue({ baseUrl: 'http://localhost:3000', token: 'tok' });
     vi.mocked(serverRunner.isServerReachable).mockResolvedValue(true);
-    (mockClient.auth.me as any).mockResolvedValue({ email: 'admin@nine.io', role: 'admin' });
+    (mockClient.auth.me as any).mockResolvedValue({ email: 'admin@nine.io', isOperator: true });
 
     await doctorAction(mockClient);
 
@@ -99,7 +111,7 @@ describe('doctorAction', () => {
     vi.mocked(serverRunner.startServerContainer).mockResolvedValue(undefined as any);
     vi.mocked(configMod.loadConfig).mockReturnValue({ baseUrl: 'http://localhost:3000', token: 'tok' });
     vi.mocked(serverRunner.isServerReachable).mockResolvedValue(true);
-    (mockClient.auth.me as any).mockResolvedValue({ email: 'admin@nine.io', role: 'admin' });
+    (mockClient.auth.me as any).mockResolvedValue({ email: 'admin@nine.io', isOperator: true });
 
     await doctorAction(mockClient, { fix: true });
 
@@ -114,7 +126,7 @@ describe('doctorAction', () => {
     vi.mocked(serverRunner.startServerContainer).mockRejectedValue(new Error('port busy'));
     vi.mocked(configMod.loadConfig).mockReturnValue({ baseUrl: 'http://localhost:3000', token: 'tok' });
     vi.mocked(serverRunner.isServerReachable).mockResolvedValue(true);
-    (mockClient.auth.me as any).mockResolvedValue({ email: 'admin@nine.io', role: 'admin' });
+    (mockClient.auth.me as any).mockResolvedValue({ email: 'admin@nine.io', isOperator: true });
 
     await doctorAction(mockClient, { fix: true });
 

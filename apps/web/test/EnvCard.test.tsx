@@ -162,7 +162,7 @@ describe('EnvCard', () => {
     const row = input.closest('div.flex.items-center') as HTMLElement;
     expect(within(row).getByTitle('Save')).toBeDisabled();
     await user.clear(input);
-    // Clearing is a legitimate edit now â€” Save enables and the field stays empty.
+    // Clearing is a legitimate edit now — Save enables and the field stays empty.
     expect(within(row).getByTitle('Save')).toBeEnabled();
     expect(input).toHaveValue('');
   });
@@ -184,7 +184,7 @@ describe('EnvCard', () => {
     const user = userEvent.setup();
     renderCard();
     // With >5 variables the filter input appears and every row renders.
-    const filter = await screen.findByPlaceholderText('Filter keysâ€¦');
+    const filter = await screen.findByPlaceholderText('Filter keys…');
     expect(screen.getByText('VAR_0')).toBeInTheDocument();
     expect(screen.getByText('VAR_6')).toBeInTheDocument();
     await user.type(filter, 'var_3');

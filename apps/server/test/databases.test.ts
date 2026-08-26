@@ -261,7 +261,7 @@ describe('databases routes', () => {
 
   it('tolerates backup files that are missing or cannot be unlinked', async () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), 'nd-dbdel-'));
-    const locked = path.join(dir, 'not-a-file'); // a directory â€” unlink throws EISDIR
+    const locked = path.join(dir, 'not-a-file'); // a directory — unlink throws EISDIR
     mkdirSync(locked);
     try {
       const app = await buildTestApp({

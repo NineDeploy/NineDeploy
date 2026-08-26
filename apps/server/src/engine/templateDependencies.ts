@@ -3,6 +3,7 @@ import {
   databases,
   type Database,
   type DB,
+  serviceProjects,
   services,
   type Service,
 } from '@ninedeploy/db';
@@ -31,13 +32,22 @@ export async function reconcileTemplateDependencies(
   const cfg = ENGINES[template.dbEngine];
   if (!cfg || !template.databaseEnv) throw new Error(`Template '${template.id}' has an invalid database contract`);
 
+  // Services no longer carry a single `projectId`; they link to any number of
+  // projects through `service_projects`. The managed database this template
+  // provisions belongs in the service's first linked project, or stays
+  // unscoped when the service is not filed under one.
+  const links = await db.query.serviceProjects.findMany({
+    where: eq(serviceProjects.serviceId, service.id),
+  });
+  const serviceProjectId = links[0]?.projectId ?? null;
+
   const attachments = await db.query.databaseAttachments.findMany({ where: eq(databaseAttachments.serviceId, service.id) });
   let database: Database | undefined;
   let alreadyAttached = false;
   for (const attachment of attachments) {
     const candidate = await db.query.databases.findFirst({ where: eq(databases.id, attachment.databaseId) });
     if (candidate?.engine === template.dbEngine) {
-      if (candidate.ownerUserId !== service.ownerUserId || candidate.projectId !== service.projectId) {
+      if (candidate.ownerUserId !== service.ownerUserId || candidate.projectId !== serviceProjectId) {
         throw new Error('Attached template database belongs to another resource');
       }
       database = candidate;
@@ -52,7 +62,7 @@ export async function reconcileTemplateDependencies(
     if (retained) {
       if (
         retained.ownerUserId !== service.ownerUserId
-        || retained.projectId !== service.projectId
+        || retained.projectId !== serviceProjectId
         || retained.engine !== template.dbEngine
       ) {
         throw new Error(`Database slug '${dbSlug}' belongs to another resource`);
@@ -63,7 +73,7 @@ export async function reconcileTemplateDependencies(
 
   if (!database) {
     const [created] = await db.insert(databases).values({
-      projectId: service.projectId,
+      projectId: serviceProjectId,
       ownerUserId: service.ownerUserId,
       name: `${service.name} DB`,
       slug: dbSlug,

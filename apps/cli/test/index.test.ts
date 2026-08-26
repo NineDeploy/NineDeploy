@@ -140,6 +140,10 @@ const h = vi.hoisted(() => {
   firewallAddRule: vi.fn(),
   firewallDeleteRule: vi.fn(),
   firewallApplyRecommended: vi.fn(),
+  manifestInit: vi.fn(),
+  manifestValidate: vi.fn(),
+  manifestShow: vi.fn(),
+  manifestApply: vi.fn(),
   };
 });
 
@@ -155,6 +159,12 @@ vi.mock('../src/commands/firewall.js', () => ({
   firewallAddRule: h.firewallAddRule,
   firewallDeleteRule: h.firewallDeleteRule,
   firewallApplyRecommended: h.firewallApplyRecommended,
+}));
+vi.mock('../src/commands/manifest.js', () => ({
+  manifestInit: h.manifestInit,
+  manifestValidate: h.manifestValidate,
+  manifestShow: h.manifestShow,
+  manifestApply: h.manifestApply,
 }));
 vi.mock('../src/commands/demo.js', () => ({ demoSeed: h.demoSeed }));
 vi.mock('../src/commands/server.js', () => ({
@@ -381,14 +391,21 @@ describe('whoami action', () => {
   it('prints the authenticated user and server', async () => {
     h.loadConfig.mockReturnValue({ baseUrl: 'http://srv:3000', token: 'tok' });
     h.getClient.mockReturnValue({
-      auth: { me: vi.fn().mockResolvedValue({ email: 'a@b.com', role: 'admin' }) },
+      auth: { me: vi.fn().mockResolvedValue({ email: 'a@b.com', isOperator: true }) },
     });
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
     await loadIndex();
     await findCommand('whoami').actionFn!();
 
-    expect(logSpy).toHaveBeenCalledWith('  a@b.com  (admin)  @  http://srv:3000');
+    expect(logSpy).toHaveBeenCalledWith('  a@b.com  (operator)  @  http://srv:3000');
+
+    // And the member label for a session without an operator seat.
+    h.getClient.mockReturnValue({
+      auth: { me: vi.fn().mockResolvedValue({ email: 'dev@b.com', isOperator: false }) },
+    });
+    await findCommand('whoami').actionFn!();
+    expect(logSpy).toHaveBeenCalledWith('  dev@b.com  (member)  @  http://srv:3000');
     expect(h.exit).not.toHaveBeenCalled();
   });
 
@@ -407,6 +424,28 @@ describe('whoami action', () => {
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('401'));
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('ninedeploy login'));
     expect(h.exit).toHaveBeenCalledWith(1);
+  });
+});
+
+describe('manifest actions', () => {
+  it('drives init, validate, show and apply against the current directory', async () => {
+    h.loadConfig.mockReturnValue({ baseUrl: 'http://srv:3000', token: 'tok' });
+    h.getClient.mockReturnValue({});
+    await loadIndex();
+    const children = findCommand('manifest').children;
+
+    await children.find((c) => c.cmdName === 'init')!.actionFn!();
+    expect(h.manifestInit).toHaveBeenCalledWith(process.cwd());
+
+    await children.find((c) => c.cmdName === 'validate')!.actionFn!();
+    expect(h.manifestValidate).toHaveBeenCalledWith(process.cwd());
+
+    await children.find((c) => c.cmdName === 'show')!.actionFn!();
+    expect(h.manifestShow).toHaveBeenCalledWith(process.cwd());
+
+    // The serviceId arrives as a string from commander and must be coerced.
+    await children.find((c) => c.cmdName === 'apply <serviceId>')!.actionFn!('12');
+    expect(h.manifestApply).toHaveBeenCalledWith(expect.anything(), process.cwd(), 12);
   });
 });
 
@@ -485,7 +524,7 @@ describe('config action', () => {
   it('re-consults loadConfig after config --server (no module-scope memoization)', async () => {
     h.loadConfig.mockReturnValue({ baseUrl: 'http://old:3000', token: 'tok' });
     h.getClient.mockReturnValue({
-      auth: { me: vi.fn().mockResolvedValue({ email: 'a@b.com', role: 'admin' }) },
+      auth: { me: vi.fn().mockResolvedValue({ email: 'a@b.com', isOperator: true }) },
     });
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
@@ -498,7 +537,7 @@ describe('config action', () => {
 
     // config (for the token) + whoami each consult loadConfig exactly once.
     expect(h.loadConfig).toHaveBeenCalledTimes(2);
-    expect(logSpy).toHaveBeenCalledWith('  a@b.com  (admin)  @  http://new:3000');
+    expect(logSpy).toHaveBeenCalledWith('  a@b.com  (operator)  @  http://new:3000');
   });
 });
 

@@ -48,7 +48,7 @@ describe('ManifestCreator', () => {
     const user = userEvent.setup();
     renderPage();
     await user.click(screen.getByText('Node 20 (npm)'));
-    // The version field's value is now "20" â€” the runtime version pin
+    // The version field's value is now "20" — the runtime version pin
     // declared in the preset. Placeholder is still set on the input, so
     // check the value attribute, not the placeholder presence.
     const versionInput = screen.getByPlaceholderText(/leave empty to let Nixpacks/);
@@ -96,7 +96,7 @@ describe('ManifestCreator', () => {
     const user = userEvent.setup();
     renderPage();
     await user.click(screen.getByRole('button', { name: /Preview/ }));
-    // The lint banner is unique to the modal â€” wait for it to appear.
+    // The lint banner is unique to the modal — wait for it to appear.
     await waitFor(() =>
       expect(document.body.textContent ?? '').toMatch(/No obvious secrets/),
     );
@@ -214,7 +214,7 @@ describe('ManifestCreator', () => {
       JSON.stringify({ version: '1', runtime: { type: 'go', version: '1.22' } }),
     );
     renderPage('/manifest-creator?from=service:1');
-    // The prefill guard keeps the existing draft intact â€” Go version
+    // The prefill guard keeps the existing draft intact — Go version
     // stays in place, the service port does not leak in.
     await waitFor(() => {
       expect(screen.getByDisplayValue('1.22')).toBeInTheDocument();
@@ -280,7 +280,7 @@ describe('ManifestCreator', () => {
     await user.click(screen.getByRole('button', { name: /Preview/ }));
     await waitFor(() => {
       const text = document.body.textContent ?? '';
-      // The YAML is the project-side manifest only â€” the nixpacks.toml
+      // The YAML is the project-side manifest only — the nixpacks.toml
       // is generated server-side, so the runtime section is "type: go, version: 1.22".
       expect(text).toMatch(/type: go/);
       expect(text).toMatch(/version: "1.22"/);

@@ -6,7 +6,7 @@ import { api } from '../src/lib/api.js';
 import { mockOf, renderWithProviders } from './helpers.js';
 
 vi.mock('../src/lib/api.js', async () => {
-  // Must be './apiMock.js', not './helpers.js' â€” see the note in apiMock.ts.
+  // Must be './apiMock.js', not './helpers.js' — see the note in apiMock.ts.
   const { createFakeApiModule } = await import('./apiMock.js');
   return createFakeApiModule();
 });
@@ -83,7 +83,7 @@ describe('ServiceDomainLauncher', () => {
     const plain = screen.getByRole('link', { name: 'Open https://plain.example.com/app in a new tab' });
     expect(plain).toHaveAttribute('href', 'https://plain.example.com/app');
 
-    // A wildcard hostname cannot be opened directly â€” it gets a hint instead.
+    // A wildcard hostname cannot be opened directly — it gets a hint instead.
     expect(screen.getByTitle('Use a concrete hostname covered by this wildcard')).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /wild\.example\.com/ })).not.toBeInTheDocument();
   });

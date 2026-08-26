@@ -5,7 +5,7 @@ import { api } from '../src/lib/api.js';
 import { renderWithProviders, mockOf } from './helpers.js';
 
 vi.mock('../src/lib/api.js', async () => {
-  // Must be './apiMock.js', not './helpers.js' â€” see the note in apiMock.ts.
+  // Must be './apiMock.js', not './helpers.js' — see the note in apiMock.ts.
   const { createFakeApiModule } = await import('./apiMock.js');
   return createFakeApiModule();
 });
@@ -75,7 +75,7 @@ describe('VolumeBrowser', () => {
     window.prompt = vi.fn(() => 'notes.md');
     renderWithProviders(<VolumeBrowser volume="nd-svc-web-data" onClose={vi.fn()} />);
 
-    // New file â†’ editor opens empty and dirty
+    // New file → editor opens empty and dirty
     fireEvent.click(await screen.findByRole('button', { name: /File$/ }));
     const editor = await screen.findByLabelText('File editor');
     expect((editor as HTMLTextAreaElement).value).toBe('');
@@ -114,7 +114,7 @@ describe('VolumeBrowser', () => {
     // save in-flight shows the pending label
     fireEvent.change(editor, { target: { value: 'body' } });
     fireEvent.click(screen.getByRole('button', { name: /Save/ }));
-    await waitFor(() => expect(screen.getByText('Savingâ€¦')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('Saving…')).toBeInTheDocument());
   });
 
   it('closes on Escape via the backdrop key handler', async () => {
@@ -235,7 +235,7 @@ describe('VolumeBrowser', () => {
     fireEvent.click(await screen.findByText('logo.png'));
 
     expect(await screen.findByAltText('logo.png')).toBeInTheDocument();
-    expect(screen.getByText('Image Preview Â· Read-only')).toBeInTheDocument();
+    expect(screen.getByText('Image Preview · Read-only')).toBeInTheDocument();
 
     const downloadBtn = screen.getByRole('button', { name: /Download/ });
     expect(downloadBtn).toBeInTheDocument();

@@ -41,7 +41,7 @@ describe.skipIf(!ENABLED)('database backup (real Redis container)', () => {
 
     await backupDatabase(db as never, dumpFile, () => undefined);
     expect(existsSync(dumpFile)).toBe(true);
-    // The RDB contains the literal value in binary form â€” the AT-REST file must not.
+    // The RDB contains the literal value in binary form — the AT-REST file must not.
     const atRest = readFileSync(dumpFile, 'utf8');
     expect(/^v\d+:/.test(atRest)).toBe(true);
     expect(atRest).not.toContain('roundtrip');

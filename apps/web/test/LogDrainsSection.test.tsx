@@ -6,7 +6,7 @@ import { api } from '../src/lib/api.js';
 import { renderWithProviders, mockOf } from './helpers.js';
 
 vi.mock('../src/lib/api.js', async () => {
-  // Must be './apiMock.js', not './helpers.js' â€” see the note in apiMock.ts.
+  // Must be './apiMock.js', not './helpers.js' — see the note in apiMock.ts.
   const { createFakeApiModule } = await import('./apiMock.js');
   return createFakeApiModule();
 });

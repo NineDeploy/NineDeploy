@@ -44,7 +44,7 @@ async function reconcileOnce(row: Record<string, unknown> | null) {
   return { updates };
 }
 
-/** Key docker CLI calls by their args â€” order-independent, unlike mock chains. */
+/** Key docker CLI calls by their args — order-independent, unlike mock chains. */
 function mockDocker(byArgs: {
   state: Array<string | Error>;
   label?: string;
@@ -122,7 +122,7 @@ describe('runtime state reconciliation', () => {
   });
 
   it('resurrects the PM2 dump once when a process is gone, then revives it', async () => {
-    // gone â†’ resurrect â†’ back online
+    // gone → resurrect → back online
     pm2Mocks.describe
       .mockImplementationOnce((_n: string, cb: (err: Error | null, desc?: unknown[]) => void) => cb(null, []))
       .mockImplementationOnce((_n: string, cb: (err: Error | null, desc?: unknown[]) => void) =>

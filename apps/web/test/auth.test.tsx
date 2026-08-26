@@ -197,10 +197,10 @@ describe('AuthProvider', () => {
     const user = userEvent.setup();
     renderAuth();
     await user.click(screen.getByText('login-passkey'));
-    // The browser assertion flow receives the server-generated optionsâ€¦
+    // The browser assertion flow receives the server-generated options…
     expect(apiMock.api.auth.passkeys.loginOptions).toHaveBeenCalled();
     expect(webauthnMock.startAuthentication).toHaveBeenCalledWith({ challenge: 'abc', rpId: 'nd.local' });
-    // â€¦and the assertion is verified server-side for a fresh session.
+    // …and the assertion is verified server-side for a fresh session.
     expect(apiMock.api.auth.passkeys.loginVerify).toHaveBeenCalledWith({ id: 'assertion-1' });
     await waitFor(() => expect(apiMock.setSessionTokens).toHaveBeenCalledWith('access-1', 'refresh-1'));
     expect(screen.getByTestId('email')).toHaveTextContent('a@b.c');
@@ -226,9 +226,9 @@ describe('AuthProvider', () => {
     renderAuth();
     await waitFor(() => expect(screen.getByTestId('email')).toHaveTextContent('a@b.c'));
     await user.click(screen.getByText('logout'));
-    // The session is revoked on the server (tokenVersion bump)â€¦
+    // The session is revoked on the server (tokenVersion bump)…
     expect(apiMock.api.auth.logout).toHaveBeenCalled();
-    // â€¦and the local state is cleared regardless.
+    // …and the local state is cleared regardless.
     expect(apiMock.clearTokens).toHaveBeenCalled();
     expect(screen.getByTestId('email')).toHaveTextContent('none');
   });

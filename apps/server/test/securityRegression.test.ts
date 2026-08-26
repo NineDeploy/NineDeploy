@@ -61,7 +61,7 @@ describe('K1: no default admin is seeded or force-reset on boot', () => {
     });
     await app.close();
 
-    // Reboot on the same DB file â€” the old code reset this hash to admin123456 here.
+    // Reboot on the same DB file — the old code reset this hash to admin123456 here.
     const app2 = await bootProd();
     const rows = await app2.db.query.users.findMany({ where: (u, { eq }) => eq(u.email, 'root@example.com') });
     expect(rows).toHaveLength(1);
@@ -73,7 +73,7 @@ describe('K1: no default admin is seeded or force-reset on boot', () => {
 });
 
 describe('K4: agent mode exposes only the minimal agent surface', () => {
-  it('buildAgentApp serves only /agent routes â€” no /v1 API, no dashboard, no /health', async () => {
+  it('buildAgentApp serves only /agent routes — no /v1 API, no dashboard, no /health', async () => {
     const app = await buildAgentApp();
     await app.register(agentRoutes, { tokenHash: 'a'.repeat(64) });
     await app.ready();

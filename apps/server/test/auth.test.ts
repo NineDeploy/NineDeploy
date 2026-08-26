@@ -524,7 +524,7 @@ describe('auth routes', () => {
     expect(list.statusCode).toBe(401);
   });
 
-  // â”€â”€ forgot / reset password â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── forgot / reset password ─────────────────────────────────────────────
   it('accepts a forgot-password request for an existing user', async () => {
     const app = await buildTestApp({
       db: createFakeDb({
@@ -608,7 +608,7 @@ describe('auth routes', () => {
     expect(res.statusCode).toBe(400);
   });
 
-  // â”€â”€ per-account login lockout â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── per-account login lockout ────────────────────────────────────────────
   it('locks an account after 5 failed logins (same message as a wrong password)', async () => {
     const app = await buildTestApp({
       db: createFakeDb({ findFirst: { users: userRow({ id: 1 }) } }),

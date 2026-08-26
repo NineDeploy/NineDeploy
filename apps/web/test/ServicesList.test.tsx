@@ -3,10 +3,11 @@ import { screen, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ServicesList } from '../src/routes/ServicesList.js';
 import { api } from '../src/lib/api.js';
+import { TagScopeProvider } from '../src/lib/projects.js';
 import { renderWithProviders, mockOf } from './helpers.js';
 
 vi.mock('../src/lib/api.js', async () => {
-  // Must be './apiMock.js', not './helpers.js' â€” see the note in apiMock.ts.
+  // Must be './apiMock.js', not './helpers.js' — see the note in apiMock.ts.
   const { createFakeApiModule } = await import('./apiMock.js');
   return createFakeApiModule();
 });
@@ -79,12 +80,18 @@ describe('ServicesList', () => {
   });
 
   it('scopes the list to the selected project', async () => {
-    localStorage.setItem('ninedeploy.projectId', '3');
+    // The project filter now lives in the chip-based tag scope
+    // (`ninedeploy.tagScope`), not the legacy single-project key.
+    localStorage.setItem('ninedeploy.tagScope', JSON.stringify({ projectIds: [3] }));
     mockOf(api.services.list).mockResolvedValue([] as never);
-    renderWithProviders(<ServicesList />);
+    renderWithProviders(
+      <TagScopeProvider>
+        <ServicesList />
+      </TagScopeProvider>,
+    );
     await screen.findByText('No services yet');
-    expect(api.services.list).toHaveBeenCalledWith('?projectId=3');
-    localStorage.removeItem('ninedeploy.projectId');
+    expect(api.services.list).toHaveBeenCalledWith('?tagProjectIds=3');
+    localStorage.removeItem('ninedeploy.tagScope');
   });
 
   it('filters services by search query and status pill, and resets filters', async () => {
@@ -124,7 +131,7 @@ describe('ServicesList', () => {
   it('searches by slug, branch and type, and shows live usage plus the volume badge', async () => {
     mockOf(api.services.list).mockResolvedValue([
       { id: 1, name: 'Frontend', slug: 'web-ui', type: 'docker', branch: 'release', port: 3000, status: 'running', volumeMount: '/app/data' },
-      // An image-based service has no branch at all â€” the filter must not
+      // An image-based service has no branch at all — the filter must not
       // crash on the nullish branch field.
       { id: 2, name: 'Sidebar', slug: 'side-car', type: 'docker', branch: null, port: 3010, status: 'idle' },
     ] as never);
@@ -143,7 +150,7 @@ describe('ServicesList', () => {
     // Volume badge carries the mount path.
     expect(screen.getByTitle('Volume mounted at /app/data')).toBeInTheDocument();
 
-    // Search matches slug, branch and type â€” and a branch-less service still
+    // Search matches slug, branch and type — and a branch-less service still
     // matches on its other fields.
     const searchInput = screen.getByPlaceholderText('Search services...');
     for (const q of ['WEB-UI', 'release', 'docker', 'side-car']) {

@@ -19,12 +19,17 @@ type Role = 'admin' | 'member';
 
 function mockDb(opts: {
   token?: { userId: number; expiresAt: Date | null };
-  user?: { id: number; role: Role; tokenVersion: number };
+  user?: { id: number; role?: Role; tokenVersion?: number };
+  /** Workspace seats backing the derived `isOperator` flag. */
+  memberships?: Array<{ workspaceId: number; role: string }>;
 } = {}) {
   return {
     query: {
       apiTokens: { findFirst: vi.fn(async () => opts.token) },
       users: { findFirst: vi.fn(async () => (opts.user ? { tokenVersion: 0, ...opts.user } : undefined)) },
+      // Operator status is workspace-derived now; the loaded row's legacy
+      // `role` field is only a back-compat marker (see lib/auth.ts).
+      workspaceMembers: { findMany: vi.fn(async () => opts.memberships ?? []) },
     },
   };
 }
@@ -32,7 +37,7 @@ function mockDb(opts: {
 describe('resolveUser', () => {
   it('resolves a valid JWT access token to id + role (fresh from DB)', async () => {
     const token = await signAccessToken(42, 0);
-    const db = mockDb({ user: { id: 42, isOperator: true } });
+    const db = mockDb({ user: { id: 42, role: 'admin' } });
     await expect(resolveUser(db as never, token)).resolves.toEqual({ id: 42, isOperator: true });
     expect(db.query.apiTokens.findFirst).not.toHaveBeenCalled();
     expect(db.query.users.findFirst).toHaveBeenCalled();
@@ -46,26 +51,26 @@ describe('resolveUser', () => {
 
   it('rejects a JWT with no ver claim at all (revocation bypass guard)', async () => {
     const token = await signAccessToken(42);
-    const db = mockDb({ user: { id: 42, isOperator: true } });
+    const db = mockDb({ user: { id: 42, role: 'admin' } });
     await expect(resolveUser(db as never, token)).resolves.toBeNull();
   });
 
   it('rejects a JWT whose ver does not match the user tokenVersion (revoked session)', async () => {
     // Token minted with ver=1, but the user has since been bumped to ver=2 (logout/role change).
     const token = await signAccessToken(42, 1);
-    const db = mockDb({ user: { id: 42, isOperator: true, tokenVersion: 2 } });
+    const db = mockDb({ user: { id: 42, role: 'admin', tokenVersion: 2 } });
     await expect(resolveUser(db as never, token)).resolves.toBeNull();
   });
 
   it('accepts a JWT whose ver matches the current tokenVersion', async () => {
     const token = await signAccessToken(42, 3);
-    const db = mockDb({ user: { id: 42, isOperator: true, tokenVersion: 3 } });
+    const db = mockDb({ user: { id: 42, role: 'admin', tokenVersion: 3 } });
     await expect(resolveUser(db as never, token)).resolves.toEqual({ id: 42, isOperator: true });
   });
 
   it('rejects a refresh token (wrong type)', async () => {
     const token = await signRefreshToken(42);
-    await expect(resolveUser(mockDb({ user: { id: 42, isOperator: true } }) as never, token)).resolves.toBeNull();
+    await expect(resolveUser(mockDb({ user: { id: 42, role: 'admin' } }) as never, token)).resolves.toBeNull();
   });
 
   it('returns null for a malformed JWT', async () => {
@@ -78,14 +83,14 @@ describe('resolveUser', () => {
   });
 
   it('resolves an opaque API token via its sha256 hash and loads the role', async () => {
-    const db = mockDb({ token: { userId: 7, expiresAt: null }, user: { id: 7, isOperator: false } });
+    const db = mockDb({ token: { userId: 7, expiresAt: null }, user: { id: 7, role: 'member' } });
     const user = await resolveUser(db as never, 'opaque-token-abc');
     expect(user).toEqual({ id: 7, isOperator: false });
     expect(db.query.apiTokens.findFirst).toHaveBeenCalledWith({ where: expect.objectContaining({}) });
   });
 
   it('queries with the sha256 of the presented token', async () => {
-    const db = mockDb({ token: { userId: 7, expiresAt: null }, user: { id: 7, isOperator: true } });
+    const db = mockDb({ token: { userId: 7, expiresAt: null }, user: { id: 7, role: 'admin' } });
     await resolveUser(db as never, 'raw-api-token');
     const call = db.query.apiTokens.findFirst.mock.calls[0]![0] as { where: unknown };
     expect(call.where).toBeDefined();
@@ -98,12 +103,12 @@ describe('resolveUser', () => {
   });
 
   it('returns the user when the token has not expired', async () => {
-    const db = mockDb({ token: { userId: 3, expiresAt: new Date(Date.now() + 60_000) }, user: { id: 3, isOperator: true } });
+    const db = mockDb({ token: { userId: 3, expiresAt: new Date(Date.now() + 60_000) }, user: { id: 3, role: 'admin' } });
     await expect(resolveUser(db as never, 'still-valid')).resolves.toEqual({ id: 3, isOperator: true });
   });
 
   it('returns null when the API token has expired', async () => {
-    const db = mockDb({ token: { userId: 3, expiresAt: new Date(Date.now() - 60_000) }, user: { id: 3, isOperator: true } });
+    const db = mockDb({ token: { userId: 3, expiresAt: new Date(Date.now() - 60_000) }, user: { id: 3, role: 'admin' } });
     await expect(resolveUser(db as never, 'expired-api-token')).resolves.toBeNull();
   });
 

@@ -108,7 +108,7 @@ describe('ThemeProvider', () => {
 
   it('exposes the accent palette', () => {
     expect(ACCENTS).toHaveLength(7);
-    // brand teal leads the list â€” same color as the marketing website
+    // brand teal leads the list — same color as the marketing website
     expect(ACCENTS[0]).toEqual({ id: 'phosphor', label: 'Phosphor', color: '#4ecdc4' });
     expect(ACCENTS[1]).toEqual({ id: 'indigo', label: 'Indigo', color: '#6366f1' });
   });

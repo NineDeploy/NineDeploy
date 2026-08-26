@@ -7,7 +7,7 @@ import { api } from '../src/lib/api.js';
 import { mockOf } from './helpers.js';
 
 vi.mock('../src/lib/api.js', async () => {
-  // Must be './apiMock.js', not './helpers.js' â€” see the note in apiMock.ts.
+  // Must be './apiMock.js', not './helpers.js' — see the note in apiMock.ts.
   const { createFakeApiModule } = await import('./apiMock.js');
   return createFakeApiModule();
 });
@@ -71,7 +71,7 @@ describe('WorkspaceContext and WorkspaceProvider', () => {
 
     const { result } = renderHook(() => useWorkspace(), { wrapper: createWrapper() });
 
-    // The stored id wins over the list order â€” no auto-switch to the first.
+    // The stored id wins over the list order — no auto-switch to the first.
     await waitFor(() => {
       expect(result.current.workspaces).toHaveLength(2);
       expect(result.current.currentWorkspace?.id).toBe(2);

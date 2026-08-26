@@ -111,7 +111,7 @@ describe('Official Kernel Plugins', () => {
       await kernel.registerPlugin(plugin);
 
       // Verify menu item registered
-      const items = kernel.menuRegistry.getItemsForSlot('sidebar:secondary', 'admin');
+      const items = kernel.menuRegistry.getItemsForSlot('sidebar:secondary', true);
       const tunnelItem = items.find((i) => i.id === 'cf-tunnels-nav');
       expect(tunnelItem).toBeDefined();
       expect(tunnelItem?.route).toBe('/tunnels');

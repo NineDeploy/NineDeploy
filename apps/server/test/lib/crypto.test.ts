@@ -19,7 +19,7 @@ describe('crypto primitives', () => {
   });
 
   it('randomToken produces URL-safe tokens of the requested length', () => {
-    expect(crypto.randomToken()).toHaveLength(43); // 32 bytes â†’ base64url
+    expect(crypto.randomToken()).toHaveLength(43); // 32 bytes → base64url
     expect(crypto.randomToken(16)).toHaveLength(22);
     expect(crypto.randomToken()).not.toBe(crypto.randomToken());
     expect(crypto.randomToken()).toMatch(/^[A-Za-z0-9_-]+$/);
@@ -149,7 +149,7 @@ describe('key rotation (versioned key ring)', () => {
   it('decrypts a legacy un-versioned envelope with the active key', () => {
     vi.stubEnv('NINEDEPLOY_MASTER_KEY', KEY_A);
     const ct = crypto.encrypt('legacy'); // v0:iv:tag:ct
-    const legacy = ct.slice('v0:'.length); // strip the version â†’ iv:tag:ct
+    const legacy = ct.slice('v0:'.length); // strip the version → iv:tag:ct
     expect(crypto.decrypt(legacy)).toBe('legacy');
   });
 
@@ -194,7 +194,7 @@ describe('key rotation (versioned key ring)', () => {
     const migrated = mod1.reencrypt(v0ct);
     expect(migrated.startsWith('v1:')).toBe(true);
     expect(mod1.decrypt(migrated)).toBe('migrate-me');
-    // Already on the active version â†’ unchanged.
+    // Already on the active version → unchanged.
     expect(mod1.reencrypt(migrated)).toBe(migrated);
   });
 

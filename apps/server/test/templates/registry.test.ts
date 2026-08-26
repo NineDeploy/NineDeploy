@@ -31,7 +31,7 @@ import {
 
 const cacheFile = () => path.join(h.base, 'templates-cache.json');
 const BUNDLE = { version: 1, updated: '2026-08-14', templates: [
-  { id: 'x', name: 'X', tagline: 'x', description: 'x', category: 'Custom', emoji: 'âœ¨', image: 'x/img', port: 80 },
+  { id: 'x', name: 'X', tagline: 'x', description: 'x', category: 'Custom', emoji: '✨', image: 'x/img', port: 80 },
 ] };
 
 afterAll(() => {
@@ -166,12 +166,12 @@ describe('remote sources', () => {
     let calls = 0;
     vi.stubGlobal('fetch', vi.fn(async () => { calls++; return { ok: true, status: 200, json: async () => BUNDLE }; }));
     await getTemplates({} as never);
-    expect(calls).toBe(1); // wrong-source cache â†’ refetch
+    expect(calls).toBe(1); // wrong-source cache → refetch
 
     invalidateTemplateCache();
     writeFileSync(cacheFile(), JSON.stringify({ source: URL_SRC, fetchedAt: new Date(Date.now() - 7 * 3600_000).toISOString(), templates: BUNDLE.templates }));
     await getTemplates({} as never);
-    expect(calls).toBe(2); // stale cache â†’ refetch
+    expect(calls).toBe(2); // stale cache → refetch
   });
 
   it('falls back to the stale cache when a refresh fails', async () => {
@@ -212,7 +212,7 @@ describe('remote sources', () => {
 
   it('ignores cache-write failures (read-only data dir simulation)', async () => {
     h.getSettingString.mockResolvedValue(URL_SRC);
-    // A cache file already exists as a DIRECTORY â†’ writeFileSync throws.
+    // A cache file already exists as a DIRECTORY → writeFileSync throws.
     writeFileSync(cacheFile(), 'x');
     rmSync(cacheFile());
     const fs = await import('node:fs');

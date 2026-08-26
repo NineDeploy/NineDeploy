@@ -6,7 +6,7 @@ import { api } from '../src/lib/api.js';
 import { renderWithProviders, mockOf } from './helpers.js';
 
 vi.mock('../src/lib/api.js', async () => {
-  // Must be './apiMock.js', not './helpers.js' â€” see the note in apiMock.ts.
+  // Must be './apiMock.js', not './helpers.js' — see the note in apiMock.ts.
   const { createFakeApiModule } = await import('./apiMock.js');
   return createFakeApiModule();
 });
@@ -80,7 +80,7 @@ describe('Tunnels', () => {
     renderWithProviders(<Tunnels />);
     fireEvent.click(await screen.findByRole('button', { name: /New tunnel/ }));
     await userEvent.type(await screen.findByPlaceholderText('production'), 'edge');
-    await userEvent.type(screen.getByPlaceholderText('eyJhIjoiâ€¦'), 'tok');
+    await userEvent.type(screen.getByPlaceholderText('eyJhIjoi…'), 'tok');
     fireEvent.click(screen.getByRole('button', { name: /Start tunnel/ }));
     await waitFor(() => expect(api.tunnels.create).toHaveBeenCalled());
     fireEvent.click(screen.getByRole('button', { name: 'Delete production' }));
@@ -92,7 +92,7 @@ describe('Tunnels', () => {
     mockOf(api.tunnels.list).mockResolvedValue(tunnels as never);
     renderWithProviders(<Tunnels />);
     await screen.findByText('production');
-    // Status words also appear in the guide/legend â€” assert presence, not uniqueness.
+    // Status words also appear in the guide/legend — assert presence, not uniqueness.
     expect(screen.getAllByText('running').length).toBeGreaterThan(0);
     expect(screen.getAllByText('error').length).toBeGreaterThan(0);
     expect(screen.getByText('nd-tunnel-1')).toBeInTheDocument();
@@ -105,7 +105,7 @@ describe('Tunnels', () => {
     renderWithProviders(<Tunnels />);
     await user.click(await screen.findByRole('button', { name: /New tunnel/ }));
     await user.type(await screen.findByPlaceholderText('production'), 'edge');
-    await user.type(screen.getByPlaceholderText('eyJhIjoiâ€¦'), 'secret-token');
+    await user.type(screen.getByPlaceholderText('eyJhIjoi…'), 'secret-token');
     await user.click(screen.getByRole('button', { name: /Start tunnel/ }));
     await waitFor(() => expect(api.tunnels.create).toHaveBeenCalledWith({ name: 'edge', token: 'secret-token' }));
     // form closes on success
@@ -138,9 +138,9 @@ describe('Tunnels', () => {
     renderWithProviders(<Tunnels />);
     await user.click(await screen.findByRole('button', { name: /New tunnel/ }));
     await user.type(await screen.findByPlaceholderText('production'), 'edge');
-    await user.type(screen.getByPlaceholderText('eyJhIjoiâ€¦'), 'tok');
+    await user.type(screen.getByPlaceholderText('eyJhIjoi…'), 'tok');
     await user.click(screen.getByRole('button', { name: /Start tunnel/ }));
-    expect(await screen.findByText('Startingâ€¦')).toBeInTheDocument();
+    expect(await screen.findByText('Starting…')).toBeInTheDocument();
   });
 
   it('removes a tunnel after confirmation', async () => {

@@ -7,7 +7,7 @@ import { createDb, deployments, services } from '@ninedeploy/db';
 /**
  * The worker's claim query, exercised against a REAL in-memory SQLite database
  * (same drizzle statements the plugin runs). Verifies the concurrency-safety
- * invariant: a service with a `building` deployment is never claimable â€” so
+ * invariant: a service with a `building` deployment is never claimable — so
  * parallel slots / future multi-process workers can only ever pick up OTHER
  * services' deployments.
  */
@@ -42,7 +42,7 @@ describe('deploy worker claim semantics (real SQLite)', () => {
       .orderBy(asc(deployments.createdAt))
       .limit(1);
 
-    // web's QUEUED deploy is older, but web is BUSY â†’ api's deploy is next.
+    // web's QUEUED deploy is older, but web is BUSY → api's deploy is next.
     expect(claimed).toBeDefined();
     expect(claimed!.id).toBe(3);
 

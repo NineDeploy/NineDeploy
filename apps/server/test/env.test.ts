@@ -109,7 +109,7 @@ describe('env', () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     vi.stubEnv('NODE_ENV', 'production');
-    // The value shipped in .env.example â€” copying it verbatim must not boot.
+    // The value shipped in .env.example — copying it verbatim must not boot.
     vi.stubEnv('NINEDEPLOY_JWT_SECRET', 'change-me-to-a-long-random-string');
     await loadEnv();
 
@@ -130,7 +130,7 @@ describe('env', () => {
 
     vi.stubEnv('NODE_ENV', 'production');
     vi.stubEnv('NINEDEPLOY_JWT_SECRET', 'a-strong-unique-production-secret');
-    vi.stubEnv('NINEDEPLOY_MASTER_KEY', 'deadbeef'); // 4 bytes â€” far too weak
+    vi.stubEnv('NINEDEPLOY_MASTER_KEY', 'deadbeef'); // 4 bytes — far too weak
     await loadEnv();
 
     expect(exitSpy).toHaveBeenCalledWith(1);
@@ -157,7 +157,7 @@ describe('env', () => {
   });
 
   // L-7: the rotation key-ring is read straight from process.env by
-  // lib/crypto.ts, so it used to skip this guard entirely â€” an operator could
+  // lib/crypto.ts, so it used to skip this guard entirely — an operator could
   // rotate ONTO a weak key with no warning.
   it('refuses to boot in production with a weak key in NINEDEPLOY_MASTER_KEYS', async () => {
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);

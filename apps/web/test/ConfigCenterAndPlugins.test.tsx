@@ -10,7 +10,7 @@ import { useAuth } from '../src/lib/auth.js';
 import { renderWithProviders, mockOf } from './helpers.js';
 
 vi.mock('../src/lib/api.js', async () => {
-  // Must be './apiMock.js', not './helpers.js' â€” see the note in apiMock.ts.
+  // Must be './apiMock.js', not './helpers.js' — see the note in apiMock.ts.
   const { createFakeApiModule } = await import('./apiMock.js');
   return createFakeApiModule();
 });
@@ -89,7 +89,7 @@ const sampleConfigEntries = [
     category: 'plugin:smtp',
     description: 'Encrypted relay credentials',
     tags: ['email', 'auth'],
-    value: 'â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢',
+    value: '••••••••',
     isConfigured: true,
     updatedAt: '2026-08-17T12:00:00.000Z',
   },
@@ -163,7 +163,7 @@ describe('Config Center & Plugins Frontend Components', () => {
     it('groups entries for git, dns and custom plugin scopes', async () => {
     mockOf(api.config.list).mockResolvedValue({
       entries: [
-        { key: 'github.webhook_secret', pluginId: null, type: 'string', isSecret: true, label: 'Hook Secret', category: 'general', tags: [], value: 'â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢', isConfigured: true },
+        { key: 'github.webhook_secret', pluginId: null, type: 'string', isSecret: true, label: 'Hook Secret', category: 'general', tags: [], value: '••••••••', isConfigured: true },
         { key: 'dns.provider', pluginId: 'cloudflare', type: 'string', isSecret: false, label: 'Provider', category: 'general', tags: [], value: 'cloudflare', isConfigured: true },
         { key: 'jwt.audience', pluginId: null, type: 'string', isSecret: false, label: 'Audience', category: 'general', tags: [], value: 'panel', isConfigured: true },
         { key: 'payment.gateway', pluginId: 'payment', type: 'string', isSecret: false, label: 'Gateway', category: 'general', tags: [], value: 'stripe', isConfigured: true },
@@ -199,7 +199,7 @@ describe('Config Center & Plugins Frontend Components', () => {
         expect(screen.getByText('system.site_name')).toBeInTheDocument();
         expect(screen.getByText('NineDeploy Production')).toBeInTheDocument();
         expect(screen.getByText('plugin:smtp:password')).toBeInTheDocument();
-        expect(screen.getByText('â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢')).toBeInTheDocument();
+        expect(screen.getByText('••••••••')).toBeInTheDocument();
       });
 
       // Filter by plugin group (entries are grouped per plugin module).
@@ -766,7 +766,7 @@ describe('Config Center & Plugins Frontend Components', () => {
       expect(screen.queryByRole('button', { name: 'Install Plugin' })).not.toBeInTheDocument();
 
       const inspectBtns = screen.getAllByRole('button', { name: /inspect/i });
-      // The core (official) plugin's card is last â€” extensions render first.
+      // The core (official) plugin's card is last — extensions render first.
       await user.click(inspectBtns.at(-1)!);
       await waitFor(() => {
         expect(screen.getByText('Plugin Details: traefik-proxy')).toBeInTheDocument();
@@ -807,7 +807,7 @@ describe('Config Center & Plugins Frontend Components', () => {
         expect(screen.getByText('Traefik Dynamic Proxy')).toBeInTheDocument();
       });
 
-      // Click Inspect on the core (official) plugin â€” its card is last.
+      // Click Inspect on the core (official) plugin — its card is last.
       const inspectBtns = screen.getAllByRole('button', { name: /inspect/i });
       await user.click(inspectBtns.at(-1)!);
 
@@ -954,7 +954,7 @@ describe('Config Center & Plugins Frontend Components', () => {
         expect(mockOf(api.config.list)).toHaveBeenCalledWith({ reveal: true });
       });
 
-      // Edit secret item (plugin:smtp:password) â€” last row: core entries
+      // Edit secret item (plugin:smtp:password) — last row: core entries
       // render first, so the smtp group's edit button comes after them.
       const editBtns = await screen.findAllByTitle('Edit Value');
       fireEvent.click(editBtns[6]!);

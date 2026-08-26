@@ -150,7 +150,7 @@ export const serviceVolumesRoutes: FastifyPluginAsync = async (app) => {
       if (!known) throw notFound(`Volume '${volumeName}' does not exist on this host`);
     }
 
-    let row;
+    let row: typeof serviceVolumeAttachments.$inferSelect;
     try {
       const [inserted] = await app.db
         .insert(serviceVolumeAttachments)
@@ -221,7 +221,7 @@ export const serviceVolumesRoutes: FastifyPluginAsync = async (app) => {
     if (input.readOnly !== undefined) update.readOnly = input.readOnly;
     const set = { ...update, updatedAt: new Date() };
 
-    let updated;
+    let updated: typeof serviceVolumeAttachments.$inferSelect | undefined;
     try {
       [updated] = await app.db
         .update(serviceVolumeAttachments)

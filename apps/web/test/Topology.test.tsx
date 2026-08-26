@@ -5,7 +5,7 @@ import { api } from '../src/lib/api.js';
 import { renderWithProviders, mockOf } from './helpers.js';
 
 vi.mock('../src/lib/api.js', async () => {
-  // Must be './apiMock.js', not './helpers.js' â€” see the note in apiMock.ts.
+  // Must be './apiMock.js', not './helpers.js' — see the note in apiMock.ts.
   const { createFakeApiModule } = await import('./apiMock.js');
   return createFakeApiModule();
 });
@@ -110,7 +110,7 @@ it('shows an error state with retry when the graph query fails', async () => {
     it('shows loading state while fetching the graph', () => {
       mockOf(api.topology.get).mockReturnValue(new Promise(() => {}));
       renderWithProviders(<Topology />);
-      expect(screen.getByText('Building topology meshâ€¦')).toBeInTheDocument();
+      expect(screen.getByText('Building topology mesh…')).toBeInTheDocument();
     });
 
     it('shows empty state when nothing is deployed', async () => {
@@ -196,7 +196,7 @@ it('shows an error state with retry when the graph query fails', async () => {
       const flow = await screen.findByTestId('react-flow');
       // 2 services + 2 databases + 1 domain (orphan skipped) + 1 gateway + 2 volumes + 1 network
       expect(flow.getAttribute('data-nodes')).toBe('10');
-      // 1 domainâ†’gateway + 1 gatewayâ†’service + 1 attachment + 1 volume + 1 network link
+      // 1 domain→gateway + 1 gateway→service + 1 attachment + 1 volume + 1 network link
       expect(flow.getAttribute('data-edges')).toBe('6');
       expect(screen.getByTestId('flow-provider')).toBeInTheDocument();
       expect(screen.getByTestId('background')).toBeInTheDocument();
@@ -258,7 +258,7 @@ it('shows an error state with retry when the graph query fails', async () => {
       fireEvent.click(screen.getByTitle('Refresh topology graph'));
       await waitFor(() => expect(api.topology.get).toHaveBeenCalledTimes(2));
 
-      // The inspector opens on node click and closes via its âœ•.
+      // The inspector opens on node click and closes via its ✕.
       fireEvent.click(screen.getByTestId('node-service-1'));
       fireEvent.click(screen.getByLabelText('Close Inspector'));
       await waitFor(() => expect(screen.queryByLabelText('Close Inspector')).not.toBeInTheDocument());
@@ -290,7 +290,7 @@ it('shows an error state with retry when the graph query fails', async () => {
     });
 
     it('tolerates a graph with missing optional collections', async () => {
-      // Only the required gateway and one service â€” every other collection is
+      // Only the required gateway and one service — every other collection is
       // absent, exercising the ?? [] fallbacks.
       mockOf(api.topology.get).mockResolvedValue({
         services: [graph.services[0]],

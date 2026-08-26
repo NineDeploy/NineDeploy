@@ -56,7 +56,7 @@ const program = new Command();
 program
   .name('ninedeploy')
   .description('NineDeploy — self-hosted deployment platform CLI\n\n  Deploy apps from Git or Docker Hub in one click.')
-  .version('0.2.36')
+  .version('0.3.0')
   .helpOption('-h, --help', 'Display this help');
 
 // ── Auth ──────────────────────────────────────────────────────────────────
@@ -97,7 +97,7 @@ program
     if (!cfg.token) { console.log('  Not logged in. Run `ninedeploy login`.'); process.exit(1); }
     try {
       const user = await getClient().auth.me();
-      console.log(`  ${user.email}  (${user.role})  @  ${cfg.baseUrl}`);
+      console.log(`  ${user.email}  (${user.isOperator ? 'operator' : 'member'})  @  ${cfg.baseUrl}`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.log(`  Could not reach the server (${msg}). Check the URL/network, or run \`ninedeploy login\` if the token expired.`);

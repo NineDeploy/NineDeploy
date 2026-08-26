@@ -7,12 +7,12 @@ import { spawnValidated } from '../src/lib/spawnValidated.js';
 import { badRequest, notFound, unauthorized, forbidden } from '../src/lib/errors.js';
 import { iso, isoDate, listResponse } from '../src/lib/serialize.js';
 
-describe('Edge Cases â€” Crypto & Password Hashing', () => {
+describe('Edge Cases — Crypto & Password Hashing', () => {
   it('handles empty string and unicode payloads safely', () => {
     const encEmpty = encrypt('');
     expect(decrypt(encEmpty)).toBe('');
 
-    const unicode = 'ðŸ”’ ðŸš€ NineDeploy â€” TÃ¼rkiye ðŸ‡¹ðŸ‡· / ð œŽ ð œ±';
+    const unicode = '🔒 🚀 NineDeploy — Türkiye 🇹🇷 / 𠜎 𠜱';
     const encUnicode = encrypt(unicode);
     expect(decrypt(encUnicode)).toBe(unicode);
   });
@@ -44,7 +44,7 @@ describe('Edge Cases â€” Crypto & Password Hashing', () => {
   });
 });
 
-describe('Edge Cases â€” Login Lockout & Brute-force Tracking', () => {
+describe('Edge Cases — Login Lockout & Brute-force Tracking', () => {
   const testEmail = 'attacker@example.com';
 
   it('does not lock user before 5 failed attempts', () => {
@@ -72,7 +72,7 @@ describe('Edge Cases â€” Login Lockout & Brute-force Tracking', () => {
   });
 });
 
-describe('Edge Cases â€” Glob & Monorepo Watch Paths', () => {
+describe('Edge Cases — Glob & Monorepo Watch Paths', () => {
   it('matches complex glob expressions with leading / trailing slashes', () => {
     const patterns = ['apps/server/**', 'packages/**'];
     expect(matchesAny('apps/server/src/index.ts', patterns)).toBe(true);
@@ -97,7 +97,7 @@ describe('Edge Cases â€” Glob & Monorepo Watch Paths', () => {
   });
 });
 
-describe('Edge Cases â€” TOTP 2FA Verification Windows', () => {
+describe('Edge Cases — TOTP 2FA Verification Windows', () => {
   const secret = 'JBSWY3DPEHPK3PXP'; // Base32 test secret
 
   it('accepts tokens within T, T-1, and T+1 clock-skew windows', () => {
@@ -112,7 +112,7 @@ describe('Edge Cases â€” TOTP 2FA Verification Windows', () => {
     expect(verifyTotp(secret, nextToken, now)).toBe(true);
   });
 
-  it('rejects tokens outside the acceptable Â±1 step window', () => {
+  it('rejects tokens outside the acceptable ±1 step window', () => {
     const now = Date.now();
     const expiredToken = totpAt(secret, now - 90_000);
     expect(verifyTotp(secret, expiredToken, now)).toBe(false);
@@ -138,7 +138,7 @@ describe('Edge Cases â€” TOTP 2FA Verification Windows', () => {
   });
 });
 
-describe('Edge Cases â€” Spawn Validation Output Handlers', () => {
+describe('Edge Cases — Spawn Validation Output Handlers', () => {
   it('collects streamed output lines and resolves exit code', async () => {
     const lines: string[] = [];
     const onLine = (l: string) => lines.push(l);
@@ -150,7 +150,7 @@ describe('Edge Cases â€” Spawn Validation Output Handlers', () => {
   });
 });
 
-describe('Edge Cases â€” Serialization & HTTP Error Codes', () => {
+describe('Edge Cases — Serialization & HTTP Error Codes', () => {
   it('serializes standard NineDeploy errors with exact HTTP status codes', () => {
     expect(badRequest('invalid input').statusCode).toBe(400);
     expect(unauthorized('no token').statusCode).toBe(401);

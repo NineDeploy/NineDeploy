@@ -121,7 +121,7 @@ describe('Config Center HTTP API', () => {
     });
     expect(setRes3.statusCode).toBe(200);
 
-    // 3. L-12: the listing is admin-only now. Masking secrets was not enough â€”
+    // 3. L-12: the listing is admin-only now. Masking secrets was not enough —
     // the non-secret entries still describe how the whole instance is wired,
     // and a member has no operator role to use them for.
     const memberListRes = await app.inject({
@@ -160,7 +160,7 @@ describe('Config Center HTTP API', () => {
     expect(filterPluginRes.statusCode).toBe(200);
     expect(filterPluginRes.json().entries.every((e: any) => e.pluginId === 'smtp')).toBe(true);
 
-    // 7. Get specific key â€” admin-only, same L-12 rule as the listing:
+    // 7. Get specific key — admin-only, same L-12 rule as the listing:
     // instance configuration is an operator concern.
     const getPubRes = await app.inject({
       method: 'GET',
@@ -198,7 +198,7 @@ describe('Config Center HTTP API', () => {
     expect(getNoCatRes.json().category).toBe('general');
     expect(getNoCatRes.json().tags).toEqual([]);
 
-    // Get secret as member â€” refused before the handler can mask anything.
+    // Get secret as member — refused before the handler can mask anything.
     const getSecretMemberRes = await app.inject({
       method: 'GET',
       url: '/plugin:smtp:password',
@@ -206,7 +206,7 @@ describe('Config Center HTTP API', () => {
     });
     expect(getSecretMemberRes.statusCode).toBe(403);
 
-    // Get custom secret as member â€” same refusal.
+    // Get custom secret as member — same refusal.
     const getCustomSecMemberRes = await app.inject({
       method: 'GET',
       url: '/custom.secret_token',
@@ -221,7 +221,7 @@ describe('Config Center HTTP API', () => {
       headers: asUser({ isOperator: true }),
     });
     expect(getSecretAdminRes.statusCode).toBe(200);
-    expect(getSecretAdminRes.json().value).toBe('â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢');
+    expect(getSecretAdminRes.json().value).toBe('••••••••');
 
     const getSecretAdminRevealRes = await app.inject({
       method: 'GET',
@@ -313,13 +313,13 @@ describe('Config Center HTTP API', () => {
     });
     expect(setRes.statusCode).toBe(200);
 
-    // Saving the displayed mask back must be refused â€” the old code silently
-    // replaced the real credential with 'â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢'.
+    // Saving the displayed mask back must be refused — the old code silently
+    // replaced the real credential with '••••••••'.
     const maskRes = await app.inject({
       method: 'POST',
       url: '/plugin:smtp:password',
       headers: asUser({ isOperator: true }),
-      payload: { value: 'â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢', isSecret: true },
+      payload: { value: '••••••••', isSecret: true },
     });
     expect(maskRes.statusCode).toBe(400);
     expect(maskRes.json().error.code).toBe('masked_secret_rejected');

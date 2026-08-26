@@ -1,6 +1,16 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import type { FastifyPluginAsync } from 'fastify';
-import { buildConfigs, envVars, services, sources, type DB, type Service } from '@ninedeploy/db';
+import {
+  buildConfigs,
+  envVars,
+  serviceLabels,
+  serviceProjects,
+  services,
+  serviceWorkspaces,
+  sources,
+  type DB,
+  type Service,
+} from '@ninedeploy/db';
 import { createService, setLimits, updateService } from '@ninedeploy/schemas';
 import { getTemplates } from '../templates/registry.js';
 import { capture } from '../lib/exec.js';
@@ -16,12 +26,52 @@ import { dockerBuilder } from '../engine/builders/docker.js';
 import { pm2Builder, pm2Logs, pm2Restart, pm2Start, pm2Stop } from '../engine/builders/pm2.js';
 import { writeDynamicConfig } from '../engine/proxy.js';
 import { removeServiceBridgeIfEmpty } from '../lib/serviceBridge.js';
+import { applyDefaultTags, replaceServiceTags } from './serviceTags.js';
+
+/** The three tag id lists a service row is serialized with. */
+interface TagIds {
+  projectIds: number[];
+  workspaceIds: number[];
+  labelIds: number[];
+}
+
+const NO_TAGS: TagIds = { projectIds: [], workspaceIds: [], labelIds: [] };
+
+/**
+ * Read the project / workspace / label links of many services in three
+ * queries rather than three per service. Returns an empty entry for a service
+ * with no links so callers can index without a null check.
+ */
+async function loadTagIds(db: DB, serviceIds: number[]): Promise<Map<number, TagIds>> {
+  const byId = new Map<number, TagIds>();
+  if (serviceIds.length === 0) return byId;
+  for (const id of serviceIds) byId.set(id, { projectIds: [], workspaceIds: [], labelIds: [] });
+
+  const [projectLinks, workspaceLinks, labelLinks] = await Promise.all([
+    db.query.serviceProjects.findMany({ where: inArray(serviceProjects.serviceId, serviceIds) }),
+    db.query.serviceWorkspaces.findMany({ where: inArray(serviceWorkspaces.serviceId, serviceIds) }),
+    db.query.serviceLabels.findMany({ where: inArray(serviceLabels.serviceId, serviceIds) }),
+  ]);
+  for (const link of projectLinks) byId.get(link.serviceId)?.projectIds.push(link.projectId);
+  for (const link of workspaceLinks) byId.get(link.serviceId)?.workspaceIds.push(link.workspaceId);
+  for (const link of labelLinks) byId.get(link.serviceId)?.labelIds.push(link.labelId);
+  return byId;
+}
+
+/** Tag ids of a single service, in the shape `serialize` expects. */
+async function tagIdsOf(db: DB, serviceId: number): Promise<TagIds> {
+  return (await loadTagIds(db, [serviceId])).get(serviceId) ?? NO_TAGS;
+}
 
 /** Shape a DB row into the API representation (Date → ISO string). */
-function serialize(s: Service, sourceName: string | null = null) {
+function serialize(s: Service, sourceName: string | null = null, tags: TagIds = NO_TAGS) {
   return {
     id: s.id,
-    projectId: s.projectId,
+    // Services link to any number of projects, workspaces and labels through
+    // the join tables; the single `projectId` column is gone.
+    projectIds: tags.projectIds,
+    workspaceIds: tags.workspaceIds,
+    labelIds: tags.labelIds,
     name: s.name,
     slug: s.slug,
     type: s.type,
@@ -86,23 +136,52 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('onRequest', app.authenticate);
 
   app.get('/', async (req) => {
-    // Optional project scoping for the global project switcher (?projectId=).
-    const projectId = Number((req.query as { projectId?: string }).projectId);
-    const scoped = Number.isInteger(projectId) && projectId > 0 ? projectId : null;
-    // Members only see their own services; admins see every service on the
-    // instance (operator-level access).
+    // The top bar filters on three independent dimensions. Within one group
+    // the ids are OR-ed (any match); across groups they are AND-ed, so a
+    // service must satisfy every group that was narrowed.
+    const query = req.query as {
+      tagProjectIds?: string;
+      tagWorkspaceIds?: string;
+      tagLabelIds?: string;
+    };
+    const ids = (raw: string | undefined): number[] =>
+      (raw ?? '')
+        .split(',')
+        .map((part) => Number(part))
+        .filter((n) => Number.isInteger(n) && n > 0);
+    const wantedProjects = ids(query.tagProjectIds);
+    const wantedWorkspaces = ids(query.tagWorkspaceIds);
+    const wantedLabels = ids(query.tagLabelIds);
+
+    // Members only see their own services; operators see every service on the
+    // instance.
     const conditions = [];
-    if (req.user?.role !== 'admin') conditions.push(eq(services.ownerUserId, req.user!.id));
-    if (scoped != null) conditions.push(eq(services.projectId, scoped));
+    if (req.user?.isOperator !== true) conditions.push(eq(services.ownerUserId, req.user!.id));
     const rows = await app.db.query.services.findMany({
       orderBy: (s, { desc }) => [desc(s.id)],
       ...(conditions.length > 0 && {
         where: conditions.length === 1 ? conditions[0]! : and(...conditions),
       }),
     });
+
+    const tagsById = await loadTagIds(app.db, rows.map((s) => s.id));
+    const matches = (have: number[], wanted: number[]) =>
+      wanted.length === 0 || wanted.some((id) => have.includes(id));
+    const visible = rows.filter((s) => {
+      const tags = tagsById.get(s.id) ?? NO_TAGS;
+      return (
+        matches(tags.projectIds, wantedProjects) &&
+        matches(tags.workspaceIds, wantedWorkspaces) &&
+        matches(tags.labelIds, wantedLabels)
+      );
+    });
+
     // List view omits the build config (detail endpoint joins it); keep the shape stable.
     const sourceNames = new Map((await app.db.query.sources.findMany()).map((s) => [s.id, s.name]));
-    return rows.map((s) => ({ ...serialize(s, s.sourceId ? (sourceNames.get(s.sourceId) ?? null) : null), build: null }));
+    return visible.map((s) => ({
+      ...serialize(s, s.sourceId ? (sourceNames.get(s.sourceId) ?? null) : null, tagsById.get(s.id) ?? NO_TAGS),
+      build: null,
+    }));
   });
 
   app.post('/', async (req) => {
@@ -134,7 +213,6 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
     if (dup) {
       const sameDefinition =
         dup.ownerUserId === req.user!.id &&
-        dup.projectId === (input.projectId ?? null) &&
         dup.type === input.type &&
         dup.repoUrl === (input.repoUrl ?? null) &&
         dup.branch === input.branch &&
@@ -157,7 +235,7 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
         ));
       if (reusable) {
         void audit(app.db, req.user!.id, 'service.reuse', input.name);
-        return serialize(dup);
+        return serialize(dup, null, await tagIdsOf(app.db, dup.id));
       }
       // A failed/stopped Hub service may have been created from an older,
       // incomplete template contract (for example Ghost before its required
@@ -179,14 +257,13 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
         };
         await app.db.update(services).set(trusted).where(eq(services.id, dup.id));
         void audit(app.db, req.user!.id, 'service.repair_template', input.name);
-        return serialize({ ...dup, ...trusted });
+        return serialize({ ...dup, ...trusted }, null, await tagIdsOf(app.db, dup.id));
       }
       throw badRequest(`A service with slug '${slug}' already exists`, 'slug_taken');
     }
     const [svc] = await app.db
       .insert(services)
       .values({
-        projectId: input.projectId ?? null,
         ownerUserId: req.user!.id,
         name: input.name,
         slug,
@@ -229,15 +306,32 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
         restartPolicy: input.build.restartPolicy ?? 'unless-stopped',
         stopGraceSeconds: input.build.stopGraceSeconds ?? 5,
       });
+    // Tagging is a separate concern from the row itself: an explicit tag set
+    // wins, otherwise the service lands in every workspace the caller belongs
+    // to so it is visible to their team by default.
+    if (input.tagProjectIds || input.tagWorkspaceIds || input.tagLabelIds) {
+      await replaceServiceTags(
+        app.db,
+        svc!.id,
+        input.tagProjectIds ?? [],
+        input.tagWorkspaceIds ?? [],
+        input.tagLabelIds ?? [],
+      );
+    } else {
+      await applyDefaultTags(app.db, req.user!, svc!.id);
+    }
     void audit(app.db, req.user!.id, 'service.create', input.name);
-    return serialize(svc, await sourceNameFor(app.db, svc.sourceId));
+    return serialize(svc, await sourceNameFor(app.db, svc.sourceId), await tagIdsOf(app.db, svc!.id));
   });
 
   app.get('/:id', async (req) => {
     const id = num((req.params as { id: string }).id);
     const svc = await loadServiceForUser(app.db, id, req.user!);
     const build = await app.db.query.buildConfigs.findFirst({ where: eq(buildConfigs.serviceId, id) });
-    return { ...serialize(svc, await sourceNameFor(app.db, svc.sourceId)), build: build ? serializeBuild(build) : null };
+    return {
+      ...serialize(svc, await sourceNameFor(app.db, svc.sourceId), await tagIdsOf(app.db, svc.id)),
+      build: build ? serializeBuild(build) : null,
+    };
   });
 
   app.patch('/:id', async (req) => {
@@ -292,7 +386,7 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
       }
     }
     void audit(app.db, req.user!.id, 'service.update', svc.name);
-    return serialize(svc, await sourceNameFor(app.db, svc.sourceId));
+    return serialize(svc, await sourceNameFor(app.db, svc.sourceId), await tagIdsOf(app.db, svc.id));
   });
 
   app.delete('/:id', async (req, reply) => {
@@ -508,7 +602,6 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
     const [created] = await app.db
       .insert(services)
       .values({
-        projectId: svc.projectId,
         ownerUserId: req.user!.id,
         name: newName,
         slug: newSlug,
@@ -565,6 +658,15 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
     }
 
     void audit(app.db, req.user!.id, 'service.clone', `${svc.name} -> ${created!.name}`);
-    return serialize(created!, await sourceNameFor(app.db, created!.sourceId));
+    // The clone belongs wherever the original did.
+    const sourceTags = await tagIdsOf(app.db, svc.id);
+    await replaceServiceTags(
+      app.db,
+      created!.id,
+      sourceTags.projectIds,
+      sourceTags.workspaceIds,
+      sourceTags.labelIds,
+    );
+    return serialize(created!, await sourceNameFor(app.db, created!.sourceId), await tagIdsOf(app.db, created!.id));
   });
 };

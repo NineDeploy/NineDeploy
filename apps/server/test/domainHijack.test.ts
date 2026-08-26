@@ -6,8 +6,8 @@ import { asUser, buildTestApp, createFakeDb, domainRow, svcRow } from './helpers
  * H-2 regression: hostname claims are ownership-scoped.
  *
  * Traefik ranks routers by rule length when no priority is set, so a second
- * router for the same host with a LONGER rule â€” `Host(x) && PathPrefix(/api)`
- * against a bare `Host(x)` â€” outranks the original and receives its traffic,
+ * router for the same host with a LONGER rule — `Host(x) && PathPrefix(/api)`
+ * against a bare `Host(x)` — outranks the original and receives its traffic,
  * `Authorization` headers included. The unique index is on (hostname, path),
  * so before this fix a member could claim any other tenant's hostname (or the
  * panel's) simply by picking a different path.
@@ -76,7 +76,7 @@ describe('H-2: hostname claims are ownership-scoped', () => {
 
   it('the case of the hostname does not get you past the check', async () => {
     // DNS (and Traefik's Host matcher) are case-insensitive, so this is the
-    // same route â€” it must not read as a different hostname.
+    // same route — it must not read as a different hostname.
     const app = await appWith(foreign, OWNER);
     expect((await claim(app, 'Victim.Example.COM')).statusCode).toBe(409);
   });
@@ -101,7 +101,7 @@ describe('H-2: hostname claims are ownership-scoped', () => {
     expect((await claim(app, 'victim.example.com')).statusCode).toBe(409);
   });
 
-  it('sharing a hostname across the callerâ€™s OWN services still works', async () => {
+  it('sharing a hostname across the caller’s OWN services still works', async () => {
     // The legitimate path-routing pattern must survive the fix.
     const own = [domainRow({ id: 9, serviceId: 99, hostname: 'shared.example.com', path: '/' })];
     const app = await appWith(own, MEMBER);
@@ -145,7 +145,7 @@ describe('H-2: the panel hostname is reserved', () => {
     expect(res.json().error.message).toBe('That hostname is reserved for the NineDeploy panel');
   });
 
-  it('reserves it against admins too â€” moving the panel is a settings change', async () => {
+  it('reserves it against admins too — moving the panel is a settings change', async () => {
     process.env['NINEDEPLOY_DOMAIN'] = 'panel.example.com';
     const app = await appWith([], null);
     const res = await claim(app, 'panel.example.com', '/v1', asUser({ id: 1, isOperator: true }));

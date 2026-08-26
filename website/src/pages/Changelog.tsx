@@ -1,8 +1,51 @@
 const releases = [
   {
-    version: "0.2.2",
+    version: "0.3.0",
     date: "2026-08",
     status: "current",
+    notes: [
+      {
+        t: "Tags, Volumes & The .ninedeploy Manifest",
+        items: [
+          "Services tag into many projects, workspaces and labels at once, with a top-bar filter that composes all three",
+          "Per-service volume attachments: mount any number of managed Docker volumes at explicit container paths",
+          "Volume backups with retention pruning, off-site copies, and a restore that refuses to run under a live service",
+          "`.ninedeploy` manifest with `manifest init/validate/show` — schema-checked and secret-scanned before it reaches git",
+          "Private-repo deployment and auto-deploy webhooks from the CLI, plus workspace invitations for addresses without an account yet",
+        ],
+      },
+      {
+        t: "Upgrade & Correctness Fixes",
+        items: [
+          "Fixed an upgrade that blocked every install from 0.2.2 onward: a column added at boot collided with its own later migration and the panel would not start",
+          "Restored 90 source files whose non-ASCII characters had been double-encoded, and the workspace role fields a bad rename had renamed away",
+          "A label created from the top-bar filter no longer disappears the moment it is added",
+          "Menu permissions fail closed: an operator-gated item is hidden, not shown, when the flag is absent",
+        ],
+      },
+    ],
+  },
+  {
+    version: "0.2.36",
+    date: "2026-08",
+    status: "stable",
+    notes: [
+      {
+        t: "Runtime Resilience & Hardening",
+        items: [
+          "Self-healing runtime state: stopped containers, dead PM2 daemons and pruned proxies are revived automatically",
+          "Boot resilience — Docker enabled at boot, a systemd unit for bare-metal PM2 deployments, restart policies on Compose services",
+          "Streaming AES-256-GCM database backups, so a large dump never has to fit in server memory",
+          "Read-only MCP mode (`NINEDEPLOY_MCP_READONLY=1`) exposing a fail-closed inspection allowlist",
+          "Tenant isolation across domain, metrics, topology, network and volume views",
+        ],
+      },
+    ],
+  },
+  {
+    version: "0.2.2",
+    date: "2026-08",
+    status: "stable",
     notes: [
       {
         t: "Platform Hardening & Cross-Platform Stability",

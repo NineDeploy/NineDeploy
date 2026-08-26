@@ -33,6 +33,8 @@ const apiMock = vi.hoisted(() => ({
     databases: { list: vi.fn() },
     templates: { list: vi.fn() },
     projects: { list: vi.fn() },
+    labels: { list: vi.fn(), create: vi.fn() },
+    workspaces: { list: vi.fn() },
     plugins: { list: vi.fn() },
     menus: { list: vi.fn() },
   },
@@ -45,13 +47,15 @@ vi.mock('../src/lib/workspace.js', () => ({ useWorkspace: workspaceMock.useWorks
 vi.mock('../src/lib/api.js', () => apiMock);
 
 import { Layout } from '../src/components/Layout.js';
-import { ProjectScopeProvider } from '../src/lib/projects.js';
+import { ProjectScopeProvider, TagScopeProvider } from '../src/lib/projects.js';
 
 function renderLayout(path = '/databases') {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const utils = render(
     <QueryClientProvider client={queryClient}>
       <ProjectScopeProvider>
+      {/* Mirrors App.tsx: TopBarFilters reads and writes the chip scope. */}
+      <TagScopeProvider>
       <MemoryRouter initialEntries={[path]}>
         <Routes>
           <Route element={<Layout />}>
@@ -59,6 +63,7 @@ function renderLayout(path = '/databases') {
           </Route>
         </Routes>
       </MemoryRouter>
+      </TagScopeProvider>
       </ProjectScopeProvider>
     </QueryClientProvider>,
   );
@@ -97,13 +102,13 @@ describe('Layout', () => {
 
   it('renders the activity bar, groups and the user avatar', () => {
     renderLayout();
-    // brand mark is the SVG logo now (aria-hidden) â€” assert the rail renders it
+    // brand mark is the SVG logo now (aria-hidden) — assert the rail renders it
     expect(document.querySelector('.flex.w-12 svg')).toBeInTheDocument();
     for (const g of ['Deploy', 'Data', 'Network', 'System']) {
       expect(screen.getAllByText(g).length).toBeGreaterThan(0);
     }
     expect(screen.getByText('A')).toBeInTheDocument(); // avatar initial
-    expect(screen.getByText('ada@example.com Â· Sign out')).toBeInTheDocument();
+    expect(screen.getByText('ada@example.com · Sign out')).toBeInTheDocument();
   });
 
   it('opens the group panel and marks the matching link active', () => {
@@ -200,7 +205,7 @@ describe('Layout', () => {
   it('opens the command palette with the search button and closes it', async () => {
     const user = userEvent.setup();
     renderLayout();
-    await user.click(screen.getByTitle('Search (âŒ˜K)'));
+    await user.click(screen.getByTitle('Search (⌘K)'));
     expect(screen.getByPlaceholderText(/Search services/)).toBeInTheDocument();
     await user.click(screen.getByText('Hub'));
     await waitFor(() =>
@@ -349,22 +354,37 @@ describe('Layout', () => {
     expect(screen.getByTestId('outlet')).toHaveTextContent('page');
   });
 
-  it('shows the global project switcher and scopes on change', async () => {
-    localStorage.removeItem('ninedeploy.projectId');
-    apiMock.api.projects.list.mockResolvedValue([
-      { id: 3, name: 'Acme', slug: 'acme', description: null, serviceCount: 1, databaseCount: 0, createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' },
-    ]);
+  it('scopes on a filter chip and persists the selection', async () => {
+    // The single-select "Project scope" <select> was replaced by the chip-based
+    // TopBarFilters (workspace / project / label, multi-select). The selection
+    // is persisted under `ninedeploy.tagScope`, not the legacy `projectId` key.
+    localStorage.removeItem('ninedeploy.tagScope');
+    const switchWorkspace = vi.fn();
+    workspaceMock.useWorkspace.mockReturnValue({
+      workspaces: [{ id: 7, name: 'Acme', slug: 'acme', role: 'owner' }],
+      currentWorkspace: null,
+      isLoading: false,
+      switchWorkspace,
+      createWorkspace: vi.fn(),
+      refreshWorkspaces: vi.fn(),
+    } as never);
     renderLayout();
-    const select = await screen.findByLabelText('Project scope');
-    expect(select).toHaveValue('');
-    const acme = await screen.findByRole('option', { name: 'Acme' });
-    expect(acme).toHaveValue('3');
-    await act(async () => { fireEvent.change(select, { target: { value: '3' } }); });
-    expect(localStorage.getItem('ninedeploy.projectId')).toBe('3');
-    // Switching back to All clears the stored scope.
-    await act(async () => { fireEvent.change(select, { target: { value: '' } }); });
-    expect(localStorage.getItem('ninedeploy.projectId')).toBeNull();
-    localStorage.removeItem('ninedeploy.projectId');
+
+    // Closed state: the chip reports no active workspace filter.
+    const chip = await screen.findByRole('button', { name: /Workspace\s*All/ });
+    await act(async () => { fireEvent.click(chip); });
+
+    // Picking a workspace switches the active one and adds it to the scope.
+    await act(async () => { fireEvent.click(await screen.findByRole('button', { name: /Acme/ })); });
+    expect(switchWorkspace).toHaveBeenCalledWith(7);
+    await waitFor(() => {
+      expect(JSON.parse(localStorage.getItem('ninedeploy.tagScope') ?? '{}').workspaceIds).toEqual([7]);
+    });
+
+    // Clearing the group removes the persisted scope entirely.
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Clear' })); });
+    await waitFor(() => expect(localStorage.getItem('ninedeploy.tagScope')).toBeNull());
+    localStorage.removeItem('ninedeploy.tagScope');
   });
 
   it('colors delete and create actions with their dedicated tones', async () => {

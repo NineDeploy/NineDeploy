@@ -20,24 +20,24 @@ const DOCKER_OUTPUT = [
   'web|1.23%|10.5MiB / 64MiB',
   'db|0.00%|12.34GiB / 1.5GiB',
   '',
-  '|5%|1b / 2b', // no name â†’ skipped
-  'api|abc|5.0MB / 977kB', // non-numeric cpu â†’ 0
+  '|5%|1b / 2b', // no name → skipped
+  'api|abc|5.0MB / 977kB', // non-numeric cpu → 0
   'all-units|9%|1kb / 1kib',
   'u2|9%|1mb / 1mib',
   'u3|9%|1gb / 1gib',
   'u4|9%|1tb / 1tib',
-  'u5|9%|1xb / 2B', // unknown unit â†’ 1x
-  'u6|9%|junk / ', // unparseable â†’ 0 bytes
-  'loner', // no pipes at all â†’ cpu/mem undefined
-  'num|9%|123 / 456', // number-only sizes â†’ 'b' unit fallback
-  'nolit|9%|100', // no limit after '/' â†’ limit fallback
+  'u5|9%|1xb / 2B', // unknown unit → 1x
+  'u6|9%|junk / ', // unparseable → 0 bytes
+  'loner', // no pipes at all → cpu/mem undefined
+  'num|9%|123 / 456', // number-only sizes → 'b' unit fallback
+  'nolit|9%|100', // no limit after '/' → limit fallback
   '',
 ].join('\n');
 
 describe('collectContainerStats', () => {
   it('parses docker stats output into a map', async () => {
     // 'web' has a configured 64MiB limit (docker inspect); everything else is
-    // unlimited â†’ memLimitBytes 0 (NOT docker stats' host-total fallback).
+    // unlimited → memLimitBytes 0 (NOT docker stats' host-total fallback).
     execMock.capture.mockImplementation(async (_c: unknown, args: unknown[]) => {
       const a = args as string[];
       if (a[0] === 'ps') return 'id1\nid2\n';
@@ -74,12 +74,12 @@ describe('collectContainerStats', () => {
       return DOCKER_OUTPUT;
     });
     const map = await collectContainerStats();
-    // no inspect call happened â†’ no configured limits â†’ 0
+    // no inspect call happened → no configured limits → 0
     expect(map.get('web')).toMatchObject({ memLimitBytes: 0 });
   });
 
   it('handles a single line with no trailing newline', async () => {
-    // limit probing degrades to zero when ps/inspect fail â€” stats still parse
+    // limit probing degrades to zero when ps/inspect fail — stats still parse
     execMock.capture.mockImplementation(async (_c: unknown, args: unknown[]) => {
       const a = args as string[];
       if (a[0] === 'ps') throw new Error('docker ps failed');

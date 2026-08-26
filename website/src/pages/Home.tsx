@@ -127,8 +127,8 @@ export function Home() {
               <span className="tag tag-accent">
                 self-hosted PaaS
               </span>
-              <span className="tag font-bold">v0.2.36</span>
-              <span className="tag">100% test coverage</span>
+              <span className="tag font-bold">v0.3.0</span>
+              <span className="tag">4,397 tests in CI</span>
             </div>
             <h1 className="text-5xl md:text-7xl font-bold leading-[0.95] tracking-tight">
               Ship like you
@@ -288,9 +288,9 @@ export function Home() {
       <section className="mx-auto max-w-7xl px-4 py-16 grid grid-cols-2 md:grid-cols-4 gap-5">
         {[
           { icon: LayoutGrid, k: 15, suffix: "", v: "runtime-certified templates" },
-          { icon: Boxes, k: 26, suffix: "", v: "tables, one SQLite file" },
-          { icon: RotateCcw, k: 2100, suffix: "+", v: "tests in CI" },
-          { icon: KeyRound, k: 100, suffix: "%", v: "coverage, no ratchets" },
+          { icon: Boxes, k: 41, suffix: "", v: "tables, one SQLite file" },
+          { icon: RotateCcw, k: 4397, suffix: "", v: "tests in CI" },
+          { icon: KeyRound, k: 95, suffix: "%+", v: "enforced coverage floor" },
         ].map((s, i) => (
           <Reveal key={s.v} delay={i * 60}>
             <div className="panel p-5 text-center hover:-translate-y-1 transition-transform">

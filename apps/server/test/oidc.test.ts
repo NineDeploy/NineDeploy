@@ -88,7 +88,7 @@ describe('OIDC and OAuth2 SSO endpoints', () => {
           scopes: 'openid profile email',
           enabled: true,
           autoEnroll: true,
-          defaultisOperator: false,
+          defaultRole: 'member',
         },
       });
       expect(res.statusCode).toBe(200);
@@ -228,7 +228,7 @@ describe('OIDC and OAuth2 SSO endpoints', () => {
           scopes: 'openid email profile',
           enabled: true,
           autoEnroll: true,
-          defaultisOperator: false,
+          defaultRole: 'member',
         },
         {
           name: 'GitHub SSO',
@@ -239,7 +239,7 @@ describe('OIDC and OAuth2 SSO endpoints', () => {
           scopes: 'read:user user:email',
           enabled: true,
           autoEnroll: true,
-          defaultisOperator: false,
+          defaultRole: 'member',
         },
         {
           name: 'Disabled SSO',
@@ -249,7 +249,7 @@ describe('OIDC and OAuth2 SSO endpoints', () => {
           clientSecretEncrypted: encrypt('enc'),
           enabled: false,
           autoEnroll: false,
-          defaultisOperator: false,
+          defaultRole: 'member',
         },
       ]);
     });
@@ -409,7 +409,7 @@ describe('OIDC and OAuth2 SSO endpoints', () => {
     it('refuses to auto-enroll an UNVERIFIED SSO email, even for a pending invitation', async () => {
       // Attack: an admin invites victim@corp.test; the attacker controls an
       // IdP account whose (unverified) email claims that address. Before the
-      // fix, the unverified guard only covered existing local accounts â€” the
+      // fix, the unverified guard only covered existing local accounts — the
       // auto-enroll path created a fresh account and auto-accepted the
       // invitation, handing over the workspace.
       const [admin] = await app.db.query.users.findMany({ where: eq(users.email, 'admin@oidc.test') });
@@ -454,10 +454,10 @@ describe('OIDC and OAuth2 SSO endpoints', () => {
       });
 
       expect(res.statusCode).toBe(403);
-      // No account was created for the claimed addressâ€¦
+      // No account was created for the claimed address…
       const squatter = await app.db.query.users.findFirst({ where: eq(users.email, 'victim@corp.test') });
       expect(squatter).toBeUndefined();
-      // â€¦and the invitation is still pending, not accepted.
+      // …and the invitation is still pending, not accepted.
       const stillPending = await app.db.query.workspaceInvitations.findFirst({
         where: eq(workspaceInvitations.email, 'victim@corp.test'),
       });
@@ -561,7 +561,7 @@ describe('OIDC and OAuth2 SSO endpoints', () => {
         url: '/v1/auth/oidc/google/callback',
         payload: { code: 'valid_code', state },
       });
-      // Rejected â€” either by the userinfo fetch (IdP says unverified) or by the
+      // Rejected — either by the userinfo fetch (IdP says unverified) or by the
       // link guard. Either way NO session may be issued for the victim account.
       expect(res.statusCode).toBeGreaterThanOrEqual(400);
       expect(JSON.stringify(res.body)).not.toContain('accessToken');
@@ -699,7 +699,7 @@ describe('OIDC and OAuth2 SSO endpoints', () => {
           clientSecretEncrypted: encrypt('enc'),
           enabled: true,
           autoEnroll: false,
-          defaultisOperator: false,
+          defaultRole: 'member',
         })
         .returning();
 

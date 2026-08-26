@@ -5,7 +5,7 @@ import { api } from '../src/lib/api.js';
 import { renderWithProviders, mockOf } from './helpers.js';
 
 vi.mock('../src/lib/api.js', async () => {
-  // Must be './apiMock.js', not './helpers.js' â€” see the note in apiMock.ts.
+  // Must be './apiMock.js', not './helpers.js' — see the note in apiMock.ts.
   const { createFakeApiModule } = await import('./apiMock.js');
   return createFakeApiModule();
 });
@@ -90,7 +90,7 @@ describe('VolumesTab', () => {
     expect(screen.getAllByText('4.1 KB').length).toBe(2);
     // The attached database card links to the database.
     expect(screen.getByRole('link', { name: /main/ })).toHaveAttribute('href', '/databases/7');
-    expect(screen.getByText('postgres Â· nd-db-main-data')).toBeInTheDocument();
+    expect(screen.getByText('postgres · nd-db-main-data')).toBeInTheDocument();
     expect(screen.getByText('Retained on Delete')).toBeInTheDocument();
     expect(screen.queryByText('nd-db-other-data')).not.toBeInTheDocument();
   });
@@ -105,8 +105,8 @@ describe('VolumesTab', () => {
     expect(await screen.findByText('nd-vol-api')).toBeInTheDocument();
     expect(screen.getByText(/Detached \(Stopped\)/)).toBeInTheDocument();
 
-    // The toggle flips the stored flag: undefined â†’ true (still protected)
-    // â†’ false (off). The first click is a visual no-op by design.
+    // The toggle flips the stored flag: undefined → true (still protected)
+    // → false (off). The first click is a visual no-op by design.
     const toggle = screen.getByRole('button', { name: /Protection On/i });
     fireEvent.click(toggle);
     expect(screen.getByRole('button', { name: /Protection On/i })).toBeInTheDocument();
@@ -144,5 +144,33 @@ describe('VolumesTab', () => {
     renderWithProviders(<VolumesTab serviceId={1} svc={svc()} />);
 
     expect(await screen.findByText('nd-vol-api')).toBeInTheDocument();
+  });
+  it('expands and collapses the backups panel of an attached volume', async () => {
+    mockOf(api.volumes.list).mockResolvedValue([] as never);
+    mockOf(api.attachments.list).mockResolvedValue([] as never);
+    mockOf(api.serviceVolumes.list).mockResolvedValue([
+      {
+        id: 3,
+        serviceId: 1,
+        volumeName: 'nd-svc-api-uploads',
+        containerPath: '/app/uploads',
+        readOnly: false,
+        sizeBytes: 2048,
+        inUse: true,
+        sharedWith: 0,
+        createdAt: '2026-01-01T00:00:00Z',
+        updatedAt: '2026-01-01T00:00:00Z',
+      },
+    ] as never);
+    mockOf(api.volumeBackups.list).mockResolvedValue([] as never);
+    renderWithProviders(<VolumesTab serviceId={1} svc={svc()} />);
+
+    const toggle = await screen.findByTestId('backups-toggle-3');
+    fireEvent.click(toggle);
+    expect(await screen.findByTestId('volume-backups-panel')).toBeInTheDocument();
+
+    // Clicking the same volume again collapses the panel.
+    fireEvent.click(toggle);
+    await waitFor(() => expect(screen.queryByTestId('volume-backups-panel')).not.toBeInTheDocument());
   });
 });

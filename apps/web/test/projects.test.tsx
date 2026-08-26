@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import './web-utils.js';
-import { ProjectScopeProvider, useProjectScope } from '../src/lib/projects.js';
+import { ProjectScopeProvider, useProjectScope, useTagScope } from '../src/lib/projects.js';
 
 function makeClient() {
   return new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -43,7 +43,7 @@ function renderProvider(list: Promise<typeof PROJECTS> | undefined = Promise.res
   return utils;
 }
 
-// The provider loads the project list through the api client module â€” mock it.
+// The provider loads the project list through the api client module — mock it.
 vi.mock('../src/lib/api.js', () => {
   const state = { projects: [...PROJECTS] };
   return {
@@ -107,5 +107,38 @@ describe('ProjectScopeProvider', () => {
     // select() must not blow up when persistence fails.
     act(() => { fireEvent.click(screen.getByText('pick2')); });
     expect(screen.getByTestId('selected-id')).toHaveTextContent('2');
+  });
+});
+
+describe('useTagScope outside a provider', () => {
+  /** Renders the fallback scope and drives every one of its no-op setters. */
+  function FallbackProbe() {
+    const scope = useTagScope();
+    return (
+      <div>
+        <span data-testid="filtered">{String(scope.isFiltered)}</span>
+        <span data-testid="ids">
+          {scope.workspaceIds.length}/{scope.projectIds.length}/{scope.labelIds.length}
+        </span>
+        <button type="button" onClick={() => { scope.setWorkspaceIds([1]); }}>ws</button>
+        <button type="button" onClick={() => { scope.setProjectIds([2]); }}>proj</button>
+        <button type="button" onClick={() => { scope.setLabelIds([3]); }}>label</button>
+        <button type="button" onClick={() => { scope.clearAll(); }}>clear</button>
+      </div>
+    );
+  }
+
+  it('reports an unfiltered scope whose setters are inert', () => {
+    render(<FallbackProbe />);
+    expect(screen.getByTestId('filtered')).toHaveTextContent('false');
+    expect(screen.getByTestId('ids')).toHaveTextContent('0/0/0');
+
+    // Storybooks and bare tests may still call the setters; they must no-op
+    // rather than crash, and the scope stays empty.
+    for (const label of ['ws', 'proj', 'label', 'clear']) {
+      act(() => { fireEvent.click(screen.getByText(label)); });
+    }
+    expect(screen.getByTestId('ids')).toHaveTextContent('0/0/0');
+    expect(screen.getByTestId('filtered')).toHaveTextContent('false');
   });
 });

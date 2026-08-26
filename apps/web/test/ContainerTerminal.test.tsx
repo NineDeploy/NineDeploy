@@ -122,7 +122,7 @@ describe('ContainerTerminal', () => {
     expect(term.loadAddon).toHaveBeenCalledWith(fit);
     expect(term.open).toHaveBeenCalledWith(reactMock.ref.current);
     expect(fit.fit).toHaveBeenCalled();
-    expect(term.writeln).toHaveBeenCalledWith('Connecting to container shellâ€¦');
+    expect(term.writeln).toHaveBeenCalledWith('Connecting to container shell…');
 
     expect(FakeWebSocket.instances).toHaveLength(1);
     const ws = FakeWebSocket.instances[0];
@@ -132,7 +132,7 @@ describe('ContainerTerminal', () => {
 
     act(() => ws?.open());
     expect(term.clear).toHaveBeenCalled();
-    expect(screen.getByText(/â—/)).toBeInTheDocument();
+    expect(screen.getByText(/●/)).toBeInTheDocument();
     cleanup();
   });
 
@@ -190,10 +190,10 @@ describe('ContainerTerminal', () => {
     const term = xtermMock.terminals[0] as { write: ReturnType<typeof vi.fn> };
     const ws = FakeWebSocket.instances[0];
     act(() => ws?.open());
-    expect(screen.getByText(/â—/)).toBeInTheDocument();
+    expect(screen.getByText(/●/)).toBeInTheDocument();
     act(() => ws?.closeFromServer());
     expect(term.write).toHaveBeenCalledWith('\r\n\x1b[31m*** Connection closed ***\x1b[0m\r\n');
-    expect(screen.getByText(/â—‹ connecting/)).toBeInTheDocument();
+    expect(screen.getByText(/○ connecting/)).toBeInTheDocument();
     cleanup();
   });
 
@@ -243,7 +243,7 @@ describe('ContainerTerminal', () => {
     runEffect();
     expect(FakeWebSocket.instances).toHaveLength(1);
     act(() => screen.getByText('Reconnect').click());
-    // The mocked useEffect never re-runs on its own â€” invoke the new one.
+    // The mocked useEffect never re-runs on its own — invoke the new one.
     runEffect();
     expect(FakeWebSocket.instances).toHaveLength(2);
   });
@@ -279,14 +279,14 @@ describe('ContainerTerminal', () => {
     act(() => {
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'a' }));
     });
-    // Still fullscreen â€” only Escape restores.
+    // Still fullscreen — only Escape restores.
     expect(screen.getByTitle('Restore window size (Esc)')).toBeInTheDocument();
   });
 
   it('shows the service name in the titlebar when provided', () => {
     render(<ContainerTerminal serviceId={1} serviceName="api" onClose={vi.fn()} />);
     runEffect();
-    expect(screen.getByText('api Â· sh')).toBeInTheDocument();
+    expect(screen.getByText('api · sh')).toBeInTheDocument();
   });
 
   it('keeps the latest terminal registered when an older session cleans up', () => {

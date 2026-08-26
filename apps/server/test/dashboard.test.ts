@@ -118,7 +118,7 @@ describe('dashboard routes', () => {
   it('falls back to the traefik mesh probe when the host cannot route bridge IPs', async () => {
     // Docker Desktop case: direct fetch to the bridge IP times out, but the
     // same request from inside the mesh (exec wget in the traefik container)
-    // succeeds â€” the service must read healthy.
+    // succeeds — the service must read healthy.
     const fetchMock = vi.fn(async () => { throw new Error('route unreachable'); }) as unknown as typeof fetch;
     vi.stubGlobal('fetch', fetchMock);
     // Reset the persistent implementation leaked from the previous test.
@@ -279,10 +279,15 @@ describe('dashboard member scoping', () => {
   function scopedDb(deploymentsResolver?: (args: unknown) => unknown[]) {
     return createFakeDb({
       select: {
-        services: [
-          svcRow({ id: 70, ownerUserId: 7, name: 'mine', status: 'stopped', port: null }),
-          svcRow({ id: 71, ownerUserId: 42, name: 'victim-billing-api', status: 'stopped', port: null }),
-        ],
+        // Full-row select -> the whole inventory; id-only projection -> the
+        // owner-scoped re-query, whose predicate the fake db cannot apply.
+        services: (cols) =>
+          cols === undefined
+            ? [
+                svcRow({ id: 70, ownerUserId: 7, name: 'mine', status: 'stopped', port: null }),
+                svcRow({ id: 71, ownerUserId: 42, name: 'victim-billing-api', status: 'stopped', port: null }),
+              ]
+            : [{ id: 70 }],
         databases: [],
       },
       findMany: {
@@ -304,7 +309,7 @@ describe('dashboard member scoping', () => {
     expect(res.body).not.toContain('victim-billing-api');
   });
 
-  it('constrains the recent-deploys query to the memberâ€™s own service ids', async () => {
+  it('constrains the recent-deploys query to the member’s own service ids', async () => {
     // The fake db ignores predicates, so assert the where-clause itself
     // carries the service_id scoping (mirrors the M-2 regression pattern).
     let deployWhere: unknown;

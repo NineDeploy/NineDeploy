@@ -35,7 +35,7 @@ interface RecordedUpdate {
 function makeDb(opts: {
   queued: Array<{ id: number }>;
   selectImpl?: () => Promise<unknown>;
-  /** rowsAffected returned by the queuedâ†’building claim update (default 1 = won the claim). */
+  /** rowsAffected returned by the queued→building claim update (default 1 = won the claim). */
   claimRowsAffected?: number;
   /** Override the entire claim update result (e.g. undefined to simulate a missing payload). */
   claimResult?: unknown;
@@ -51,7 +51,7 @@ function makeDb(opts: {
     if (isOuter) outerSelect();
     const rows = isOuter ? opts.queued : (opts.building ?? []);
     const self: Record<string, unknown> = {
-      // biome-ignore lint/suspicious/noThenProperty: intentional thenable â€” mirrors drizzle query builders.
+      // biome-ignore lint/suspicious/noThenProperty: intentional thenable — mirrors drizzle query builders.
       then: (ok: (v: unknown) => unknown, rej?: (e: unknown) => unknown) =>
         // Outer (candidate) queries resolve via selectImpl so tests can
         // simulate per-call results and failures; inner queries resolve rows.
@@ -94,7 +94,7 @@ afterEach(() => {
 
 describe('worker plugin', () => {
   it('requeues stale `building` deployments on startup (crash recovery)', async () => {
-    // Older than the 45-minute stale threshold â†’ resumed; a fresh one is left alone.
+    // Older than the 45-minute stale threshold → resumed; a fresh one is left alone.
     const old = new Date(Date.now() - 60 * 60 * 1000);
     const { db, updates } = makeDb({ queued: [], building: [{ id: 7, startedAt: old }, { id: 8, startedAt: new Date() }] });
     const app = await buildApp(db);
@@ -340,7 +340,7 @@ describe('worker plugin', () => {
     vi.useFakeTimers();
     configMock.config.deployConcurrency = 2;
     // Each slot's claim query sees a different queued deployment (outer calls
-    // only â€” the notInArray subquery reuses db.select without the {id} cols).
+    // only — the notInArray subquery reuses db.select without the {id} cols).
     let outerCalls = 0;
     const { db } = makeDb({
       queued: [],

@@ -10,7 +10,7 @@ import type { ReactNode } from 'react';
  *     vi.mock('../src/lib/api.js', async () => (await import('./apiMock.js')).createFakeApiModule());
  *
  * If that factory awaits `./helpers.js` instead, the run DEADLOCKS: helpers
- * imports `src/lib/workspace.tsx`, which imports `src/lib/api.js` â€” the module
+ * imports `src/lib/workspace.tsx`, which imports `src/lib/api.js` — the module
  * whose factory is still executing. Vitest waits for the factory, the factory
  * waits for the import, and the file never finishes collecting (it reports
  * "no tests" and hangs until killed). Importing this file instead breaks the
@@ -86,6 +86,18 @@ export function createFakeApiModule() {
     deploys: { trigger: vi.fn(), list: vi.fn(), rollback: vi.fn(), cancel: vi.fn(), configDiff: vi.fn() },
     domains: { list: vi.fn(), create: vi.fn(), remove: vi.fn(), all: vi.fn().mockResolvedValue([]), setSsl: vi.fn(), update: vi.fn() },
     volumes: { list: vi.fn(), remove: vi.fn(), prune: vi.fn(), listFiles: vi.fn(), readFile: vi.fn(), writeFile: vi.fn(), mkdir: vi.fn(), deleteFile: vi.fn() },
+    serviceVolumes: {
+      list: vi.fn().mockResolvedValue([]),
+      create: vi.fn(),
+      update: vi.fn(),
+      remove: vi.fn(),
+    },
+    volumeBackups: {
+      list: vi.fn().mockResolvedValue([]),
+      create: vi.fn(),
+      restore: vi.fn(),
+      downloadUrl: vi.fn((volumeName: string, id: number) => `/v1/volumes/${volumeName}/backups/${id}/download`),
+    },
     containers: { inspect: vi.fn(), compose: vi.fn(), listFiles: vi.fn(), readFile: vi.fn(), writeFile: vi.fn(), mkdir: vi.fn(), deleteFile: vi.fn() },
     system: { resources: vi.fn(), pruneImages: vi.fn(), exportUrl: vi.fn(), updateCheck: vi.fn(), dockerEvents: vi.fn() },
     networks: { list: vi.fn(), create: vi.fn(), remove: vi.fn(), attach: vi.fn(), detach: vi.fn() },
@@ -225,7 +237,7 @@ export function createFakeApiModule() {
 export function createAuthMock() {
   // `useAuth` resolves to a signed-out session by default. It used to be a bare
   // vi.fn() returning undefined, which is fine for a component that ignores the
-  // result but crashes anything doing `const { user } = useAuth()` â€” including
+  // result but crashes anything doing `const { user } = useAuth()` — including
   // WorkspaceProvider, which every rendered route sits inside.
   return {
     AuthProvider: ({ children }: { children?: ReactNode }) => <>{children}</>,

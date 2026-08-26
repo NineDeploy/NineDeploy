@@ -34,7 +34,7 @@ const configMock = vi.hoisted(() => ({
 }));
 vi.mock('../src/config.js', () => ({ config: configMock }));
 
-// The route's `finally` unlinks the archive immediately after reply.send() â€”
+// The route's `finally` unlinks the archive immediately after reply.send() —
 // a real stream would open the file after it is gone. Mock createReadStream so
 // the export branch completes deterministically.
 const fsMocks = vi.hoisted(() => ({
@@ -68,7 +68,7 @@ vi.mock('node:fs', async (importOriginal) => {
 // failure via error/exit-code branches.
 const spawnMock = vi.hoisted(() => ({
   force: { error: false, code: null as number | null },
-  // Force failure on the Nth spawn (1-based) instead of the first â€” the import
+  // Force failure on the Nth spawn (1-based) instead of the first — the import
   // path now spawns tar twice (member listing, then extraction).
   forceNth: null as number | null,
   calls: 0,
@@ -126,7 +126,7 @@ function newDataDir(): string {
 function tar(dir: string, out: string): Promise<void> {
   return new Promise((resolve, reject) => {
     // cwd = os.tmpdir() keeps BOTH paths relative (GNU tar on Windows mistakes
-    // `D:\â€¦` for a remote-host spec) and the archive stays outside the
+    // `D:\…` for a remote-host spec) and the archive stays outside the
     // archived directory.
     const rel = (p: string) => path.relative(os.tmpdir(), p).split(path.sep).join('/');
     const child = spawnMock.spawn('tar', ['-czf', rel(out), '-C', rel(dir), '.'], { cwd: os.tmpdir() });
@@ -246,7 +246,7 @@ describe('system resources routes', () => {
     expect(res.json()).toMatchObject({
       containers: 0,
       volumes: 0,
-      imagesSummary: { total: '0', active: '0', size: 'â€”', reclaimable: 'â€”' },
+      imagesSummary: { total: '0', active: '0', size: '—', reclaimable: '—' },
       images: [
         { repo: 'repo-only', tag: '', size: '' },
         { repo: '', tag: '', size: '' },
@@ -262,7 +262,7 @@ describe('system resources routes', () => {
     expect(res.json()).toMatchObject({
       containers: 0,
       volumes: 0,
-      imagesSummary: { total: '0', active: '0', size: 'â€”', reclaimable: 'â€”' },
+      imagesSummary: { total: '0', active: '0', size: '—', reclaimable: '—' },
       images: [],
     });
   });
@@ -493,7 +493,7 @@ describe('system resources routes', () => {
   });
 
   it('rejects an archive with path-traversal members (tar-slip)', async () => {    // Craft an archive with a literal `../evil` member via python's tarfile
-    // (portable â€” bsdtar on macOS has no --transform).
+    // (portable — bsdtar on macOS has no --transform).
     const uploadDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nd-slip-'));
     createdDirs.push(uploadDir);
     const archive = path.join(uploadDir, 'evil.tar.gz');
@@ -552,7 +552,7 @@ describe('system resources routes', () => {
     fs.writeFileSync(path.join(buildDir, 'master.key'), 'imported-key');
     const body = await makeArchive(buildDir);
 
-    // Fail the SECOND move (master.key) â€” after the db was already replaced.
+    // Fail the SECOND move (master.key) — after the db was already replaced.
     fsMocks.failRename = 'master.key';
     try {
       const app = await appWith();

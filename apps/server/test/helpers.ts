@@ -9,7 +9,7 @@ import rawBodyPlugin from '../src/plugins/rawBody.js';
 import { NineDeployKernel } from '../src/kernel/kernel.js';
 import { config } from '../src/config.js';
 
-// â”€â”€ Drizzle table name extraction â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Drizzle table name extraction ─────────────────────────────────────────
 const NAME_SYMBOL = Symbol.for('drizzle:Name');
 
 /** Resolve a drizzle table object (or anything) to its SQL table name. */
@@ -29,8 +29,16 @@ export interface FakeDbOpts {
   findMany?: Record<string, RowsResolver>;
   /** Rows returned by db.query.<table>.findFirst(args). */
   findFirst?: Record<string, RowResolver>;
-  /** Rows returned by db.select().from(table) (full-row selects). */
-  select?: Record<string, Row[]>;
+  /**
+   * Rows returned by db.select().from(table) (full-row selects).
+   *
+   * The fake db does not evaluate `where` predicates, so a route that scopes
+   * by re-querying with a narrower projection (`select({ id: services.id })
+   * .from(services).where(eq(services.ownerUserId, ...))`) cannot be modelled
+   * by a static row list. Pass a function to branch on the projection: it
+   * receives the selected columns (`undefined` for a full-row select).
+   */
+  select?: Record<string, Row[] | ((cols: unknown) => Row[])>;
   /** Rows returned by db.select({ n: count() }).from(table). */
   counts?: Record<string, Array<{ n: number }>>;
   /** Rows returned by db.insert(table).values(v).returning(). */
@@ -48,9 +56,48 @@ export interface FakeDbOpts {
 /**
  * Build a chainable fake Drizzle DB. Every query family is keyed by table
  * name and falls back to empty/happy-path defaults:
- *   findMany â†’ [], findFirst â†’ undefined, select â†’ [], counts â†’ [],
- *   insert(...).returning() â†’ [values], update(...).returning() â†’ [set].
+ *   findMany → [], findFirst → undefined, select → [], counts → [],
+ *   insert(...).returning() → [values], update(...).returning() → [set].
  */
+/**
+ * Authorization is workspace-derived: `isOperator()` asks the DB whether the
+ * caller holds an owner/admin seat anywhere, so a fake DB with no
+ * `workspace_members` rows makes every caller a non-operator and turns every
+ * resource guard into a 404. `asUser()` defaults to user 1 as an operator, so
+ * the fake DB gives *that* user one owner seat by default.
+ *
+ * The seat is deliberately scoped to user 1: negative tests sign in as a
+ * different id (`asUser({ id: 7, isOperator: false })`) and must still be
+ * treated as a plain member. Tests that need user 1 to be a non-operator
+ * override `findMany.workspaceMembers` explicitly (usually with `() => []`).
+ */
+const DEFAULT_OPERATOR_USER_ID = 1;
+
+const DEFAULT_MEMBERSHIP: Row = {
+  id: 1,
+  workspaceId: 1,
+  userId: DEFAULT_OPERATOR_USER_ID,
+  role: 'owner',
+  createdAt: new Date('2026-01-01T00:00:00Z'),
+};
+
+/** Pull the bound user id out of a drizzle `eq(workspaceMembers.userId, n)`. */
+function boundUserId(args: unknown): number | null {
+  const chunks = (args as { where?: { queryChunks?: unknown[] } } | undefined)?.where?.queryChunks;
+  if (!Array.isArray(chunks)) return null;
+  for (const chunk of chunks) {
+    const value = (chunk as { value?: unknown } | null)?.value;
+    if (typeof value === 'number') return value;
+  }
+  return null;
+}
+
+function defaultRows(table: string, args: unknown): Row[] {
+  if (table !== 'workspaceMembers' && table !== 'workspace_members') return [];
+  const userId = boundUserId(args);
+  return userId === null || userId === DEFAULT_OPERATOR_USER_ID ? [DEFAULT_MEMBERSHIP] : [];
+}
+
 export function createFakeDb(opts: FakeDbOpts = {}): DB {
   const resolveRows = (v: RowsResolver | undefined, fallback: Row[], ...args: unknown[]): Promise<Row[]> => {
     try {
@@ -96,7 +143,7 @@ export function createFakeDb(opts: FakeDbOpts = {}): DB {
           }
           const snake = name.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
           const target = opts.findMany?.[name] !== undefined ? opts.findMany[name] : opts.findMany?.[snake];
-          return resolveRows(target, [], args);
+          return resolveRows(target, defaultRows(name, args), args);
         },
         findFirst: (args?: unknown) => {
           const snake = name.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
@@ -112,12 +159,13 @@ export function createFakeDb(opts: FakeDbOpts = {}): DB {
       const name = tableName(table);
       const error = opts.selectError?.[name];
       const isCount = cols !== undefined && 'n' in cols;
-      const rows: Row[] = isCount ? (opts.counts?.[name] ?? []) : (opts.select?.[name] ?? []);
+      const configured = isCount ? opts.counts?.[name] : opts.select?.[name];
+      const rows: Row[] = typeof configured === 'function' ? configured(cols) : (configured ?? []);
       // A chainable thenable: `await`, `.where(...)`, `.leftJoin(...)`,
       // `.limit(...)` and `.orderBy(...)` all resolve to the configured rows,
       // mirroring drizzle's query-builder shapes.
       const chain: Record<string, unknown> = {};
-      // biome-ignore lint/suspicious/noThenProperty: intentional thenable â€” the fake DB query result must be awaitable by the code under test.
+      // biome-ignore lint/suspicious/noThenProperty: intentional thenable — the fake DB query result must be awaitable by the code under test.
       chain.then = (ok: (v: unknown) => unknown, rej?: (e: Error) => unknown) =>
         error ? (rej ?? (() => {}))(error) : ok(rows);
       for (const step of ['where', 'leftJoin', 'innerJoin', 'limit', 'orderBy']) {
@@ -135,12 +183,16 @@ export function createFakeDb(opts: FakeDbOpts = {}): DB {
         const builder: {
           returning: () => Promise<Row[]>;
           onConflictDoUpdate: () => Promise<Row[]>;
+          onConflictDoNothing: () => Promise<Row[]>;
           then: (ok: (v?: unknown) => unknown, rej?: (e: Error) => unknown) => unknown;
         } = {
           returning: () => rows(),
           // Settings-style upserts resolve like a plain insert in the fake.
           onConflictDoUpdate: () => rows(),
-          // biome-ignore lint/suspicious/noThenProperty: intentional thenable â€” the fake DB insert result must be awaitable by the code under test.
+          // Idempotent link-table inserts (service_projects, service_workspaces,
+          // service_labels) resolve the same way.
+          onConflictDoNothing: () => rows(),
+          // biome-ignore lint/suspicious/noThenProperty: intentional thenable — the fake DB insert result must be awaitable by the code under test.
           then: (ok, rej) => {
             rows().then(ok, rej);
             return undefined;
@@ -162,7 +214,7 @@ export function createFakeDb(opts: FakeDbOpts = {}): DB {
             then: (ok: (v?: unknown) => unknown, rej?: (e: Error) => unknown) => unknown;
           } = {
             returning: () => rows(),
-            // biome-ignore lint/suspicious/noThenProperty: intentional thenable â€” the fake DB update result must be awaitable by the code under test.
+            // biome-ignore lint/suspicious/noThenProperty: intentional thenable — the fake DB update result must be awaitable by the code under test.
             then: (ok, rej) => {
               rows().then(ok, rej);
               return undefined;
@@ -184,7 +236,7 @@ export function createFakeDb(opts: FakeDbOpts = {}): DB {
           then: (ok: (v?: unknown) => unknown, _rej?: (e: Error) => unknown) => unknown;
         } = {
           returning: () => rows(),
-          // biome-ignore lint/suspicious/noThenProperty: intentional thenable â€” the fake DB delete result must be awaitable by the code under test.
+          // biome-ignore lint/suspicious/noThenProperty: intentional thenable — the fake DB delete result must be awaitable by the code under test.
           then: (ok) => {
             rows().then(() => ok(undefined));
             return undefined;
@@ -196,7 +248,7 @@ export function createFakeDb(opts: FakeDbOpts = {}): DB {
   };
 
   const run = () => ({
-    // biome-ignore lint/suspicious/noThenProperty: intentional thenable â€” the fake DB run result must be awaitable by the code under test.
+    // biome-ignore lint/suspicious/noThenProperty: intentional thenable — the fake DB run result must be awaitable by the code under test.
     then: (ok: (v?: unknown) => unknown, rej: (e: Error) => unknown) =>
       opts.runError ? rej(new Error('db unavailable')) : ok(undefined),
   });
@@ -205,12 +257,12 @@ export function createFakeDb(opts: FakeDbOpts = {}): DB {
   return {
     ...dbish,
     // Drizzle-style transaction: runs the callback against the same fake db
-    // (single-connection fake â€” no isolation semantics needed for route tests).
+    // (single-connection fake — no isolation semantics needed for route tests).
     transaction: async <T>(fn: (tx: typeof dbish) => Promise<T>): Promise<T> => fn(dbish),
   } as unknown as DB;
 }
 
-// â”€â”€ Fastify test app â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Fastify test app ──────────────────────────────────────────────────────
 
 export interface TestAppOpts {
   db?: DB;
@@ -227,7 +279,7 @@ export interface TestAppOpts {
  *   - `user` request decoration (null) + an `authenticate` pre-handler that
  *     reads the `x-test-user` header (throws 401 when absent)
  *   - `db` (fake) and `stats` decorations
- *   - the same error envelope app.ts produces (ZodError â†’ 400, HttpError â†’ status)
+ *   - the same error envelope app.ts produces (ZodError → 400, HttpError → status)
  */
 export async function buildTestApp(opts: TestAppOpts = {}): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
@@ -289,7 +341,7 @@ export async function buildTestApp(opts: TestAppOpts = {}): Promise<FastifyInsta
  * Every app `buildTestApp` hands out, closed after the test that made it.
  *
  * Files that build one Fastify instance per test used to leave all of them
- * open â€” 50+ live servers, each with its own kernel, plugin state and (in the
+ * open — 50+ live servers, each with its own kernel, plugin state and (in the
  * websocket tests) sockets, all still attached to the worker's event loop and
  * still able to emit through its IPC channel. On Windows that reliably wedged
  * the fork partway through a large file: the run reported N of M tests and
@@ -303,7 +355,7 @@ afterEach(async () => {
   await Promise.all(apps.map((a) => a.close().catch(() => undefined)));
 });
 
-// â”€â”€ Request/WS helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Request/WS helpers ────────────────────────────────────────────────────
 
 /** Headers that make the test `authenticate` stub resolve to a user id. */
 export const asUser = (
@@ -356,7 +408,7 @@ export async function waitFor(pred: () => boolean, timeoutMs = 2000): Promise<vo
   }
 }
 
-// â”€â”€ Row fixtures (mirror packages/db/src/schema.ts shapes) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Row fixtures (mirror packages/db/src/schema.ts shapes) ────────────────
 
 export const NOW = new Date('2026-01-01T00:00:00.000Z');
 
@@ -386,7 +438,7 @@ export const sessionRow = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-/** Record every payload written through db.update(...) â€” for asserting which
+/** Record every payload written through db.update(...) — for asserting which
  * statuses a code path actually persisted, independent of the fake's resolvers. */
 export function trackStatusUpdates(db: ReturnType<typeof createFakeDb>) {
   const updates: Array<Record<string, unknown>> = [];

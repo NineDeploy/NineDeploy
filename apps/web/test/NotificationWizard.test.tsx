@@ -56,7 +56,7 @@ describe('NotificationWizard', () => {
     await user.click(screen.getByText('Telegram'));
     await user.click(screen.getByRole('button', { name: /continue/i }));
     expect(screen.getByText('1. Create bot')).toBeInTheDocument();
-    expect(screen.getByPlaceholderText('789123456:AAExâ€¦:987654321')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('789123456:AAEx…:987654321')).toBeInTheDocument();
   });
 
   it('shows the discord connect form', async () => {
@@ -65,7 +65,7 @@ describe('NotificationWizard', () => {
     await user.click(screen.getByText('Discord'));
     await user.click(screen.getByRole('button', { name: /continue/i }));
     expect(screen.getByText('Create Discord Webhook')).toBeInTheDocument();
-    expect(screen.getByPlaceholderText('https://discord.com/api/webhooks/â€¦')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('https://discord.com/api/webhooks/…')).toBeInTheDocument();
   });
 
   it('shows the webhook connect form', async () => {
@@ -83,7 +83,7 @@ describe('NotificationWizard', () => {
     await user.click(screen.getByText('Telegram'));
     await user.click(screen.getByRole('button', { name: /continue/i }));
     expect(screen.getByRole('button', { name: /continue/i })).toBeDisabled();
-    await user.type(screen.getByPlaceholderText('789123456:AAExâ€¦:987654321'), 'tok:chat');
+    await user.type(screen.getByPlaceholderText('789123456:AAEx…:987654321'), 'tok:chat');
     expect(screen.getByRole('button', { name: /continue/i })).toBeEnabled();
   });
 
@@ -92,14 +92,14 @@ describe('NotificationWizard', () => {
     renderWizard();
     await user.click(screen.getByText('Telegram'));
     await user.click(screen.getByRole('button', { name: /continue/i }));
-    await user.type(screen.getByPlaceholderText('789123456:AAExâ€¦:987654321'), 'tok:chat');
+    await user.type(screen.getByPlaceholderText('789123456:AAEx…:987654321'), 'tok:chat');
     await user.click(screen.getByRole('button', { name: /continue/i }));
     expect(screen.getByText('Deployments')).toBeInTheDocument();
     await user.click(screen.getByText('Domains'));
     await user.click(screen.getByText('Deployments'));
     await user.click(screen.getByRole('button', { name: /continue/i }));
     // "Events" text appears in both the stepper label and the summary row
-    // header â€” use getAllByText to assert the stepper rendered.
+    // header — use getAllByText to assert the stepper rendered.
     expect(screen.getAllByText('Events').length).toBeGreaterThan(0);
   });
 
@@ -108,7 +108,7 @@ describe('NotificationWizard', () => {
     const user = userEvent.setup();
     await user.click(screen.getByText('Telegram'));
     await user.click(screen.getByRole('button', { name: /continue/i }));
-    await user.type(screen.getByPlaceholderText('789123456:AAExâ€¦:987654321'), 'tok:chat');
+    await user.type(screen.getByPlaceholderText('789123456:AAEx…:987654321'), 'tok:chat');
     await user.click(screen.getByRole('button', { name: /continue/i }));
     await user.click(screen.getByRole('button', { name: /continue/i }));
 
@@ -148,7 +148,7 @@ describe('NotificationWizard', () => {
     const user = userEvent.setup();
     await user.click(screen.getByText('Telegram'));
     await user.click(screen.getByRole('button', { name: /continue/i }));
-    await user.type(screen.getByPlaceholderText('789123456:AAExâ€¦:987654321'), 'tok:chat');
+    await user.type(screen.getByPlaceholderText('789123456:AAEx…:987654321'), 'tok:chat');
     await user.click(screen.getByRole('button', { name: /continue/i }));
     await user.click(screen.getByRole('button', { name: /continue/i }));
     await user.click(screen.getByRole('button', { name: /send test/i }));
@@ -160,20 +160,20 @@ describe('NotificationWizard', () => {
   });
 
   it('patches the existing channel when retrying the test after a delivery failure', async () => {
-    // First delivery fails AFTER the channel row was createdâ€¦
+    // First delivery fails AFTER the channel row was created…
     apiMock.api.notifications.testChannel.mockRejectedValueOnce(new Error('no route'));
     const { onClose } = renderWizard();
     const user = userEvent.setup();
     await user.click(screen.getByText('Telegram'));
     await user.click(screen.getByRole('button', { name: /continue/i }));
-    await user.type(screen.getByPlaceholderText('789123456:AAExâ€¦:987654321'), 'tok:chat');
+    await user.type(screen.getByPlaceholderText('789123456:AAEx…:987654321'), 'tok:chat');
     await user.click(screen.getByRole('button', { name: /continue/i }));
     await user.click(screen.getByRole('button', { name: /continue/i }));
     await user.click(screen.getByRole('button', { name: /send test/i }));
-    await waitFor(() => expect(screen.getByText('Test failed â€” check your settings')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('Test failed — check your settings')).toBeInTheDocument());
     expect(apiMock.api.notifications.createChannel).toHaveBeenCalledTimes(1);
 
-    // â€¦retrying syncs the (possibly edited) settings via PATCH instead of
+    // …retrying syncs the (possibly edited) settings via PATCH instead of
     // creating a duplicate channel.
     await user.click(screen.getByRole('button', { name: /send test/i }));
     await waitFor(() =>
@@ -197,11 +197,11 @@ describe('NotificationWizard', () => {
     renderWizard();
     await user.click(screen.getByText('Discord'));
     await user.click(screen.getByRole('button', { name: /continue/i }));
-    await user.type(screen.getByPlaceholderText('https://discord.com/api/webhooks/â€¦'), 'https://discord.com/x');
+    await user.type(screen.getByPlaceholderText('https://discord.com/api/webhooks/…'), 'https://discord.com/x');
     await user.click(screen.getByRole('button', { name: /continue/i }));
     await user.click(screen.getByRole('button', { name: /continue/i }));
     await user.click(screen.getByRole('button', { name: /send test/i }));
-    await waitFor(() => expect(screen.getByText('Test failed â€” check your settings')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('Test failed — check your settings')).toBeInTheDocument());
     expect(screen.getByRole('button', { name: /send test/i })).toBeInTheDocument();
   });
 
@@ -216,7 +216,7 @@ describe('NotificationWizard', () => {
     await user.click(screen.getByRole('button', { name: /continue/i }));
     await user.click(screen.getByRole('button', { name: /continue/i }));
     await user.click(screen.getByRole('button', { name: /send test/i }));
-    expect(screen.getByText('Testingâ€¦')).toBeInTheDocument();
+    expect(screen.getByText('Testing…')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /testing/i })).toBeDisabled();
     d.resolve({ ok: true });
   });
@@ -226,7 +226,7 @@ describe('NotificationWizard', () => {
     renderWizard();
     await user.click(screen.getByText('Telegram'));
     await user.click(screen.getByRole('button', { name: /continue/i }));
-    await user.type(screen.getByPlaceholderText('789123456:AAExâ€¦:987654321'), 'x'.repeat(60));
+    await user.type(screen.getByPlaceholderText('789123456:AAEx…:987654321'), 'x'.repeat(60));
     const nameInput = screen.getByPlaceholderText(/Telegram alerts/i) as HTMLInputElement;
     await user.type(nameInput, 'My Alerts');
     await waitFor(() => expect(nameInput.value).toBe('My Alerts'));
@@ -239,7 +239,7 @@ describe('NotificationWizard', () => {
       ).toBeInTheDocument(),
     );
     const target = screen.getByText((_, el) => (el?.textContent ?? '').startsWith('x'.repeat(40)));
-    expect(target.textContent).toContain('â€¦');
+    expect(target.textContent).toContain('…');
     // Run the test + create and verify the custom name is sent.
     await user.click(screen.getByRole('button', { name: /send test/i }));
     await waitFor(() =>
@@ -266,7 +266,7 @@ describe('NotificationWizard', () => {
     const form = document.querySelector('form');
     expect(form).not.toBeNull();
     fireEvent.submit(form!);
-    expect(screen.getByPlaceholderText('789123456:AAExâ€¦:987654321')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('789123456:AAEx…:987654321')).toBeInTheDocument();
   });
 
   it('shows the discord confirmation when a discord channel tests ok', async () => {
@@ -274,7 +274,7 @@ describe('NotificationWizard', () => {
     const user = userEvent.setup();
     await user.click(screen.getByText('Discord'));
     await user.click(screen.getByRole('button', { name: /continue/i }));
-    await user.type(screen.getByPlaceholderText('https://discord.com/api/webhooks/â€¦'), 'https://discord.com/api/webhooks/abc');
+    await user.type(screen.getByPlaceholderText('https://discord.com/api/webhooks/…'), 'https://discord.com/api/webhooks/abc');
     await user.click(screen.getByRole('button', { name: /continue/i }));
     await user.click(screen.getByRole('button', { name: /continue/i }));
     await user.click(screen.getByRole('button', { name: /send test/i }));
@@ -302,7 +302,7 @@ describe('NotificationWizard', () => {
     renderWizard();
     await user.click(screen.getByText('Telegram'));
     await user.click(screen.getByRole('button', { name: /continue/i }));
-    await user.type(screen.getByPlaceholderText('789123456:AAExâ€¦:987654321'), 'tok:chat');
+    await user.type(screen.getByPlaceholderText('789123456:AAEx…:987654321'), 'tok:chat');
     await user.click(screen.getByRole('button', { name: /continue/i }));
     await user.click(screen.getByText('Deployments'));
     await user.click(screen.getByText('Services'));
@@ -315,17 +315,17 @@ describe('NotificationWizard', () => {
     const user = userEvent.setup();
     renderWizard();
     // The footer "Back" button is the only one whose accessible name is
-    // exactly "Back" â€” step 2 (Events) also renders an event-group card
+    // exactly "Back" — step 2 (Events) also renders an event-group card
     // titled "Backups" which matches `/back/i`. Grab the footer button
     // up front while there's exactly one.
     const footerBack = screen.getByRole('button', { name: /^Back$/ });
     expect(footerBack.className).toContain('invisible');
     await user.click(screen.getByText('Telegram'));
     await user.click(screen.getByRole('button', { name: /continue/i }));
-    await user.type(screen.getByPlaceholderText('789123456:AAExâ€¦:987654321'), 'tok:chat');
+    await user.type(screen.getByPlaceholderText('789123456:AAEx…:987654321'), 'tok:chat');
     await user.click(screen.getByRole('button', { name: /continue/i }));
     await user.click(footerBack);
-    expect(screen.getByPlaceholderText('789123456:AAExâ€¦:987654321')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('789123456:AAEx…:987654321')).toBeInTheDocument();
   });
 
   it('closes via X and the backdrop', async () => {
@@ -339,28 +339,28 @@ describe('NotificationWizard', () => {
     expect(onClose).toHaveBeenCalledTimes(2);
   });
 
-  it('renders the success summary with the channel-specific instructions and shows Creatingâ€¦ while pending', async () => {
+  it('renders the success summary with the channel-specific instructions and shows Creating… while pending', async () => {
     let resolveCreate: (v: { id: number; name: string; type: string }) => void = () => {};
     const createPromise = new Promise<{ id: number; name: string; type: string }>((res) => {
       resolveCreate = res;
     });
-    // doTest calls createChannel then testChannel â€” resolve createChannel so
+    // doTest calls createChannel then testChannel — resolve createChannel so
     // testChannel (mocked to resolve) runs and tested flips to 'ok'.
     apiMock.api.notifications.createChannel.mockImplementation(() => createPromise);
     const user = userEvent.setup();
     renderWizard();
     await user.click(screen.getByText('Telegram'));
     await user.click(screen.getByRole('button', { name: /continue/i }));
-    await user.type(screen.getByPlaceholderText('789123456:AAExâ€¦:987654321'), 'tok:chat');
+    await user.type(screen.getByPlaceholderText('789123456:AAEx…:987654321'), 'tok:chat');
     await user.click(screen.getByRole('button', { name: /continue/i }));
     await user.click(screen.getByRole('button', { name: /continue/i }));
-    // Run the test: flip tested='ok' â†’ success copy renders.
+    // Run the test: flip tested='ok' → success copy renders.
     await user.click(screen.getByRole('button', { name: /send test/i }));
-    expect(screen.getByText('Testingâ€¦')).toBeInTheDocument();
+    expect(screen.getByText('Testing…')).toBeInTheDocument();
     resolveCreate({ id: 1, name: 'ch', type: 'telegram' });
     await waitFor(() => expect(screen.getByText('Test message sent!')).toBeInTheDocument());
     // "Check your Telegram" appears inside a <p> with surrounding sibling
-    // text â€” use a function matcher scoped to the test summary block.
+    // text — use a function matcher scoped to the test summary block.
     const matches = screen.getAllByText(
       (_, el) => (el?.textContent ?? '').includes('Check your Telegram'),
     );
@@ -369,11 +369,11 @@ describe('NotificationWizard', () => {
     // (covers the tested === 'ok' branch of the footer button label).
     expect(screen.getByRole('button', { name: /create channel/i })).toBeInTheDocument();
     // Submit create: mock updateChannel with a fresh deferred so we can
-    // assert the 'Savingâ€¦' label appears while the mutation is pending.
+    // assert the 'Saving…' label appears while the mutation is pending.
     const savePromise = new Promise<{ id: number; active: boolean }>(() => {});
     apiMock.api.notifications.updateChannel.mockReturnValueOnce(savePromise);
     await user.click(screen.getByRole('button', { name: /create channel/i }));
-    expect(screen.getByText('Savingâ€¦')).toBeInTheDocument();
+    expect(screen.getByText('Saving…')).toBeInTheDocument();
   });
 
   it('shows the slack connect form and creates a slack channel', async () => {
@@ -382,7 +382,7 @@ describe('NotificationWizard', () => {
     await user.click(screen.getByText('Slack'));
     await user.click(screen.getByRole('button', { name: /continue/i }));
     expect(screen.getByText('Create Slack Webhook')).toBeInTheDocument();
-    await user.type(screen.getByPlaceholderText('https://hooks.slack.com/services/â€¦'), 'https://hooks.slack.com/services/T/B/x');
+    await user.type(screen.getByPlaceholderText('https://hooks.slack.com/services/…'), 'https://hooks.slack.com/services/T/B/x');
     await user.click(screen.getByRole('button', { name: /continue/i }));
     await user.click(screen.getByRole('button', { name: /continue/i }));
     await user.click(screen.getByRole('button', { name: /send test/i }));

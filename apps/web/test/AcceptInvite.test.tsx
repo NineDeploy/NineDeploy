@@ -49,7 +49,7 @@ describe('AcceptInvite page', () => {
     expect(await screen.findByText('Join Acme')).toBeInTheDocument();
     const signIn = screen.getByRole('button', { name: /Sign in to accept/i });
     fireEvent.click(signIn);
-    // The router navigates within MemoryRouter â€” the login route would catch it
+    // The router navigates within MemoryRouter — the login route would catch it
     // if the navigate() call was not gated on user.
   });
 
@@ -108,7 +108,7 @@ describe('AcceptInvite page', () => {
     expect(await screen.findByText('Join Acme')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Accept invitation' }));
     expect(await screen.findByText('Could not accept')).toBeInTheDocument();
-    // Click "Try again" â€” the retry should succeed and transition the page.
+    // Click "Try again" — the retry should succeed and transition the page.
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
     expect(await screen.findByText('Welcome aboard')).toBeInTheDocument();
   });

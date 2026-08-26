@@ -29,11 +29,11 @@ describe.skipIf(!ENABLED)('database backup/restore (real MySQL container)', () =
       .withExposedPorts(3306)
       .withWaitStrategy(Wait.forLogMessage(/ready for connections/, 2))
       .start();
-    // The log line can precede the root password flip by a moment â€” poll
+    // The log line can precede the root password flip by a moment — poll
     // until the credential actually works (bounded, fails fast otherwise).
     const deadline = Date.now() + 60_000;
     for (;;) {
-      // NB: `mysqladmin ping` succeeds even on access denied â€” verify the
+      // NB: `mysqladmin ping` succeeds even on access denied — verify the
       // credential actually authorizes a query.
       const ok = await capture('docker', ['exec', container.getName().replace(/^\//, ''), 'mysql', '-uroot', `-p${PASSWORD}`, '-e', 'SELECT 1']).then(() => true).catch(() => false);
       if (ok) break;
@@ -57,7 +57,7 @@ describe.skipIf(!ENABLED)('database backup/restore (real MySQL container)', () =
 
     await backupDatabase(db as never, dumpFile, () => undefined);
     expect(existsSync(dumpFile)).toBe(true);
-    // Encrypted at rest â€” no plaintext dump leakage.
+    // Encrypted at rest — no plaintext dump leakage.
     const atRest = readFileSync(dumpFile, 'utf8');
     expect(/^v\d+:/.test(atRest)).toBe(true);
     expect(atRest).not.toContain('roundtrip');

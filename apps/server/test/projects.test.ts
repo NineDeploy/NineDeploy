@@ -37,7 +37,7 @@ describe('projects routes', () => {
     const app = await appWith({
       findMany: { projects: [projectRow()] },
       select: {
-        services: [{ projectId: 1 }, { projectId: 1 }, { projectId: null }],
+        service_projects: [{ projectId: 1 }, { projectId: 1 }, { projectId: null }],
         databases: [{ projectId: 1 }],
       },
     });
@@ -185,9 +185,21 @@ describe('projects routes', () => {
   it('filters projects by workspaceId and creates/patches with workspaceId', async () => {
     let projectDb: any;
     const app = await appWith({
-      findMany: { projects: [projectRow({ id: 1, workspaceId: 5 })] },
+      findMany: {
+        projects: [projectRow({ id: 1, workspaceId: 5 })],
+        // A project may only be created/moved inside a workspace the caller
+        // belongs to, so the acting user needs seats in both 5 and 7.
+        workspaceMembers: [
+          { id: 1, workspaceId: 5, userId: 1, role: 'owner' },
+          { id: 2, workspaceId: 7, userId: 1, role: 'owner' },
+        ],
+      },
       insert: { projects: [projectRow({ id: 2, workspaceId: 5 })] },
-      findFirst: { projects: () => projectDb },
+      findFirst: {
+        projects: () => projectDb,
+        // `isWorkspaceMember` looks the seat up with findFirst, not findMany.
+        workspaceMembers: { id: 1, workspaceId: 5, userId: 1, role: 'owner' },
+      },
       update: { projects: [projectRow({ id: 2, workspaceId: 7 })] },
     });
 

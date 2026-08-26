@@ -51,7 +51,7 @@ describe('loginAction', () => {
   it('stores the token and prints the user on success', async () => {
     const login = vi.fn().mockResolvedValue({
       tokens: { accessToken: 'tok123' },
-      user: { email: 'a@b.com', role: 'admin' },
+      user: { email: 'a@b.com', isOperator: true },
     });
     h.createClient.mockReturnValue({ auth: { login } });
     h.prompt.mockReset().mockResolvedValueOnce('http://srv:3000').mockResolvedValueOnce('a@b.com');
@@ -64,8 +64,21 @@ describe('loginAction', () => {
     expect(h.createClient).toHaveBeenCalledWith({ baseUrl: 'http://srv:3000' });
     expect(login).toHaveBeenCalledWith({ email: 'a@b.com', password: 'secret-pass' });
     expect(h.saveConfig).toHaveBeenCalledWith({ baseUrl: 'http://srv:3000', token: 'tok123' });
-    expect(logSpy).toHaveBeenCalledWith('✓ Logged in as a@b.com (admin)');
+    expect(logSpy).toHaveBeenCalledWith('✓ Logged in as a@b.com (operator)');
     expect(process.exitCode).toBe(0);
+  });
+
+  it('labels a session without an operator seat as a member', async () => {
+    const login = vi.fn().mockResolvedValue({
+      tokens: { accessToken: 'tok123' },
+      user: { email: 'dev@b.com', isOperator: false },
+    });
+    h.createClient.mockReturnValue({ auth: { login } });
+    h.prompt.mockReset().mockResolvedValueOnce('http://srv:3000').mockResolvedValueOnce('dev@b.com');
+
+    await loginAction();
+
+    expect(logSpy).toHaveBeenCalledWith('✓ Logged in as dev@b.com (member)');
   });
 
   it('rejects an empty email', async () => {

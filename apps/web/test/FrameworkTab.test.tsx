@@ -6,7 +6,7 @@ import { api } from '../src/lib/api.js';
 import { renderWithProviders, mockOf } from './helpers.js';
 
 vi.mock('../src/lib/api.js', async () => {
-  // Must be './apiMock.js', not './helpers.js' â€” see the note in apiMock.ts.
+  // Must be './apiMock.js', not './helpers.js' — see the note in apiMock.ts.
   const { createFakeApiModule } = await import('./apiMock.js');
   return createFakeApiModule();
 });
@@ -53,7 +53,7 @@ const richInsights = {
   framework: {
     id: 'next',
     name: 'Next.js',
-    emoji: 'â–²',
+    emoji: '▲',
     category: 'ssr',
     port: 3000,
     installCmd: 'pnpm install',
@@ -90,7 +90,7 @@ const sparseInsights = {
   framework: {
     id: 'static',
     name: 'Static Site',
-    emoji: 'ðŸ“„',
+    emoji: '📄',
     category: 'static',
     port: 80,
     installCmd: null,
@@ -169,7 +169,7 @@ describe('FrameworkTab', () => {
     renderWithProviders(<FrameworkTab serviceId={1} svc={svc()} />);
 
     fireEvent.click(await screen.findByRole('button', { name: 'Analyze repository' }));
-    expect(await screen.findByText('Analyzingâ€¦')).toBeInTheDocument();
+    expect(await screen.findByText('Analyzing…')).toBeInTheDocument();
   });
 
   it('renders the full analysis: facts, scripts, detected files, monorepo packages and notes', async () => {
@@ -181,7 +181,7 @@ describe('FrameworkTab', () => {
     expect(screen.getByText('TypeScript')).toBeInTheDocument();
     expect(screen.getAllByText('Next.js').length).toBeGreaterThan(0);
     expect(screen.getAllByText('pnpm').length).toBeGreaterThan(0);
-    expect(screen.getByText('42 prod Â· 7 dev')).toBeInTheDocument();
+    expect(screen.getByText('42 prod · 7 dev')).toBeInTheDocument();
     expect(screen.getByText('main')).toBeInTheDocument();
     expect(screen.getByTitle('abcdef123456')).toBeInTheDocument();
     // scripts block + detected files
@@ -192,7 +192,7 @@ describe('FrameworkTab', () => {
     expect(screen.getByText('Monorepo packages (2)')).toBeInTheDocument();
     expect(screen.getByText('/apps/web')).toBeInTheDocument();
     expect(screen.getByText('/packages/ui')).toBeInTheDocument();
-    expect(screen.getByText('Â· Next.js')).toBeInTheDocument();
+    expect(screen.getByText('· Next.js')).toBeInTheDocument();
     // deploy notes
     expect(screen.getByText('Deployment notes for Next.js')).toBeInTheDocument();
     expect(screen.getByText('Uses standalone output')).toBeInTheDocument();
@@ -204,15 +204,15 @@ describe('FrameworkTab', () => {
 
     expect(await screen.findByText('What this repository contains')).toBeInTheDocument();
     // optional facts fall back to an em dash
-    expect(screen.getAllByText('â€”').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('—').length).toBeGreaterThan(0);
     // empty sections are omitted entirely
     expect(screen.queryByText('package.json scripts')).not.toBeInTheDocument();
     expect(screen.queryByText('Detected files:')).not.toBeInTheDocument();
     expect(screen.queryByText(/Monorepo packages/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Deployment notes/)).not.toBeInTheDocument();
-    // special settings table: current from build, suggested falls back to â€”
+    // special settings table: current from build, suggested falls back to —
     expect(screen.getByText('npm i')).toBeInTheDocument();
-    expect(screen.getByText('Special Settings â€” Static Site presets')).toBeInTheDocument();
+    expect(screen.getByText('Special Settings — Static Site presets')).toBeInTheDocument();
   });
 
   it('applies the suggested commands and port, and reports failures', async () => {
@@ -227,7 +227,7 @@ describe('FrameworkTab', () => {
         build: { installCmd: 'pnpm install', buildCmd: 'pnpm build', startCmd: 'pnpm start' },
       }));
     await waitFor(() =>
-      expect(toastSpy.toast).toHaveBeenCalledWith('Framework settings applied â€” redeploy to take effect', 'success'));
+      expect(toastSpy.toast).toHaveBeenCalledWith('Framework settings applied — redeploy to take effect', 'success'));
 
     // failure path
     mockOf(api.services.update).mockRejectedValueOnce(new Error('nope') as never);
@@ -241,7 +241,7 @@ describe('FrameworkTab', () => {
     renderWithProviders(<FrameworkTab serviceId={1} svc={svc()} />);
 
     fireEvent.click(await screen.findByRole('button', { name: 'Apply commands & port' }));
-    expect(await screen.findByText('Applyingâ€¦')).toBeInTheDocument();
+    expect(await screen.findByText('Applying…')).toBeInTheDocument();
   });
 
   it('creates selected env vars, skips existing ones and unticked ones', async () => {
@@ -251,9 +251,9 @@ describe('FrameworkTab', () => {
     mockOf(api.env.create).mockResolvedValue({} as never);
     renderWithProviders(<FrameworkTab serviceId={1} svc={svc()} />);
 
-    await screen.findByText('Special Settings â€” Next.js presets');
+    await screen.findByText('Special Settings — Next.js presets');
     expect(screen.getByText('Suggested environment variables')).toBeInTheDocument();
-    expect(screen.getByText('â€” runtime mode')).toBeInTheDocument();
+    expect(screen.getByText('— runtime mode')).toBeInTheDocument();
     fireEvent.click(await screen.findByRole('button', { name: 'Create selected variables' }));
     await waitFor(() => expect(api.env.create).toHaveBeenCalledTimes(2));
     expect(api.env.create).toHaveBeenCalledWith(1, { key: 'NODE_ENV', value: 'production', isSecret: false });
@@ -290,7 +290,7 @@ describe('FrameworkTab', () => {
     renderWithProviders(<FrameworkTab serviceId={1} svc={svc()} />);
 
     fireEvent.click(await screen.findByRole('button', { name: 'Create selected variables' }));
-    expect(await screen.findByText('Creatingâ€¦')).toBeInTheDocument();
+    expect(await screen.findByText('Creating…')).toBeInTheDocument();
   });
 
   it('re-analyzes from the detected framework card', async () => {

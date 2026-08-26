@@ -6,7 +6,7 @@ import { renderWithProviders, mockOf } from './helpers.js';
 import type { Service } from '@ninedeploy/sdk';
 
 vi.mock('../src/lib/api.js', async () => {
-  // Must be './apiMock.js', not './helpers.js' â€” see the note in apiMock.ts.
+  // Must be './apiMock.js', not './helpers.js' — see the note in apiMock.ts.
   const { createFakeApiModule } = await import('./apiMock.js');
   return createFakeApiModule();
 });
@@ -147,7 +147,7 @@ describe('ArchitectureTab', () => {
     expect(await screen.findByText('my-service')).toBeInTheDocument();
     expect(screen.getByText('Container Registry')).toBeInTheDocument();
     expect(screen.getByText('ghcr.io/org/my-app:v1')).toBeInTheDocument();
-    expect(screen.getByText(':â€”')).toBeInTheDocument();
+    expect(screen.getByText(':—')).toBeInTheDocument();
     expect(screen.queryByText('Traefik Ingress')).not.toBeInTheDocument();
     expect(screen.queryByText('/app/data')).not.toBeInTheDocument();
     expect(screen.queryByText('Health Probe')).not.toBeInTheDocument();
@@ -197,7 +197,7 @@ describe('ArchitectureTab', () => {
     fireEvent.click(dbNode);
 
     expect(await screen.findByText('Selected: main-postgres')).toBeInTheDocument();
-    expect(screen.getByText('Go to Database â†’')).toBeInTheDocument();
+    expect(screen.getByText('Go to Database →')).toBeInTheDocument();
 
     // Click on the Domain node
     const domNode = screen.getByTestId('node-dom-1');

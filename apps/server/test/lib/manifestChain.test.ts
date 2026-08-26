@@ -8,12 +8,12 @@ import { generateNixpacksToml } from '../../src/lib/ninedeployToNixpacks.js';
 import type { BuildConfig } from '@ninedeploy/db';
 
 /**
- * End-to-end test of the manifest â†’ build pipeline that the docker builder
+ * End-to-end test of the manifest → build pipeline that the docker builder
  * will use in production. Stands in for an integration test of the builder
  * itself, which would require mocking every docker call; this exercises
  * the same chain at module boundaries, with real filesystem I/O.
  */
-describe('manifest chain (load â†’ apply â†’ toml)', () => {
+describe('manifest chain (load → apply → toml)', () => {
   let workDir: string;
   const baseConfig: BuildConfig = {
     id: 1,
@@ -106,12 +106,12 @@ build:
     };
 
     const effective = applyManifestToBuildConfig(loaded!.manifest, panelOverride);
-    // installCmd is set in the panel â†’ manifest must NOT overwrite.
+    // installCmd is set in the panel → manifest must NOT overwrite.
     expect(effective.installCmd).toBe('pnpm install --frozen-lockfile');
-    // build/start are NOT set in the panel â†’ manifest fills them.
+    // build/start are NOT set in the panel → manifest fills them.
     expect(effective.buildCmd).toBe('npm run build');
     expect(effective.startCmd).toBe('node server.js');
-    // baseDir is a real sub-path in the panel â†’ manifest must NOT overwrite.
+    // baseDir is a real sub-path in the panel → manifest must NOT overwrite.
     expect(effective.baseDir).toBe('apps/admin');
   });
 

@@ -88,7 +88,7 @@ describe('Servers', () => {
     mockOf(api.servers.list).mockResolvedValue([] as never);
     mockOf(api.servers.create).mockResolvedValue({
       id: 3, token: 'raw-tok', tokenSha256: 'a'.repeat(64),
-      agentCommand: 'NINEDEPLOY_AGENT=1 â€¦',
+      agentCommand: 'NINEDEPLOY_AGENT=1 …',
     } as never);
     renderWithProviders(<Servers />);
     fireEvent.click(await screen.findByRole('button', { name: 'Add server' }));
@@ -117,7 +117,7 @@ describe('Servers', () => {
     renderWithProviders(<Servers />);
     fireEvent.click((await screen.findAllByTitle('Test connectivity'))[0]!);
     await waitFor(() => expect(api.servers.test).toHaveBeenCalledWith(1));
-    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Agent reachable â€” marked online', 'success'));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Agent reachable — marked online', 'success'));
     mockOf(api.servers.test).mockRejectedValue(new Error('x') as never);
     fireEvent.click(screen.getAllByTitle('Test connectivity')[0]!);
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Agent unreachable', 'error'));
@@ -160,7 +160,7 @@ describe('Servers', () => {
     fireEvent.change(screen.getByPlaceholderText('edge-1'), { target: { value: 'x' } });
     fireEvent.change(screen.getByPlaceholderText('10.0.0.5'), { target: { value: 'h' } });
     fireEvent.submit(screen.getByPlaceholderText('edge-1').closest('form')!);
-    expect(await screen.findByText('Registeringâ€¦')).toBeInTheDocument();
+    expect(await screen.findByText('Registering…')).toBeInTheDocument();
   });
 
   it('falls back to 4600 when the port field is emptied', async () => {
@@ -373,7 +373,7 @@ describe('Servers', () => {
 
     // Switch to password auth
     fireEvent.click(screen.getByRole('button', { name: /SSH Password/i }));
-    fireEvent.change(screen.getByPlaceholderText('â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢'), { target: { value: 'secret123' } });
+    fireEvent.change(screen.getByPlaceholderText('••••••••••••'), { target: { value: 'secret123' } });
 
     // Switch back to key auth
     fireEvent.click(screen.getByRole('button', { name: /SSH Private Key/i }));
@@ -431,7 +431,7 @@ describe('Servers', () => {
     fireEvent.change(screen.getByPlaceholderText('22'), { target: { value: '' } });
     fireEvent.change(screen.getByPlaceholderText('root'), { target: { value: '' } });
     fireEvent.click(screen.getByRole('button', { name: /SSH Password/i }));
-    fireEvent.change(screen.getByPlaceholderText('â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢'), { target: { value: 'probe-pass' } });
+    fireEvent.change(screen.getByPlaceholderText('••••••••••••'), { target: { value: 'probe-pass' } });
 
     mockOf(api.servers.sshTest).mockResolvedValueOnce({ ok: true, message: 'Password probe ok', latencyMs: 5 });
     fireEvent.click(screen.getByRole('button', { name: /Test SSH Connection/i }));
@@ -479,7 +479,7 @@ describe('Servers', () => {
 
     // Switch to password auth
     fireEvent.click(screen.getByRole('button', { name: /SSH Password/i }));
-    fireEvent.change(screen.getByPlaceholderText('â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢'), { target: { value: 'secretPass!' } });
+    fireEvent.change(screen.getByPlaceholderText('••••••••••••'), { target: { value: 'secretPass!' } });
 
     fireEvent.click(screen.getByRole('button', { name: /Start Automated Onboarding/i }));
     await waitFor(() => expect(api.servers.sshBootstrap).toHaveBeenCalledWith({
@@ -605,13 +605,13 @@ describe('Servers', () => {
       ok: true,
       serverId: 20,
       steps: [
-        { step: 'connecting', status: 'running', message: 'Connecting to hostâ€¦', timestamp: '2026-01-01T00:00:00Z' },
+        { step: 'connecting', status: 'running', message: 'Connecting to host…', timestamp: '2026-01-01T00:00:00Z' },
         { step: 'agent_deploy', status: 'failed', message: 'Failed agent deploy', timestamp: '2026-01-01T00:00:00Z' },
       ],
       logs: ['[CONNECTING] IN PROGRESS'],
     });
 
-    expect(await screen.findByText('Connecting to hostâ€¦')).toBeInTheDocument();
+    expect(await screen.findByText('Connecting to host…')).toBeInTheDocument();
     expect(screen.getByText('Failed agent deploy')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Done' }));
   });

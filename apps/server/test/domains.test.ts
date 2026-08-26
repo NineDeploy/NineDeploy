@@ -241,7 +241,7 @@ describe('domains routes', () => {
     expect(res.json().error.code).toBe('validation_error');
   });
 
-  // â”€â”€ routing extras: ssl / www redirect / headers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── routing extras: ssl / www redirect / headers ─────────────────────────
   it('patches ssl, redirectWww and headers together', async () => {
     const app = await buildTestApp({
       db: createFakeDb({

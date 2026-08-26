@@ -75,7 +75,7 @@ describe('bare-metal systemd installation policy', () => {
   it('rejects an unknown Nixpacks version (defence-in-depth against tampered releases)', () => {
     const installer = rootFile('install.sh');
     // The installer must not silently download a release whose SHA-256 isn't
-    // in its verified-checksum table â€” it has to fail with a clear message
+    // in its verified-checksum table — it has to fail with a clear message
     // so the operator knows to update the table after auditing GitHub.
     expect(installer).toContain('is not in the installer');
   });

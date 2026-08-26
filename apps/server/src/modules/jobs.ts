@@ -51,7 +51,7 @@ export const jobRoutes: FastifyPluginAsync = async (app) => {
     const input = jobCreate.parse(req.body ?? {});
     assertCron(input.cron);
     if (input.kind === 'exec' && !input.command) throw badRequest('command is required for exec jobs');
-    // Exec jobs run arbitrary commands inside the container â€” admin-only,
+    // Exec jobs run arbitrary commands inside the container — admin-only,
     // consistent with the exec WS route and the volume file manager.
     if (input.kind === 'exec' && !req.user?.isOperator) {
       throw forbidden('Operator access required');
@@ -95,7 +95,7 @@ export const jobRoutes: FastifyPluginAsync = async (app) => {
     if (input.command !== undefined) values.command = input.command.trim() || null;
     if (input.enabled !== undefined) values.enabled = input.enabled;
     // Creating, switching to, or editing an exec job means arbitrary container
-    // commands â€” admin-only. Backup jobs are also admin-only: they create
+    // commands — admin-only. Backup jobs are also admin-only: they create
     // host-level files (`sibling container + tar` to the data dir) and
     // optionally push to remote storage.
     const isExecLike = values.kind === 'exec' || existingJob.kind === 'exec';
@@ -146,7 +146,7 @@ export const jobRoutes: FastifyPluginAsync = async (app) => {
     const jobId = parseId((req.params as { jobId: string }).jobId);
     // Owning the service is not enough: `jobId` must belong to THIS service.
     // Without this, any member who owns any service could read every job's
-    // captured output by iterating jobId â€” including admin-only `exec` jobs,
+    // captured output by iterating jobId — including admin-only `exec` jobs,
     // whose output is up to 60 KB of arbitrary in-container command results.
     const job = await app.db.query.scheduledJobs.findFirst({
       where: and(eq(scheduledJobs.id, jobId), eq(scheduledJobs.serviceId, id)),

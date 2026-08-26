@@ -1,7 +1,7 @@
 ﻿/**
- * Tests for the manifest â†’ service orchestrator. Uses an in-memory SQLite
+ * Tests for the manifest → service orchestrator. Uses an in-memory SQLite
  * with the real Drizzle schema so the SQL semantics (unique indexes,
- * cascades, default values) are exercised end-to-end â€” no mocks.
+ * cascades, default values) are exercised end-to-end — no mocks.
  */
 import { fileURLToPath } from 'node:url';
 import { migrate } from 'drizzle-orm/libsql/migrator';
@@ -62,7 +62,7 @@ afterEach(async () => {
   // Cleanup is handled in beforeEach.
 });
 
-describe('applyManifestToService â€” routes', () => {
+describe('applyManifestToService — routes', () => {
   it('inserts a domain in pending state for each declared route', async () => {
     const result = await applyManifestToService(
       db,
@@ -123,7 +123,7 @@ describe('applyManifestToService â€” routes', () => {
     const rows = await db.select().from(domains).where(eq(domains.serviceId, serviceId));
     expect(rows).toHaveLength(1);
     expect(rows[0]!.ssl).toBe(true);
-    // Status is the panel's concern â€” manifest never demotes an active host.
+    // Status is the panel's concern — manifest never demotes an active host.
     expect(rows[0]!.status).toBe('active');
   });
 
@@ -158,7 +158,7 @@ describe('applyManifestToService â€” routes', () => {
   });
 });
 
-describe('applyManifestToService â€” database', () => {
+describe('applyManifestToService — database', () => {
   beforeEach(async () => {
     // The drizzle schema declares `ownerUserId` on the `databases` table but
     // the latest migration does not yet add the column on `databases` (only
@@ -183,7 +183,7 @@ describe('applyManifestToService â€” database', () => {
     expect(attaches[0]!.envAlias).toBe('DATABASE_URL');
   });
 
-  it('is idempotent â€” re-running the manifest does not create a second attachment', async () => {
+  it('is idempotent — re-running the manifest does not create a second attachment', async () => {
     await applyManifestToService(db, serviceId, m({ database: { ref: 'app-db', env: 'A' } }));
     await applyManifestToService(db, serviceId, m({ database: { ref: 'app-db', env: 'B' } }));
     const attaches = await db
@@ -191,7 +191,7 @@ describe('applyManifestToService â€” database', () => {
       .from(databaseAttachments)
       .where(eq(databaseAttachments.serviceId, serviceId));
     expect(attaches).toHaveLength(1);
-    // The original env alias is preserved â€” manifest cannot flip an existing alias.
+    // The original env alias is preserved — manifest cannot flip an existing alias.
     expect(attaches[0]!.envAlias).toBe('A');
   });
 
@@ -213,7 +213,7 @@ describe('applyManifestToService â€” database', () => {
   });
 });
 
-describe('applyManifestToService â€” alerts', () => {
+describe('applyManifestToService — alerts', () => {
   it('inserts an alert rule per declared alert', async () => {
     const result = await applyManifestToService(
       db,
@@ -292,7 +292,7 @@ describe('applyManifestToService â€” alerts', () => {
   });
 });
 
-describe('applyManifestToService â€” deferred sections emit warnings', () => {
+describe('applyManifestToService — deferred sections emit warnings', () => {
   it('emits a warning when volume.backups is declared', async () => {
     const result = await applyManifestToService(
       db,

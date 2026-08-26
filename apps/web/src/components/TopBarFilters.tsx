@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, Filter, Plus, Tag, X } from 'lucide-react';
 import { useTagScope } from '../lib/projects.js';
 import { useAuth } from '../lib/auth.js';
@@ -30,6 +30,7 @@ const COLOR_HEX: Record<LabelColor, string> = {
 export function TopBarFilters() {
   const { user } = useAuth();
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const scope = useTagScope();
   const { workspaces, currentWorkspace, switchWorkspace } = useWorkspace();
   const isOperator = user?.isOperator === true;
@@ -81,8 +82,11 @@ export function TopBarFilters() {
         color: newLabelColor,
         workspaceId: currentWorkspace?.id ?? null,
       });
+      // Refresh BOTH label queries before selecting the new chip: the tag
+      // scope prunes any id missing from its own (unscoped) `['labels']`
+      // query, which would otherwise drop the chip the moment it is added.
+      await Promise.all([refetchLabels(), queryClient.invalidateQueries({ queryKey: ['labels'] })]);
       scope.setLabelIds([...scope.labelIds, created.id]);
-      await refetchLabels();
       setNewLabel('');
       toast(`Label "${created.name}" created`, 'success');
     } catch (err) {

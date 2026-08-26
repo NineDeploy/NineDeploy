@@ -8,7 +8,7 @@ import { useAuth } from '../src/lib/auth.js';
 import { renderWithProviders, mockOf } from './helpers.js';
 
 vi.mock('../src/lib/api.js', async () => {
-  // Must be './apiMock.js', not './helpers.js' â€” see the note in apiMock.ts.
+  // Must be './apiMock.js', not './helpers.js' — see the note in apiMock.ts.
   const { createFakeApiModule } = await import('./apiMock.js');
   return createFakeApiModule();
 });
@@ -74,7 +74,7 @@ describe('Login', () => {
       { initialEntries: [{ pathname: '/login', state: { from: '/hub' } }] },
     );
     await user.type(await screen.findByPlaceholderText('you@example.com'), 'a@b.c');
-    await user.type(screen.getByPlaceholderText('â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢'), 'secret');
+    await user.type(screen.getByPlaceholderText('••••••••'), 'secret');
     await user.click(screen.getByRole('button', { name: /Sign in/ }));
     await waitFor(() => expect(login).toHaveBeenCalledWith('a@b.c', 'secret', undefined));
     await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/hub'));
@@ -92,7 +92,7 @@ describe('Login', () => {
       </>,
     );
     await user.type(await screen.findByPlaceholderText('you@example.com'), 'a@b.c');
-    await user.type(screen.getByPlaceholderText('â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢'), 'secret');
+    await user.type(screen.getByPlaceholderText('••••••••'), 'secret');
     await user.click(screen.getByRole('button', { name: /Sign in/ }));
     await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/'));
   });
@@ -107,7 +107,7 @@ describe('Login', () => {
     expect(screen.getByPlaceholderText('Admin')).toBeInTheDocument();
     await user.type(screen.getByPlaceholderText('Admin'), 'Boss');
     await user.type(screen.getByPlaceholderText('you@example.com'), 'a@b.c');
-    await user.type(screen.getByPlaceholderText('â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢'), 'secret');
+    await user.type(screen.getByPlaceholderText('••••••••'), 'secret');
     await user.click(screen.getByRole('button', { name: /Create account/ }));
     await waitFor(() => expect(setup).toHaveBeenCalledWith('a@b.c', 'secret', 'Boss'));
   });
@@ -120,7 +120,7 @@ describe('Login', () => {
     renderWithProviders(<Login />);
     await screen.findByRole('heading', { name: 'Create admin account' });
     await user.type(screen.getByPlaceholderText('you@example.com'), 'a@b.c');
-    await user.type(screen.getByPlaceholderText('â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢'), 'secret');
+    await user.type(screen.getByPlaceholderText('••••••••'), 'secret');
     await user.click(screen.getByRole('button', { name: /Create account/ }));
     await waitFor(() => expect(setup).toHaveBeenCalledWith('a@b.c', 'secret', undefined));
   });
@@ -132,7 +132,7 @@ describe('Login', () => {
     mockOf(useAuth).mockReturnValue(authValue({ login }) as never);
     renderWithProviders(<Login />);
     await user.type(await screen.findByPlaceholderText('you@example.com'), 'a@b.c');
-    await user.type(screen.getByPlaceholderText('â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢'), 'wrong');
+    await user.type(screen.getByPlaceholderText('••••••••'), 'wrong');
     await user.click(screen.getByRole('button', { name: /Sign in/ }));
     await screen.findByText('Bad credentials');
   });
@@ -144,7 +144,7 @@ describe('Login', () => {
     mockOf(useAuth).mockReturnValue(authValue({ login }) as never);
     renderWithProviders(<Login />);
     await user.type(await screen.findByPlaceholderText('you@example.com'), 'a@b.c');
-    await user.type(screen.getByPlaceholderText('â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢'), 'wrong');
+    await user.type(screen.getByPlaceholderText('••••••••'), 'wrong');
     await user.click(screen.getByRole('button', { name: /Sign in/ }));
     await screen.findByText('Something went wrong');
   });
@@ -160,7 +160,7 @@ describe('Login', () => {
     mockOf(useAuth).mockReturnValue(authValue({ login }) as never);
     renderWithProviders(<Login />);
     await user.type(await screen.findByPlaceholderText('you@example.com'), 'a@b.c');
-    await user.type(screen.getByPlaceholderText('â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢'), 'secret');
+    await user.type(screen.getByPlaceholderText('••••••••'), 'secret');
     await user.click(screen.getByRole('button', { name: /Sign in/ }));
     // The second step appears without an error banner.
     expect(await screen.findByPlaceholderText('123456')).toBeInTheDocument();
@@ -181,7 +181,7 @@ describe('Login', () => {
     mockOf(useAuth).mockReturnValue(authValue({ login }) as never);
     renderWithProviders(<Login />);
     await user.type(await screen.findByPlaceholderText('you@example.com'), 'a@b.c');
-    await user.type(screen.getByPlaceholderText('â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢'), 'secret');
+    await user.type(screen.getByPlaceholderText('••••••••'), 'secret');
     await user.click(screen.getByRole('button', { name: /Sign in/ }));
     await user.type(await screen.findByPlaceholderText('123456'), '000000');
     await user.click(screen.getByRole('button', { name: /Verify & sign in/ }));
@@ -242,7 +242,7 @@ describe('Login', () => {
     mockOf(api.auth.status).mockResolvedValue({ initialized: true } as never);
     mockOf(useAuth).mockReturnValue(authValue() as never);
     renderWithProviders(<Login />, { initialEntries: ['/login?reset=ok'] });
-    expect(await screen.findByText(/Password updated â€” sign in with your new password/)).toBeInTheDocument();
+    expect(await screen.findByText(/Password updated — sign in with your new password/)).toBeInTheDocument();
   });
 
   it('renders public SSO provider buttons and redirects on click', async () => {

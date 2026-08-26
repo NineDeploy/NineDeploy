@@ -6,7 +6,7 @@ import { api } from '../src/lib/api.js';
 import { renderWithProviders, mockOf } from './helpers.js';
 
 vi.mock('../src/lib/api.js', async () => {
-  // Must be './apiMock.js', not './helpers.js' â€” see the note in apiMock.ts.
+  // Must be './apiMock.js', not './helpers.js' — see the note in apiMock.ts.
   const { createFakeApiModule } = await import('./apiMock.js');
   return createFakeApiModule();
 });
@@ -70,7 +70,7 @@ describe('Networks', () => {
     await screen.findByText('back-tier');
     fireEvent.click(screen.getAllByRole('button', { name: /Attach/ })[0]!);
     await user.type(screen.getByPlaceholderText('my-app-42'), 'nd-api-2');
-    // The attach-card submit is the FIRST exact-"Attach" button â€” the form
+    // The attach-card submit is the FIRST exact-"Attach" button — the form
     // card renders above the network list.
     fireEvent.click(screen.getAllByRole('button', { name: /^Attach$/ })[0]!);
     await waitFor(() => expect(api.networks.attach).toHaveBeenCalledWith({ network: 'ninedeploy', container: 'nd-api-2' }));
@@ -126,7 +126,7 @@ describe('Networks', () => {
     renderWithProviders(<Networks />);
     await screen.findByText('back-tier');
 
-    // Delete failure (non-Error â†’ generic).
+    // Delete failure (non-Error → generic).
     fireEvent.click(screen.getAllByRole('button', { name: /Delete/ })[0]!);
     fireEvent.click(screen.getAllByRole('button', { name: 'Delete' }).at(-1)!);
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Delete failed', 'error'));
@@ -145,13 +145,13 @@ describe('Networks', () => {
     renderWithProviders(<Networks />);
     await screen.findByText('back-tier');
 
-    // Attach failure (non-Error â†’ generic).
+    // Attach failure (non-Error → generic).
     fireEvent.click(screen.getAllByRole('button', { name: /Attach/ })[0]!);
     await user.type(screen.getByPlaceholderText('my-app-42'), 'nd-api-2');
     fireEvent.click(screen.getAllByRole('button', { name: /^Attach$/ })[0]!);
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Attach failed', 'error'));
 
-    // Detach failure (Error â†’ its message).
+    // Detach failure (Error → its message).
     fireEvent.click(screen.getByTitle('Detach'));
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('docker api down', 'error'));
   });
@@ -179,19 +179,19 @@ describe('Networks', () => {
     renderWithProviders(<Networks />);
     await screen.findByText('back-tier');
 
-    // create failure (Error â†’ err.message)
+    // create failure (Error → err.message)
     fireEvent.click(screen.getByRole('button', { name: /New network/ }));
     await user.type(screen.getByPlaceholderText('my-network'), 'front-tier');
     fireEvent.click(screen.getByRole('button', { name: 'Create' }));
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('name taken', 'error'));
 
-    // attach failure (Error â†’ err.message)
+    // attach failure (Error → err.message)
     fireEvent.click(screen.getAllByRole('button', { name: /Attach/ })[0]!);
     await user.type(screen.getByPlaceholderText('my-app-42'), 'nd-api-2');
     fireEvent.click(screen.getAllByRole('button', { name: /^Attach$/ })[0]!);
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('no such container', 'error'));
 
-    // detach failure (non-Error â†’ generic message)
+    // detach failure (non-Error → generic message)
     fireEvent.click(screen.getByTitle('Detach'));
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Detach failed', 'error'));
   });
@@ -201,7 +201,7 @@ describe('Networks', () => {
     renderWithProviders(<Networks />);
     await screen.findByText('back-tier');
 
-    // Driver select change â†’ overlay.
+    // Driver select change → overlay.
     fireEvent.click(screen.getByRole('button', { name: /New network/ }));
     await user.type(screen.getByPlaceholderText('my-network'), 'mesh-net');
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'overlay' } });

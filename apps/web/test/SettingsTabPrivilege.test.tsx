@@ -6,7 +6,7 @@ import { ToastProvider } from '../src/components/Toast.js';
 /**
  * H-3 (UI half): deployment lifecycle hooks execute binaries on the HOST, so
  * `assertMayUseHostPrivilege` restricts them to admins. The settings form must
- * not offer them to a member â€” otherwise every save comes back 403 â€” and, more
+ * not offer them to a member — otherwise every save comes back 403 — and, more
  * importantly, a member's save must OMIT the hook keys rather than send them
  * empty, or an ordinary rename would clear what an admin configured.
  *
@@ -114,7 +114,7 @@ describe('SettingsTab host-privilege gating', () => {
     await screen.findByText('Service settings');
     fireEvent.click(screen.getByRole('button', { name: /Save settings/ }));
     const build = await savedBuild();
-    // absent, not '' â€” an empty string would wipe the admin's `make migrate`
+    // absent, not '' — an empty string would wipe the admin's `make migrate`
     expect(build.preDeployCmd).toBeUndefined();
     expect(build.postDeployCmd).toBeUndefined();
     expect(build.preStopCmd).toBeUndefined();

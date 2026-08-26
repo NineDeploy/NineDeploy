@@ -135,7 +135,7 @@ describe('Traefik route', () => {
     expect(await screen.findByText('app-router')).toBeInTheDocument();
     expect(screen.getByText('Host(`app.example.com`)')).toBeInTheDocument();
     expect(screen.getByText('websecure')).toBeInTheDocument();
-    expect(screen.getByText('â†’ app-service')).toBeInTheDocument();
+    expect(screen.getByText('→ app-service')).toBeInTheDocument();
 
     // Backend Services
     expect(screen.getByText('Backend Services')).toBeInTheDocument();
@@ -268,12 +268,12 @@ describe('Traefik route', () => {
     expect(await screen.findByText('Traefik Running')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: /Restart/ }));
-    expect(await screen.findByText('Restartingâ€¦')).toBeInTheDocument();
+    expect(await screen.findByText('Restarting…')).toBeInTheDocument();
     resolveRestart({ ok: true, json: () => Promise.resolve({ ok: true }) });
     await screen.findByText('Restart');
 
     fireEvent.click(screen.getByRole('button', { name: /Backup Certs/ }));
-    expect(await screen.findByText('Backing upâ€¦')).toBeInTheDocument();
+    expect(await screen.findByText('Backing up…')).toBeInTheDocument();
     resolveBackup({ ok: true, json: () => Promise.resolve({ ok: true }) });
     await screen.findByText('Backup Certs');
   });
@@ -331,10 +331,10 @@ describe('Traefik route', () => {
     });
 
     renderWithProviders(<Traefik />);
-    expect(await screen.findByText('â†’ v3.1.0')).toBeInTheDocument();
+    expect(await screen.findByText('→ v3.1.0')).toBeInTheDocument();
     const updateBtn = screen.getByRole('button', { name: /Update to v3.1.0/ });
     fireEvent.click(updateBtn);
-    expect(await screen.findByText('Updatingâ€¦')).toBeInTheDocument();
+    expect(await screen.findByText('Updating…')).toBeInTheDocument();
     resolveUpdate({ ok: true, json: () => Promise.resolve({ ok: true, newVersion: '3.1.0' }) });
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Traefik updated to v3.1.0', 'success'));
   });

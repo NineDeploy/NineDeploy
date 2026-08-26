@@ -5,7 +5,7 @@ import { api } from '../src/lib/api.js';
 import { renderWithProviders, mockOf } from './helpers.js';
 
 vi.mock('../src/lib/api.js', async () => {
-  // Must be './apiMock.js', not './helpers.js' â€” see the note in apiMock.ts.
+  // Must be './apiMock.js', not './helpers.js' — see the note in apiMock.ts.
   const { createFakeApiModule } = await import('./apiMock.js');
   return createFakeApiModule();
 });
@@ -71,7 +71,7 @@ it('shows an error card with retry when the dashboard query fails', async () => 
     renderWithProviders(<Dashboard />);
     // 3 running + 1 unhealthy running -> attention banner
     await screen.findByText('1 service need attention');
-    expect(screen.getByText(/3 running Â· 1 stopped Â· 1 errored Â· 5 containers Â· 1 databases/)).toBeInTheDocument();
+    expect(screen.getByText(/3 running · 1 stopped · 1 errored · 5 containers · 1 databases/)).toBeInTheDocument();
     // stat cards
     expect(screen.getAllByText('5').length).toBeGreaterThan(0);
     expect(screen.getByText('12')).toBeInTheDocument();
@@ -84,8 +84,8 @@ it('shows an error card with retry when the dashboard query fails', async () => 
     expect(screen.getByText('42ms')).toBeInTheDocument();
     expect(screen.getByText('900ms')).toBeInTheDocument();
     expect(screen.getByText('250ms')).toBeInTheDocument();
-    // commit sha fallback rendered inside "type Â· sha" text nodes
-    expect(screen.getAllByText(/Â· â€”/).length).toBeGreaterThan(0);
+    // commit sha fallback rendered inside "type · sha" text nodes
+    expect(screen.getAllByText(/· —/).length).toBeGreaterThan(0);
     // links to services
     expect(screen.getAllByRole('link', { name: /api/ })[0]).toHaveAttribute('href', '/services/1');
     // recent deploys
@@ -192,8 +192,8 @@ it('shows an error card with retry when the dashboard query fails', async () => 
     const seedBtn = await screen.findByRole('button', { name: /Load Demo Stack/i });
     fireEvent.click(seedBtn);
 
-    // Pending state renders 'Seeding Demoâ€¦'
-    expect(await screen.findByRole('button', { name: /Seeding Demoâ€¦/i })).toBeInTheDocument();
+    // Pending state renders 'Seeding Demo…'
+    expect(await screen.findByRole('button', { name: /Seeding Demo…/i })).toBeInTheDocument();
 
     resolveSeed({
       ok: true,

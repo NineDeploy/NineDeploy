@@ -1,7 +1,7 @@
 import { fileURLToPath } from 'node:url';
-import { eq } from 'drizzle-orm';
+import { eq, is } from 'drizzle-orm';
 import { migrate } from 'drizzle-orm/libsql/migrator';
-import { getTableConfig } from 'drizzle-orm/sqlite-core';
+import { getTableConfig, SQLiteTable } from 'drizzle-orm/sqlite-core';
 import { describe, expect, it } from 'vitest';
 import * as schema from '../src/index.js';
 
@@ -18,6 +18,10 @@ describe('schema', () => {
     'workspaceInvitations',
     'oidcProviders',
     'projects',
+    'labels',
+    'serviceProjects',
+    'serviceWorkspaces',
+    'serviceLabels',
     'services',
     'buildConfigs',
     'repoInsights',
@@ -32,6 +36,9 @@ describe('schema', () => {
     'settings',
     'databases',
     'databaseAttachments',
+    'serviceVolumeAttachments',
+    'backupDestinations',
+    'servers',
     'tunnels',
     'notificationChannels',
     'notificationLog',
@@ -99,50 +106,25 @@ describe('schema', () => {
   });
 
   it('resolves every foreign key reference in the schema', () => {
-    const tables = [
-      'users',
-      'apiTokens',
-      'webauthnCredentials',
-      'sessions',
-      'workspaces',
-      'workspaceMembers',
-      'workspaceInvitations',
-      'oidcProviders',
-      'projects',
-      'services',
-      'buildConfigs',
-      'repoInsights',
-      'deployments',
-      'envVars',
-      'sources',
-      'domains',
-      'webhooks',
-      'backups',
-      'metrics',
-      'auditLog',
-      'settings',
-      'databases',
-      'databaseAttachments',
-      'tunnels',
-      'notificationChannels',
-      'notificationLog',
-      'alertRules',
-      'alertState',
-      'passwordResetTokens',
-      'jobRuns',
-      'scheduledJobs',
-      'configEntries',
-      'installedPlugins',
-      'logDrains',
-    ] as const;
-    for (const name of tables) {
-      const table = (schema as unknown as Record<string, unknown>)[name];
-      if (!table || typeof table !== 'object') continue;
-      const config = getTableConfig(table as never);
+    // Derived from the live exports rather than a hand-maintained list, so a
+    // newly added table can never silently skip its lazy `references(() => ...)`
+    // callbacks (which is exactly how `service_volume_attachments` and the
+    // label/project/workspace join tables slipped past this check before).
+    const tables = Object.entries(schema as unknown as Record<string, unknown>).filter(
+      (entry): entry is [string, SQLiteTable] => is(entry[1], SQLiteTable),
+    );
+    expect(tables.length).toBeGreaterThan(0);
+
+    for (const [name, table] of tables) {
+      const config = getTableConfig(table);
       for (const fk of config.foreignKeys) {
         // getName() resolves the lazy `references(() => ...)` callbacks.
-        expect(fk.getName()).toContain('_fk');
+        expect(fk.getName(), `unresolved foreign key on ${name}`).toContain('_fk');
       }
+      // Touching the composite primary key + index config forces the table's
+      // `(t) => ({ ... })` extra-config callback to run for join tables too.
+      for (const index of config.indexes) expect(index.config.name).toBeTruthy();
+      for (const pk of config.primaryKeys) expect(pk.getName()).toBeTruthy();
     }
   });
 

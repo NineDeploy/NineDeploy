@@ -25,7 +25,7 @@ export async function loginAction(): Promise<void> {
   try {
     const session = await client.auth.login({ email, password });
     saveConfig({ baseUrl, token: session.tokens.accessToken });
-    console.log(`✓ Logged in as ${session.user.email} (${session.user.role})`);
+    console.log(`✓ Logged in as ${session.user.email} (${session.user.isOperator ? 'operator' : 'member'})`);
   } catch (err) {
     if (err instanceof NineDeployError) {
       console.error(`✗ Login failed (${err.status}): ${err.message}`);

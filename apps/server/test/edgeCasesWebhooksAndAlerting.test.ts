@@ -11,7 +11,7 @@ import {
 import { rotateSecrets } from '../src/lib/keyRotation.js';
 import { createHmac } from 'node:crypto';
 
-describe('Edge Cases â€” Webhook Signatures & Multiprovider Parsing', () => {
+describe('Edge Cases — Webhook Signatures & Multiprovider Parsing', () => {
   const secret = 'webhook-secret-key';
   const body = JSON.stringify({ ref: 'refs/heads/main', commits: [{ added: ['src/app.ts'], modified: [], removed: [] }] });
 
@@ -66,7 +66,7 @@ describe('Edge Cases â€” Webhook Signatures & Multiprovider Parsing', () =>
   });
 });
 
-describe('Edge Cases â€” Alerting Engine State Transitions', () => {
+describe('Edge Cases — Alerting Engine State Transitions', () => {
   it('transitions state from ok -> breaching -> firing -> ok with recovery audit', async () => {
     const rules = [
       {
@@ -129,7 +129,7 @@ describe('Edge Cases â€” Alerting Engine State Transitions', () => {
   });
 });
 
-describe('Edge Cases â€” Master Key Rotation Registry', () => {
+describe('Edge Cases — Master Key Rotation Registry', () => {
   it('re-encrypts across all registered tables safely', async () => {
     const mockDb = {
       select: vi.fn(() => ({

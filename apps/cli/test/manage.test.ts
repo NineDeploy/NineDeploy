@@ -547,13 +547,17 @@ describe('deploys watch', () => {
 });
 
 describe('users & activity', () => {
-  it('lists users (with and without names)', async () => {
+  it('lists users (with and without names, operator and member)', async () => {
+    // `users.role` is gone; the table renders the derived operator flag.
     const client = { users: { list: vi.fn().mockResolvedValue([
-      { id: 1, email: 'a@x.com', name: 'A', role: 'admin' },
-      { id: 2, email: 'b@x.com', name: null, role: 'member' },
+      { id: 1, email: 'a@x.com', name: 'A', isOperator: true, workspaceCount: 2 },
+      { id: 2, email: 'b@x.com', name: null, isOperator: false, workspaceCount: 0 },
     ]) } };
     await usersList(client as never);
-    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('a@x.com'));
+    const printed = logSpy.mock.calls.map((c) => String(c[0])).join(' | ');
+    expect(printed).toContain('a@x.com');
+    expect(printed).toContain('operator');
+    expect(printed).toContain('member');
   });
 
   it('lists activity capped at 30 rows', async () => {

@@ -520,7 +520,7 @@ describe('template routes', () => {
 
     const res = await app.inject({ method: 'POST', url: '/grafana/deploy', headers: asUser(), payload: { name: 'Grafana' } });
 
-    // The caller here is an ADMIN, who can see the colliding service â€” so the
+    // The caller here is an ADMIN, who can see the colliding service — so the
     // explicit, actionable error stays.
     expect(res.statusCode).toBe(400);
     expect(res.json()).toMatchObject({ error: { code: 'slug_taken' } });
@@ -561,7 +561,7 @@ describe('template routes', () => {
     expect(JSON.stringify(res.json())).not.toContain('slug_taken');
     expect(inserted).toHaveLength(1);
     // The collision-avoidance suffix is a base64url token (3 random bytes), so
-    // it may contain `-` or `_` â€” match any URL-safe character after the dash.
+    // it may contain `-` or `_` — match any URL-safe character after the dash.
     expect(String(inserted[0]!['slug'])).toMatch(/^grafana-[A-Za-z0-9_-]+$/);
     expect(String(inserted[0]!['slug'])).not.toBe('grafana');
   });

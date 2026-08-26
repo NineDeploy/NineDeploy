@@ -278,7 +278,16 @@ export async function usersList(client: NineDeployClient): Promise<void> {
   await spinner('Fetching', async () => {
     const users = await client.users.list();
     if (users.length === 0) { info('No users.'); return; }
-    table(users.map((u) => ({ id: u.id, email: u.email, name: u.name ?? '—', role: u.role })), ['id', 'email', 'name', 'role']);
+    table(
+      users.map((u) => ({
+        id: u.id,
+        email: u.email,
+        name: u.name ?? '—',
+        role: u.isOperator ? 'operator' : 'member',
+        workspaces: u.workspaceCount,
+      })),
+      ['id', 'email', 'name', 'role', 'workspaces'],
+    );
   });
 }
 

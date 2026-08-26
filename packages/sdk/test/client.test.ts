@@ -686,17 +686,21 @@ describe('createClient', () => {
   });
 
   describe('users', () => {
-    it('exercises list, setRole and remove', async () => {
+    it('exercises list, create and remove', async () => {
       const { fetchMock, calls } = makeFetch(() => ok({}));
       const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
 
       await client.users.list();
       expect(last(calls)).toMatchObject({ url: '/v1/users', init: { method: 'GET' } });
 
-      await client.users.setRole(1, 'admin');
-      expect(last(calls).url).toBe('/v1/users/1/role');
-      expect(last(calls).init.method).toBe('PATCH');
-      expect(JSON.parse(last(calls).init.body ?? '{}')).toEqual({ role: 'admin' });
+      await client.users.create({ email: 'new@example.com', password: 'fresh-pass-123', name: 'New' });
+      expect(last(calls).url).toBe('/v1/users');
+      expect(last(calls).init.method).toBe('POST');
+
+      // The legacy `PATCH /v1/users/:id/role` endpoint is gone: `users.role`
+      // was dropped when authorization became workspace-only, so role changes
+      // go through `workspaces.updateMemberRole` instead.
+      expect((client.users as Record<string, unknown>).setRole).toBeUndefined();
 
       await client.users.resetPassword(1, { newPassword: 'fresh-pass-123' });
       expect(last(calls).url).toBe('/v1/users/1/password');
@@ -1507,6 +1511,83 @@ describe('createClient', () => {
 
       await client.firewall.applyRecommended();
       expect(last(calls)).toMatchObject({ url: '/v1/firewall/recommended', init: { method: 'POST' } });
+    });
+  });
+  describe('labels and service tags', () => {
+    it('exercises label CRUD with and without a query, plus tag get/set', async () => {
+      const { fetchMock, calls } = makeFetch(() => ok({}));
+      const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
+
+      await client.labels.list();
+      expect(last(calls)).toMatchObject({ url: '/v1/labels', init: { method: 'GET' } });
+
+      await client.labels.list('?workspaceId=3');
+      expect(last(calls)).toMatchObject({ url: '/v1/labels?workspaceId=3', init: { method: 'GET' } });
+
+      await client.labels.create({ name: 'production', color: 'red' });
+      expect(last(calls)).toMatchObject({ url: '/v1/labels', init: { method: 'POST' } });
+      expect(JSON.parse(last(calls).init.body ?? '{}')).toEqual({ name: 'production', color: 'red' });
+
+      await client.labels.update(7, { color: 'indigo' });
+      expect(last(calls)).toMatchObject({ url: '/v1/labels/7', init: { method: 'PATCH' } });
+
+      await client.labels.remove(7);
+      expect(last(calls)).toMatchObject({ url: '/v1/labels/7', init: { method: 'DELETE' } });
+
+      await client.serviceTags.get(4);
+      expect(last(calls)).toMatchObject({ url: '/v1/services/4/tags', init: { method: 'GET' } });
+
+      await client.serviceTags.set(4, { projectIds: [1], workspaceIds: [2], labelIds: [3] });
+      expect(last(calls)).toMatchObject({ url: '/v1/services/4/tags', init: { method: 'PUT' } });
+      expect(JSON.parse(last(calls).init.body ?? '{}')).toEqual({ projectIds: [1], workspaceIds: [2], labelIds: [3] });
+    });
+  });
+
+  describe('service volumes and volume backups', () => {
+    it('exercises volume attachment list, create, update and remove', async () => {
+      const { fetchMock, calls } = makeFetch(() => ok({}));
+      const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
+
+      await client.serviceVolumes.list(9);
+      expect(last(calls)).toMatchObject({ url: '/v1/services/9/volumes', init: { method: 'GET' } });
+
+      await client.serviceVolumes.create(9, { volumeName: 'nd-svc-web-data', containerPath: '/data' });
+      expect(last(calls)).toMatchObject({ url: '/v1/services/9/volumes', init: { method: 'POST' } });
+      expect(JSON.parse(last(calls).init.body ?? '{}')).toEqual({
+        volumeName: 'nd-svc-web-data',
+        containerPath: '/data',
+      });
+
+      await client.serviceVolumes.update(9, 2, { readOnly: true });
+      expect(last(calls)).toMatchObject({ url: '/v1/services/9/volumes/2', init: { method: 'PATCH' } });
+      expect(JSON.parse(last(calls).init.body ?? '{}')).toEqual({ readOnly: true });
+
+      await client.serviceVolumes.remove(9, 2);
+      expect(last(calls)).toMatchObject({ url: '/v1/services/9/volumes/2', init: { method: 'DELETE' } });
+    });
+
+    it('exercises volume backup list, create, restore and downloadUrl', async () => {
+      const { fetchMock, calls } = makeFetch(() => ok({}));
+      const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
+
+      await client.volumeBackups.list('nd-svc-web-data');
+      expect(last(calls)).toMatchObject({ url: '/v1/volumes/nd-svc-web-data/backups', init: { method: 'GET' } });
+
+      await client.volumeBackups.create('nd-svc-web-data', { note: 'pre-upgrade' });
+      expect(last(calls)).toMatchObject({ url: '/v1/volumes/nd-svc-web-data/backups', init: { method: 'POST' } });
+
+      await client.volumeBackups.restore('nd-svc-web-data', 11);
+      expect(last(calls)).toMatchObject({
+        url: '/v1/volumes/nd-svc-web-data/backups/11/restore',
+        init: { method: 'POST' },
+      });
+
+      // downloadUrl is a pure path builder: it must never issue a request.
+      const before = calls.length;
+      expect(client.volumeBackups.downloadUrl('nd-svc-web-data', 11)).toBe(
+        '/v1/volumes/nd-svc-web-data/backups/11/download',
+      );
+      expect(calls).toHaveLength(before);
     });
   });
 });

@@ -425,7 +425,7 @@ tcp:
 
     const member = asUser({ id: 7, isOperator: false });
     // The shared UI page stays reachable, but must not carry the routing
-    // tables or the certificate (domain) list â€” those map out every tenant
+    // tables or the certificate (domain) list — those map out every tenant
     // on the instance (same L-12 rule as /traefik/config).
     const overview = await app.inject({ method: 'GET', url: '/traefik', headers: member });
     expect(overview.statusCode).toBe(200);

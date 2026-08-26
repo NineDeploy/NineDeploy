@@ -98,7 +98,11 @@ describe('topology routes', () => {
     expect(res.json().volumes).toEqual([
       { name: 'nd-svc-mine-data', owner: { kind: 'service', refId: 1, name: 'web' } },
     ]);
-    expect(res.json().networks).toEqual([{ name: 'ninedeploy', driver: 'bridge', containers: ['mine-1'] }]);
+    // The shared Traefik gateway stays visible: it is not another tenant's
+    // resource and is already reported to every caller as `gateway`.
+    expect(res.json().networks).toEqual([
+      { name: 'ninedeploy', driver: 'bridge', containers: ['mine-1', 'ninedeploy-traefik'] },
+    ]);
   });
 
   it('layers volumes, networks and the gateway from docker probes', async () => {

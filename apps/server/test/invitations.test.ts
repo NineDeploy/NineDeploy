@@ -42,7 +42,7 @@ const userRow = (over: Record<string, unknown> = {}) => ({
   id: 2,
   email: 'alice@example.com',
   name: 'Alice Dev',
-  isOperator: false,
+  role: 'member',
   ...over,
 });
 
@@ -50,7 +50,7 @@ const invitationRow = (over: Record<string, unknown> = {}) => ({
   id: 50,
   workspaceId: 1,
   email: 'bob@example.com',
-  isOperator: false,
+  role: 'member',
   token: 'a'.repeat(64),
   invitedByUserId: 2,
   expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
@@ -149,7 +149,7 @@ describe('invitation helpers', () => {
       const { token, invitation } = await createOrRefreshInvitation(db, {
         workspaceId: 1,
         email: 'bob@example.com',
-        isOperator: false,
+        role: 'member',
         invitedByUserId: 2,
       });
       expect(token).toMatch(/^[0-9a-f]{64}$/);
@@ -166,7 +166,7 @@ describe('invitation helpers', () => {
       const { token } = await createOrRefreshInvitation(db, {
         workspaceId: 1,
         email: 'bob@example.com',
-        isOperator: true,
+        role: 'admin',
         invitedByUserId: 2,
       });
       expect(token).not.toBe(existing.token);
@@ -181,7 +181,7 @@ describe('invitation helpers', () => {
         createOrRefreshInvitation(db, {
           workspaceId: 1,
           email: 'bob@example.com',
-          isOperator: false,
+          role: 'member',
           invitedByUserId: 2,
         }),
       ).rejects.toThrow(/Could not create invitation/);
@@ -189,7 +189,7 @@ describe('invitation helpers', () => {
 
     it('stores only the sha256 hash of the token, never the cleartext', async () => {
       // A leaked DB file/backup must not expose live membership-granting
-      // tokens â€” same scheme as API and password-reset tokens.
+      // tokens — same scheme as API and password-reset tokens.
       const inserted: Array<Record<string, unknown>> = [];
       const db = createFakeDb({
         findFirst: { workspace_invitations: undefined },
@@ -203,7 +203,7 @@ describe('invitation helpers', () => {
       const { token } = await createOrRefreshInvitation(db, {
         workspaceId: 1,
         email: 'bob@example.com',
-        isOperator: false,
+        role: 'member',
         invitedByUserId: 2,
       });
       expect(token).toMatch(/^[0-9a-f]{64}$/);
@@ -258,21 +258,21 @@ describe('invitation helpers', () => {
     beforeEach(() => vi.clearAllMocks());
 
     it('joins pending workspaces for matching email', async () => {
-      const inv = invitationRow({ workspaceId: 1, isOperator: true });
+      const inv = invitationRow({ workspaceId: 1, role: 'admin' });
       const db = createFakeDb({
         select: { workspace_invitations: [inv] },
         findFirst: { workspace_members: undefined },
         update: { workspace_invitations: [invitationRow({ id: inv.id, acceptedAt: new Date() })] },
       });
       const joined = await acceptInvitationsForUser(db, { id: 99, email: 'bob@example.com' });
-      expect(joined).toEqual([{ workspaceId: 1, isOperator: true, email: 'bob@example.com' }]);
+      expect(joined).toEqual([{ workspaceId: 1, role: 'admin', email: 'bob@example.com' }]);
     });
 
     it('skips rows where the user is already a member but still marks the invite consumed', async () => {
       const inv = invitationRow({ workspaceId: 1 });
       const db = createFakeDb({
         select: { workspace_invitations: [inv] },
-        findFirst: { workspace_members: memberRow({ workspaceId: 1, userId: 99, isOperator: false }) },
+        findFirst: { workspace_members: memberRow({ workspaceId: 1, userId: 99, role: 'member' }) },
         update: { workspace_invitations: [inv] },
       });
       const joined = await acceptInvitationsForUser(db, { id: 99, email: 'bob@example.com' });
@@ -310,7 +310,7 @@ describe('invitationRoutes', () => {
         },
         insert: {
           workspace_invitations: [
-            invitationRow({ id: 100, workspaceId: 1, email: 'newbie@example.com', isOperator: false }),
+            invitationRow({ id: 100, workspaceId: 1, email: 'newbie@example.com', role: 'member' }),
           ],
         },
       }),
@@ -321,7 +321,7 @@ describe('invitationRoutes', () => {
       method: 'POST',
       url: '/workspaces/1/invitations',
       headers: { ...asUser({ id: 2 }), 'content-type': 'application/json' },
-      payload: { email: 'newbie@example.com', isOperator: false },
+      payload: { email: 'newbie@example.com', role: 'member' },
     });
     expect(res.statusCode).toBe(200);
     expect(res.headers['x-invitation-token']).toMatch(/^[0-9a-f]{64}$/);
@@ -349,13 +349,13 @@ describe('invitationRoutes', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/workspaces/1/invitations',
-      headers: { ...asUser({ id: 3, isOperator: false }), 'content-type': 'application/json' },
+      headers: { ...asUser({ id: 3, role: 'member' }), 'content-type': 'application/json' },
       payload: { email: 'someone@example.com' },
     });
     expect(res.statusCode).toBe(403);
   });
 
-  it('refuses to invite an already-registered email (404 â€” L-12)', async () => {
+  it('refuses to invite an already-registered email (404 — L-12)', async () => {
     const app = await buildTestApp({
       db: createFakeDb({
         findFirst: {
@@ -401,7 +401,7 @@ describe('invitationRoutes', () => {
         findMany: {
           workspace_invitations: [
             invitationRow({ id: 10, email: 'a@example.com' }),
-            invitationRow({ id: 11, email: 'b@example.com', isOperator: true }),
+            invitationRow({ id: 11, email: 'b@example.com', role: 'admin' }),
           ],
           users: [userRow({ id: 2, name: 'Alice' })],
         },
@@ -427,7 +427,7 @@ describe('invitationRoutes', () => {
     });
     await app.register(invitationRoutes, { prefix: '/workspaces' });
 
-    const res = await app.inject({ method: 'GET', url: '/workspaces/1/invitations', headers: asUser({ id: 9, isOperator: false }) });
+    const res = await app.inject({ method: 'GET', url: '/workspaces/1/invitations', headers: asUser({ id: 9, role: 'member' }) });
     expect(res.statusCode).toBe(403);
   });
 

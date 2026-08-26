@@ -117,7 +117,7 @@ describe('lintManifest', () => {
     const hits = lintManifest({ version: '1', build: { install: 'AKIAIOSFODNN7EXAMPLE' } });
     // The redacted preview should hide the bulk of the credential and
     // only keep the first 4 + last 2 characters.
-    expect(hits[0]?.redacted).toMatch(/^AKIAâ€¦LE \(len=\d+\)$/);
+    expect(hits[0]?.redacted).toMatch(/^AKIA…LE \(len=\d+\)$/);
   });
 
   it('redacts short values with a length-only marker', () => {

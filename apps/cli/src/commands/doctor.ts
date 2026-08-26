@@ -135,7 +135,7 @@ export async function doctorAction(client: NineDeployClient, opts: DoctorOptions
   } else {
     try {
       const user = await client.auth.me();
-      kv('Logged In User', `${user.email} (${user.role})`);
+      kv('Logged In User', `${user.email} (${user.isOperator ? 'operator' : 'member'})`);
       kv('Token Status', c.green('valid'));
     } catch {
       kv('Token Status', c.red('invalid or expired'));

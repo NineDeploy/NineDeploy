@@ -17,7 +17,7 @@ import {
   safeContainerPath,
 } from '../src/engine/containerFiles.js';
 
-describe('Edge Cases â€” Traefik Proxy Static & DNS Configuration', () => {
+describe('Edge Cases — Traefik Proxy Static & DNS Configuration', () => {
   it('renders static config with HTTP-01 ACME challenge when no DNS provider is configured', () => {
     const yaml = renderStaticConfig('admin@example.com', null);
     expect(yaml).toContain('email: admin@example.com');
@@ -54,7 +54,7 @@ describe('Edge Cases â€” Traefik Proxy Static & DNS Configuration', () => {
   });
 });
 
-describe('Edge Cases â€” Log Drain Formatting & Dispatch', () => {
+describe('Edge Cases — Log Drain Formatting & Dispatch', () => {
   const sampleEntry = {
     timestamp: '2026-08-19T12:00:00.000Z',
     service: 'api-gateway',
@@ -159,7 +159,7 @@ describe('Edge Cases â€” Log Drain Formatting & Dispatch', () => {
   });
 });
 
-describe('Edge Cases â€” Container & Volume Path Traversal Guards', () => {
+describe('Edge Cases — Container & Volume Path Traversal Guards', () => {
   it('strictly validates managed container names', () => {
     expect(isManagedContainer('nd-svc-frontend')).toBe(true);
     expect(isManagedContainer('nd-db-postgres')).toBe(true);

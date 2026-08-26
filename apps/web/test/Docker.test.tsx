@@ -105,7 +105,7 @@ describe('DockerDashboard', () => {
     renderDashboard();
     expect(await screen.findByText('7')).toBeInTheDocument();
     expect(screen.getByText('12')).toBeInTheDocument();
-    expect(screen.getByText(/9 active Â· 3 reclaimable/)).toBeInTheDocument();
+    expect(screen.getByText(/9 active · 3 reclaimable/)).toBeInTheDocument();
     expect(screen.getByText('ninedeploy')).toBeInTheDocument();
     expect(screen.getAllByText('nginx').length).toBeGreaterThan(0);
     expect(await screen.findByText('nd-web-3')).toBeInTheDocument();
@@ -164,7 +164,7 @@ describe('DockerDashboard', () => {
 
   it('submits manual container name to inspect', async () => {
     renderDashboard();
-    const input = screen.getByPlaceholderText('Inspect container nameâ€¦');
+    const input = screen.getByPlaceholderText('Inspect container name…');
     fireEvent.change(input, { target: { value: 'custom-db-1' } });
     const allInspectBtns = screen.getAllByRole('button', { name: /inspect/i });
     const formSubmitBtn = allInspectBtns[0]!;
@@ -228,7 +228,7 @@ describe('DockerDashboard', () => {
     renderDashboard();
     expect(await screen.findByText('nd-web-1')).toBeInTheDocument();
     expect(screen.getByText(/Admin access required for the inspector/)).toBeInTheDocument();
-    expect(screen.queryByPlaceholderText('Inspect container nameâ€¦')).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText('Inspect container name…')).not.toBeInTheDocument();
   });
 
   it('ignores an inspector submit with an empty container name', async () => {
@@ -236,7 +236,7 @@ describe('DockerDashboard', () => {
     await screen.findByText('nd-web-1');
     const formSubmitBtn = screen.getAllByRole('button', { name: /inspect/i })[0]!;
     fireEvent.click(formSubmitBtn);
-    // No selection happens â€” the compose endpoint is not called.
+    // No selection happens — the compose endpoint is not called.
     expect(apiMock.api.containers.compose).not.toHaveBeenCalled();
   });
 });

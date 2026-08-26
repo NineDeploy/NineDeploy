@@ -11,7 +11,7 @@ const dbEngineMocks = vi.hoisted(() => ({
 }));
 vi.mock('../src/engine/database.js', () => dbEngineMocks);
 
-// Stub `loadServiceForUser` â€” the pre-existing implementation queries the
+// Stub `loadServiceForUser` — the pre-existing implementation queries the
 // `serviceWorkspaces` table which belongs to a parallel branch not merged
 // here yet. The volume-attach route's auth gate has its own owner check
 // via `serviceVolumeAttachments`, so this stub keeps the test independent.
@@ -27,7 +27,7 @@ vi.mock('../src/lib/resourceAccess.js', async () => {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  // listManagedVolumeNames hits docker â€” return the candidate name for the
+  // listManagedVolumeNames hits docker — return the candidate name for the
   // "attach existing" test, an empty list otherwise.
   execMocks.capture.mockImplementation(async (_cmd: string, args: string[]) => {
     if (args[0] === 'volume' && args[1] === 'ls') {
@@ -68,7 +68,7 @@ describe('service volume attachments', () => {
         db: createFakeDb({
           findFirst: {
             services: svcRow({ id: 1, slug: 'web' }),
-            // Second attach row: same volumeName, different service â†’ sharing=1.
+            // Second attach row: same volumeName, different service → sharing=1.
             'service_volume_attachments': undefined,
           },
           select: {
@@ -86,9 +86,9 @@ describe('service volume attachments', () => {
       const body = res.json() as Array<{ volumeName: string; sharedWith: number; sizeBytes: number }>;
       expect(body).toHaveLength(1);
       expect(body[0]?.volumeName).toBe('nd-svc-web-uploads');
-      // sizeBytes comes from `docker run --rm alpine du` â€” the mock returns 0.
+      // sizeBytes comes from `docker run --rm alpine du` — the mock returns 0.
       expect(body[0]?.sizeBytes).toBe(0);
-      // Only this service has the row â†’ no other sharer.
+      // Only this service has the row → no other sharer.
       expect(body[0]?.sharedWith).toBe(0);
     });
   });
@@ -191,7 +191,7 @@ describe('service volume attachments', () => {
   });
 
   describe('DELETE /:id/volumes/:attId', () => {
-    it('204s and returns 204 even when the attachment does not exist (idempotent â€” actually 404 here)', async () => {
+    it('204s and returns 204 even when the attachment does not exist (idempotent — actually 404 here)', async () => {
       const app = await buildTestApp({
         db: createFakeDb({
           findFirst: {

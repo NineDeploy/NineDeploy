@@ -5,7 +5,7 @@ import { parsePipelineStages, PipelineStepper } from '../src/components/Pipeline
 describe('PipelineStepper', () => {
   it('parses raw logs into active pipeline stages correctly', () => {
     const rawLogs = `
-â–¶ Deployment #10 for "api" (docker)
+▶ Deployment #10 for "api" (docker)
 ##[stage:PREPARE:running] Resolving repository, sources and workspace
 ##[stage:PREPARE:success]
 ##[stage:BUILD:running] Building image and compiling dependencies
@@ -17,7 +17,7 @@ describe('PipelineStepper', () => {
 ##[stage:PROXY_SWAP:success]
 ##[stage:CLEANUP:success]
 ##[stage:COMPLETE:success] Service is live and healthy on production
-âœ“ Deployment successful
+✓ Deployment successful
 `;
 
     const stages = parsePipelineStages(rawLogs, 'running');

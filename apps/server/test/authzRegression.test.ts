@@ -15,7 +15,7 @@ import { asUser, buildTestApp, createFakeDb, dbRow, svcRow } from './helpers.js'
  *   M-1  GET  /databases/:id/backups|storage  checked nothing but the session
  *
  * The shared choke-point (`lib/resourceAccess.ts`) already existed in all three
- * cases â€” it simply was not called. These tests exist so a future refactor
+ * cases — it simply was not called. These tests exist so a future refactor
  * cannot quietly drop the call again.
  */
 
@@ -62,7 +62,7 @@ const asAdmin = () => asUser({ id: 1, isOperator: true });
 
 /**
  * Collect the SQL column names referenced by a drizzle condition. The graph is
- * cyclic (Column â†’ Table â†’ Column), so JSON.stringify is not an option; walk it
+ * cyclic (Column → Table → Column), so JSON.stringify is not an option; walk it
  * with a seen-set instead.
  */
 function columnsIn(node: unknown, seen = new WeakSet<object>()): string[] {
@@ -79,7 +79,7 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-// â”€â”€ H-1 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── H-1 ────────────────────────────────────────────────────────────────────
 
 describe('H-1: attaching a database authorizes the DATABASE, not just the service', () => {
   /** Caller owns service 3; database 5 is whatever the test supplies. */
@@ -127,9 +127,9 @@ describe('H-1: attaching a database authorizes the DATABASE, not just the servic
   });
 });
 
-// â”€â”€ M-2 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── M-2 ────────────────────────────────────────────────────────────────────
 
-describe('M-2: job run history is scoped to the jobâ€™s own service', () => {
+describe('M-2: job run history is scoped to the job’s own service', () => {
   const leakyRun = {
     id: 1,
     jobId: 11,
@@ -166,7 +166,7 @@ describe('M-2: job run history is scoped to the jobâ€™s own service', () =>
     return app;
   }
 
-  it('an unknown jobId is a 404 instead of another serviceâ€™s output', async () => {
+  it('an unknown jobId is a 404 instead of another service’s output', async () => {
     // The lookup is now `(jobs.id = jobId AND jobs.serviceId = id)`, so a job
     // belonging to a different service resolves to nothing.
     const app = await runsApp(undefined);
@@ -177,7 +177,7 @@ describe('M-2: job run history is scoped to the jobâ€™s own service', () =>
     expect(res.body).not.toContain('leaked');
   });
 
-  it('the run history of the serviceâ€™s own job is still returned', async () => {
+  it('the run history of the service’s own job is still returned', async () => {
     const app = await runsApp(job({ serviceId: 3 }));
     const res = await app.inject({
       method: 'GET', url: '/services/3/jobs/11/runs', headers: asMember(),
@@ -210,7 +210,7 @@ describe('M-2: job run history is scoped to the jobâ€™s own service', () =>
   });
 });
 
-// â”€â”€ M-1 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── M-1 ────────────────────────────────────────────────────────────────────
 
 describe('M-1: backup routes run the database access check', () => {
   const otherTenantDb = dbRow({ id: 5, ownerUserId: OWNER, projectId: null });

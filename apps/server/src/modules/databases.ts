@@ -235,7 +235,7 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
 
   app.delete('/:id', async (req) => {
     const id = num((req.params as { id: string }).id);
-    // Destroying a database is irreversible â€” resolve access before reading it.
+    // Destroying a database is irreversible — resolve access before reading it.
     await loadDatabaseForUser(app.db, id, req.user!);
     const d = await app.db.query.databases.findFirst({
       where: eq(databases.id, id),
@@ -265,7 +265,7 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
     // Capture the dump paths BEFORE the transaction deletes the rows.
     const backupRows = await app.db.query.backups.findMany({ where: eq(backups.databaseId, d.id) });
     // Atomic row removal (attachments + backups + the database itself commit
-    // together) â€” a mid-delete failure must never leave live rows pointing at
+    // together) — a mid-delete failure must never leave live rows pointing at
     // already-destroyed artifacts. The volume is intentionally kept = retained.
     await app.db.transaction(async (tx) => {
       await tx.delete(databaseAttachments).where(eq(databaseAttachments.databaseId, d.id));
@@ -273,7 +273,7 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
       await tx.delete(databases).where(eq(databases.id, d.id));
     });
     // Post-commit best-effort cleanup: unlink the dump files (dumps contain DB
-    // credentials, plaintext once decrypted). Files are not transactional â€” a
+    // credentials, plaintext once decrypted). Files are not transactional — a
     // failure here leaves an orphaned dump, which is logged, not silent.
     for (const b of backupRows) {
       try {
@@ -286,7 +286,7 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
     return { ok: true };
   });
 
-  // Resource limits â€” recreates the container if running so they take effect.
+  // Resource limits — recreates the container if running so they take effect.
   app.patch('/:id/limits', async (req) => {
     const d = await loadDatabaseForUser(app.db, num((req.params as { id: string }).id), req.user!);
     const input = setLimits.parse(req.body);
@@ -340,7 +340,7 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
     return { logs };
   });
 
-  // Credential reveal (password + full URI) â€” admin-only, audited surface.
+  // Credential reveal (password + full URI) — admin-only, audited surface.
   app.get('/:id/credentials', { preHandler: [app.requireAdmin] }, async (req) => {
     const id = num((req.params as { id: string }).id);
     const d = await loadDatabaseForUser(app.db, id, req.user!);
@@ -360,7 +360,7 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
   });
 };
 
-// â”€â”€ Service â†” database attachments â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Service ↔ database attachments ────────────────────────────────────────
 function aliasFor(engine: string): string {
   switch (engine.toLowerCase()) {
     case 'redis':
@@ -401,13 +401,13 @@ export const attachmentRoutes: FastifyPluginAsync = async (app) => {
 
   app.post('/:id/attachments', async (req) => {
     const id = num((req.params as { id: string }).id);
-    // Validates databaseId (positive int) and the env alias charset â€” an alias
+    // Validates databaseId (positive int) and the env alias charset — an alias
     // like `MY ALIAS` would otherwise be injected verbatim into the service's
     // runtime env and break `docker run --env-file` at deploy time.
     const input = createAttachment.parse(req.body ?? {});
     await loadServiceForUser(app.db, id, req.user!);
     // BOTH sides need an access decision. Checking only the service let a
-    // member attach ANY database id to a service they own â€” the deploy
+    // member attach ANY database id to a service they own — the deploy
     // pipeline then injects that database's decrypted password and connection
     // string into their container env (engine/pipeline.ts), handing them full
     // read/write access to another tenant's data.

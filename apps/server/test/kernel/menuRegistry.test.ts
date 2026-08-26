@@ -46,7 +46,7 @@ describe('MenuRegistry', () => {
     });
 
     // 1. Filter for admin
-    const adminItems = registry.getItemsForSlot('sidebar:main', 'admin');
+    const adminItems = registry.getItemsForSlot('sidebar:main', true);
     expect(adminItems).toHaveLength(4);
     expect(adminItems[0]?.id).toBe('sidebar-admin-only'); // order 5
     expect(adminItems[1]?.id).toBe('sidebar-projects'); // order 10
@@ -54,20 +54,22 @@ describe('MenuRegistry', () => {
     expect(adminItems[3]?.id).toBe('sidebar-default-order'); // order 100
 
     // 2. Filter for member (admin-only item excluded)
-    const memberItems = registry.getItemsForSlot('sidebar:main', 'member');
+    const memberItems = registry.getItemsForSlot('sidebar:main', false);
     expect(memberItems).toHaveLength(3);
     expect(memberItems[0]?.id).toBe('sidebar-projects');
 
-    // 3. Filter without userRole (all matching slot included)
+    // 3. Filter without the operator flag: fail-closed, so an item gated on
+    //    `permission: 'admin'` is hidden rather than shown to everyone.
     const noRoleItems = registry.getItemsForSlot('sidebar:main');
-    expect(noRoleItems).toHaveLength(4);
+    expect(noRoleItems).toHaveLength(3);
+    expect(noRoleItems.map((i) => i.id)).not.toContain('sidebar-admin-only');
 
     // 4. GetAllItems
     expect(registry.getAllItems()).toHaveLength(5);
 
     // 5. Unregister via callback
     unsub();
-    expect(registry.getItemsForSlot('sidebar:main', 'admin')).toHaveLength(3);
+    expect(registry.getItemsForSlot('sidebar:main', true)).toHaveLength(3);
 
     // 6. Unregister via ID
     expect(registry.unregisterMenuItem('sidebar-servers')).toBe(true);

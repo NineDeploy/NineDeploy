@@ -33,7 +33,7 @@ beforeEach(() => {
   dbEngineMocks.volumeExists.mockResolvedValue(true);
 });
 
-// NOTE: route-level integration tests are intentionally omitted here â€”
+// NOTE: route-level integration tests are intentionally omitted here —
 // they need a `loadServiceForUser` mock that bypasses the parallel
 // `serviceWorkspaces` branch (0034_tags_and_team_overhaul). Until that
 // branch merges, route tests live in the e2e smoke. The helpers below

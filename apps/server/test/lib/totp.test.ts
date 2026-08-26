@@ -10,7 +10,7 @@ describe('base32', () => {
   });
 
   it('decodes the RFC 4226 test vector secret', () => {
-    // "12345678901234567890" â†’ GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ
+    // "12345678901234567890" → GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ
     expect(base32Decode('GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ').toString()).toBe('12345678901234567890');
   });
 
@@ -32,7 +32,7 @@ describe('hotp (RFC 4226 test vectors)', () => {
 
 describe('totpAt / verifyTotp', () => {
   const secret = base32Encode(Buffer.from('12345678901234567890'));
-  const t = 59_000; // RFC 6238 SHA-1 test time â†’ 94287082 â†’ code 287082
+  const t = 59_000; // RFC 6238 SHA-1 test time → 94287082 → code 287082
 
   it('produces the RFC 6238 code at t=59s', () => {
     expect(totpAt(secret, t)).toBe('287082');
@@ -43,7 +43,7 @@ describe('totpAt / verifyTotp', () => {
     expect(verifyTotp(secret, code)).toBe(true);
   });
 
-  it('accepts codes from the Â±1 step window', () => {
+  it('accepts codes from the ±1 step window', () => {
     const now = Date.now();
     const prev = totpAt(secret, now - 30_000);
     const next = totpAt(secret, now + 30_000);

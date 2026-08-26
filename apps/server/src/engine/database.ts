@@ -433,6 +433,89 @@ export async function removeVolume(name: string, log: (line: string) => void): P
   await run('docker', ['volume', 'rm', name], {}, log).catch(() => undefined);
 }
 
+// ── managed volume snapshot / restore ─────────────────────────────────────
+//
+// A named Docker volume can only be read through a container that mounts it:
+// the panel may itself be containerised and has no path to the daemon's
+// storage directory. These helpers therefore create a throwaway sidecar,
+// tar inside it, and move the archive across with `docker cp` — the same
+// shape the database dump/restore paths above already use, and the reason
+// neither side bind-mounts a host directory (which would have to be resolvable
+// by the daemon rather than by this process).
+
+/** Sidecar image for the tar work. Same tag the rest of the volume tooling
+ *  already prepares, so the pull is usually a no-op. */
+const VOLUME_TAR_IMAGE = 'alpine:latest';
+/** Archive path inside the sidecar. */
+const VOLUME_TMP_ARCHIVE = '/tmp/ninedeploy-volume.tar.gz';
+
+/** Create a named Docker volume. Idempotent: `docker volume create` returns the
+ *  existing volume unchanged when the name is already taken. */
+export async function createDockerVolume(
+  name: string,
+  log: (line: string) => void = swallow,
+): Promise<void> {
+  log(`Creating volume ${name} …`);
+  await run('docker', ['volume', 'create', name], {}, log);
+}
+
+/** Snapshot a named volume into a gzipped tarball on the host. */
+export async function backupVolume(
+  name: string,
+  destFile: string,
+  log: (line: string) => void,
+): Promise<void> {
+  await ensureDockerImage(VOLUME_TAR_IMAGE, log);
+  log(`Snapshotting volume ${name} …`);
+  const cid = (
+    await capture('docker', [
+      'create',
+      '-v', `${name}:/v:ro`,
+      VOLUME_TAR_IMAGE,
+      'tar', '-czf', VOLUME_TMP_ARCHIVE, '-C', '/v', '.',
+    ])
+  ).trim();
+  try {
+    await run('docker', ['start', '-a', cid], {}, log);
+    await run('docker', ['cp', `${cid}:${VOLUME_TMP_ARCHIVE}`, destFile], {}, log);
+  } finally {
+    await run('docker', ['rm', '-f', cid], {}, swallow).catch(() => undefined);
+  }
+  log(`Snapshot written to ${destFile}`);
+}
+
+/**
+ * Restore a gzipped tarball back into a named volume.
+ *
+ * The volume is emptied first. Extracting over the existing contents would
+ * merge the two, silently keeping files the snapshot does not contain and
+ * leaving the volume in a state that never existed.
+ */
+export async function restoreVolume(
+  name: string,
+  srcFile: string,
+  log: (line: string) => void,
+): Promise<void> {
+  await ensureDockerImage(VOLUME_TAR_IMAGE, log);
+  log(`Restoring volume ${name} …`);
+  const cid = (
+    await capture('docker', [
+      'create',
+      '-v', `${name}:/v`,
+      VOLUME_TAR_IMAGE,
+      'sh', '-c',
+      `rm -rf /v/..?* /v/.[!.]* /v/* 2>/dev/null; tar -xzf ${VOLUME_TMP_ARCHIVE} -C /v`,
+    ])
+  ).trim();
+  try {
+    await run('docker', ['cp', srcFile, `${cid}:${VOLUME_TMP_ARCHIVE}`], {}, log);
+    await run('docker', ['start', '-a', cid], {}, log);
+  } finally {
+    await run('docker', ['rm', '-f', cid], {}, swallow).catch(() => undefined);
+  }
+  log(`Volume ${name} restored`);
+}
+
 /** Build the connection string a service uses to reach this database. */
 export function connectionString(d: Database): string {
   const cfg = ENGINES[d.engine];

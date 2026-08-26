@@ -13,10 +13,10 @@ import { asUser, buildTestApp, createFakeDb, svcRow } from './helpers.js';
  * were all admin-gated on the grounds that host reach is admin-only. These
  * tests hold that boundary closed:
  *
- *   â€¢ PM2 services            â†’ `sh -c <installCmd>` on the host
- *   â€¢ Compose services        â†’ attacker-authored YAML (host mounts, privileged)
- *   â€¢ Lifecycle hooks         â†’ host binaries via engine/pipeline.ts
- *   â€¢ docker-socket templates â†’ container control of the whole host
+ *   • PM2 services            → `sh -c <installCmd>` on the host
+ *   • Compose services        → attacker-authored YAML (host mounts, privileged)
+ *   • Lifecycle hooks         → host binaries via engine/pipeline.ts
+ *   • docker-socket templates → container control of the whole host
  */
 
 const execMocks = vi.hoisted(() => ({

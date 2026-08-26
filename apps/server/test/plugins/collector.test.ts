@@ -223,7 +223,7 @@ describe('cpuDeltaPct', () => {
     expect(cpuDeltaPct([cpu(1, 10)], [cpu(1, 10), cpu(1, 10)])).toBeNull();
     // Zero deltas (sampled too fast) are not a measurement.
     expect(cpuDeltaPct([cpu(5, 10)], [cpu(5, 10)])).toBeNull();
-    // 10 total ticks elapsed, 3 idle â†’ 70% busy.
+    // 10 total ticks elapsed, 3 idle → 70% busy.
     expect(cpuDeltaPct([cpu(10, 20)], [cpu(13, 30)])).toBe(70);
     // A malformed sample missing the idle counter is tolerated as 0.
     const partial = [{ model: '', speed: 0, times: { user: 5 } }] as never;

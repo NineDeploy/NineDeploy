@@ -35,7 +35,7 @@ describe('job scheduler plugin', () => {
     const app = Fastify({ logger: false });
     app.decorate('db', makeDb([
       { id: 1, cron: '0 3 * * *', enabled: true },
-      { id: 2, cron: '* * * * *', enabled: false }, // disabled â†’ not armed
+      { id: 2, cron: '* * * * *', enabled: false }, // disabled → not armed
     ]));
     await app.register(jobSchedulerPlugin);
     // Both jobs are queried; only the enabled one gets a cron.
@@ -92,7 +92,7 @@ describe('job scheduler plugin', () => {
     vi.useFakeTimers();
     const app = Fastify({ logger: false });
     // The 2nd findMany (first reload) blocks until we release it, so close()
-    // lands while armJobs is still pending â€” the follow-up scheduleReload must
+    // lands while armJobs is still pending — the follow-up scheduleReload must
     // observe `stopped` and arm nothing.
     let releaseGate: ((v: undefined) => void) | null = null;
     let calls = 0;
@@ -107,7 +107,7 @@ describe('job scheduler plugin', () => {
     await vi.advanceTimersByTimeAsync(5 * 60 * 1000); // reload starts, gated
     expect(releaseGate).toBeTruthy();
     await app.close(); // stopped = true while the reload query pends
-    releaseGate!(); // armJobs settles â†’ scheduleReload sees stopped â†’ returns
+    releaseGate!(); // armJobs settles → scheduleReload sees stopped → returns
     await vi.advanceTimersByTimeAsync(0); // flush the gated reload
 
     // The in-flight reload may finish arming (2nd Cron), but nothing further:

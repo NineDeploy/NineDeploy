@@ -1,6 +1,6 @@
 ﻿/**
  * Integration test: MongoDB backup/restore round-trip against a live container
- * through the real engine/database.ts code path (mongodump archive â†’ mongorestore).
+ * through the real engine/database.ts code path (mongodump archive → mongorestore).
  * Gated on RUN_INTEGRATION=1 + Docker.
  */
 import { existsSync, readFileSync, rmSync } from 'node:fs';
@@ -60,7 +60,7 @@ describe.skipIf(!ENABLED)('database backup/restore (real MongoDB container)', ()
 
     await backupDatabase(db as never, dumpFile, () => undefined);
     expect(existsSync(dumpFile)).toBe(true);
-    // Encrypted at rest â€” the document value must not appear in the file.
+    // Encrypted at rest — the document value must not appear in the file.
     const atRest = readFileSync(dumpFile, 'utf8');
     expect(/^v\d+:/.test(atRest)).toBe(true);
     expect(atRest).not.toContain('roundtrip');

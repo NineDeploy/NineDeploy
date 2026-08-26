@@ -196,7 +196,7 @@ export async function findPendingInvitationByToken(
     (await db.query.workspaceInvitations.findFirst({ where: eq(workspaceInvitations.token, sha256(token)) })) ??
     // Legacy rows (created before hashing) still hold the cleartext token.
     // Accept them once and rewrite the row to the hash so the fallback is
-    // self-retiring â€” outstanding emailed links keep working across the
+    // self-retiring — outstanding emailed links keep working across the
     // upgrade without leaving plaintext tokens in storage.
     (await db.query.workspaceInvitations.findFirst({ where: eq(workspaceInvitations.token, token) }));
   if (!row) return null;
@@ -246,7 +246,7 @@ export async function acceptInvitationsForUser(
       where: and(eq(workspaceMembers.workspaceId, inv.workspaceId), eq(workspaceMembers.userId, user.id)),
     });
     if (existing) {
-      // Already a member â€” just mark the invite consumed so it doesn't stick around.
+      // Already a member — just mark the invite consumed so it doesn't stick around.
       await db
         .update(workspaceInvitations)
         .set({ acceptedAt: now, acceptedByUserId: user.id, updatedAt: now })
@@ -268,7 +268,7 @@ export async function acceptInvitationsForUser(
 }
 
 /**
- * Authenticated invitation routes â€” mounted at /v1/workspaces/:id/invitations
+ * Authenticated invitation routes — mounted at /v1/workspaces/:id/invitations
  * (and listing/management endpoints). These require a logged-in user and
  * workspace ownership/admin authority. Routes inside are written WITHOUT the
  * `/workspaces` prefix so the registration prefix can be applied.
@@ -383,7 +383,7 @@ export const invitationRoutes: FastifyPluginAsync = async (app) => {
 };
 
 /**
- * Authenticated accept route â€” mounted standalone (no prefix) so the public
+ * Authenticated accept route — mounted standalone (no prefix) so the public
  * path /v1/invitations/:token/accept lands here. Auth required: the caller's
  * email must match the address the invite was sent to.
  */
@@ -428,7 +428,7 @@ export const acceptInvitationRoutes: FastifyPluginAsync = async (app) => {
       app.db,
       req.user!.id,
       'workspace.invitation.accept',
-      `${inv.email} â†’ workspace #${inv.workspaceId} as ${inv.role}`,
+      `${inv.email} → workspace #${inv.workspaceId} as ${inv.role}`,
     );
 
     return { ok: true, workspaceId: inv.workspaceId, role: inv.role as WorkspaceRole };

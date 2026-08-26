@@ -7,7 +7,7 @@ import { challengeRecordName, isOwnZone, requiresOwnershipProof } from '../src/l
  * control of the DNS zone.
  *
  * The create-time check (`domainHijack.test.ts`) settles contests between two
- * tenants of THIS instance. It cannot settle the first claim â€” whoever asks
+ * tenants of THIS instance. It cannot settle the first claim — whoever asks
  * first gets `app.victim.com`, and that router starts serving as soon as the
  * victim's DNS points here, or immediately for anyone who can set the Host
  * header themselves. Requests, cookies and Authorization headers for a domain
@@ -95,7 +95,7 @@ describe('which claims need proof', () => {
   });
 });
 
-describe('claiming someone elseâ€™s hostname', () => {
+describe('claiming someone else’s hostname', () => {
   it('creates the row PENDING and hands back the challenge', async () => {
     const { a, inserted } = await app();
     const res = await a.inject({
@@ -207,6 +207,6 @@ describe('POST /:id/domains/:domainId/verify', () => {
   });
 });
 
-// The enforcement point itself â€” that `writeDynamicConfig` never describes a
-// pending domain to Traefik â€” is covered in test/proxy.test.ts, which already
+// The enforcement point itself — that `writeDynamicConfig` never describes a
+// pending domain to Traefik — is covered in test/proxy.test.ts, which already
 // has the filesystem harness for reading the generated dynamic.yml.

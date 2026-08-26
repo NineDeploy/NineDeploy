@@ -6,7 +6,7 @@ import { api } from '../src/lib/api.js';
 import { renderWithProviders, mockOf } from './helpers.js';
 
 vi.mock('../src/lib/api.js', async () => {
-  // Must be './apiMock.js', not './helpers.js' â€” see the note in apiMock.ts.
+  // Must be './apiMock.js', not './helpers.js' — see the note in apiMock.ts.
   const { createFakeApiModule } = await import('./apiMock.js');
   return createFakeApiModule();
 });
@@ -58,7 +58,7 @@ describe('IntegrationsSection', () => {
     const testBtn = screen.getByRole('button', { name: 'Test connection' });
     await waitFor(() => expect(testBtn).toBeEnabled());
     fireEvent.click(testBtn);
-    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Connected â€” 12 secrets reachable', 'success'));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Connected — 12 secrets reachable', 'success'));
   });
 
   it('sends doppler-shaped vault settings and surfaces a test failure', async () => {
@@ -188,10 +188,10 @@ describe('IntegrationsSection', () => {
     await user.type(screen.getByPlaceholderText('Universal Auth / service token'), 'fresh-tok');
     const testBtn = screen.getByRole('button', { name: 'Test connection' });
     await waitFor(() => expect(testBtn).toBeEnabled());
-    // Test in flight â†’ pending label; then it resolves.
+    // Test in flight → pending label; then it resolves.
     mockOf(api.settings.vault.test).mockReturnValueOnce(new Promise(() => {}) as never);
     fireEvent.click(testBtn);
-    expect(await screen.findByText('Testingâ€¦')).toBeInTheDocument();
+    expect(await screen.findByText('Testing…')).toBeInTheDocument();
   });
 
   it('shows the vault saving label while a save is in flight', async () => {
@@ -201,14 +201,14 @@ describe('IntegrationsSection', () => {
     const save = (await screen.findAllByRole('button', { name: 'Save' }))[0]!;
     await waitFor(() => expect(save).toBeEnabled());
     fireEvent.click(save);
-    expect(await screen.findByText('Savingâ€¦')).toBeInTheDocument();
+    expect(await screen.findByText('Saving…')).toBeInTheDocument();
   });
 
   it('covers DNS token test result fallbacks', async () => {
     mockOf(api.settings.dnsRecords.get).mockResolvedValue({ enabled: false, hasToken: true } as never);
     mockOf(api.settings.dnsRecords.test)
-      .mockResolvedValueOnce({ ok: true } as never) // no status â†’ "active"
-      .mockResolvedValueOnce({ ok: false } as never); // no error â†’ "Token invalid"
+      .mockResolvedValueOnce({ ok: true } as never) // no status → "active"
+      .mockResolvedValueOnce({ ok: false } as never); // no error → "Token invalid"
     renderWithProviders(<IntegrationsSection />);
     const test = await screen.findByRole('button', { name: 'Test token' });
     await waitFor(() => expect(test).toBeEnabled());
@@ -227,9 +227,9 @@ describe('IntegrationsSection', () => {
     const test = await screen.findByRole('button', { name: 'Test token' });
     await waitFor(() => expect(test).toBeEnabled());
     fireEvent.click(save);
-    expect(await screen.findByText('Savingâ€¦')).toBeInTheDocument();
+    expect(await screen.findByText('Saving…')).toBeInTheDocument();
     fireEvent.click(test);
-    expect(await screen.findByText('Testingâ€¦')).toBeInTheDocument();
+    expect(await screen.findByText('Testing…')).toBeInTheDocument();
   });
 
   it('reports an invalid DNS token', async () => {

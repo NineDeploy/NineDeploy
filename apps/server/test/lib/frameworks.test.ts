@@ -28,7 +28,7 @@ const write = (rel: string, content: string) => {
 
 const pkgJson = (fields: Record<string, unknown>) => write('package.json', JSON.stringify(fields));
 
-describe('analyzeRepo â€” Node frameworks', () => {
+describe('analyzeRepo — Node frameworks', () => {
   it('detects Next.js with version, lockfile package manager and node engine', () => {
     pkgJson({
       name: 'web',
@@ -160,7 +160,7 @@ describe('analyzeRepo â€” Node frameworks', () => {
   });
 });
 
-describe('analyzeRepo â€” non-Node stacks', () => {
+describe('analyzeRepo — non-Node stacks', () => {
   it('detects FastAPI from requirements.txt', () => {
     write('requirements.txt', 'fastapi==0.110.0\nuvicorn[standard]\n');
 
@@ -212,7 +212,7 @@ describe('analyzeRepo â€” non-Node stacks', () => {
   });
 });
 
-describe('analyzeRepo â€” baseDir', () => {
+describe('analyzeRepo — baseDir', () => {
   it('analyzes a monorepo subdirectory as the build context', () => {
     write('apps/web/package.json', JSON.stringify({ dependencies: { next: '15.0.0' } }));
     write('package.json', JSON.stringify({ private: true, workspaces: ['apps/*'] }));
@@ -232,6 +232,6 @@ describe('summarizeInsights', () => {
     write('pnpm-lock.yaml', '');
 
     const line = summarizeInsights(analyzeRepo(dir));
-    expect(line).toBe('Detected Next.js 15.1.2 Â· pnpm Â· Node 20.11.0');
+    expect(line).toBe('Detected Next.js 15.1.2 · pnpm · Node 20.11.0');
   });
 });

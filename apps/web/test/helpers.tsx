@@ -9,7 +9,7 @@ import { ToastProvider } from '../src/components/Toast.js';
 import { ProjectScopeProvider } from '../src/lib/projects.js';
 import { WorkspaceProvider } from '../src/lib/workspace.js';
 
-/** jsdom does not implement ResizeObserver â€” some rendered components touch it. */
+/** jsdom does not implement ResizeObserver — some rendered components touch it. */
 if (typeof globalThis.ResizeObserver === 'undefined') {
   class ResizeObserverStub {
     observe(): void {}
@@ -32,7 +32,7 @@ afterEach(() => {
 
 // Re-exported so `import { createFakeApiModule } from './helpers.js'` still
 // works at TEST time. Inside a vi.mock factory, import './apiMock.js' directly
-// â€” see the note in that file.
+// — see the note in that file.
 export { createFakeApiModule } from './apiMock.js';
 
 export { createAuthMock, createThemeMock, createWorkspaceMock } from './apiMock.js';
@@ -63,6 +63,11 @@ export function renderWithProviders(ui: ReactNode, opts: RenderOptions = {}) {
       <AuthProvider>
         <WorkspaceProvider>
           <ProjectScopeProvider>
+            {/* No TagScopeProvider here on purpose: it fetches its own
+                projects/labels/workspaces, which would shift the first raw
+                `fetch` call every export/import test asserts on. Routes fall
+                back to the unfiltered scope; the tests that exercise chip
+                filtering wrap their subject in TagScopeProvider themselves. */}
             <MemoryRouter initialEntries={initialEntries}>
               <ToastProvider>{ui}</ToastProvider>
             </MemoryRouter>

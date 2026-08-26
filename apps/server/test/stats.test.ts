@@ -58,10 +58,15 @@ describe('stats routes', () => {
     const app = await buildTestApp({
       db: createFakeDb({
         select: {
-          services: [
-            svcRow({ id: 1, ownerUserId: 7, runtimeId: 'c1', name: 'mine' }),
-            svcRow({ id: 2, ownerUserId: 9, runtimeId: 'c2', name: 'theirs' }),
-          ],
+          // Full-row select -> the whole inventory; id-only projection -> the
+          // owner-scoped re-query, whose predicate the fake db cannot apply.
+          services: (cols) =>
+            cols === undefined
+              ? [
+                  svcRow({ id: 1, ownerUserId: 7, runtimeId: 'c1', name: 'mine' }),
+                  svcRow({ id: 2, ownerUserId: 9, runtimeId: 'c2', name: 'theirs' }),
+                ]
+              : [{ id: 1 }],
           databases: [],
         },
       }),
@@ -75,7 +80,7 @@ describe('stats routes', () => {
 });
 
 describe('metric routes', () => {
-  it('returns cpu points by default (storage pctÃ—100 â†’ display %)', async () => {
+  it('returns cpu points by default (storage pct×100 → display %)', async () => {
     const app = await buildTestApp({
       db: createFakeDb({ findMany: { metrics: [metricRow({ value: 325, ts: new Date('2026-01-01T00:01:00Z') })] }, findFirst: { services: svcRow({ id: 1 }) } }),
     });

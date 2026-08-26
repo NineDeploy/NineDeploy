@@ -25,7 +25,7 @@ const adminUser = { id: 1, isOperator: true as const };
 
 beforeEach(() => vi.clearAllMocks());
 
-// â”€â”€ L-2: /demo/seed writes instance-global, null-owner rows â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── L-2: /demo/seed writes instance-global, null-owner rows ────────────────
 describe('L-2: seeding the demo stack is an admin action', () => {
   async function app() {
     const { demoRoutes } = await import('../src/modules/demo.js');
@@ -45,7 +45,7 @@ describe('L-2: seeding the demo stack is an admin action', () => {
   });
 });
 
-// â”€â”€ L-3: WebSocket tokens never travel in the query string â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── L-3: WebSocket tokens never travel in the query string ─────────────────
 describe('L-3: the ?token= WebSocket fallback is gone', () => {
   it('reads the subprotocol form', () => {
     expect(websocketBearerToken({ 'sec-websocket-protocol': 'ninedeploy.bearer.abc123' })).toBe('abc123');
@@ -60,18 +60,18 @@ describe('L-3: the ?token= WebSocket fallback is gone', () => {
   });
 });
 
-// â”€â”€ L-5: passkey login must not enumerate credentials â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── L-5: passkey login must not enumerate credentials ──────────────────────
 describe('L-5: the passkey login ceremony leaks no credential ids', () => {
   it('returns an empty allowCredentials and never reads the table', async () => {
     const { beginAuthentication } = await import('../src/lib/webauthn.js');
-    // No arguments to pass â€” the enumeration was the argument.
+    // No arguments to pass — the enumeration was the argument.
     expect(beginAuthentication.length).toBe(0);
     const options = JSON.parse(await beginAuthentication()) as { allowCredentials?: unknown[] };
     expect(options.allowCredentials ?? []).toEqual([]);
   });
 });
 
-// â”€â”€ L-6: host ports are a shared, finite resource â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── L-6: host ports are a shared, finite resource ──────────────────────────
 describe('L-6: publishing a host port', () => {
   it('lets anyone publish an ordinary high port', () => {
     expect(() => assertMayPublishPort(memberUser, 8080)).not.toThrow();
@@ -89,7 +89,7 @@ describe('L-6: publishing a host port', () => {
     expect(() => assertMayPublishPort(adminUser, 25)).not.toThrow();
   });
 
-  it("refuses NineDeploy's own ports to admins too â€” that is an outage, not an attack", () => {
+  it("refuses NineDeploy's own ports to admins too — that is an outage, not an attack", () => {
     for (const port of reservedHostPorts()) {
       expect(() => assertMayPublishPort(adminUser, port), String(port)).toThrow(/reserved by NineDeploy/);
       expect(() => assertMayPublishPort(memberUser, port), String(port)).toThrow(/reserved by NineDeploy/);
@@ -115,7 +115,7 @@ describe('L-6: publishing a host port', () => {
   });
 });
 
-// â”€â”€ L-12: instance-wide inventories are operator data â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── L-12: instance-wide inventories are operator data ──────────────────────
 describe('L-12: instance-wide listings are admin-only', () => {
   it('GET /volumes refuses a member and answers an admin', async () => {
     const { volumeRoutes } = await import('../src/modules/volumes.js');
@@ -141,7 +141,7 @@ describe('L-12: instance-wide listings are admin-only', () => {
 
   it('GET /networks/:name/members refuses a member and answers an admin', async () => {
     // Container names on a network map out the instance inventory just like
-    // the listing does â€” the per-network route must not be the side door.
+    // the listing does — the per-network route must not be the side door.
     const { networkRoutes } = await import('../src/modules/networks.js');
     const build = async () => {
       const a = await buildTestApp({ db: createFakeDb({}) });
@@ -163,7 +163,7 @@ describe('L-12: instance-wide listings are admin-only', () => {
       await a.register(configCenterRoutes, { prefix: '/config' });
       return a;
     };
-    // The gate fires before the handler, so the member sees 403 â€” never a
+    // The gate fires before the handler, so the member sees 403 — never a
     // value, masked or not. The admin passes the gate (404 = unknown key).
     expect((await (await build()).inject({ method: 'GET', url: '/config/system.site_name', headers: member() })).statusCode).toBe(403);
     const adminRes = await (await build()).inject({ method: 'GET', url: '/config/system.site_name', headers: admin() });
@@ -182,7 +182,7 @@ describe('L-12: instance-wide listings are admin-only', () => {
     expect((await (await build()).inject({ method: 'GET', url: '/v1/traefik/certificates', headers: member() })).statusCode).toBe(403);
     expect((await (await build()).inject({ method: 'GET', url: '/v1/traefik/version', headers: member() })).statusCode).toBe(403);
     // The shared UI page stays reachable for members but must not carry the
-    // routing tables or certificate list â€” only the status banner.
+    // routing tables or certificate list — only the status banner.
     const memberRes = await (await build()).inject({ method: 'GET', url: '/v1/traefik', headers: member() });
     expect(memberRes.statusCode).toBe(200);
     const memberBody = memberRes.json();

@@ -45,7 +45,7 @@ describe('startTunnel', () => {
 
     expect(dockerPullMocks.ensureDockerImage).toHaveBeenCalledWith('cloudflare/cloudflared:latest', log);
     expect(h.decrypt).toHaveBeenCalledWith('enc-token');
-    expect(log).toHaveBeenCalledWith('Starting Cloudflare Tunnel web (nd-tunnel-web) â€¦');
+    expect(log).toHaveBeenCalledWith('Starting Cloudflare Tunnel web (nd-tunnel-web) …');
     const args = h.run.mock.calls[0]![1] as unknown[];
     expect(args).toEqual([
       'run', '-d', '--name', 'nd-tunnel-web', '--network', 'ninedeploy', '--restart', 'unless-stopped',

@@ -128,7 +128,7 @@ describe('DatabaseWizard', () => {
     await user.type(screen.getByPlaceholderText('my-database'), 'm1');
     await user.click(screen.getByRole('button', { name: /continue/i }));
     await user.click(screen.getByRole('button', { name: /create database/i }));
-    expect(screen.getByText('Creatingâ€¦')).toBeInTheDocument();
+    expect(screen.getByText('Creating…')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /creating/i })).toBeDisabled();
     d.resolve({ id: 2 });
   });
@@ -164,7 +164,7 @@ describe('DatabaseWizard', () => {
     const { container } = renderWizard();
     await user.click(screen.getByText('PostgreSQL'));
     await user.click(screen.getByRole('button', { name: /continue/i }));
-    // After advancing, step 0 is "completed" â€” its circle uses the emerald
+    // After advancing, step 0 is "completed" — its circle uses the emerald
     // background and contains the Check lucide icon (rendered as <svg>).
     expect(container.querySelector('.bg-emerald-500')).not.toBeNull();
   });
@@ -177,8 +177,8 @@ describe('DatabaseWizard', () => {
     await user.type(screen.getByPlaceholderText('my-database'), 'cache');
     await user.click(screen.getByRole('button', { name: /continue/i }));
     // The review row combines the engine emoji and label via `ENGINES.find(...)`
-    // â€” covers the `?? ''` and `?? ''` nullish fallbacks.
-    expect(screen.getByText(/âš¡ Redis/)).toBeInTheDocument();
+    // — covers the `?? ''` and `?? ''` nullish fallbacks.
+    expect(screen.getByText(/⚡ Redis/)).toBeInTheDocument();
   });
 
   it('selects, changes and attaches an existing retained volume or toggles back to fresh volume', async () => {
@@ -278,10 +278,10 @@ describe('DatabaseWizard', () => {
     renderWizard();
     await user.click(screen.getByText('PostgreSQL'));
     await user.click(screen.getByRole('button', { name: 'Create Now' }));
-    expect(screen.getByText('Creatingâ€¦')).toBeInTheDocument();
+    expect(screen.getByText('Creating…')).toBeInTheDocument();
     hold.resolve({ id: 1 });
     await waitFor(() =>
-      expect(screen.queryByText('Creatingâ€¦')).not.toBeInTheDocument());
+      expect(screen.queryByText('Creating…')).not.toBeInTheDocument());
   });
 
   it('renders the DevOps Pro badge in advanced mode', async () => {

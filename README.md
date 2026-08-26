@@ -7,9 +7,10 @@ Deploy apps from Git or container registries with zero downtime, automatic rollb
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js](https://img.shields.io/badge/Node.js-%E2%89%A522.13-green.svg)](https://nodejs.org)
+[![Version](https://img.shields.io/badge/Version-0.3.0-blue.svg)](./CHANGELOG.md)
 [![TypeScript](https://img.shields.io/badge/TypeScript-7-blue.svg)](https://www.typescriptlang.org)
 [![Docker](https://img.shields.io/badge/Docker-required-blue.svg)](https://docker.com)
-[![Test Coverage](https://img.shields.io/badge/Coverage-100%25-brightgreen.svg)](https://github.com/NineDeploy/NineDeploy)
+[![Tests](https://img.shields.io/badge/Tests-4397%20passing-brightgreen.svg)](https://github.com/NineDeploy/NineDeploy)
 [![CI](https://github.com/NineDeploy/NineDeploy/actions/workflows/ci.yml/badge.svg)](https://github.com/NineDeploy/NineDeploy/actions/workflows/ci.yml)
 
 [Website](https://ninedeploy.com) • [Documentation](./docs/QUICKSTART.md) • [1-Click Templates](https://ninedeploy.com/templates) • [Changelog](https://ninedeploy.com/changelog)
@@ -40,6 +41,8 @@ curl -fsSL https://raw.githubusercontent.com/NineDeploy/NineDeploy/main/install.
 
 Or bring your own compose (required secret + docker GID, restart policy,
 health-gated readiness — see `docker-compose.prod.yml`):
+
+```bash
 echo "NINEDEPLOY_JWT_SECRET=$(openssl rand -hex 32)" >> .env
 echo "DOCKER_GID=$(getent group docker | cut -d: -f3)" >> .env
 docker compose -f docker-compose.prod.yml up -d
@@ -94,6 +97,7 @@ For in-depth guides, operational workflows, and configuration references:
 | :--- | :--- |
 | 🚀 [**Quickstart & Upgrading**](./docs/QUICKSTART.md) | Installation options, in-place upgrades, systemd unit configuration, and environment setup. |
 | 🔐 [**Private Repository Guide**](./docs/PRIVATE_REPO_GUIDE.md) | End-to-end playbook for deploying a private GitHub/GitLab repo: GitHub PAT, server-generated SSH deploy keys, encrypted source credentials, build-pack selection, auto-deploy webhooks. |
+| 📄 [**`.ninedeploy` Manifest**](./docs/NINEDEPLOY_MANIFEST.md) | The repo-side manifest: runtime and build sections, routes, alerts, database binding, volume backup policy, and the `manifest init/validate/show` CLI. |
 | 🔄 [**Deployments & Pipelines**](./docs/DEPLOYMENTS.md) | Blue-green zero-downtime releases, cancellation, watch paths, and ephemeral PR preview environments. |
 | 🏢 [**Workspaces & RBAC**](./docs/WORKSPACES_RBAC.md) | Multi-tenant workspace scoping, team member invitations, and role-based permissions matrix. |
 | 🔒 [**Security & Single Sign-On**](./docs/SECURITY_SSO.md) | Dual-vault AES-256-GCM encryption, OIDC SSO (Google, GitHub, Okta), Passkeys (WebAuthn), and TOTP 2FA. |
@@ -112,10 +116,13 @@ For in-depth guides, operational workflows, and configuration references:
 - 🏢 **Workspaces & Multi-Tenancy**: Organize projects, servers, databases, and teams across isolated workspaces with 4-tier RBAC.
 - 🔑 **Enterprise SSO & Passkeys**: Authenticate via OpenID Connect (Google, GitHub, Keycloak, Okta), biometric Passkeys (WebAuthn), or TOTP 2FA.
 - 🗄️ **1-Click Databases & Encrypted S3 Backups**: Instant Postgres (with `pgvector`), MySQL, Redis, MongoDB, ClickHouse, and RabbitMQ with streaming AES-256-GCM snapshots and automated offsite sync to Cloudflare R2 / AWS S3.
+- 🏷️ **Projects, Workspaces & Labels**: Tag a service into as many projects, workspaces and labels as it belongs to, then filter the whole panel by all three at once — AND across the groups, OR inside one.
+- 💾 **Volume Attachments & Backups**: Mount any number of managed Docker volumes into a service at explicit paths, then snapshot, restore or download each one — with retention pruning and off-site copies.
+- 📄 **`.ninedeploy` Manifest**: Keep runtime, build, routes, alerts and backup policy next to the code. `ninedeploy manifest validate` schema-checks it and blocks credential-shaped values before they reach git history.
 - ♻️ **Durable Deployment Recovery**: Worker-owned Hub provisioning survives browser disconnects and server restarts, then idempotently resumes template databases, attachments, environment reconciliation, and application deployment.
 - 🤖 **Native AI Superpowers**: Built-in 35-tool Model Context Protocol (MCP) server enables AI coding agents (Claude, Cursor, Antigravity, Cline) to query logs, trigger builds, and manage resources, with an optional fail-closed read-only mode.
 - 🌐 **Automated Ingress & Tunnels**: Built-in Traefik with automated wildcard Let's Encrypt certificates and zero-configuration Cloudflare Tunnels for NAT-restricted nodes.
-- 💯 **100% Test Coverage**: Monorepo packages enforce strict 100% Vitest coverage globally in CI.
+- 💯 **Enforced Coverage Gates**: 4,397 Vitest specs run in CI. `db`, `schemas`, `sdk` and the CLI hold a strict 100% gate; the web dashboard enforces 99% statements and the server 95%, so a regression fails the build rather than sliding through.
 
 ---
 
@@ -136,6 +143,14 @@ ninedeploy services list
 ninedeploy services create
 ninedeploy services deploy <service-id>
 ninedeploy system dashboard
+
+# Deploy a private repository
+ninedeploy sources create
+ninedeploy webhooks create <service-id>
+
+# Manage the repo-side .ninedeploy manifest
+ninedeploy manifest init
+ninedeploy manifest validate
 ```
 
 ---
