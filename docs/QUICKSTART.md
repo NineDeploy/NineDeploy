@@ -110,10 +110,15 @@ bash install.sh --version v0.3.0
 
 # Track edge (main branch)
 bash install.sh --channel main
+
+# Discard local modifications and rebuild from scratch
+bash install.sh --force
 ```
 
+**Where the code comes from**: on the `release` channel the installer downloads the source tarball GitHub publishes for the tag (`/archive/refs/tags/vX.Y.Z.tar.gz`) — no git required on the host. It falls back to a git clone when the tarball is unreachable, and the `main` channel always uses git. The resolved tag is looked up from `git ls-remote`, then the GitHub releases API, then the tags API, so a single unavailable source cannot pin you to a stale version.
+
 **Upgrade Safety Mechanism**:
-Before pulling updates or applying migrations, the installer automatically snapshots `.data/ninedeploy.db` and `.data/master.key` to `.data/upgrade-backups/pre-update-YYYYMMDD-HHMMSS.tar.gz`.
+Before pulling updates or applying migrations, the installer automatically snapshots `.data/ninedeploy.db` and `.data/master.key` to `.data/upgrade-backups/pre-update-YYYYMMDD-HHMMSS.tar.gz`. Build output (`dist/`, the turbo cache) is always cleared before rebuilding, so an upgrade can never leave the previous release's panel bundle in place, and the installer fails if `apps/web/dist/index.html` is missing after the build.
 
 ### Docker Upgrade:
 ```bash

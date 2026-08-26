@@ -12,6 +12,17 @@ const releases = [
           "Volume backups with retention pruning, off-site copies, and a restore that refuses to run under a live service",
           "`.ninedeploy` manifest with `manifest init/validate/show` — schema-checked and secret-scanned before it reaches git",
           "Private-repo deployment and auto-deploy webhooks from the CLI, plus workspace invitations for addresses without an account yet",
+          "A new Organize menu puts Workspaces, Projects and the new Labels page in the navigation — projects had a route with no menu entry, and labels had no management screen at all",
+          "Volume snapshots, restore and download from the Volumes page, including retained volumes that belong to no service",
+        ],
+      },
+      {
+        t: "Installer",
+        items: [
+          "The release channel installs the source tarball GitHub publishes for the tag instead of cloning — no git needed on the host, and no half-fetched shallow checkout",
+          "The newest tag is resolved from git ls-remote, then the GitHub releases API, then the tags API, so one unavailable source cannot pin you to a stale version",
+          "Build output and the turbo cache are cleared before every rebuild, and the installer verifies the built version against the requested tag — an upgrade can no longer keep serving the previous panel bundle",
+          "New --force flag discards local modifications and rebuilds from scratch",
         ],
       },
       {

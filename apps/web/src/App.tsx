@@ -35,6 +35,7 @@ import { DockerDashboard } from './routes/Docker.js';
 import { Traefik } from './routes/Traefik.js';
 import { Activity } from './routes/Activity.js';
 import { Projects } from './routes/Projects.js';
+import { Labels } from './routes/Labels.js';
 
 function RequireAuth({ children }: { children: ReactNode }) {
   const { user } = useAuth();
@@ -87,6 +88,7 @@ export default function App() {
         <Route path="dashboard" element={<Navigate to="/" replace />} />
         <Route path="workspaces" element={<Workspaces />} />
         <Route path="projects" element={<Projects />} />
+        <Route path="labels" element={<Labels />} />
         <Route path="services" element={<ServicesList />} />
         <Route path="hub" element={<Hub />} />
         <Route path="manifest-creator" element={<ManifestCreator />} />

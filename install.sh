@@ -19,6 +19,15 @@
 #   existing install decides the mode; on a fresh host with a terminal the
 #   installer asks. Upgrades are the same command re-run.
 #
+# Version selection:
+#   --channel release   newest vX.Y.Z tag on GitHub (default)
+#   --channel main      track the main branch (edge)
+#   --version vX.Y.Z    pin an exact tag
+#   --force             discard local modifications to tracked files and drop
+#                       every build artifact before rebuilding. Use this when
+#                       an upgrade left a stale panel bundle behind.
+#                       NINEDEPLOY_FORCE=1 works too.
+#
 set -euo pipefail
 
 BOLD='\033[1m'
@@ -177,6 +186,8 @@ else
   INSTALL_DIR="$NINEDEPLOY_INSTALL_DIR"
 fi
 REPO_URL="https://github.com/NineDeploy/NineDeploy.git"
+# Same repository as REPO_URL, in the owner/name form the GitHub API wants.
+REPO_SLUG="NineDeploy/NineDeploy"
 NEEDS_CLONE=false
 
 echo ""
@@ -190,6 +201,7 @@ echo ""
 
 CHANNEL="${NINEDEPLOY_CHANNEL:-release}"
 PINNED_VERSION="${NINEDEPLOY_VERSION:-}"
+FORCE_REFRESH="${NINEDEPLOY_FORCE:-0}"
 INSTALL_MODE_FLAG=""
 
 while [ "$#" -gt 0 ]; do
@@ -219,6 +231,10 @@ while [ "$#" -gt 0 ]; do
       [ "$#" -ge 2 ] || fail "--channel requires release or main"
       CHANNEL="$2"
       shift 2
+      ;;
+    --force|-f)
+      FORCE_REFRESH=1
+      shift
       ;;
     v[0-9]*)
       [ -z "$PINNED_VERSION" ] && PINNED_VERSION="$1"
@@ -627,11 +643,104 @@ ok "Docker network & ingress ready"
 #   main              — track the main branch (edge; previous behaviour)
 # A specific tag can be pinned with --version vX.Y.Z / NINEDEPLOY_VERSION.
 
-# Highest vX.Y.Z tag from the remote (no clone needed).
+# Highest vX.Y.Z from a newline-separated tag list on stdin.
+#
+# `sort -V` is GNU-only; busybox and BSD coreutils either lack it or sort
+# lexically, which ranks v0.2.9 above v0.2.36 and would pin an upgrade to a
+# stale release forever. Normalise each component to a zero-padded fixed
+# width first so a plain lexical `sort` is correct everywhere.
+highest_semver_tag() {
+  (grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true) \
+    | awk -F'[v.]' '{ printf "%010d%010d%010d %s\n", $2, $3, $4, $0 }' \
+    | sort \
+    | tail -1 \
+    | awk '{print $2}'
+}
+
+# Newest vX.Y.Z release tag, asked of GitHub directly. Three independent
+# sources, because a single one is not reliable enough to decide what an
+# operator's `--channel release` upgrade actually installs:
+#
+#   1. `git ls-remote` — works behind a git-only proxy, no API rate limit.
+#   2. The releases API — authoritative for what is *published*, and the only
+#      source that skips a tag pushed without a release.
+#   3. The tags API — fallback when releases/latest 404s (no published
+#      release yet) but tags exist.
+#
+# The first source that yields a well-formed tag wins.
 latest_tag() {
-  (git ls-remote --tags --refs "$REPO_URL" 2>/dev/null || true) \
-    | awk -F/ '{print $NF}' | (grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true) \
-    | sort -V | tail -1
+  local _tag=""
+
+  _tag=$(
+    (git ls-remote --tags --refs "$REPO_URL" 2>/dev/null || true) \
+      | awk -F/ '{print $NF}' | highest_semver_tag
+  )
+  if [ -n "$_tag" ]; then printf '%s' "$_tag"; return 0; fi
+
+  warn "git ls-remote returned no tags — asking the GitHub releases API"
+  _tag=$(
+    (curl -fsSL -m 15 -H 'Accept: application/vnd.github+json' \
+      "https://api.github.com/repos/${REPO_SLUG}/releases/latest" 2>/dev/null || true) \
+      | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' \
+      | head -1 | sed 's/.*"\([^"]*\)"$/\1/' | highest_semver_tag
+  )
+  if [ -n "$_tag" ]; then printf '%s' "$_tag"; return 0; fi
+
+  warn "No published release — falling back to the GitHub tags API"
+  _tag=$(
+    (curl -fsSL -m 15 -H 'Accept: application/vnd.github+json' \
+      "https://api.github.com/repos/${REPO_SLUG}/tags?per_page=100" 2>/dev/null || true) \
+      | grep -o '"name"[[:space:]]*:[[:space:]]*"[^"]*"' \
+      | sed 's/.*"\([^"]*\)"$/\1/' | highest_semver_tag
+  )
+  printf '%s' "$_tag"
+}
+
+# Source of the tree the installer is about to build. `release` means the
+# published tarball for a tag; `git` means a clone/checkout. Set in section 3.
+SOURCE_MODE=""
+# Records the installed release so a later upgrade knows what is on disk
+# without needing a git history.
+RELEASE_STAMP_FILE=".ninedeploy-release"
+
+# Download and unpack the source tarball GitHub publishes for a tag.
+#   $1  tag (vX.Y.Z)
+#   $2  directory to unpack into (created; the archive's top-level
+#       <repo>-<version>/ wrapper is stripped)
+# Returns non-zero — leaving no partial tree behind — when the release does
+# not exist, the download fails, or the archive does not look like NineDeploy.
+fetch_release_tarball() {
+  local _ref="$1" _dest="$2" _stage _archive _url
+  _url="https://github.com/${REPO_SLUG}/archive/refs/tags/${_ref}.tar.gz"
+  _stage=$(mktemp -d) || return 1
+  _archive="$_stage/ninedeploy-${_ref}.tar.gz"
+
+  if ! curl -fsSL --retry 3 --retry-delay 2 -m 600 "$_url" -o "$_archive"; then
+    rm -rf "$_stage"
+    return 1
+  fi
+  # A 404 page or an HTML error would still be a file; make tar prove it.
+  if ! tar -tzf "$_archive" >/dev/null 2>&1; then
+    rm -rf "$_stage"
+    return 1
+  fi
+
+  mkdir -p "$_dest" || { rm -rf "$_stage"; return 1; }
+  # Every failure past this point leaves a partial tree behind. The caller
+  # falls back to `git clone`, which refuses a non-empty target, so unwind it.
+  if ! tar -xzf "$_archive" -C "$_dest" --strip-components=1; then
+    rm -rf "$_stage" "${_dest:?}"
+    return 1
+  fi
+  rm -rf "$_stage"
+
+  # The archive must be the monorepo root, not some other project's tarball.
+  if [ ! -f "$_dest/package.json" ] || [ ! -f "$_dest/pnpm-workspace.yaml" ]; then
+    warn "The tarball for $_ref does not look like a NineDeploy source tree"
+    rm -rf "${_dest:?}"
+    return 1
+  fi
+  return 0
 }
 
 REF=""
@@ -779,9 +888,123 @@ if [ "$INSTALL_MODE" = "docker" ]; then
 fi
 
 # ── 3. Get the code ────────────────────────────────────────────────────────
+#
+# Preferred source: the tarball GitHub publishes for a release tag. It is the
+# exact tree the tag points at, needs no git on the host, and cannot land on a
+# half-fetched object the way a shallow clone can. `git` stays available for
+# the edge channel and as the fallback when the archive endpoint is
+# unreachable or the tag has no tarball yet.
+
+# Replace the tracked source tree in $INSTALL_DIR with the release tarball for
+# $1, preserving .env, .data and node_modules. Returns non-zero when the
+# tarball could not be fetched, leaving the existing install untouched.
+upgrade_from_release() {
+  local _ref="$1" _stage
+  _stage=$(mktemp -d) || return 1
+  rm -rf "$_stage"
+
+  info "Downloading the $_ref release tarball from GitHub…"
+  if ! fetch_release_tarball "$_ref" "$_stage"; then
+    rm -rf "$_stage"
+    return 1
+  fi
+
+  # Drop source directories that the new tree owns wholesale, so a file
+  # deleted in this release does not survive as a stale module. Everything
+  # holding state — .env, .data, node_modules — is outside this list.
+  local _d
+  for _d in apps packages scripts systemd patches docs .github; do
+    rm -rf "${INSTALL_DIR:?}/$_d"
+  done
+
+  # Copy the new tree over the install dir (dotfiles included) — but not
+  # install.sh: this script is executing from that exact path, and bash reads
+  # it incrementally. Overwriting it in place would make the running shell
+  # resume at a byte offset in different content.
+  (cd "$_stage" && tar -cf - --exclude=./install.sh .) | (cd "$INSTALL_DIR" && tar -xf -) || {
+    rm -rf "$_stage"
+    fail "Could not unpack $_ref over $INSTALL_DIR"
+  }
+
+  # Swap the installer itself by rename: the running process keeps its open
+  # descriptor on the old inode and finishes reading the script it started.
+  if [ -f "$_stage/install.sh" ]; then
+    if cp "$_stage/install.sh" "$INSTALL_DIR/.install.sh.new"; then
+      chmod +x "$INSTALL_DIR/.install.sh.new" 2>/dev/null || true
+      mv -f "$INSTALL_DIR/.install.sh.new" "$INSTALL_DIR/install.sh"         || rm -f "$INSTALL_DIR/.install.sh.new"
+    fi
+  fi
+
+  rm -rf "$_stage"
+  ok "Source tree replaced with release $_ref"
+  return 0
+}
+
+# Move an existing git checkout onto $1 and hard-reset it to the remote.
+update_from_git() {
+  local _ref="$1"
+
+  # The remote must be the canonical repository. A fork or a renamed remote
+  # left behind by an earlier manual clone would silently pin the upgrade to
+  # somebody else's history.
+  local _origin
+  _origin=$(git remote get-url origin 2>/dev/null || true)
+  if [ "$_origin" != "$REPO_URL" ]; then
+    if [ -z "$_origin" ]; then
+      git remote add origin "$REPO_URL"
+    else
+      warn "origin was $_origin — repointing it at $REPO_URL"
+      git remote set-url origin "$REPO_URL"
+    fi
+  fi
+
+  # Fresh installs used to be cloned with --depth 1, so the checkout holds
+  # exactly one commit and none of the objects a newer tag needs. `git fetch
+  # --tags` on such a repository succeeds while fetching nothing usable, and
+  # the checkout then lands on the old commit — which is how an "upgraded"
+  # host keeps serving the previous release. Deepen first.
+  if [ "$(git rev-parse --is-shallow-repository 2>/dev/null || echo false)" = "true" ]; then
+    info "Shallow checkout detected — fetching full history so tags resolve…"
+    git fetch --unshallow --tags origin 2>/dev/null \
+      || git fetch --depth=2147483647 --tags origin 2>/dev/null \
+      || warn "Could not deepen the checkout; tag resolution may be limited"
+  fi
+
+  # --force + --prune-tags so a retagged or deleted release is reflected
+  # locally instead of leaving a stale tag pointing at old objects.
+  info "Fetching the latest refs from GitHub…"
+  git fetch --force --tags --prune origin || fail "could not fetch from $REPO_URL"
+  git fetch --force --prune --prune-tags --tags origin >/dev/null 2>&1 || true
+
+  if [ "$FORCE_REFRESH" = "1" ]; then
+    warn "--force: discarding local modifications to tracked files"
+    git reset --hard HEAD >/dev/null 2>&1 || true
+  fi
+
+  git checkout --force "$_ref" || { [ "$HAS_SYSTEMD" = true ] && sudo systemctl start ninedeploy; fail "could not check out $_ref"; }
+
+  # Land exactly on the remote's idea of $_ref. `checkout --force` on a branch
+  # leaves the old local commit in place; on a tag it can silently keep a
+  # stale local tag. Reset to the fetched object either way.
+  if [ "$_ref" = "main" ]; then
+    git reset --hard origin/main || warn "could not reset to origin/main; continuing with the checked-out tree"
+  else
+    git reset --hard "refs/tags/$_ref" || warn "could not reset to $_ref; continuing with the checked-out tree"
+  fi
+
+  ok "Source tree at $_ref ($(git rev-parse --short HEAD 2>/dev/null || echo unknown))"
+}
+
 
 if [ -f "$INSTALL_DIR/package.json" ]; then
-  info "Existing installation found at $INSTALL_DIR — updating…"
+  # What is on disk right now, so the upgrade reports both ends of the jump.
+  PREVIOUS_VERSION=$(node -p "require('${INSTALL_DIR}/package.json').version" 2>/dev/null || echo "")
+  PREVIOUS_REF=$(cat "$INSTALL_DIR/$RELEASE_STAMP_FILE" 2>/dev/null || echo "")
+  if [ -n "$PREVIOUS_VERSION" ]; then
+    info "Existing installation found at $INSTALL_DIR — upgrading ${PREVIOUS_REF:-v$PREVIOUS_VERSION} → $REF"
+  else
+    info "Existing installation found at $INSTALL_DIR — updating…"
+  fi
   cd "$INSTALL_DIR"
 
   HAS_SYSTEMD=false
@@ -798,19 +1021,74 @@ if [ -f "$INSTALL_DIR/package.json" ]; then
     if tar -czf "$BACKUP_FILE" .data/ninedeploy.db .data/master.key 2>/dev/null; then
       ok "Pre-update backup saved to $BACKUP_FILE"
     else
-      warn "Backup of .data failed — continuing (git history remains)"
+      warn "Backup of .data failed — continuing without a pre-upgrade snapshot"
     fi
   fi
 
-  git fetch --tags origin
-  git checkout --force "$REF" || { [ "$HAS_SYSTEMD" = true ] && sudo systemctl start ninedeploy; fail "could not check out $REF"; }
-  if [ "$REF" = "main" ]; then
-    git pull origin main || warn "git pull failed, continuing with the checked-out $REF"
+  # ── Upgrade: release tarball first, git second ─────────────────────────
+  #
+  # A tagged release is the artifact operators are told to run, so it is what
+  # the installer fetches. `git` remains the path for the edge channel and
+  # for hosts that cannot reach the archive endpoint, and it is the only way
+  # to move an existing clone-based install forward.
+  if [ "$REF" != "main" ] && upgrade_from_release "$REF"; then
+    SOURCE_MODE="release"
+  elif [ -d "$INSTALL_DIR/.git" ]; then
+    [ "$REF" = "main" ] || warn "Release tarball unavailable for $REF — falling back to git"
+    SOURCE_MODE="git"
+    update_from_git "$REF"
+  else
+    fail "Could not download the $REF release tarball, and $INSTALL_DIR is not a git checkout. Re-run with --channel main, or check network access to github.com."
   fi
 else
-  info "Cloning NineDeploy to $INSTALL_DIR …"
-  git clone --depth 1 ${REF:+-b "$REF"} "$REPO_URL" "$INSTALL_DIR"
+  # ── Fresh install ──────────────────────────────────────────────────────
+  if [ "$REF" != "main" ]; then
+    info "Downloading the $REF release tarball from GitHub…"
+    # Unpack into a staging directory rather than straight into $INSTALL_DIR:
+    # a failed extraction must never remove whatever the operator already had
+    # at that path, and `git clone` (the fallback) refuses a non-empty target.
+    FRESH_STAGE=$(mktemp -d) && rm -rf "$FRESH_STAGE"
+    if fetch_release_tarball "$REF" "$FRESH_STAGE"; then
+      mkdir -p "$INSTALL_DIR"
+      if (cd "$FRESH_STAGE" && tar -cf - .) | (cd "$INSTALL_DIR" && tar -xf -); then
+        SOURCE_MODE="release"
+        ok "Unpacked NineDeploy $REF to $INSTALL_DIR"
+      else
+        warn "Could not unpack $REF into $INSTALL_DIR — falling back to git clone"
+      fi
+    else
+      warn "Release tarball unavailable for $REF — falling back to git clone"
+    fi
+    rm -rf "$FRESH_STAGE"
+  fi
+  if [ -z "$SOURCE_MODE" ]; then
+    info "Cloning NineDeploy to $INSTALL_DIR …"
+    git clone --depth 1 ${REF:+-b "$REF"} "$REPO_URL" "$INSTALL_DIR"
+    SOURCE_MODE="git"
+  fi
   cd "$INSTALL_DIR"
+fi
+
+# Stamp what is on disk. `git describe` is unavailable in a tarball install,
+# so without this an upgrade has no way to report the version it replaced.
+printf '%s\n' "$REF" > "$INSTALL_DIR/$RELEASE_STAMP_FILE" 2>/dev/null || true
+
+# A build artifact from the previous release is not overwritten by a checkout
+# — dist/ is gitignored, so an upgrade that rebuilds nothing keeps serving the
+# old panel bundle, which is exactly the "upgraded but the UI still shows the
+# previous version" failure. Drop the artifacts and the turbo cache so the
+# build below cannot be skipped.
+info "Clearing build artifacts from the previous release…"
+rm -rf .turbo apps/*/.turbo packages/*/.turbo 2>/dev/null || true
+rm -rf apps/*/dist packages/*/dist 2>/dev/null || true
+rm -rf node_modules/.cache node_modules/.vite 2>/dev/null || true
+if [ "$FORCE_REFRESH" = "1" ] && [ "$SOURCE_MODE" = "git" ]; then
+  # Untracked leftovers can shadow a moved or renamed source file. .data,
+  # .env and the upgrade backups are gitignored on purpose and must survive,
+  # so clean only what git tracks as ignored *build* output — never -x.
+  # A release-tarball install has no git index; upgrade_from_release already
+  # replaced the source directories wholesale.
+  git clean -fd -e .data -e .env -e '*.local' >/dev/null 2>&1 || true
 fi
 
 # ── 3. Install + build ────────────────────────────────────────────────────
@@ -820,6 +1098,21 @@ pnpm install --frozen-lockfile || pnpm install
 
 info "Building…"
 pnpm build
+
+# Prove the tree that was just built is the one that was requested. A silent
+# mismatch here is the difference between "upgraded" and "still on the old
+# release but nobody noticed".
+BUILT_VERSION=$(node -p "require('${INSTALL_DIR}/package.json').version" 2>/dev/null || echo "unknown")
+if [ "$REF" = "main" ]; then
+  ok "Built NineDeploy ${BUILT_VERSION} from main ($(git rev-parse --short HEAD 2>/dev/null || echo unknown))"
+elif [ "v${BUILT_VERSION}" = "$REF" ]; then
+  ok "Built NineDeploy ${BUILT_VERSION} (matches $REF)"
+else
+  warn "Checked out $REF but package.json reports ${BUILT_VERSION} — the tag and the manifest disagree."
+fi
+if [ ! -f "${INSTALL_DIR}/apps/web/dist/index.html" ]; then
+  fail "The web panel did not build (apps/web/dist/index.html is missing). Re-run with --force."
+fi
 
 # Link global CLI executable
 if [ -f "$INSTALL_DIR/apps/cli/dist/index.js" ]; then

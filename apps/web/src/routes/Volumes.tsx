@@ -1,12 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import { ArrowUpRight, Database, ExternalLink, FolderOpen, HardDrive, Layers, Lock, Package, Server, Trash2 } from 'lucide-react';
+import { Archive, ArrowUpRight, Database, ExternalLink, FolderOpen, HardDrive, Layers, Lock, Package, Server, Trash2 } from 'lucide-react';
 import { Link } from 'react-router';
 import { api } from '../lib/api.js';
 import { useToast } from '../components/Toast.js';
 import { Button, Card, ConfirmDialog, EmptyState, ErrorCard, PageHeader, Skeleton, cn } from '../components/ui.js';
 import { formatBytes } from '../lib/format.js';
 import { VolumeBrowser } from '../components/VolumeBrowser.js';
+import { VolumeBackupsPanel } from '../components/VolumeBackupsPanel.js';
 
 export function Volumes() {
   const qc = useQueryClient();
@@ -15,6 +16,11 @@ export function Volumes() {
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const [confirmPrune, setConfirmPrune] = useState(false);
   const [browsing, setBrowsing] = useState<string | null>(null);
+  // Snapshot history for one volume, expanded under the grid. Volume
+  // backups used to be reachable only from a service's Volumes tab, which
+  // left every retained (owner-less) volume with no way to snapshot or
+  // restore it at all.
+  const [snapshotting, setSnapshotting] = useState<string | null>(null);
   const remove = useMutation({
     mutationFn: (name: string) => api.volumes.remove(name),
     onSuccess: () => {
@@ -138,6 +144,18 @@ export function Volumes() {
                     >
                       <FolderOpen size={14} />
                     </button>
+                    <button type="button"
+                      onClick={() => setSnapshotting((cur) => (cur === v.name ? null : v.name))}
+                      className={cn(
+                        'rounded-lg p-1.5 transition hover:bg-white/5',
+                        snapshotting === v.name ? 'text-amber-300' : 'text-slate-500 hover:text-amber-300',
+                      )}
+                      title="Snapshots — back up, restore or download this volume"
+                      aria-expanded={snapshotting === v.name}
+                      aria-label={`Snapshots for ${v.name}`}
+                    >
+                      <Archive size={14} />
+                    </button>
                     {!v.inUse && (
                       <button type="button"
                         onClick={() => setPendingDelete(v.name)}
@@ -153,6 +171,15 @@ export function Volumes() {
               </Card>
             );
           })}
+        </div>
+      )}
+      {snapshotting && (
+        <div className="mt-4 rounded-xl border border-amber-500/20 bg-amber-500/[0.02] p-4">
+          <div className="mb-3 flex items-center justify-between">
+            <p className="font-mono text-[11px] text-slate-400">{snapshotting}</p>
+            <Button size="sm" variant="secondary" onClick={() => setSnapshotting(null)}>Close</Button>
+          </div>
+          <VolumeBackupsPanel volumeName={snapshotting} />
         </div>
       )}
       {browsing && <VolumeBrowser volume={browsing} onClose={() => setBrowsing(null)} />}

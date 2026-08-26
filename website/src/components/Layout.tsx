@@ -26,6 +26,9 @@ import {
   FileCode,
   Sliders,
   LifeBuoy,
+  Tag,
+  HardDrive,
+  GitBranch,
 } from "lucide-react";
 import { Logo } from "./Logo";
 
@@ -64,6 +67,10 @@ const docCategories = [
       { slug: "ingress-traefik-tunnels", title: "Ingress & SSL", desc: "Traefik & Cloudflare Tunnels", icon: Radio },
       { slug: "alerts-notifications", title: "Alerts & Webhooks", desc: "Telegram, Discord, Slack, SMTP", icon: Zap },
       { slug: "multi-server", title: "Multi-Server Clusters", desc: "SSH auto-provisioning & agents", icon: Server },
+      { slug: "tags-projects-labels", title: "Projects & Tags", desc: "Workspaces, projects & labels", icon: Tag },
+      { slug: "volumes-storage", title: "Volumes & Storage", desc: "Attachments, snapshots & restore", icon: HardDrive },
+      { slug: "ninedeploy-manifest", title: ".ninedeploy Manifest", desc: "Config committed next to the code", icon: FileCode },
+      { slug: "private-repos", title: "Private Repos & Sources", desc: "Deploy keys & auto-deploy webhooks", icon: GitBranch },
     ],
   },
   {
@@ -263,7 +270,7 @@ export function Layout({
                   <div className="px-4 py-2.5 bg-[#eef3f8] dark:bg-[#06090e] border-t-2 border-edge dark:border-line flex items-center justify-between gap-4 font-mono text-xs">
                     <span className="text-[#4a5c73] dark:text-zinc-400 flex items-center gap-2">
                       <span className="w-1.5 h-1.5 rounded-full bg-phosphor-dim animate-pulse" />
-                      17 documentation guides · v0.3.0 GA
+                      21 documentation guides · v0.3.0 GA
                     </span>
                     <DropdownMenu.Item asChild>
                       <Link

@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router';
 import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.js';
 import { useWorkspace } from '../lib/workspace.js';
+import { useTagScope } from '../lib/projects.js';
 import { useToast } from '../components/Toast.js';
 import { Badge, Button, Card, ConfirmDialog, EmptyState, ErrorCard, Field, Input, Modal, PageHeader, Skeleton, Textarea } from '../components/ui.js';
 import { formatDateTime } from '../lib/format.js';
@@ -26,6 +27,7 @@ export function Projects() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const { workspaces, currentWorkspace } = useWorkspace();
+  const scope = useTagScope();
   const operator = user?.isOperator === true;
   const activeWorkspaceId = currentWorkspace?.id ?? null;
 
@@ -174,7 +176,13 @@ export function Projects() {
                     <td className="px-5 py-3">
                       <button
                         type="button"
-                        onClick={() => navigate(`/services?projectId=${p.id}`)}
+                        onClick={() => {
+                          // `/services` filters off the shared tag scope, not
+                          // a query string — set the chip so the list actually
+                          // narrows and the selection stays visible.
+                          scope.setProjectIds([p.id]);
+                          navigate('/services');
+                        }}
                         className="text-left"
                       >
                         <div className="font-medium text-slate-200 hover:text-indigo-300">{p.name}</div>

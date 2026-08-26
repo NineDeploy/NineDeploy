@@ -160,6 +160,294 @@ pnpm build && pnpm dev`,
     ],
   },
   {
+    slug: "tags-projects-labels",
+    title: "Tags: Projects, Workspaces & Labels",
+    description: "Three independent dimensions a service can belong to at once.",
+    group: "Core",
+    blocks: [
+      {
+        kind: "p",
+        text: "A service is not filed into one folder. It carries membership in three independent dimensions at the same time — projects, workspaces and labels — each stored in its own join table (service_projects, service_workspaces, service_labels). Nothing moves when you reorganise; you only add or remove a tag.",
+      },
+      { kind: "h2", text: "The three dimensions" },
+      {
+        kind: "list",
+        items: [
+          "Workspace — the tenancy boundary. Members, roles, invitations and RBAC hang off it. A service can be shared across several workspaces.",
+          "Project — a purpose grouping (Acme Web, Internal tooling). Projects also own shared environment variables, and a service inherits the union of every project it is linked to.",
+          "Label — a free-form coloured tag (production, staging, team-x) for slicing across the other two.",
+        ],
+      },
+      { kind: "h2", text: "Filtering" },
+      {
+        kind: "p",
+        text: "The top bar has one chip group per dimension. Selections OR within a group and AND across groups: picking projects A and B plus the label production returns services in (A or B) that are also tagged production. The selection is persisted per browser under ninedeploy.tagScope, so a reload keeps your view.",
+      },
+      {
+        kind: "code",
+        file: "REST",
+        body: `# Every dimension is a comma-separated id list; omit one to leave it unfiltered.
+GET /v1/services?tagProjectIds=3,7&tagLabelIds=2
+
+# Manage the flat lists
+GET|POST /v1/projects        PATCH|DELETE /v1/projects/:id
+GET|POST /v1/labels          PATCH|DELETE /v1/labels/:id
+
+# Replace one service's whole membership in a single round-trip
+PUT /v1/services/:id/tags
+{ "projectIds": [3], "workspaceIds": [1], "labelIds": [2, 5] }`,
+      },
+      { kind: "h2", text: "In the panel" },
+      {
+        kind: "list",
+        items: [
+          "Organize → Workspaces — tenants, members, roles and invitations (including invites to addresses with no account yet).",
+          "Organize → Projects — create, rename and delete projects; the row shows service and database counts.",
+          "Organize → Labels — full CRUD with an eight-token colour palette; clicking a label scopes the services list to it.",
+          "Service detail → Tags card — edits all three dimensions of one service and saves them in one request.",
+        ],
+      },
+      {
+        kind: "callout",
+        tone: "info",
+        title: "Deleting a tag never deletes a service",
+        text: "Removing a project or label only drops the membership rows. Every service that carried it keeps running, untagged in that dimension.",
+      },
+    ],
+  },
+  {
+    slug: "volumes-storage",
+    title: "Volumes & Storage",
+    description: "Per-service volume attachments, and snapshot/restore for any managed volume.",
+    group: "Core",
+    blocks: [
+      {
+        kind: "p",
+        text: "NineDeploy manages Docker named volumes on your behalf. Every managed volume is prefixed (nd-svc- for service storage, nd-db- for a managed database) so the platform never touches a volume it did not create. A service is no longer limited to one mount — it can attach any number of volumes at explicit container paths.",
+      },
+      { kind: "h2", text: "Attaching a volume to a service" },
+      {
+        kind: "p",
+        text: "Open a service → Volumes & Storage → Attach Volume. Either pick an existing managed volume or provision a new one by giving it a short label; the server prepends the service prefix to keep the name unique. Choose the absolute container path and whether the mount is read-only. The path and the volume are both unique per service, so a typo cannot shadow an existing mount.",
+      },
+      {
+        kind: "code",
+        file: "REST",
+        body: `GET    /v1/services/:id/volumes
+POST   /v1/services/:id/volumes
+{ "create": { "label": "uploads" }, "containerPath": "/app/uploads", "readOnly": false }
+# ...or attach one that already exists:
+{ "volumeName": "nd-svc-api-uploads", "containerPath": "/app/uploads" }
+
+PATCH  /v1/services/:id/volumes/:attId   # move the mount or flip readOnly
+DELETE /v1/services/:id/volumes/:attId   # detaches only — the volume survives`,
+      },
+      {
+        kind: "callout",
+        tone: "info",
+        title: "Detach is not delete",
+        text: "Removing an attachment records the change and unmounts the volume on the next deploy. The data stays; delete the volume itself from the Volumes page when you actually want it gone.",
+      },
+      { kind: "h2", text: "Backups" },
+      {
+        kind: "p",
+        text: "Any managed volume can be snapshotted, restored and downloaded. Snapshots run through a throwaway sidecar container, so a containerised panel never needs a path into the daemon's storage directory. They reuse the same S3-compatible destination as database backups for off-site copies and prune to the configured retention cap.",
+      },
+      {
+        kind: "code",
+        file: "REST",
+        body: `GET  /v1/volumes/:name/backups
+POST /v1/volumes/:name/backups                  # snapshot now (admin)
+POST /v1/volumes/:name/backups/:bid/restore     # admin
+GET  /v1/volumes/:name/backups/:bid/download    # admin`,
+      },
+      {
+        kind: "callout",
+        tone: "warn",
+        title: "Restore requires a stopped service",
+        text: "A restore empties the volume before unpacking the archive rather than merging over what is already there, and it refuses to run while the owning service is still running. Stop the service first.",
+      },
+      { kind: "h2", text: "Declaring storage in the repo" },
+      {
+        kind: "code",
+        file: ".ninedeploy",
+        body: `volume:
+  mount: "/var/lib/app/data"
+  backups:
+    schedule: "0 3 * * *"    # 5-field cron
+    retention: 14            # days, 1-365`,
+      },
+    ],
+  },
+  {
+    slug: "ninedeploy-manifest",
+    title: "The .ninedeploy manifest",
+    description: "Commit build, runtime, routing and storage config next to the code.",
+    group: "Core",
+    blocks: [
+      {
+        kind: "p",
+        text: ".ninedeploy is a YAML file committed in your repository root that declares how the service is built, run, routed, alerted and backed up. It removes click-through configuration drift: the panel and the file describe the same service, and the file travels with the branch.",
+      },
+      { kind: "h2", text: "Filenames & precedence" },
+      {
+        kind: "list",
+        items: [
+          "The loader accepts .ninedeploy, .ninedeploy.yml, .ninedeploy.yaml, ninedeploy.yml, ninedeploy.yaml — in that order; the first match wins.",
+          "The extensionless dotfile .ninedeploy is canonical and is what `ninedeploy manifest init` writes.",
+          "Files larger than 16 KiB are refused at load time.",
+        ],
+      },
+      { kind: "h2", text: "Merge precedence" },
+      { kind: "code", body: `panel/DB  >  manifest  >  auto-detect` },
+      {
+        kind: "p",
+        text: "A value set in the panel always wins. If the panel is silent the manifest fills the gap, and if the manifest is silent too NineDeploy falls back to its own detection. The manifest is a project default, not a hard override — you can still run a one-off experiment from the panel without editing the file.",
+      },
+      { kind: "h2", text: "A representative file" },
+      {
+        kind: "code",
+        file: ".ninedeploy",
+        body: `version: "1"
+
+runtime:
+  type: node
+  version: "20"
+
+build:
+  install: "pnpm i --frozen-lockfile"
+  build: "pnpm build"
+  start: "node dist/server.js"
+  baseDir: "apps/api"        # monorepo sub-path
+
+run:
+  port: 3000
+  healthcheck: "/healthz"
+  restart: unless-stopped
+
+env:
+  required:                   # names only - values live in the env vault
+    - DATABASE_URL
+    - STRIPE_SECRET_KEY
+  aliases:
+    POSTGRES_URL: DATABASE_URL
+
+watch:
+  paths:
+    - "apps/api/**"
+    - "packages/**"
+    - "!**/*.test.ts"
+
+routes:
+  - host: api.example.com
+    ssl: true
+    redirectWww: true
+    rateLimit: { average: 50, burst: 100 }
+
+database:
+  ref: primary-postgres       # slug of a managed database
+  env: DATABASE_URL
+
+resources:
+  cpuShares: 1024
+  memMb: 512`,
+      },
+      { kind: "h2", text: "Sections" },
+      {
+        kind: "list",
+        items: [
+          "runtime — language and version pinned for Nixpacks (auto | node | python | go | ruby | php | java | rust | static).",
+          "build — install/build/start commands, monorepo baseDir, or an explicit dockerfile that skips Nixpacks entirely.",
+          "run — container port, HTTP healthcheck path and restart policy (no | always | unless-stopped | on-failure[:N]).",
+          "static — serve a pre-built dist/ directory with SPA fallback instead of starting a process.",
+          "env — required variable names and aliases that rename injected managed-database variables.",
+          "phases — advanced Nixpacks overrides: extra Nix packages and additional build commands.",
+          "resources — cpuShares and memMb limits.",
+          "hooks — preBuild, postBuild and preStop command lines.",
+          "watch — glob paths that decide whether a push rebuilds this service.",
+          "routes — hostnames upserted into the domains table, with SSL, headers, IP allowlist and rate limits.",
+          "previews — ephemeral PR environment hostname pattern and retention.",
+          "volume — persistent mount path and its backup schedule.",
+          "database — managed-DB slug to attach and the env var to inject the URL into.",
+          "network — published host port and extra Docker network aliases.",
+        ],
+      },
+      { kind: "h2", text: "CLI" },
+      {
+        kind: "code",
+        file: "shell",
+        body: `ninedeploy manifest init       # detect the project kind and scaffold a starter file
+ninedeploy manifest validate   # strict schema check + secret scan
+ninedeploy manifest show       # print the resolved manifest as a flat summary`,
+      },
+      {
+        kind: "p",
+        text: "The panel has the same thing under Deploy → Manifest Creator, which builds a manifest section by section and hands you the YAML to commit. Each service also has a Manifest & Traefik tab showing the manifest the last deploy actually used.",
+      },
+      {
+        kind: "callout",
+        tone: "warn",
+        title: "Never put secrets in the manifest",
+        text: "The file is committed to git, so the loader regex-scans every byte before validation and fails the load on a hit — AWS keys, GitHub/GitLab PATs, Slack and Stripe tokens, OpenAI and Anthropic keys, Discord webhooks, DB URLs with embedded credentials, PEM private key blocks and literal Bearer JWTs. Reference secrets by name under env.required and keep the values in the panel env vault.",
+      },
+      {
+        kind: "callout",
+        tone: "info",
+        title: "Applied automatically on every deploy",
+        text: "The docker builder reads the build and runtime sections at build time; the deploy pipeline reads the operational sections (routes, alerts, database ref) at deploy time. There is no separate apply step to remember — the on-demand manifest apply endpoint is still pending, and the CLI says so rather than pretending it ran.",
+      },
+    ],
+  },
+  {
+    slug: "private-repos",
+    title: "Private repos, sources & webhooks",
+    description: "Encrypted credentials, server-generated deploy keys, auto-deploy hooks.",
+    group: "Core",
+    blocks: [
+      {
+        kind: "p",
+        text: "A source is a stored, AES-256-GCM encrypted credential for a Git provider or container registry. Services reference a source instead of embedding a token, so the same credential can be rotated once and picked up everywhere. Credentials are scrubbed from the working tree right after checkout and never appear in build logs.",
+      },
+      { kind: "h2", text: "Credential types" },
+      {
+        kind: "list",
+        items: [
+          "Provider token — a GitHub / GitLab / Bitbucket PAT. The panel can list the repositories and branches it can reach, and test proves the token still authenticates without deploying anything.",
+          "SSH deploy key — generated server-side as an ed25519 pair. The private half is encrypted into the source row and never leaves the server; you paste the returned public key into the provider's Deploy keys screen.",
+          "Registry credential — used for private Docker image pulls, per source.",
+        ],
+      },
+      {
+        kind: "code",
+        file: "shell",
+        body: `ninedeploy sources list
+ninedeploy sources add              # interactive: provider, token or deploy key
+ninedeploy sources test <id>        # live credential check
+ninedeploy sources deploy-key <id>  # generate an ed25519 pair, print the public half
+
+ninedeploy webhooks list <service>
+ninedeploy webhooks create <service>   # returns the URL + HMAC secret once`,
+      },
+      { kind: "h2", text: "Auto-deploy webhooks" },
+      {
+        kind: "p",
+        text: "Each service can own webhooks that trigger a deploy on push. The receiver verifies the HMAC signature in constant time, checks the branch, applies the manifest's watch.paths globs, and de-duplicates replayed deliveries. A push whose diff touches nothing in watch.paths is accepted and skipped rather than rebuilt.",
+      },
+      {
+        kind: "callout",
+        tone: "warn",
+        title: "The secret is shown once",
+        text: "Webhook secrets and generated private keys are never returned again after creation. Store the secret in your provider immediately; if you lose it, delete the webhook and create a new one.",
+      },
+      {
+        kind: "callout",
+        tone: "info",
+        title: "Fork PRs are not trusted",
+        text: "Pull-request preview environments reject invalid refs and external fork repositories before they can inherit the service's environment variables or enter the build queue.",
+      },
+    ],
+  },
+  {
     slug: "databases",
     title: "Managed databases",
     description: "Postgres (pgvector), MySQL, MariaDB, Redis, Valkey, ClickHouse, Meilisearch, RabbitMQ, Mongo.",

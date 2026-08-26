@@ -10,6 +10,77 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     version: '0.3.0',
+    date: '2026-08-26',
+    title: 'Tags, Volumes & The .ninedeploy Manifest',
+    changes: [
+      'Tags across three dimensions: a service belongs to many projects, workspaces and labels at once, and the top-bar filter composes all three (AND across groups, OR within one)',
+      "A Projects page and a Labels page manage the flat tag lists; a per-service Tags card edits one service's whole membership through PUT /v1/services/:id/tags",
+      'Per-service volume attachments: mount any number of managed Docker volumes at explicit container paths, read-only or read-write, with a uniqueness guard on both path and volume',
+      'Volume backups: snapshot, restore and download any managed volume, reusing the database backup destination for off-site copies and refusing to restore under a live service',
+      "`.ninedeploy` manifest: `ninedeploy manifest init|validate|show` scaffolds, schema-checks and prints the repo-side manifest, with the server's own secret scan rejecting credential-shaped values before they reach git (the deploy pipeline applies the file itself on every deploy; the on-demand `apply` endpoint is still pending)",
+      'Private repository deployment from the CLI: `ninedeploy sources` and `ninedeploy webhooks` manage encrypted credentials, server-generated SSH deploy keys and auto-deploy webhooks',
+      "Workspace invitations for addresses that have no account yet, accepted automatically on the invitee's next login or registration",
+      "Self-healing runtime state: every 60 seconds the panel revives stopped containers, a dead PM2 daemon and stopped PM2 processes instead of reporting a dead service as running",
+      "Fixed the upgrade that blocked every install from 0.2.2 onward — a boot-time column collided with its own later migration and the panel never started",
+      "Implemented the three managed-volume helpers the backup routes imported but that had never been written; the server package did not compile without them",
+      'Finished the service tagging migration in the services API, which still read the removed single-project column',
+      'An Organize navigation group makes Workspaces, Projects and the new Labels page reachable; projects had a route with no menu entry and labels had no management screen at all',
+      'Volume snapshots, restore and download are available for every volume from Data > Volumes, including retained volumes that belong to no service',
+      'The command palette indexes Manifest Creator, Workspaces, Projects, Labels, Networks, Traefik and Docker, and ranks label matches above type matches so a single letter no longer fills the result list with navigation entries',
+      'install.sh installs the published release tarball instead of cloning, resolves the newest tag through three independent sources, clears stale build output before rebuilding, and verifies the built version against the requested tag',
+    ],
+  },
+  {
+    version: '0.2.36',
+    date: '2026-08-20',
+    title: 'Legacy Provisioning Recovery',
+    changes: [
+      'Deployments stranded by the browser-owned provisioning flow from 0.2.34 are detected by their provisioning marker and requeued on worker startup, without waiting for the stale-deployment timeout',
+    ],
+  },
+  {
+    version: '0.2.35',
+    date: '2026-08-20',
+    title: 'Durable Hub Provisioning',
+    changes: [
+      'Services persist their trusted Hub template ID so the worker can reconstruct and reconcile required database dependencies after a process or host restart',
+      'Preparing a Hub service is now a durable queue operation: database startup, attachment, environment reconciliation and deployment continue even if the browser disconnects',
+      'Stale building deployments are requeued for idempotent recovery instead of being marked failed automatically',
+    ],
+  },
+  {
+    version: '0.2.34',
+    date: '2026-08-20',
+    title: 'Immediate Hub Handoff',
+    changes: [
+      'Pressing Deploy in a Hub modal prepares the service identity, closes the modal and navigates straight to the Deploys tab instead of waiting for image and database provisioning',
+      'The fast prepare response creates a building deployment row immediately so the Deployments tab can display and poll it while dependencies are provisioned',
+      'Provisioning continues in the background after navigation; completion and failure refresh service state and raise a toast without reopening the modal',
+    ],
+  },
+  {
+    version: '0.2.33',
+    date: '2026-08-20',
+    title: 'Dependency Readiness',
+    changes: [
+      'Runtime deployment recovers the trusted application-specific database mapping from the bundled template contract instead of falling back to localhost',
+      'A service whose attached database is not running fails before its application container starts, reporting the exact attachment readiness count instead of restart-looping',
+      'Deployment logs list the injected managed-database environment key names without exposing credential values',
+    ],
+  },
+  {
+    version: '0.2.32',
+    date: '2026-08-20',
+    title: 'Canonical Hub Provisioning',
+    changes: [
+      'The API owns service configuration, environment reconciliation, database startup, attachment and queueing as one ordered operation; the panel no longer coordinates them separately',
+      'Hub images, ports, mounts, commands, socket access and database mappings resolve exclusively from the trusted server registry and cannot be overridden by the panel request',
+      'Repeating an install with the same name reuses the caller-owned failed service, database, volume and attachment instead of creating duplicates',
+      'Directus, Ghost, Hasura, Matomo, Umami, Vikunja, WordPress and YOURLS all run through the same provisioning contract and regression suite',
+    ],
+  },
+  {
+    version: '0.2.31',
     date: '2026-08-20',
     title: 'Reliable Ghost Deployment',
     changes: [

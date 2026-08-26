@@ -1,9 +1,9 @@
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 import {
-  Activity, Cloud, Database, Globe, HardDrive, HelpCircle, KeyRound,
+  Activity, Building2, Cloud, Container, Database, FileCode, FolderKanban, Globe, HardDrive, HelpCircle, KeyRound,
   Layers, LayoutDashboard, type LucideIcon, Network, Rocket, Search, Server,
-  Settings as SettingsIcon, Sparkles, Users,
+  Settings as SettingsIcon, Shield, Sparkles, Tag, Users,
 } from 'lucide-react';
 import { useNavigate } from 'react-router';
 import { api } from '../lib/api.js';
@@ -22,10 +22,17 @@ const NAV_COMMANDS: Cmd[] = [
   { type: 'Navigate', label: 'Hub', sub: 'Template gallery', to: '/hub', icon: Sparkles },
   { type: 'Navigate', label: 'Dashboard', sub: 'Overview & health', to: '/', icon: LayoutDashboard },
   { type: 'Navigate', label: 'Services', sub: 'All services', to: '/services', icon: Server },
+  { type: 'Navigate', label: 'Manifest Creator', sub: 'Build a .ninedeploy manifest', to: '/manifest-creator', icon: FileCode },
+  { type: 'Navigate', label: 'Workspaces', sub: 'Tenants, members & invitations', to: '/workspaces', icon: Building2 },
+  { type: 'Navigate', label: 'Projects', sub: 'Group services by purpose', to: '/projects', icon: FolderKanban },
+  { type: 'Navigate', label: 'Labels', sub: 'Free-form service tags', to: '/labels', icon: Tag },
   { type: 'Navigate', label: 'Databases', sub: 'Managed databases', to: '/databases', icon: Database },
   { type: 'Navigate', label: 'Domains', sub: 'Domain routing & SSL', to: '/domains', icon: Globe },
   { type: 'Navigate', label: 'Tunnels', sub: 'Cloudflare tunnels', to: '/tunnels', icon: Cloud },
   { type: 'Navigate', label: 'Volumes', sub: 'Persistent storage', to: '/volumes', icon: Layers },
+  { type: 'Navigate', label: 'Networks', sub: 'Docker networks', to: '/networks', icon: Network },
+  { type: 'Navigate', label: 'Traefik', sub: 'Ingress, routers & middlewares', to: '/traefik', icon: Shield },
+  { type: 'Navigate', label: 'Docker', sub: 'Containers, images & system', to: '/docker', icon: Container },
   { type: 'Navigate', label: 'Topology', sub: 'Service graph', to: '/topology', icon: Network },
   { type: 'Navigate', label: 'Backups', sub: 'Database snapshots', to: '/backups', icon: HardDrive },
   { type: 'Navigate', label: 'Sources', sub: 'Private repo credentials', to: '/sources', icon: KeyRound },
@@ -82,9 +89,28 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
     const all = [...NAV_COMMANDS, ...dynamic];
     if (!query.trim()) return all.slice(0, 8);
     const q = query.toLowerCase();
+
+    // Rank before truncating. Every nav entry carries the type 'Navigate', so
+    // a bare type match makes single letters like "n" or "a" hit all of them
+    // at once — enough to fill the result cap and starve the service or
+    // template the operator was actually looking for. A label match therefore
+    // always outranks a description match, which outranks a type match.
+    const rank = (c: Cmd): number => {
+      const label = c.label.toLowerCase();
+      if (label.startsWith(q)) return 0;
+      if (label.includes(q)) return 1;
+      if (c.sub.toLowerCase().includes(q)) return 2;
+      if (c.type.toLowerCase().includes(q)) return 3;
+      return -1;
+    };
     return all
-      .filter((c) => c.label.toLowerCase().includes(q) || c.sub.toLowerCase().includes(q) || c.type.toLowerCase().includes(q))
-      .slice(0, 24);
+      .map((c) => ({ c, r: rank(c) }))
+      .filter((e) => e.r >= 0)
+      // Array.prototype.sort is stable, so entries of equal rank keep their
+      // declaration order (nav first, then services, databases, templates).
+      .sort((a, b) => a.r - b.r)
+      .slice(0, 24)
+      .map((e) => e.c);
   }, [query, services.data, databases.data, templates.data, plugins.data, menus.data]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: intentionally keyed on query — the selection must reset whenever the search text changes, even though the body only touches the setter.

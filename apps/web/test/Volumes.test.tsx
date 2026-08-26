@@ -38,6 +38,35 @@ describe('Volumes', () => {
     await waitFor(() => expect(screen.queryByLabelText('Close volume browser')).toBeNull());
   });
 
+  it('expands and collapses the snapshot panel for a retained volume', async () => {
+    mockOf(api.volumes.list).mockResolvedValue([volumes[2]] as never);
+    mockOf(api.volumeBackups.list).mockResolvedValue([] as never);
+    renderWithProviders(<Volumes />);
+
+    // A retained volume has no owning service, so its snapshots were
+    // previously unreachable from anywhere in the panel.
+    const toggle = await screen.findByLabelText('Snapshots for nd-old');
+    fireEvent.click(toggle);
+    expect(await screen.findByTestId('volume-backups-panel')).toBeInTheDocument();
+    await waitFor(() => expect(api.volumeBackups.list).toHaveBeenCalledWith('nd-old'));
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    await waitFor(() => expect(screen.queryByTestId('volume-backups-panel')).toBeNull());
+  });
+
+  it('collapses the snapshot panel when its own toggle is pressed again', async () => {
+    mockOf(api.volumes.list).mockResolvedValue([volumes[2]] as never);
+    mockOf(api.volumeBackups.list).mockResolvedValue([] as never);
+    renderWithProviders(<Volumes />);
+
+    const toggle = await screen.findByLabelText('Snapshots for nd-old');
+    fireEvent.click(toggle);
+    expect(await screen.findByTestId('volume-backups-panel')).toBeInTheDocument();
+    fireEvent.click(toggle);
+    await waitFor(() => expect(screen.queryByTestId('volume-backups-panel')).toBeNull());
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
   });

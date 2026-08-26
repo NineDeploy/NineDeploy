@@ -23,6 +23,10 @@ import {
   Shield,
   ShieldCheck,
   FolderTree,
+  FolderKanban,
+  Tag,
+  Layers,
+  Mail,
   Terminal as TerminalIcon,
   Waypoints,
 } from "lucide-react";
@@ -43,6 +47,11 @@ const groups: {
         icon: GitBranch,
         title: "Git, registry, or hub",
         body: "Clone with PAT or SSH deploy keys (scrubbed after checkout), pull from private registries with per-source credentials, or start from 15 runtime-certified templates.",
+      },
+      {
+        icon: FileCode,
+        title: ".ninedeploy manifest",
+        body: "Commit build, runtime, routing, storage and alert config next to the code. Panel > manifest > auto-detect, so the file is a project default rather than a hard override — and a secret scanner refuses any credential-shaped value before it reaches git.",
       },
       {
         icon: RotateCcw,
@@ -88,6 +97,16 @@ const groups: {
         icon: FileCode,
         title: "Live Container File Manager",
         body: "Direct in-browser container filesystem explorer with file editing, drag-and-drop upload/download, and volume inspection.",
+      },
+      {
+        icon: Layers,
+        title: "Per-Service Volume Attachments",
+        body: "A service mounts any number of managed Docker volumes at explicit container paths, read-only or read-write, with a uniqueness guard on both the path and the volume. Detaching unmounts — it never deletes the data.",
+      },
+      {
+        icon: HardDrive,
+        title: "Volume Snapshots & Restore",
+        body: "Snapshot, restore and download any managed volume. Snapshots run through a throwaway sidecar so a containerised panel never needs a path into the daemon's storage, reuse the database backup destination for off-site copies, and refuse to restore under a running service.",
       },
       {
         icon: Copy,
@@ -139,6 +158,21 @@ const groups: {
   {
     title: "System",
     items: [
+      {
+        icon: Tag,
+        title: "Tags Across Three Dimensions",
+        body: "A service belongs to many projects, workspaces and labels at once. The top-bar filter composes all three — OR within a dimension, AND across them — and the selection persists per browser.",
+      },
+      {
+        icon: FolderKanban,
+        title: "Projects & Labels Management",
+        body: "Flat, N-N project and label lists with their own pages: create, rename, recolour and delete without moving a single service. Shared project env vars resolve as the union of every project a service is linked to.",
+      },
+      {
+        icon: Mail,
+        title: "Workspace Invitations",
+        body: "Invite an address that has no account yet — the invitation is accepted automatically on the invitee's next login or registration.",
+      },
       {
         icon: Building2,
         title: "Workspaces & Team RBAC",

@@ -1,8 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
-  Activity, Building2, ChevronLeft, ChevronRight, Clock, Cloud, Container, Database, Globe, HardDrive,
-  FileCode, Info, KeyRound, Layers, LayoutDashboard, Moon, Network, Shield, type LucideIcon,
+  Activity, Building2, ChevronLeft, ChevronRight, Clock, Cloud, Container, Database, FolderKanban, Globe, HardDrive,
+  FileCode, Info, KeyRound, Layers, LayoutDashboard, Moon, Network, Shield, Tag, type LucideIcon,
   Rocket, Search, Server, Settings as SettingsIcon, Sparkles, Sun, Users, X,
 } from 'lucide-react';
 import { Link, Outlet, useLocation } from 'react-router';
@@ -37,6 +37,8 @@ export const ICON_MAP: Record<string, LucideIcon> = {
   sparkles: Sparkles,
   layers: Layers,
   users: Users,
+  tag: Tag,
+  folder: FolderKanban,
 };
 
 const GROUPS: NavGroup[] = [
@@ -46,6 +48,17 @@ const GROUPS: NavGroup[] = [
       { to: '/manifest-creator', label: 'Manifest Creator', icon: FileCode },
       { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
       { to: '/services', label: 'Services', icon: Server },
+    ],
+  },
+  {
+    // The three tag dimensions a service can belong to. Projects and labels
+    // used to have no navigation entry at all — projects were reachable only
+    // by typing the URL, and labels only as a side effect of the top-bar
+    // filter, which offered no way to rename, recolour or delete one.
+    id: 'organize', label: 'Organize', icon: FolderKanban, items: [
+      { to: '/workspaces', label: 'Workspaces', icon: Building2 },
+      { to: '/projects', label: 'Projects', icon: FolderKanban },
+      { to: '/labels', label: 'Labels', icon: Tag },
     ],
   },
   {
@@ -66,7 +79,6 @@ const GROUPS: NavGroup[] = [
   },
   {
     id: 'system', label: 'System', icon: SettingsIcon, items: [
-      { to: '/workspaces', label: 'Workspaces', icon: Building2 },
       { to: '/activity', label: 'Activity', icon: Clock },
       { to: '/monitoring', label: 'Monitoring', icon: Activity },
       { to: '/docker', label: 'Docker', icon: Container, advancedOnly: true },

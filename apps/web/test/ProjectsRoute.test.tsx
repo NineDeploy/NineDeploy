@@ -32,6 +32,23 @@ vi.mock('react-router', async () => {
   return { ...actual, useNavigate: () => navigate };
 });
 
+// Only `useTagScope` is replaced: `renderWithProviders` still mounts the real
+// `ProjectScopeProvider` from the same module.
+const tagScope = vi.hoisted(() => ({
+  workspaceIds: [] as number[],
+  projectIds: [] as number[],
+  labelIds: [] as number[],
+  setWorkspaceIds: vi.fn(),
+  setProjectIds: vi.fn(),
+  setLabelIds: vi.fn(),
+  clearAll: vi.fn(),
+  isFiltered: false,
+}));
+vi.mock('../src/lib/projects.js', async () => {
+  const actual = await vi.importActual<typeof import('../src/lib/projects.js')>('../src/lib/projects.js');
+  return { ...actual, useTagScope: () => tagScope };
+});
+
 const workspace = { id: 2, name: 'Core', slug: 'core', role: 'owner' };
 
 const project = (over: Record<string, unknown> = {}) => ({
@@ -89,10 +106,13 @@ describe('Projects route', () => {
     expect(screen.queryByText('Marketing site')).not.toBeInTheDocument();
   });
 
-  it('navigates to the scoped service list when a project name is clicked', async () => {
+  it('scopes the tag filter to the project and navigates to the service list', async () => {
     renderWithProviders(<Projects />);
     fireEvent.click(await screen.findByText('Acme Web'));
-    expect(navigate).toHaveBeenCalledWith('/services?projectId=1');
+    // `/services` reads its filter from the shared tag scope, not from a
+    // query string — a `?projectId=` link would navigate but not filter.
+    expect(tagScope.setProjectIds).toHaveBeenCalledWith([1]);
+    expect(navigate).toHaveBeenCalledWith('/services');
   });
 
   it('scopes the query to the active workspace', async () => {

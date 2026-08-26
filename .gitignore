@@ -59,3 +59,8 @@ security-report/
 
 *.txt
 *.tar.gz
+
+# Coverage artifacts (v8 json reporter scratch output)
+cov-json/
+cov-json2/
+coverage/
