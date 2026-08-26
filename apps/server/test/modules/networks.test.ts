@@ -31,7 +31,7 @@ describe('networks module', () => {
     const res = await a.inject({ method: 'GET', url: '/', headers: asUser() });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({
-      networks: [{ name: 'net-a', driver: 'bridge', members: ['c-1', 'c-2'] }],
+      networks: [{ name: 'net-a', driver: 'bridge', members: ['c-1', 'c-2'], isManaged: false }],
       remote: null,
     });
   });
@@ -166,18 +166,21 @@ describe('networks module', () => {
     const a = await app();
     await a.register(networkRoutes);
     const res = await a.inject({ method: 'GET', url: '/', headers: asUser() });
-    expect(res.json().networks).toEqual([{ name: 'net-a', driver: 'bridge', members: [] }]);
+    expect(res.json().networks).toEqual([{ name: 'net-a', driver: 'bridge', members: [], isManaged: false }]);
   });
 
-  it('tolerates inventory failures while listing and deleting', async () => {
+  it('tolerates inventory failures while listing and surfaces docker remove errors as 409', async () => {
     inventoryMocks.listUserNetworks.mockRejectedValueOnce(new Error('docker down'));
     const a = await app();
     await a.register(networkRoutes);
     const listed = await a.inject({ method: 'GET', url: '/', headers: asUser() });
     expect(listed.json()).toEqual({ networks: [], remote: null });
-    execMocks.run.mockRejectedValueOnce(new Error('in use'));
+    // A real docker error (e.g. "has active endpoints") must be surfaced, not
+    // swallowed — the operator needs to know *why* the remove failed.
+    execMocks.run.mockRejectedValueOnce(new Error('has active endpoints'));
     const removed = await a.inject({ method: 'DELETE', url: '/net-a', headers: asUser() });
-    expect(removed.statusCode).toBe(200);
+    expect(removed.statusCode).toBe(409);
+    expect(removed.json().error.message).toBe('has active endpoints');
   });
 
   it('converts agent failures into 400s', async () => {
@@ -214,5 +217,96 @@ describe('networks module', () => {
   it('validates docker name operands', () => {
     expect(isValidNetworkName('net-1')).toBe(true);
     expect(isValidNetworkName('-bad')).toBe(false);
+  });
+
+  it('rejects deletion of the managed ninedeploy network on the local path', async () => {
+    const a = await app();
+    await a.register(networkRoutes);
+    const res = await a.inject({ method: 'DELETE', url: '/ninedeploy', headers: asUser() });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.message).toMatch(/managed by NineDeploy/);
+    expect(execMocks.run).not.toHaveBeenCalledWith('docker', ['network', 'rm', 'ninedeploy'], expect.anything(), expect.anything());
+  });
+
+  it('rejects deletion of any per-service nd-svc-* bridge (Model B managed mesh)', async () => {
+    const a = await app();
+    await a.register(networkRoutes);
+    agentMocks.agentOp.mockClear();
+    execMocks.run.mockClear();
+    const res = await a.inject({ method: 'DELETE', url: '/nd-svc-my-app', headers: asUser() });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.message).toMatch(/managed by NineDeploy/);
+    expect(execMocks.run).not.toHaveBeenCalledWith('docker', ['network', 'rm', 'nd-svc-my-app'], expect.anything(), expect.anything());
+    expect(agentMocks.agentOp).not.toHaveBeenCalled();
+  });
+
+  it('rejects deletion of the managed ninedeploy network on the remote (agent) path', async () => {
+    const a = await app();
+    await a.register(networkRoutes);
+    agentMocks.agentOp.mockClear();
+    const res = await a.inject({ method: 'DELETE', url: '/ninedeploy?serverId=3', headers: asUser() });
+    expect(res.statusCode).toBe(409);
+    expect(agentMocks.agentOp).not.toHaveBeenCalled();
+  });
+
+  it('rejects attaching a managed container to a user network', async () => {
+    const a = await app();
+    await a.register(networkRoutes);
+    const res = await a.inject({
+      method: 'POST',
+      url: '/attach',
+      headers: { ...asUser(), 'x-role': 'admin' },
+      payload: { network: 'mesh', container: 'nd-svc-api-1' },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.message).toMatch(/managed by NineDeploy/);
+    expect(execMocks.run).not.toHaveBeenCalledWith(
+      'docker', ['network', 'connect', 'mesh', 'nd-svc-api-1'], expect.anything(), expect.anything(),
+    );
+  });
+
+  it('rejects detaching a managed database container from a user network', async () => {
+    const a = await app();
+    await a.register(networkRoutes);
+    agentMocks.agentOp.mockClear();
+    const res = await a.inject({
+      method: 'POST',
+      url: '/detach',
+      headers: { ...asUser(), 'x-role': 'admin' },
+      payload: { network: 'mesh', container: 'nd-db-pg-1', serverId: 5 },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(agentMocks.agentOp).not.toHaveBeenCalled();
+  });
+
+  it('rejects creating a network that shadows the managed mesh', async () => {
+    const a = await app();
+    await a.register(networkRoutes);
+    const res = await a.inject({
+      method: 'POST',
+      url: '/',
+      headers: { ...asUser(), 'x-role': 'admin' },
+      payload: { name: 'ninedeploy', driver: 'bridge' },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.message).toMatch(/reserved by NineDeploy/);
+    expect(execMocks.run).not.toHaveBeenCalledWith(
+      'docker', ['network', 'create', expect.anything()], expect.anything(), expect.anything(),
+    );
+  });
+
+  it('still allows attaching user-owned containers to user networks', async () => {
+    const a = await app();
+    await a.register(networkRoutes);
+    const res = await a.inject({
+      method: 'POST',
+      url: '/attach',
+      headers: { ...asUser(), 'x-role': 'admin' },
+      payload: { network: 'mesh', container: 'user-nginx-1' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(execMocks.run).toHaveBeenCalledWith(
+      'docker', ['network', 'connect', 'mesh', 'user-nginx-1'], expect.anything(), expect.anything(),
+    );
   });
 });

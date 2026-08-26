@@ -4,7 +4,12 @@ import { run } from '../lib/exec.js';
 import { agentOp } from '../lib/agentClient.js';
 import { listUserNetworks, networkMembers } from '../lib/inventory.js';
 import { audit } from '../lib/audit.js';
-import { badRequest } from '../lib/errors.js';
+import { badRequest, conflict } from '../lib/errors.js';
+import {
+  ManagedNamespaceError,
+  isManagedContainer,
+  isManagedNetwork,
+} from '../lib/managedNamespace.js';
 
 const noop = (): void => undefined;
 
@@ -30,6 +35,34 @@ const attachBody = z.object({
   serverId: z.number().int().positive().nullish(),
 });
 
+/**
+ * Reject the request when the given network or container is NineDeploy-managed.
+ * Throws `conflict()` (→ 409) so the UI surfaces a clear "protected" error
+ * instead of the docker CLI's generic "has active endpoints" message.
+ */
+function guardManaged(network: string, container?: string): void {
+  if (isManagedNetwork(network)) {
+    throw new ManagedNamespaceError(
+      'network',
+      network,
+      `Network '${network}' is managed by NineDeploy and cannot be removed or detached.`,
+    );
+  }
+  if (container && isManagedContainer(container)) {
+    throw new ManagedNamespaceError(
+      'container',
+      container,
+      `Container '${container}' is managed by NineDeploy and cannot be attached/detached from user networks.`,
+    );
+  }
+}
+
+/** Map a ManagedNamespaceError to a 409 — other errors pass through. */
+function rethrowManaged(err: unknown): never {
+  if (err instanceof ManagedNamespaceError) throw conflict(err.message);
+  throw err;
+}
+
 /** Docker network management UI backend. Mounted under /networks. */
 export const networkRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('onRequest', app.authenticate);
@@ -48,6 +81,7 @@ export const networkRoutes: FastifyPluginAsync = async (app) => {
     const withMembers = await Promise.all(
       networks.map(async (n) => ({
         ...n,
+        isManaged: isManagedNetwork(n.name),
         members: await networkMembers(n.name).catch(() => []),
       })),
     );
@@ -56,13 +90,22 @@ export const networkRoutes: FastifyPluginAsync = async (app) => {
 
   app.post('/', { preHandler: app.requireAdmin }, async (req) => {
     const input = createBody.parse(req.body);
-    if (input.serverId != null) {
-      await agentOr400(agentOp(app.db, input.serverId, 'docker.networkCreate', {
-        name: input.name,
-        driver: input.driver,
-      }, noop));
-    } else {
-      await run('docker', ['network', 'create', '--driver', input.driver, input.name], {}, noop);
+    // Never let a user shadow the managed mesh by creating a network with the
+    // same name — Docker would refuse, but we want a clear panel-side error.
+    if (isManagedNetwork(input.name)) {
+      throw conflict(`Network '${input.name}' is reserved by NineDeploy.`);
+    }
+    try {
+      if (input.serverId != null) {
+        await agentOr400(agentOp(app.db, input.serverId, 'docker.networkCreate', {
+          name: input.name,
+          driver: input.driver,
+        }, noop));
+      } else {
+        await run('docker', ['network', 'create', '--driver', input.driver, input.name], {}, noop);
+      }
+    } catch (err) {
+      rethrowManaged(err);
     }
     void audit(app.db, req.user!.id, 'network.create', input.name, { driver: input.driver });
     return { ok: true, name: input.name };
@@ -73,9 +116,32 @@ export const networkRoutes: FastifyPluginAsync = async (app) => {
     if (!RE_NAME.test(name)) throw badRequest('Invalid network name');
     const serverId = Number((req.query as { serverId?: string }).serverId);
     if (Number.isInteger(serverId) && serverId > 0) {
-      await agentOr400(agentOp(app.db, serverId, 'docker.networkRm', { name }, noop));
+      try {
+        guardManaged(name);
+        await agentOr400(agentOp(app.db, serverId, 'docker.networkRm', { name }, noop));
+      } catch (err) {
+        if (err instanceof ManagedNamespaceError) {
+          void audit(app.db, req.user!.id, 'network.delete.blocked', name, { reason: err.message, serverId });
+          throw conflict(err.message);
+        }
+        // Surface the real docker/agent error so the operator sees *why* the
+        // network could not be removed (active endpoints, not found, etc.).
+        throw badRequest(err instanceof Error ? err.message : 'network remove failed');
+      }
     } else {
-      await run('docker', ['network', 'rm', name], {}, noop).catch(() => undefined);
+      try {
+        guardManaged(name);
+        await run('docker', ['network', 'rm', name], {}, noop);
+      } catch (err) {
+        if (err instanceof ManagedNamespaceError) {
+          void audit(app.db, req.user!.id, 'network.delete.blocked', name, { reason: err.message });
+          throw conflict(err.message);
+        }
+        // "has active endpoints" is the common case — surface it as 409 so the
+        // UI can show a "detach the containers first" hint rather than a
+        // generic 500.
+        throw conflict(err instanceof Error ? err.message : 'network remove failed');
+      }
     }
     void audit(app.db, req.user!.id, 'network.delete', name);
     return { ok: true };
@@ -84,13 +150,25 @@ export const networkRoutes: FastifyPluginAsync = async (app) => {
   // Attach / detach a container to/from a network.
   app.post('/attach', { preHandler: app.requireAdmin }, async (req) => {
     const input = attachBody.parse(req.body);
-    if (input.serverId != null) {
-      await agentOr400(agentOp(app.db, input.serverId, 'docker.networkConnect', {
-        network: input.network,
-        container: input.container,
-      }, noop));
-    } else {
-      await run('docker', ['network', 'connect', input.network, input.container], {}, noop);
+    try {
+      guardManaged(input.network, input.container);
+      if (input.serverId != null) {
+        await agentOr400(agentOp(app.db, input.serverId, 'docker.networkConnect', {
+          network: input.network,
+          container: input.container,
+        }, noop));
+      } else {
+        await run('docker', ['network', 'connect', input.network, input.container], {}, noop);
+      }
+    } catch (err) {
+      if (err instanceof ManagedNamespaceError) {
+        void audit(app.db, req.user!.id, 'network.attach.blocked', `${input.container} → ${input.network}`, {
+          reason: err.message,
+          serverId: input.serverId,
+        });
+        throw conflict(err.message);
+      }
+      rethrowManaged(err);
     }
     void audit(app.db, req.user!.id, 'network.attach', `${input.container} → ${input.network}`);
     return { ok: true };
@@ -98,13 +176,25 @@ export const networkRoutes: FastifyPluginAsync = async (app) => {
 
   app.post('/detach', { preHandler: app.requireAdmin }, async (req) => {
     const input = attachBody.parse(req.body);
-    if (input.serverId != null) {
-      await agentOr400(agentOp(app.db, input.serverId, 'docker.networkDisconnect', {
-        network: input.network,
-        container: input.container,
-      }, noop));
-    } else {
-      await run('docker', ['network', 'disconnect', input.network, input.container], {}, noop);
+    try {
+      guardManaged(input.network, input.container);
+      if (input.serverId != null) {
+        await agentOr400(agentOp(app.db, input.serverId, 'docker.networkDisconnect', {
+          network: input.network,
+          container: input.container,
+        }, noop));
+      } else {
+        await run('docker', ['network', 'disconnect', input.network, input.container], {}, noop);
+      }
+    } catch (err) {
+      if (err instanceof ManagedNamespaceError) {
+        void audit(app.db, req.user!.id, 'network.detach.blocked', `${input.container} ↮ ${input.network}`, {
+          reason: err.message,
+          serverId: input.serverId,
+        });
+        throw conflict(err.message);
+      }
+      rethrowManaged(err);
     }
     void audit(app.db, req.user!.id, 'network.detach', `${input.container} ↮ ${input.network}`);
     return { ok: true };
@@ -113,7 +203,7 @@ export const networkRoutes: FastifyPluginAsync = async (app) => {
   // Member listing for one network (used by the attach/detach UI). Admin-only
   // like GET /networks above: container names on a network map out the whole
   // instance's inventory.
-  app.get('/:name/members', { preHandler: app.requireAdmin }, async (req) => {
+  app.get('/:name/members', { preHandler: [app.requireAdmin] }, async (req) => {
     const name = String((req.params as { name: string }).name);
     if (!RE_NAME.test(name)) throw badRequest('Invalid network name');
     try {
