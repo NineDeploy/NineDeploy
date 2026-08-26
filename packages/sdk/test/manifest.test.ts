@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import yaml from 'js-yaml';
+import { recommendedRuntimeVersion, runtimeVersionAdvisory } from '@ninedeploy/schemas';
 import {
   detectProjectKind,
   formatManifestYaml,
@@ -352,28 +353,40 @@ describe('detectProjectKind', () => {
 });
 
 describe('starterManifest', () => {
-  it('returns a Node 20 manifest for node-npm', () => {
+  // Versions are asserted against the runtime catalog rather than literals:
+  // these starters exist to track the recommended pin, so hard-coding a
+  // number here would just recreate the drift the catalog was added to stop.
+  it('pins the recommended Node version for node-npm', () => {
     const m = starterManifest('node-npm');
     expect(m.runtime?.type).toBe('node');
-    expect(m.runtime?.version).toBe('20');
+    expect(m.runtime?.version).toBe(recommendedRuntimeVersion('node'));
     expect(m.build?.install).toBe('npm ci');
   });
 
   it('uses pnpm commands for node-pnpm', () => {
     const m = starterManifest('node-pnpm');
     expect(m.build?.install).toBe('pnpm install --frozen-lockfile');
+    expect(m.runtime?.version).toBe(recommendedRuntimeVersion('node'));
   });
 
-  it('declares Python 3.12 for python projects', () => {
+  it('pins the recommended Python version for python projects', () => {
     const m = starterManifest('python');
     expect(m.runtime?.type).toBe('python');
-    expect(m.runtime?.version).toBe('3.12');
+    expect(m.runtime?.version).toBe(recommendedRuntimeVersion('python'));
   });
 
-  it('declares Go 1.22 for go projects', () => {
+  it('pins the recommended Go version for go projects', () => {
     const m = starterManifest('go');
     expect(m.runtime?.type).toBe('go');
-    expect(m.runtime?.version).toBe('1.22');
+    expect(m.runtime?.version).toBe(recommendedRuntimeVersion('go'));
+  });
+
+  it('never pins a version that is already end-of-life', () => {
+    for (const kind of ['node-npm', 'node-pnpm', 'python', 'go'] as const) {
+      const runtime = starterManifest(kind).runtime;
+      const advisory = runtimeVersionAdvisory(runtime?.type ?? 'auto', runtime?.version);
+      expect(advisory).toBeNull();
+    }
   });
 
   it('declares a static SPA config for vite-style projects', () => {

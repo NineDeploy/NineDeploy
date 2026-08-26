@@ -1,5 +1,9 @@
 import yaml from 'js-yaml';
-import { ninedeployManifest, type NinedeployManifest } from '@ninedeploy/schemas';
+import {
+  ninedeployManifest,
+  recommendedRuntimeVersion,
+  type NinedeployManifest,
+} from '@ninedeploy/schemas';
 
 /**
  * Parse a raw `.ninedeploy` YAML string into a typed object.
@@ -262,17 +266,33 @@ export function detectProjectKind(files: ReadonlyArray<string>): ProjectKind {
 }
 
 /**
+ * Read a recommended version out of `RUNTIME_VERSION_CATALOG`. Throws rather
+ * than falling back to an unpinned runtime: a starter that silently stopped
+ * pinning a version would be a far subtler bug than a loud one.
+ */
+function pin(type: 'node' | 'python' | 'go'): string {
+  const version = recommendedRuntimeVersion(type);
+  /* c8 ignore next -- unreachable: the catalog always carries these three. */
+  if (!version) throw new Error(`runtime catalog has no recommended version for "${type}"`);
+  return version;
+}
+
+/**
  * Produce a starter `.ninedeploy` for a given project kind. The result is
- * opinionated: it pins Node 20 (current LTS), uses the manifest to declare
- * a domain placeholder, and sets sensible defaults. The operator is
+ * opinionated: it pins the recommended runtime version, uses the manifest to
+ * declare a domain placeholder, and sets sensible defaults. The operator is
  * expected to edit the file before committing.
+ *
+ * Versions are never written literally here — they come from the runtime
+ * catalog in `@ninedeploy/schemas`, the one place they are maintained, so the
+ * CLI and the web Manifest Creator can never disagree about what "current" means.
  */
 export function starterManifest(kind: ProjectKind): NinedeployManifest {
   switch (kind) {
     case 'node-npm':
       return {
         version: '1',
-        runtime: { type: 'node', version: '20' },
+        runtime: { type: 'node', version: pin('node') },
         build: { install: 'npm ci', build: 'npm run build', start: 'npm start' },
         run: { port: 3000, restart: 'unless-stopped' },
         routes: [{ host: 'app.example.com', path: '/', ssl: true }],
@@ -280,21 +300,21 @@ export function starterManifest(kind: ProjectKind): NinedeployManifest {
     case 'node-pnpm':
       return {
         version: '1',
-        runtime: { type: 'node', version: '20' },
+        runtime: { type: 'node', version: pin('node') },
         build: { install: 'pnpm install --frozen-lockfile', build: 'pnpm build', start: 'pnpm start' },
         run: { port: 3000, restart: 'unless-stopped' },
       };
     case 'python':
       return {
         version: '1',
-        runtime: { type: 'python', version: '3.12' },
+        runtime: { type: 'python', version: pin('python') },
         build: { install: 'pip install -r requirements.txt', start: 'python main.py' },
         run: { port: 8000, restart: 'unless-stopped' },
       };
     case 'go':
       return {
         version: '1',
-        runtime: { type: 'go', version: '1.22' },
+        runtime: { type: 'go', version: pin('go') },
         build: { build: 'go build -o app .', start: './app' },
         run: { port: 8080, restart: 'unless-stopped' },
       };

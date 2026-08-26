@@ -1,4 +1,4 @@
-export const VERSION = '0.3.1';
+export const VERSION = '0.3.2';
 
 export interface ChangelogEntry {
   version: string;
@@ -8,6 +8,19 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.3.2',
+    date: '2026-08-26',
+    title: 'Honest Runtimes',
+    changes: [
+      'Manifest Creator presets pinned Node 20, Python 3.12 and Go 1.22 — all three lost upstream support months ago; the defaults are now Node 24 (Active LTS), Python 3.14 and Go 1.27, plus Ruby, PHP, Java and Rust',
+      'Every version NineDeploy suggests now comes from one curated catalog in @ninedeploy/schemas instead of literals duplicated across the panel and the CLI, and the catalog records the date it was last reviewed so staleness is visible',
+      'The Version field is a picker showing each version with its support status; end-of-life and security-only versions stay selectable — reproducing a legacy runtime is a real need — but carry an advisory naming the recommended pin',
+      "The manifest's build sections (runtime, phases, build) are not applied at build time: the pipeline applies only routes, alerts and database. The docs and the Runtime section now say so instead of implying a pin that never happens",
+      'Every runtime pin the nixpacks.toml generator produced was broken — wrong nixpkgs attribute names for Go and Ruby, nonsense for any patch-level pin, and a package list that replaced the provider toolchain instead of extending it',
+      'Version pins now go only through the provider environment variables Nixpacks 1.41.0 actually reads, and a pin it cannot honour returns a specific warning rather than silently building a different version',
+    ],
+  },
   {
     version: '0.3.1',
     date: '2026-08-26',

@@ -8,10 +8,12 @@ import { generateNixpacksToml } from '../../src/lib/ninedeployToNixpacks.js';
 import type { BuildConfig } from '@ninedeploy/db';
 
 /**
- * End-to-end test of the manifest → build pipeline that the docker builder
- * will use in production. Stands in for an integration test of the builder
- * itself, which would require mocking every docker call; this exercises
- * the same chain at module boundaries, with real filesystem I/O.
+ * End-to-end test of the manifest → build chain: load, apply, generate.
+ *
+ * Note this chain is not yet wired into a deploy — the pipeline applies only
+ * the manifest's operational sections, and the docker builder writes no
+ * nixpacks.toml. The test pins the contract each module exposes so that
+ * wiring it up later is a small, verifiable step rather than a rewrite.
  */
 describe('manifest chain (load → apply → toml)', () => {
   let workDir: string;
@@ -66,16 +68,18 @@ build:
     expect(effective.buildCmd).toBe('npm run build');
     expect(effective.startCmd).toBe('node server.js');
 
-    // Step 3: write nixpacks.toml the way the docker builder will.
-    const toml = generateNixpacksToml(loaded!.manifest);
-    expect(toml).not.toBeNull();
+    // Step 3: generate the nixpacks.toml a builder would write.
+    const result = generateNixpacksToml(loaded!.manifest);
+    expect(result.toml).not.toBeNull();
+    expect(result.warnings).toEqual([]);
     const tomlPath = path.join(workDir, 'nixpacks.toml');
-    writeFileSync(tomlPath, toml!);
+    writeFileSync(tomlPath, result.toml!);
     const onDisk = readFileSync(tomlPath, 'utf8');
 
     // Step 4: assert the on-disk nixpacks.toml matches the Nixpacks schema.
-    expect(onDisk).toContain('[phases.setup]');
-    expect(onDisk).toContain('"nodejs_20"');
+    // No [phases.setup]: the toolchain is the provider's job, and naming it
+    // here would replace the provider's package list rather than extend it.
+    expect(onDisk).not.toContain('[phases.setup]');
     expect(onDisk).toContain('[phases.install]');
     expect(onDisk).toContain('"npm ci"');
     expect(onDisk).toContain('[phases.build]');
@@ -145,6 +149,6 @@ watch:
 `,
     );
     const loaded = loadNinedeployManifest(workDir);
-    expect(generateNixpacksToml(loaded!.manifest)).toBeNull();
+    expect(generateNixpacksToml(loaded!.manifest).toml).toBeNull();
   });
 });

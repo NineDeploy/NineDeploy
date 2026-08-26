@@ -7,9 +7,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { recommendedRuntimeVersion } from '@ninedeploy/schemas';
 import { ManifestCreator } from '../src/routes/ManifestCreator.js';
 import { createQueryClient, renderWithProviders } from './web-utils.js';
 import './web-utils.js';
+
+/**
+ * Preset labels carry the recommended version, so they are derived from the
+ * runtime catalog rather than spelled out — a version bump should not need a
+ * test edit.
+ */
+const NODE_NPM_PRESET = `Node ${recommendedRuntimeVersion('node')} (npm)`;
 
 /** Render the page with both Router + QueryClient providers. */
 function renderPage(initialRoute = '/manifest-creator') {
@@ -40,19 +48,19 @@ describe('ManifestCreator', () => {
   it('renders the page header and a preset selector', () => {
     renderPage();
     expect(screen.getByText('Manifest Creator')).toBeInTheDocument();
-    expect(screen.getByText('Node 20 (npm)')).toBeInTheDocument();
+    expect(screen.getByText(NODE_NPM_PRESET)).toBeInTheDocument();
     expect(screen.getByText('Blank')).toBeInTheDocument();
   });
 
   it('replaces the form state when a preset is clicked', async () => {
     const user = userEvent.setup();
     renderPage();
-    await user.click(screen.getByText('Node 20 (npm)'));
-    // The version field's value is now "20" — the runtime version pin
-    // declared in the preset. Placeholder is still set on the input, so
-    // check the value attribute, not the placeholder presence.
-    const versionInput = screen.getByPlaceholderText(/leave empty to let Nixpacks/);
-    expect((versionInput as HTMLInputElement).value).toBe('20');
+    await user.click(screen.getByText(NODE_NPM_PRESET));
+    // The preset pins a version the catalog knows, so the runtime section
+    // shows it selected in the version picker rather than in the free-text
+    // escape hatch (which only appears for versions outside the catalog).
+    const versionSelect = screen.getByLabelText('Runtime version') as HTMLSelectElement;
+    expect(versionSelect.value).toBe(recommendedRuntimeVersion('node'));
   });
 
   it('switches the active section when a nav button is clicked', async () => {
@@ -112,11 +120,12 @@ describe('ManifestCreator', () => {
   it('persists the draft to localStorage on every change', async () => {
     const user = userEvent.setup();
     renderPage();
-    await user.click(screen.getByText('Node 20 (npm)'));
+    const nodeVersion = recommendedRuntimeVersion('node');
+    await user.click(screen.getByText(NODE_NPM_PRESET));
     const stored = window.localStorage.getItem('ninedeploy.manifest.draft');
     expect(stored).toBeTruthy();
     expect(JSON.parse(stored ?? '{}')).toMatchObject({
-      runtime: { type: 'node', version: '20' },
+      runtime: { type: 'node', version: nodeVersion },
     });
   });
 
@@ -147,7 +156,7 @@ describe('ManifestCreator', () => {
       return el;
     });
     renderPage();
-    await user.click(screen.getByText('Node 20 (npm)'));
+    await user.click(screen.getByText(NODE_NPM_PRESET));
     await user.click(screen.getByRole('button', { name: /Download/ }));
     expect(anchorClickCount).toBeGreaterThan(0);
     createElementSpy.mockRestore();
@@ -161,7 +170,7 @@ describe('ManifestCreator', () => {
       value: { writeText },
     });
     renderPage();
-    await user.click(screen.getByText('Node 20 (npm)'));
+    await user.click(screen.getByText(NODE_NPM_PRESET));
     await user.click(screen.getByRole('button', { name: /Copy YAML/ }));
     expect(writeText).toHaveBeenCalled();
     // The copied text is the manifest YAML; verify a known preset value
@@ -172,7 +181,7 @@ describe('ManifestCreator', () => {
   it('resets the manifest to a clean empty state when Reset is clicked', async () => {
     const user = userEvent.setup();
     renderPage();
-    await user.click(screen.getByText('Node 20 (npm)'));
+    await user.click(screen.getByText(NODE_NPM_PRESET));
     await user.click(screen.getByRole('button', { name: /Build section/ }));
     expect(screen.getByText(/Install command/)).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /Reset/ }));
@@ -276,14 +285,15 @@ describe('ManifestCreator', () => {
     const user = userEvent.setup();
     renderPage();
     // Apply the Go preset, then open the preview and verify key fields appear.
-    await user.click(screen.getByText('Go 1.22'));
+    const goVersion = recommendedRuntimeVersion('go');
+    await user.click(screen.getByText(`Go ${goVersion}`));
     await user.click(screen.getByRole('button', { name: /Preview/ }));
     await waitFor(() => {
       const text = document.body.textContent ?? '';
-      // The YAML is the project-side manifest only — the nixpacks.toml
-      // is generated server-side, so the runtime section is "type: go, version: 1.22".
+      // The YAML is the project-side manifest only — the nixpacks.toml is
+      // generated server-side, so the runtime section is just type + version.
       expect(text).toMatch(/type: go/);
-      expect(text).toMatch(/version: "1.22"/);
+      expect(text).toContain(`version: "${goVersion}"`);
       expect(text).toMatch(/start: \.\/app/);
     });
   });
@@ -307,7 +317,7 @@ describe('ManifestCreator', () => {
   it('renders a copy of the preview modal when the header Preview button is clicked', async () => {
     const user = userEvent.setup();
     renderPage();
-    await user.click(screen.getByText('Node 20 (npm)'));
+    await user.click(screen.getByText(NODE_NPM_PRESET));
     // Open and re-open the modal to exercise the open/close cycle.
     await user.click(screen.getByRole('button', { name: /Preview/ }));
     await waitFor(() => {
@@ -387,7 +397,7 @@ describe('ManifestCreator', () => {
       return el;
     });
     renderPage();
-    await user.click(screen.getByText('Node 20 (npm)'));
+    await user.click(screen.getByText(NODE_NPM_PRESET));
     await user.click(screen.getByRole('button', { name: /Preview/ }));
     // The modal has a Download button.
     const downloadButtons = screen.getAllByRole('button', { name: /Download/ });

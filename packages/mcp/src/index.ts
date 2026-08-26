@@ -21,7 +21,7 @@ export function buildServer(
   warn: (msg: string) => void = console.error,
   options: { readOnly?: boolean } = {},
 ): McpServer {
-  const server = new McpServer({ name: 'ninedeploy', version: '0.3.1' });
+  const server = new McpServer({ name: 'ninedeploy', version: '0.3.2' });
 
   const tools = options.readOnly ? TOOLS.filter((tool) => READ_ONLY_TOOL_NAMES.has(tool.name)) : TOOLS;
   for (const tool of tools) {

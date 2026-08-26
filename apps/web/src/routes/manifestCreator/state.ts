@@ -83,7 +83,7 @@ export const SECTIONS: readonly ManifestSection[] = [
   {
     id: 'runtime',
     label: 'Runtime',
-    blurb: 'Language + version (Node 20, Python 3.12, …)',
+    blurb: 'Language + version pin (Node, Python, Go, …)',
     isFilled: (m) => m.runtime != null,
   },
   {

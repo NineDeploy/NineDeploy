@@ -270,7 +270,7 @@ export function Layout({
                   <div className="px-4 py-2.5 bg-[#eef3f8] dark:bg-[#06090e] border-t-2 border-edge dark:border-line flex items-center justify-between gap-4 font-mono text-xs">
                     <span className="text-[#4a5c73] dark:text-zinc-400 flex items-center gap-2">
                       <span className="w-1.5 h-1.5 rounded-full bg-phosphor-dim animate-pulse" />
-                      21 documentation guides · v0.3.1 GA
+                      21 documentation guides · v0.3.2 GA
                     </span>
                     <DropdownMenu.Item asChild>
                       <Link
@@ -388,7 +388,7 @@ export function Layout({
             <div className="tag mb-3">status</div>
             <ul className="space-y-2 text-[#4a5c73] dark:text-zinc-400">
               <li className="flex items-center gap-2">
-                <span className="w-2 h-2 bg-phosphor-dim animate-pulse" /> v0.3.1 GA
+                <span className="w-2 h-2 bg-phosphor-dim animate-pulse" /> v0.3.2 GA
               </li>
               <li>4,405 tests in CI</li>
               <li>SQLite core · Zero external DB</li>

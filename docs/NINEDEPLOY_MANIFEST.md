@@ -79,15 +79,69 @@ version: "1"
 
 ### 4.1 `runtime` — Language & Version
 
+> **Not applied at build time yet.** The deploy pipeline reads `.ninedeploy` and
+> applies its *operational* sections — `routes`, `alerts`, `database` — on every
+> deploy. The *build* sections (`runtime`, `phases`, `build`) are parsed and
+> validated but not yet handed to the builder: `engine/builders/docker.ts`
+> invokes the Nixpacks CLI with `--install-cmd` / `--build-cmd` / `--start-cmd`
+> and writes no `nixpacks.toml`. `generateNixpacksToml` exists and is tested,
+> but nothing calls it. Declare `runtime` for documentation and forward
+> compatibility; to pin a version today, use the mechanism your ecosystem
+> already has (`.nvmrc`, `go.mod`, `composer.json`, `.ruby-version`).
+
 Pins the language runtime Nixpacks should install. `version` is `<major>` or `<major>.<minor>` or `<major>.<minor>.<patch>`.
 
 ```yaml
 runtime:
   type: node          # auto | node | python | go | ruby | php | java | rust | static
-  version: "20"       # optional; 20 / 20.18 / 3.12 are all valid
+  version: "24"       # optional; 24 / 24.4 / 3.14 are all valid
 ```
 
 When `type` is `static`, use the `static` section instead of `build`/`run` — see §4.4.
+
+**Which version to pin.** The schema accepts any numeric version, including
+ones that have gone end-of-life — reproducing a legacy runtime is a valid
+reason to deploy one. What NineDeploy *recommends* lives in a single curated
+table, `RUNTIME_VERSION_CATALOG` in `@ninedeploy/schemas`
+([`packages/schemas/src/runtimeVersions.ts`](../packages/schemas/src/runtimeVersions.ts)).
+Everything that suggests a version reads from it: the Manifest Creator's
+presets and version picker, and the CLI's `starterManifest`. The picker shows
+each version's upstream support state and warns — without blocking — when the
+pinned version is security-only or end-of-life.
+
+Recommended pins as of 2026-08-26:
+
+| Runtime | Recommended | Why |
+| --- | --- | --- |
+| node | `24` | Active LTS (supported to 2028-04-30) |
+| python | `3.14` | Latest stable; 3.13 goes security-only in Oct 2026 |
+| go | `1.27` | Latest stable; Go supports only the two newest releases |
+| ruby | `3.4` | Normal maintenance; 4.0 is available but only 8 months old |
+| php | `8.4` | Active support; moves to 8.5 when 8.4 lapses 2026-12-31 |
+| java | `25` | Current LTS |
+| rust | `1.98` | Latest stable; Rust backports nothing to older releases |
+
+To bump a default, edit the catalog and its `RUNTIME_CATALOG_REVIEWED` date —
+not the presets, which derive from it.
+
+**What the builder will be able to honour.** The catalog above tracks *upstream*
+support. Nixpacks — pinned to v1.41.0 by the installer, and upstream in
+maintenance mode — can deliver considerably less, so once the build sections are
+wired up these are the real ceilings:
+
+| Runtime | Pin mechanism | Versions Nixpacks 1.41.0 can build | Out-of-range behaviour |
+| --- | --- | --- | --- |
+| node | `NIXPACKS_NODE_VERSION` | 14, 16, 18, 20, 22, 24 | silently falls back to 18 |
+| python | `NIXPACKS_PYTHON_VERSION` | 2.7, 3.7 – 3.13 | silently falls back to `python3` |
+| ruby | `NIXPACKS_RUBY_VERSION` (rbenv) | any, but needs an exact `3.4.10` | fails during build |
+| rust | `NIXPACKS_RUST_VERSION` | any, but needs an exact `1.98.0` | fails at Nix eval |
+| java | `NIXPACKS_JDK_VERSION` | 8, 11, 17, 19, 20, 21 | **fails the build** |
+| go | none — read from `go.mod` | ≤ 1.23 | pin ignored |
+| php | none — read from `composer.json` | 7.4, 8.0 – 8.4 | pin ignored |
+
+`generateNixpacksToml` refuses to emit a pin it knows Nixpacks cannot honour and
+returns a warning instead, so a manifest asking for Python 3.14 or JDK 25 will
+say so rather than quietly building something else.
 
 ### 4.2 `build` — Install / Build / Start
 
@@ -391,7 +445,7 @@ version: "1"
 
 runtime:
   type: node
-  version: "20"
+  version: "24"
 
 build:
   install: "npm ci"
@@ -467,7 +521,7 @@ What happens on push:
 
 | Symptom | Likely cause | Fix |
 | :--- | :--- | :--- |
-| Build picks the wrong Node version | `runtime.version` not set and Nixpacks auto-detected a different version | Add `runtime: { type: node, version: "20" }` |
+| Build picks the wrong Node version | `runtime.version` not set and Nixpacks auto-detected a different version | Add `runtime: { type: node, version: "24" }` |
 | `npm ci` fails with `package-lock.json not found` | Lock file not committed | Run `npm install` locally and commit the lock file |
 | Route 404s after deploy | `routes` not declared and panel is empty for that service | Add a `routes[]` entry, or set the domain in the panel |
 | `ManifestSecretError` on a deploy | Manifest contains a literal token | Move the value to the panel env vault; reference by name in `env.required` |

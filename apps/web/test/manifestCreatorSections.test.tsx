@@ -27,29 +27,105 @@ import { WatchSection } from '../src/routes/manifestCreator/sections/WatchSectio
 import { RuntimeSection } from '../src/routes/manifestCreator/sections/RuntimeSection.js';
 
 describe('RuntimeSection', () => {
-  it('renders type and version fields, emits onChange when type is changed', async () => {
+  // `Field` renders its label as a plain <span>, so the type select has no
+  // accessible name — it is simply the first combobox in the section.
+  const typeSelect = () => screen.getAllByRole('combobox')[0]!;
+  const versionSelect = () => screen.getByLabelText('Runtime version');
+  const versionInput = () =>
+    screen.getByPlaceholderText(/leave empty to let Nixpacks/) as HTMLInputElement;
+
+  it('renders type and version fields, emits onChange when type is changed', () => {
     const onChange = vi.fn();
     render(<RuntimeSection value={undefined} onChange={onChange} />);
-    const select = screen.getByRole('combobox');
-    fireEvent.change(select, { target: { value: 'python' } });
+    // `auto` has no version axis, so only the type select is rendered.
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'python' } });
     expect(onChange).toHaveBeenCalledWith({ type: 'python' });
   });
 
   it('emits onChange with the version when the version input is typed', () => {
     const onChange = vi.fn();
     render(<RuntimeSection value={undefined} onChange={onChange} />);
-    const input = screen.getByPlaceholderText(/leave empty to let Nixpacks/) as HTMLInputElement;
-    fireEvent.change(input, { target: { value: '20' } });
+    fireEvent.change(versionInput(), { target: { value: '20' } });
     expect(onChange).toHaveBeenLastCalledWith({ type: 'auto', version: '20' });
   });
 
   it('clears the version when the input is emptied', async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
-    render(<RuntimeSection value={{ type: 'node', version: '20' }} onChange={onChange} />);
-    const input = screen.getByPlaceholderText(/leave empty to let Nixpacks/) as HTMLInputElement;
-    await user.clear(input);
+    render(<RuntimeSection value={{ type: 'auto', version: '20' }} onChange={onChange} />);
+    await user.clear(versionInput());
+    expect(onChange).toHaveBeenLastCalledWith({ type: 'auto' });
+  });
+
+  it('offers catalog versions for a pinnable runtime and emits the picked one', () => {
+    const onChange = vi.fn();
+    render(<RuntimeSection value={{ type: 'node' }} onChange={onChange} />);
+    fireEvent.change(versionSelect(), { target: { value: '22' } });
+    expect(onChange).toHaveBeenLastCalledWith({ type: 'node', version: '22' });
+  });
+
+  it('drops the pin when "no pin" is chosen', () => {
+    const onChange = vi.fn();
+    render(<RuntimeSection value={{ type: 'node', version: '24' }} onChange={onChange} />);
+    fireEvent.change(versionSelect(), { target: { value: '' } });
     expect(onChange).toHaveBeenLastCalledWith({ type: 'node' });
+  });
+
+  it('still allows an end-of-life version, with a warning instead of a block', () => {
+    const onChange = vi.fn();
+    render(<RuntimeSection value={{ type: 'node' }} onChange={onChange} />);
+    fireEvent.change(versionSelect(), { target: { value: '20' } });
+    expect(onChange).toHaveBeenLastCalledWith({ type: 'node', version: '20' });
+  });
+
+  it('shows an end-of-life advisory for an unsupported pin', () => {
+    render(<RuntimeSection value={{ type: 'node', version: '20' }} onChange={vi.fn()} />);
+    expect(screen.getByText('End of life')).toBeInTheDocument();
+    expect(screen.getByText(/no longer receives security patches/)).toBeInTheDocument();
+  });
+
+  it('shows a security-only advisory and no advisory for a supported pin', () => {
+    const { unmount } = render(
+      <RuntimeSection value={{ type: 'python', version: '3.12' }} onChange={vi.fn()} />,
+    );
+    expect(screen.getByText('Security fixes only')).toBeInTheDocument();
+    unmount();
+    render(<RuntimeSection value={{ type: 'node', version: '24' }} onChange={vi.fn()} />);
+    expect(screen.queryByText('End of life')).not.toBeInTheDocument();
+    expect(screen.queryByText('Security fixes only')).not.toBeInTheDocument();
+  });
+
+  it('falls back to the free-text input for a version outside the catalog', () => {
+    render(<RuntimeSection value={{ type: 'node', version: '19' }} onChange={vi.fn()} />);
+    expect(versionInput().value).toBe('19');
+    expect(screen.getByText('Unverified')).toBeInTheDocument();
+  });
+
+  it('reveals the free-text input when "Other version…" is picked', () => {
+    const onChange = vi.fn();
+    render(<RuntimeSection value={{ type: 'node' }} onChange={onChange} />);
+    expect(screen.queryByPlaceholderText(/leave empty to let Nixpacks/)).not.toBeInTheDocument();
+    fireEvent.change(versionSelect(), { target: { value: '__custom__' } });
+    // Switching to custom is a UI-only move — nothing is emitted until typed.
+    expect(onChange).not.toHaveBeenCalled();
+    fireEvent.change(versionInput(), { target: { value: '20.18.1' } });
+    expect(onChange).toHaveBeenLastCalledWith({ type: 'node', version: '20.18.1' });
+  });
+
+  it('keeps a version across a type change only when it is valid for the new type', () => {
+    const onChange = vi.fn();
+    const { unmount } = render(
+      <RuntimeSection value={{ type: 'node', version: '24' }} onChange={onChange} />,
+    );
+    fireEvent.change(typeSelect(), { target: { value: 'python' } });
+    // "24" means nothing to Python, so the pin is dropped rather than carried.
+    expect(onChange).toHaveBeenLastCalledWith({ type: 'python' });
+    unmount();
+
+    const onChange2 = vi.fn();
+    render(<RuntimeSection value={{ type: 'auto', version: '24' }} onChange={onChange2} />);
+    fireEvent.change(typeSelect(), { target: { value: 'node' } });
+    expect(onChange2).toHaveBeenLastCalledWith({ type: 'node', version: '24' });
   });
 });
 
@@ -784,8 +860,9 @@ void _manifest;
 describe('clear-input branches', () => {
   it('RuntimeSection: clearing version sends { type } without version', () => {
     const onChange = vi.fn();
-    render(<RuntimeSection value={{ type: 'node', version: '20' }} onChange={onChange} />);
-    const input = screen.getByDisplayValue('20');
+    // "19" is outside the catalog, so the section renders its free-text input.
+    render(<RuntimeSection value={{ type: 'node', version: '19' }} onChange={onChange} />);
+    const input = screen.getByDisplayValue('19');
     fireEvent.change(input, { target: { value: '' } });
     expect(onChange).toHaveBeenLastCalledWith({ type: 'node' });
   });

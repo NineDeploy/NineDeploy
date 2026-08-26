@@ -1,8 +1,31 @@
 const releases = [
   {
-    version: "0.3.1",
+    version: "0.3.2",
     date: "2026-08",
     status: "current",
+    notes: [
+      {
+        t: "Honest Runtimes",
+        items: [
+          "Manifest Creator presets pinned Node 20, Python 3.12 and Go 1.22 — all three had lost upstream support months earlier; the defaults are now Node 24 (Active LTS), Python 3.14 and Go 1.27, plus Ruby, PHP, Java and Rust",
+          "Every version NineDeploy suggests comes from one curated catalog instead of literals duplicated across the panel and the CLI, and the catalog records the date it was last reviewed so staleness is visible rather than silent",
+          "The Version field is a picker showing each version's support status, with an escape hatch for anything else — end-of-life versions stay selectable, they just carry an advisory naming the recommended pin",
+        ],
+      },
+      {
+        t: "Manifest Build Sections",
+        items: [
+          "The manifest's build half (runtime, phases, build) is not applied at build time — the pipeline applies only routes, alerts and database. The docs and the panel now say so instead of implying a pin that never happens",
+          "Every runtime pin the nixpacks.toml generator produced was broken: wrong nixpkgs attribute names for Go and Ruby, nonsense for any patch-level pin, and a package list that replaced the provider toolchain instead of extending it",
+          "Pins now go only through the provider environment variables Nixpacks 1.41.0 actually reads, and one it cannot honour returns a specific warning rather than quietly building a different version",
+        ],
+      },
+    ],
+  },
+  {
+    version: "0.3.1",
+    date: "2026-08",
+    status: "stable",
     notes: [
       {
         t: "Boot Fix For 0.3.0",

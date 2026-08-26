@@ -10,10 +10,15 @@ import type { NinedeployManifest } from '@ninedeploy/schemas';
  * repo. This keeps the panel authoritative while letting the manifest fill
  * in the gaps for the 95% of services where the panel is left empty.
  *
- * What is NOT patched here: runtime/phases/start (they are expressed
- * through the generated `nixpacks.toml` instead), `env.required` (handled
- * by the build log as a warning), and `routes`/`database`/`volume`/etc.
- * (routed through their own modules, see PR 3).
+ * What is NOT patched here: `runtime` and `phases` — they would be expressed
+ * through a generated `nixpacks.toml`, but that generator
+ * (`ninedeployToNixpacks.ts`) is not yet wired into the builder, so those
+ * sections currently have no effect on a build. Also excluded:
+ * `env.required` (surfaced in the build log as a warning) and
+ * `routes`/`database`/`volume`/etc. (routed through their own modules).
+ *
+ * Note this function is itself not yet called by the pipeline — the deploy
+ * path applies only the manifest's operational sections today.
  */
 export function applyManifestToBuildConfig(
   manifest: NinedeployManifest,

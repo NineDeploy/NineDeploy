@@ -2,52 +2,150 @@ import type { NinedeployManifest, RuntimeType } from '@ninedeploy/schemas';
 
 /**
  * Translate a `.ninedeploy` manifest into a Nixpacks-compatible `nixpacks.toml`
- * string. The file is the single source of truth at build time: Nixpacks
- * reads it from the repo root and overrides its own auto-detection with the
- * values declared here.
+ * string, plus the warnings an operator needs to see when the manifest asks
+ * for something Nixpacks cannot express.
  *
- * The function is pure: same input → same output, no I/O. The docker builder
- * writes the result to a temp file alongside the checked-out repo and lets
- * Nixpacks pick it up automatically.
+ * NOT YET WIRED INTO THE BUILD. Nothing calls this function: the deploy
+ * pipeline (`engine/pipeline.ts`) applies only the manifest's *operational*
+ * sections — routes, alerts, database — and the Nixpacks builder
+ * (`engine/builders/docker.ts`) invokes the CLI with `--install-cmd` /
+ * `--build-cmd` / `--start-cmd` and never writes a `nixpacks.toml`. Until it
+ * does, `runtime`, `phases` and `build.*` in a manifest have no effect on a
+ * build. See `docs/NINEDEPLOY_MANIFEST.md` §4.1.
+ *
+ * The function is pure: same input, same output, no I/O.
+ *
+ * Why version pins go through environment variables
+ * -------------------------------------------------
+ * An earlier version of this file emitted hand-built nixpkgs attribute names
+ * (`go_127`, `ruby_34`, `nodejs_20`) into `[phases.setup] nixPkgs`. That is
+ * wrong in three compounding ways, all checked against the Nixpacks release
+ * the installer pins (v1.41.0):
+ *
+ *   1. `nixPkgs` REPLACES the provider's package list rather than extending
+ *      it, unless the list contains the literal `"..."` sentinel. A pin
+ *      therefore deleted the toolchain the provider had already selected.
+ *   2. The name resolves against the archive the *provider* pinned, not
+ *      current nixpkgs. Those archives are old (the fallback is from
+ *      September 2023), so modern attributes are simply absent.
+ *   3. An attribute that does not resolve is a hard `undefined variable` Nix
+ *      evaluation error during `docker build` — a late, opaque failure.
+ *
+ * So version pins are expressed only through the provider environment
+ * variables Nixpacks actually reads, and a pin it cannot express becomes a
+ * warning instead of a silently-wrong or broken build.
  *
  * Field mapping:
- *   - `runtime.type`     → first matching provider package in nixPkgs
- *   - `runtime.version`  → NIXPACKS_<TYPE>_VERSION env var (when supported)
- *   - `phases.setup.pkgs` → additive nixPkgs entries
- *   - `phases.build.cmds` → [phases.build].cmds
- *   - `build.install`     → [phases.install].cmds
- *   - `build.build`       → [phases.build].cmds (prepended)
- *   - `build.start`       → [phases.start].cmd
- *
- * Returns `null` when the manifest has nothing Nixpacks can act on (i.e.
- * the auto-detected defaults would already do the right thing). The caller
- * uses that to skip writing an empty nixpacks.toml.
+ *   - `runtime.version`   -> NIXPACKS_<TYPE>_VERSION, when the provider has one
+ *   - `phases.setup.pkgs` -> nixPkgs, extending the provider's list via `"..."`
+ *   - `phases.build.cmds` -> [phases.build].cmds
+ *   - `build.install`     -> [phases.install].cmds
+ *   - `build.build`       -> [phases.build].cmds (prepended)
+ *   - `build.start`       -> [phases.start].cmd
  */
 
-/** Map a NineDeploy runtime type to the Nixpacks variable that pins the version. */
-const NIXPACKS_VERSION_VAR: Partial<Record<RuntimeType, string>> = {
-  node: 'NIXPACKS_NODE_VERSION',
-  python: 'NIXPACKS_PYTHON_VERSION',
-  go: 'NIXPACKS_GO_VERSION',
-  ruby: 'NIXPACKS_RUBY_VERSION',
-  php: 'NIXPACKS_PHP_VERSION',
-  rust: 'NIXPACKS_RUST_VERSION',
+/** Nixpacks release the installer pins; the support sets below track it. */
+export const NIXPACKS_TARGET_VERSION = '1.41.0';
+
+type PinResolution = { value: string } | { reason: string };
+
+interface RuntimePin {
+  /** Environment variable name as it appears in `[variables]`. */
+  variable: string;
+  /** Turn a manifest version into the value to emit, or explain why not. */
+  resolve: (version: string) => PinResolution;
+}
+
+/** Leading numeric segment, e.g. "24.4.1" -> "24". */
+const major = (version: string): string => version.split('.')[0] ?? '';
+
+/** First two segments, e.g. "3.14.2" -> "3.14"; "" when there is no minor. */
+const series = (version: string): string => {
+  const parts = version.split('.');
+  return parts.length >= 2 ? `${parts[0]}.${parts[1]}` : '';
+};
+
+const isExactPatch = (version: string): boolean => version.split('.').length === 3;
+
+/**
+ * How each runtime's version reaches Nixpacks v1.41.0. The supported sets are
+ * read from the provider sources rather than the docs, which are stale on
+ * both Node and PHP.
+ *
+ * Go and PHP are absent on purpose: neither provider reads a configuration
+ * variable in v1.41.0. Their versions come from `go.mod` and `composer.json`
+ * respectively, which is the repository's job, not the manifest's.
+ */
+const RUNTIME_PINS: Partial<Record<RuntimeType, RuntimePin>> = {
+  // `src/providers/node/mod.rs`, AVAILABLE_NODE_VERSIONS. Nixpacks parses the
+  // value as a semver range, so the manifest string passes through as-is;
+  // only the major has to be one it can resolve. An unsupported major falls
+  // back to Node 18 silently, which is exactly the surprise we warn about.
+  node: {
+    variable: 'NIXPACKS_NODE_VERSION',
+    resolve: (version) =>
+      ['14', '16', '18', '20', '22', '24'].includes(major(version))
+        ? { value: version }
+        : {
+            reason: `Nixpacks ${NIXPACKS_TARGET_VERSION} can only build Node 14, 16, 18, 20, 22 or 24, and would silently fall back to 18`,
+          },
+  },
+  // `src/providers/python.rs`, the (major, minor) match arm.
+  python: {
+    variable: 'NIXPACKS_PYTHON_VERSION',
+    resolve: (version) => {
+      const value = series(version) || `${major(version)}.0`;
+      return ['2.7', '3.7', '3.8', '3.9', '3.10', '3.11', '3.12', '3.13'].includes(value)
+        ? { value }
+        : {
+            reason: `Nixpacks ${NIXPACKS_TARGET_VERSION} can only build Python 2.7 and 3.7 to 3.13, and would silently fall back to its default python3`,
+          };
+    },
+  },
+  // `src/providers/ruby.rs`: the value is handed to `rbenv install`, which
+  // needs a full version rather than a series.
+  ruby: {
+    variable: 'NIXPACKS_RUBY_VERSION',
+    resolve: (version) =>
+      isExactPatch(version)
+        ? { value: version }
+        : { reason: 'Ruby is installed through rbenv, which needs an exact version like 3.4.10' },
+  },
+  // `src/providers/rust.rs`: interpolated into `rust-bin.stable."<v>".default`,
+  // an attribute that only exists for full versions.
+  rust: {
+    variable: 'NIXPACKS_RUST_VERSION',
+    resolve: (version) =>
+      isExactPatch(version)
+        ? { value: version }
+        : { reason: 'The Rust overlay only has full versions, so use 1.98.0 rather than 1.98' },
+  },
+  // `src/providers/java.rs`: a bare major, and the only provider that *bails*
+  // on an unsupported value rather than falling back. Emitting an out-of-set
+  // version would fail the build outright, so we refuse to emit it.
+  java: {
+    variable: 'NIXPACKS_JDK_VERSION',
+    resolve: (version) =>
+      ['8', '11', '17', '19', '20', '21'].includes(major(version))
+        ? { value: major(version) }
+        : {
+            reason: `Nixpacks ${NIXPACKS_TARGET_VERSION} only ships JDK 8, 11, 17, 19, 20 and 21, and fails the build on anything else`,
+          },
+  },
+};
+
+/** Runtimes Nixpacks v1.41.0 cannot pin from a manifest at all. */
+const NO_PIN_PATH: Partial<Record<RuntimeType, string>> = {
+  go: 'set the `go` directive in go.mod instead',
+  php: 'set `require.php` in composer.json instead',
 };
 
 /**
- * `runtime.type` only ever needs a package pin when it's not `auto` AND
- * `runtime.version` is set. Auto-discovery has its own provider resolution
- * (e.g. Nixpacks sees a `package.json` and picks Node on its own), so we
- * don't override unless the manifest explicitly tells us to.
+ * `nixPkgs` replaces the provider's package list unless this sentinel is
+ * present, in which case it expands to whatever the provider chose. Every
+ * list we emit starts with it so extra packages are additive, as documented.
  */
-const NIXPACKS_PKG: Partial<Record<RuntimeType, (version: string) => string>> = {
-  node: (v) => `nodejs_${v.replace(/\D/g, '')}`,
-  python: (v) => `python${v.replace('.', '')}`,
-  go: (v) => `go_${v.replace(/\D/g, '')}`,
-  ruby: (v) => `ruby_${v.replace(/\D/g, '')}`,
-  php: (v) => `php${v.replace(/\D/g, '')}`,
-  rust: () => `rustc`,
-};
+const KEEP_PROVIDER_PKGS = '...';
 
 function formatTomlString(value: string): string {
   // TOML basic strings: escape backslash and double-quote, then wrap in
@@ -62,32 +160,36 @@ function formatTomlArray(values: string[]): string {
   return `[\n${lines.join(',\n')},\n  ]`;
 }
 
-export function generateNixpacksToml(manifest: NinedeployManifest): string | null {
+export interface NixpacksTomlResult {
+  /** The file contents, or `null` when the manifest has nothing to express. */
+  toml: string | null;
+  /** Operator-facing notes about pins that could not be honoured. */
+  warnings: string[];
+}
+
+export function generateNixpacksToml(manifest: NinedeployManifest): NixpacksTomlResult {
   const sections: string[] = [];
   const variables: string[] = [];
+  const warnings: string[] = [];
 
-  // ── [phases.setup] nixPkgs (additive) ───────────────────────────────────
-  const setupPkgs: string[] = [];
-  const runtime = manifest.runtime;
-  if (runtime?.type && runtime.type !== 'auto' && runtime.version) {
-    const pkg = NIXPACKS_PKG[runtime.type]?.(runtime.version);
-    if (pkg) setupPkgs.push(pkg);
-  }
-  for (const pkg of manifest.phases?.setup?.pkgs ?? []) {
-    setupPkgs.push(pkg);
-  }
-  if (setupPkgs.length > 0) {
-    sections.push(`[phases.setup]\nnixPkgs = ${formatTomlArray(setupPkgs)}`);
+  // [phases.setup] nixPkgs — only the operator's explicit extra packages. The
+  // runtime toolchain is the provider's job; see the header for why we no
+  // longer name it here.
+  const extraPkgs = manifest.phases?.setup?.pkgs ?? [];
+  if (extraPkgs.length > 0) {
+    sections.push(
+      `[phases.setup]\nnixPkgs = ${formatTomlArray([KEEP_PROVIDER_PKGS, ...extraPkgs])}`,
+    );
   }
 
-  // ── [phases.install] (manifest.build.install) ──────────────────────────
+  // [phases.install] (manifest.build.install)
   const installCmds: string[] = [];
   if (manifest.build?.install) installCmds.push(manifest.build.install);
   if (installCmds.length > 0) {
     sections.push(`[phases.install]\ncmds = ${formatTomlArray(installCmds)}`);
   }
 
-  // ── [phases.build] (manifest.build.build + manifest.phases.build.cmds) ─
+  // [phases.build] (manifest.build.build + manifest.phases.build.cmds)
   const buildCmds: string[] = [];
   if (manifest.build?.build) buildCmds.push(manifest.build.build);
   for (const cmd of manifest.phases?.build?.cmds ?? []) {
@@ -97,23 +199,36 @@ export function generateNixpacksToml(manifest: NinedeployManifest): string | nul
     sections.push(`[phases.build]\ncmds = ${formatTomlArray(buildCmds)}`);
   }
 
-  // ── [phases.start] (manifest.build.start) ──────────────────────────────
+  // [phases.start] (manifest.build.start)
   if (manifest.build?.start) {
     sections.push(`[phases.start]\ncmd = ${formatTomlString(manifest.build.start)}`);
   }
 
-  // ── [variables] (NIXPACKS_<TYPE>_VERSION) ──────────────────────────────
+  // [variables] (NIXPACKS_<TYPE>_VERSION)
+  const runtime = manifest.runtime;
   if (runtime?.type && runtime.type !== 'auto' && runtime.version) {
-    const envVar = NIXPACKS_VERSION_VAR[runtime.type];
-    if (envVar) {
-      variables.push(`${envVar} = ${formatTomlString(runtime.version)}`);
+    const pin = RUNTIME_PINS[runtime.type];
+    if (!pin) {
+      const alternative = NO_PIN_PATH[runtime.type];
+      warnings.push(
+        alternative
+          ? `runtime.version "${runtime.version}" is not applied: Nixpacks ${NIXPACKS_TARGET_VERSION} has no ${runtime.type} version variable, so ${alternative}.`
+          : `runtime.version "${runtime.version}" is not applied: Nixpacks ${NIXPACKS_TARGET_VERSION} cannot pin a ${runtime.type} version.`,
+      );
+    } else {
+      const resolved = pin.resolve(runtime.version);
+      if ('value' in resolved) {
+        variables.push(`${pin.variable} = ${formatTomlString(resolved.value)}`);
+      } else {
+        warnings.push(`runtime.version "${runtime.version}" is not applied: ${resolved.reason}.`);
+      }
     }
   }
   if (variables.length > 0) {
     sections.push(`[variables]\n${variables.join('\n')}`);
   }
 
-  if (sections.length === 0) return null;
   // Two blank lines between sections is the Nixpacks-recommended style.
-  return `${sections.join('\n\n')}\n`;
+  const toml = sections.length === 0 ? null : `${sections.join('\n\n')}\n`;
+  return { toml, warnings };
 }
