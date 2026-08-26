@@ -13,7 +13,10 @@
  * Every helper here is idempotent: safe to call on every deploy.
  */
 import { capture, run } from './exec.js';
-import { NETWORK, TRAEFIK_CONTAINER } from '../engine/proxy.js';
+// From the leaf module, not from `proxy` — importing them from there
+// closes a cycle whose top-level `RESERVED_NETWORKS` evaluation crashed
+// the server on boot with a temporal-dead-zone ReferenceError.
+import { NETWORK, TRAEFIK_CONTAINER } from '../engine/dockerNames.js';
 
 const swallow = (): void => undefined;
 

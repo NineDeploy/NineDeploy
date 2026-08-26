@@ -26,7 +26,24 @@ const proxyMocks = vi.hoisted(() => ({
   writeDynamicConfig: vi.fn(async () => undefined),
   // docker.ts imports NETWORK from proxy.js; provide it so the mock stays complete.
   NETWORK: 'ninedeploy',
+  TRAEFIK_CONTAINER: 'ninedeploy-traefik',
+  TRAEFIK_IMAGE: 'traefik:3',
 }));
+
+/**
+ * Calls that act on a service's *runtime* (container, compose project, PM2
+ * process), as opposed to the per-service Docker bridge that deleting a
+ * service reaps via `removeServiceBridgeIfEmpty`.
+ *
+ * The delete tests below used to assert `run` was never called at all. That
+ * held only because this mock was incomplete: `serviceBridge` imported
+ * `TRAEFIK_CONTAINER` from the mocked `proxy.js`, the binding was missing, and
+ * the resulting throw was swallowed by the delete route — so the bridge reap
+ * silently never ran under test. Splitting the two concerns asserts the real
+ * contract instead of a mock artifact.
+ */
+const runtimeRunCalls = () =>
+  execMocks.run.mock.calls.filter((c) => (c[1] as string[])[0] !== 'network');
 vi.mock('../src/engine/proxy.js', () => proxyMocks);
 
 const configMock = vi.hoisted(() => ({
@@ -477,7 +494,14 @@ describe('services routes', () => {
     await app.register(servicesRoutes);
     const res = await app.inject({ method: 'DELETE', url: '/1', headers: asUser() });
     expect(res.statusCode).toBe(204);
-    expect(execMocks.run).not.toHaveBeenCalled();
+    expect(runtimeRunCalls()).toEqual([]);
+    // The service is gone, so its private bridge is reaped with it.
+    expect(execMocks.run).toHaveBeenCalledWith(
+      'docker',
+      ['network', 'disconnect', 'nd-svc-web', 'ninedeploy-traefik'],
+      {},
+      expect.any(Function),
+    );
   });
 
   it('tears a compose project down on delete', async () => {
@@ -863,7 +887,9 @@ describe('services routes', () => {
     await app.register(servicesRoutes);
     const res = await app.inject({ method: 'DELETE', url: '/1', headers: asUser() });
     expect(res.statusCode).toBe(204);
-    expect(execMocks.run).not.toHaveBeenCalled();
+    // An unknown service type has no runtime the panel knows how to retire —
+    // but the row, its routing and its bridge still go away.
+    expect(runtimeRunCalls()).toEqual([]);
     expect(pm2Mocks.delete).not.toHaveBeenCalled();
     expect(proxyMocks.writeDynamicConfig).toHaveBeenCalled();
   });

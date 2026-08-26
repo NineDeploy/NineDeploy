@@ -8,14 +8,12 @@ import { getSettingString } from '../lib/settings.js';
 import { decrypt, encrypt } from '../lib/crypto.js';
 import { ensureDockerImage } from '../lib/dockerPull.js';
 import { reapTraefikNetworks } from '../lib/serviceBridge.js';
+import { NETWORK, TRAEFIK_CONTAINER, TRAEFIK_IMAGE } from './dockerNames.js';
 
-export const TRAEFIK_CONTAINER = 'ninedeploy-traefik';
-// Stay on Traefik v3 major — minor/patch updates are pulled automatically.
-// Pin to a specific version only if you need reproducibility (e.g. "traefik:v3.3").
-export const TRAEFIK_IMAGE = 'traefik:3';
-
-/** Shared Docker network that app + database containers join to reach each other. */
-export const NETWORK = 'ninedeploy';
+// Defined in a leaf module and re-exported here: `proxy` and `serviceBridge`
+// import each other, and a constant declared in one of them is in its temporal
+// dead zone for the other. See engine/dockerNames.ts.
+export { NETWORK, TRAEFIK_CONTAINER, TRAEFIK_IMAGE } from './dockerNames.js';
 
 /**
  * Whitelists for Traefik rule operands. Hostnames may contain DNS chars plus a
