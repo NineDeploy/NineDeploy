@@ -64,3 +64,4 @@ security-report/
 cov-json/
 cov-json2/
 coverage/
+.tmp-real-validate/nextjs-test/.ninedeploy
