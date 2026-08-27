@@ -9,6 +9,21 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '0.3.4',
+    date: '2026-08-27',
+    title: 'One-Click Self-Update & Honest Records',
+    changes: [
+      'Operators can upgrade the panel from the dashboard: a banner offers the new release and runs this install\'s own installer for the pinned exact tag — data snapshot, source swap, rebuild, migrations, service restart — detaching through systemd-run so it survives stopping its own unit; failure reports the installer output tail and container-mode installs stay on the manual pull path',
+      'Deployment history settles old rows into a new superseded status instead of displaying every past deploy as Running forever, both at finalize time and via a boot-time reconciliation pass',
+      'Volume snapshots carry labels (manual / schedule-… / operator tags) that surface across the Backups page together with scope and volume names',
+      'Auto-deploy webhook URLs are derived from the Settings panel domain (NINEDEPLOY_DOMAIN, then NINEDEPLOY_PUBLIC_URL) with https mirroring the ACME configuration, and the environment tab warns when stored webhook URLs point at localhost so git providers cannot silently fail delivery',
+      'The scheduled-jobs editor is rebuilt around cron presets with human-readable schedule descriptions and next-run chips; environment variables gain a raw .env bulk-edit mode that saves added/updated/removed diffs in parallel',
+      'Detaching a volume queues a redeploy instead of demanding the service be stopped first — matching attach/update behavior because Docker cannot hot-swap mounts',
+      'Alert rules expose lastEvaluatedAt so the monitoring page can tell "never evaluated" apart from a lapsed collector',
+      'Every CI job had been dying in seconds on ERR_PNPM_BAD_PM_VERSION (workflows pinned pnpm 11.22.0 while packageManager declares 11.23.0); the pin is removed in favor of deriving from packageManager, and the Dockerfile installs pinned pnpm via npm now that Node ≥ 26 images no longer bundle corepack',
+    ],
+  },
+  {
     version: '0.3.3',
     date: '2026-08-27',
     title: 'Full-System Audit Hardening',
