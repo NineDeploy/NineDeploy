@@ -260,6 +260,13 @@
       "when": 1787900000000,
       "tag": "0037_volume_backup_labels",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "6",
+      "when": 1788000000000,
+      "tag": "0038_instance_operator",
+      "breakpoints": true
     }
   ]
 }

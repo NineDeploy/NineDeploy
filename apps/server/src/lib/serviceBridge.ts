@@ -74,10 +74,16 @@ export async function connectContainerToServiceBridge(
  * that joined the per-slug mesh while the previous instance was down.
  */
 export async function reapTraefikNetworks(log: (line: string) => void): Promise<void> {
-  const ls = await capture('docker', [
-    'network', 'ls', '--filter', 'name=^nd-svc-', '--format', '{{.Name}}',
-  ]).catch(() => '');
-  const bridges = ls.split('\n').map((s) => s.trim()).filter(Boolean);
+  // Per-slug bridges (`nd-svc-*`) plus compose project defaults
+  // (`ndcmp-<slug>_default`) — both must survive a Traefik restart.
+  const nameFilters = ['^nd-svc-', '^ndcmp-'];
+  const bridges: string[] = [];
+  for (const filter of nameFilters) {
+    const ls = await capture('docker', [
+      'network', 'ls', '--filter', `name=${filter}`, '--format', '{{.Name}}',
+    ]).catch(() => '');
+    bridges.push(...ls.split('\n').map((s) => s.trim()).filter(Boolean));
+  }
   for (const name of bridges) {
     const state = await capture('docker', [
       'inspect', TRAEFIK_CONTAINER,
@@ -88,6 +94,23 @@ export async function reapTraefikNetworks(log: (line: string) => void): Promise<
       await run('docker', ['network', 'connect', name, TRAEFIK_CONTAINER], {}, log).catch(() => undefined);
     }
   }
+}
+
+/**
+ * Attach Traefik to a compose project's default network
+ * (`ndcmp-<slug>_default`) so the dynamic config can target the stack's main
+ * container by name. Idempotent; safe on every deploy. Tolerates a missing
+ * Traefik (first-boot reaping attaches later).
+ */
+export async function connectTraefikToComposeNetwork(slug: string, log: (line: string) => void): Promise<void> {
+  const name = `ndcmp-${slug}_default`;
+  const state = await capture('docker', [
+    'inspect', TRAEFIK_CONTAINER,
+    '--format', '{{json .NetworkSettings.Networks}}',
+  ]).catch(() => '');
+  if (!state || state.includes(`"${name}"`)) return;
+  log(`attaching traefik to ${name}`);
+  await run('docker', ['network', 'connect', name, TRAEFIK_CONTAINER], {}, log);
 }
 
 /**

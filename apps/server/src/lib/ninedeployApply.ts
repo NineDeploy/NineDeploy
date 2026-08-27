@@ -10,15 +10,22 @@ import type { NinedeployManifest } from '@ninedeploy/schemas';
  * repo. This keeps the panel authoritative while letting the manifest fill
  * in the gaps for the 95% of services where the panel is left empty.
  *
- * What is NOT patched here: `runtime` and `phases` — they would be expressed
- * through a generated `nixpacks.toml`, but that generator
- * (`ninedeployToNixpacks.ts`) is not yet wired into the builder, so those
- * sections currently have no effect on a build. Also excluded:
- * `env.required` (surfaced in the build log as a warning) and
- * `routes`/`database`/`volume`/etc. (routed through their own modules).
+ * What is NOT patched here, and why:
  *
- * Note this function is itself not yet called by the pipeline — the deploy
- * path applies only the manifest's operational sections today.
+ *   • `runtime` / `phases` — expressed through a generated `nixpacks.toml`
+ *     instead (`ninedeployToNixpacks.ts`, rendered by the Docker builder).
+ *   • `env.required` — surfaced in the build log as a warning, not a config
+ *     value (`findMissingRequiredEnv` below).
+ *   • `routes` / `database` / `alerts` — routed through
+ *     `applyManifestToService.ts`, which writes real rows.
+ *   • **`hooks` — deliberately excluded.** Deploy lifecycle hooks execute on
+ *     the HOST (`engine/pipeline.ts:runHook`), which is why
+ *     `lib/hostPrivilege.ts` gates them behind the instance-operator flag. That
+ *     gate reads the STORED build config before the deploy starts, so honouring
+ *     a manifest-supplied hook would let anyone who can push to the repository
+ *     run commands on the host — bypassing the boundary entirely, and breaking
+ *     container isolation for ordinary Docker services. Hooks stay a panel-only
+ *     setting; a manifest that declares them gets a deploy-log warning.
  */
 export function applyManifestToBuildConfig(
   manifest: NinedeployManifest,
@@ -35,6 +42,13 @@ export function applyManifestToBuildConfig(
       ? (manifest.build?.baseDir ?? buildConfig.baseDir)
       : buildConfig.baseDir,
     dockerfilePath: buildConfig.dockerfilePath ?? manifest.build?.dockerfile ?? null,
+    // `run.restart` maps straight onto `docker --restart`. Safe to accept from
+    // the repo: it changes only how the container is supervised, not what runs
+    // in it. 'unless-stopped' is the schema default, i.e. "operator untouched".
+    restartPolicy:
+      buildConfig.restartPolicy === 'unless-stopped'
+        ? (manifest.run?.restart ?? buildConfig.restartPolicy)
+        : buildConfig.restartPolicy,
   };
 }
 

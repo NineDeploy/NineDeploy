@@ -34,15 +34,14 @@ describe('users routes', () => {
   it('lists users with operator and workspaceCount fields', async () => {
     // The fake `findMany` doesn't honour the `where: eq(userId)` filter, so
     // we put the per-user membership rows in a function-style resolver.
-    // Without an owner seat the server reports `isOperator: false` for
-    // everyone — the goal of this test is to exercise the serialization
-    // shape, not the operator derivation (covered by the integration
-    // /oidc.test.ts path that creates a real workspace row).
+    // `isOperator` is now read straight off `users.is_instance_operator`, so
+    // the workspace seats deliberately stay empty here: a user with an owner
+    // seat but no flag must still list as a non-operator.
     const app = await appWith({
       findMany: {
         users: [
           admin(),
-          userRow({ id: 2, email: 'b@example.com', name: 'B', isOperator: false }),
+          userRow({ id: 2, email: 'b@example.com', name: 'B', isInstanceOperator: false }),
         ],
         workspaceMembers: () => [],
       },
@@ -50,8 +49,31 @@ describe('users routes', () => {
     const res = await app.inject({ method: 'GET', url: '/', headers: asUser() });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject([
-      { id: 1, email: 'admin@example.com', name: 'Admin', isOperator: false, workspaceCount: 0 },
+      { id: 1, email: 'admin@example.com', name: 'Admin', isOperator: true, workspaceCount: 0 },
       { id: 2, email: 'b@example.com', name: 'B', isOperator: false, workspaceCount: 0 },
+    ]);
+  });
+
+  it('counts each user’s workspace seats alongside the operator flag', async () => {
+    const app = await appWith({
+      findMany: {
+        users: [admin(), userRow({ id: 2, email: 'b@example.com', isInstanceOperator: false })],
+      },
+      // The route reads seats through a projection `select`, not `findMany`.
+      select: {
+        workspace_members: [
+          { userId: 1, workspaceId: 1, role: 'owner' },
+          { userId: 2, workspaceId: 1, role: 'viewer' },
+          { userId: 2, workspaceId: 2, role: 'member' },
+        ],
+      },
+    });
+    const res = await app.inject({ method: 'GET', url: '/', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject([
+      { id: 1, workspaceCount: 1, isOperator: true },
+      // Two seats, neither of which confers the instance-operator flag.
+      { id: 2, workspaceCount: 2, isOperator: false },
     ]);
   });
 
@@ -113,9 +135,71 @@ describe('users routes', () => {
   });
 
   it('deletes a user via the operator path', async () => {
-    const app = await appWith({ findFirst: { users: userRow({ id: 5 }) } });
+    const app = await appWith({ findFirst: { users: userRow({ id: 5, isInstanceOperator: false }) } });
     const res = await app.inject({ method: 'DELETE', url: '/5', headers: asUser() });
     expect(res.statusCode).toBe(200);
+  });
+
+  // Losing the last operator would lock the instance out of every
+  // operator-only route — including the one that grants the flag back.
+  it('refuses to delete the last instance operator', async () => {
+    const app = await appWith({
+      findFirst: { users: userRow({ id: 5, isInstanceOperator: true }) },
+      select: { users: [userRow({ id: 5, isInstanceOperator: true })] },
+    });
+    const res = await app.inject({ method: 'DELETE', url: '/5', headers: asUser() });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toMatchObject({ error: { message: /last instance operator/ } });
+  });
+
+  it('grants and revokes the instance-operator flag', async () => {
+    const app = await appWith({
+      findFirst: { users: userRow({ id: 5, isInstanceOperator: false }) },
+      select: { users: [userRow({ id: 1 }), userRow({ id: 9 })] },
+    });
+    const granted = await app.inject({
+      method: 'PATCH',
+      url: '/5/operator',
+      headers: asUser(),
+      payload: { isOperator: true },
+    });
+    expect(granted.statusCode).toBe(200);
+    expect(granted.json()).toMatchObject({ ok: true, id: 5, isOperator: true });
+
+    const revoked = await app.inject({
+      method: 'PATCH',
+      url: '/5/operator',
+      headers: asUser(),
+      payload: { isOperator: false },
+    });
+    expect(revoked.statusCode).toBe(200);
+    expect(revoked.json()).toMatchObject({ isOperator: false });
+  });
+
+  it('404s an operator grant for a user that does not exist', async () => {
+    const app = await appWith({ findFirst: { users: undefined } });
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/404/operator',
+      headers: asUser(),
+      payload: { isOperator: true },
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('refuses to revoke the flag from the last instance operator', async () => {
+    const app = await appWith({
+      findFirst: { users: userRow({ id: 5, isInstanceOperator: true }) },
+      select: { users: [userRow({ id: 5, isInstanceOperator: true })] },
+    });
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/5/operator',
+      headers: asUser(),
+      payload: { isOperator: false },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toMatchObject({ error: { message: /last instance operator/ } });
   });
 
   it('returns 404 when deleting a user that vanished mid-check', async () => {

@@ -443,7 +443,48 @@ describe('auth routes', () => {
       payload: { name: 'ci' },
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ id: 5, name: 'ci', token: 'raw-token', createdAt: '2026-01-01T00:00:00.000Z' });
+    expect(res.json()).toEqual({
+      id: 5,
+      name: 'ci',
+      token: 'raw-token',
+      // An empty scope list is a legacy, unrestricted token — the response
+      // says so rather than implying the token is scoped.
+      scopes: [],
+      expiresAt: null,
+      createdAt: '2026-01-01T00:00:00.000Z',
+    });
+  });
+
+  it('refuses to mint an operator-scoped token for a non-operator', async () => {
+    // A token must never outrank the account behind it: otherwise a member
+    // could hand themselves an operator credential and use it to reach the
+    // host-privileged deploy paths.
+    const app = await buildTestApp({ db: createFakeDb() });
+    await app.register(authRoutes);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/tokens',
+      headers: asUser({ id: 7, isOperator: false }),
+      payload: { name: 'sneaky', scopes: ['operator'] },
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toMatchObject({ error: { message: /operator-scoped token/ } });
+  });
+
+  it('mints a scoped, expiring token for an operator', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({ insert: { api_tokens: [tokenRow({ id: 9, name: 'ci' })] } }),
+    });
+    await app.register(authRoutes);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/tokens',
+      headers: asUser(),
+      payload: { name: 'ci', scopes: ['read'], expiresInDays: 30 },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ scopes: ['read'] });
+    expect(res.json().expiresAt).toEqual(expect.any(String));
   });
 
   it('creates an API token with the default name when none is given', async () => {
@@ -503,8 +544,8 @@ describe('auth routes', () => {
     const res = await app.inject({ method: 'GET', url: '/tokens', headers: asUser() });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual([
-      { id: 1, name: 'a', lastUsedAt: '2026-01-02T00:00:00.000Z', createdAt: '2026-01-01T00:00:00.000Z' },
-      { id: 2, name: 'b', lastUsedAt: null, createdAt: '2026-01-01T00:00:00.000Z' },
+      { id: 1, name: 'a', scopes: [], lastUsedAt: '2026-01-02T00:00:00.000Z', expiresAt: null, createdAt: '2026-01-01T00:00:00.000Z' },
+      { id: 2, name: 'b', scopes: [], lastUsedAt: null, expiresAt: null, createdAt: '2026-01-01T00:00:00.000Z' },
     ]);
   });
 

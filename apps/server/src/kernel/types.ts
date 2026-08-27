@@ -40,6 +40,11 @@ export interface DomainEvents {
   'plugin.status_changed': { pluginId: string; status: 'active' | 'disabled' | 'errored' };
   'plugin.reloaded': { pluginId: string; status: 'active' | 'disabled' | 'errored' };
 
+  // The raw audit firehose, bridged from `lib/events.ts` (see
+  // `kernel/auditBridge.ts`). Every `audit()` call reaches plugins here, so a
+  // plugin can observe anything without the bridge needing a mapping for it.
+  'audit.recorded': { action: string; entity: string | null; actorUserId: number | null; ts: string };
+
   // Plugin Ecosystem Events
   'deployment.status_changed': { deploymentId?: number; status?: string; serviceName?: string };
   'service.health_changed': { serviceId?: number; status?: string };

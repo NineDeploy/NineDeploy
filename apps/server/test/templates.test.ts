@@ -24,7 +24,8 @@ describe('template routes', () => {
     const res = await app.inject({ method: 'GET', url: '/', headers: asUser() });
     expect(res.statusCode).toBe(200);
     const rows = res.json();
-    expect(rows).toHaveLength(88);
+    expect(rows).toHaveLength(89);
+    expect(rows.some((row: { id: string }) => row.id === 'umami-stack')).toBe(true);
     expect(rows[0]).toMatchObject({ id: 'n8n', name: 'n8n', category: 'Automation', runtimeVerified: true });
     expect(rows[0]).not.toHaveProperty('description');
   });

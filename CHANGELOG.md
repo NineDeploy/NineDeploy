@@ -9,6 +9,99 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Instance-operator rights are no longer self-grantable** *(critical)*. `isOperator`
+  was computed as "holds `owner`/`admin` in at least one workspace". Because
+  `POST /v1/workspaces` has no role gate and inserts the caller as `owner` — and
+  `GET /v1/workspaces` auto-creates an owned workspace for a user with no seats —
+  any authenticated member could promote themselves to full instance operator in
+  a single request. That flag also gates the host-privilege boundary
+  (`lib/hostPrivilege.ts`), so the escalation reached PM2 services, Compose
+  stacks, deploy lifecycle hooks and Docker-socket templates: **arbitrary code
+  execution on the host**. Migration `0038` adds `users.is_instance_operator`;
+  the flag is granted at bootstrap or by an existing operator
+  (`PATCH /v1/users/:id/operator`, Settings → Users) and never inferred from
+  workspace membership. The last operator cannot be demoted or deleted.
+  Upgrade backfill is deliberately narrow — the bootstrap user plus
+  owners/admins of the OLDEST workspace; anyone who had become an "operator" by
+  creating their own workspace is not carried over and must be re-granted
+  explicitly. `test/operatorEscalation.test.ts` fails against the old code.
+- **Workspace roles are actually enforced.** `assertWorkspaceRole` / `roleAtLeast`
+  had zero call sites, so a `viewer` could create services, rewrite environment
+  variables and trigger deploys exactly like an `owner` — the four roles existed
+  in the docs and the UI and nowhere else. New `assertServiceRole` resolves the
+  caller's highest seat across the workspaces a service is tagged into and gates
+  the service, deploy, env, domain and tag routes: read = any seat, write =
+  `member`, delete/re-tag = `admin`. Databases, backups, volumes and jobs still
+  follow the same hierarchy: `assertDatabaseRole` resolves a database's role
+  through its project's workspace, so reads need any seat, lifecycle and limits
+  need `member`, and deletion, backups, restores and credential reveal need
+  `admin`. Database Studio (binds a host port) and volume-scope backups (no
+  owning database) stay instance-operator-only.
+- **Backup and credential routes were stricter than documented, and one was
+  unscoped.** Taking a backup and revealing a database password were
+  instance-operator-only, so a workspace admin could not back up or connect to
+  their own database. Both are now `admin` on the database. Relaxing them
+  required adding the per-database ownership check that `DELETE /backups/:bid`
+  and `GET /backups/:bid/download` never had — safe while only operators could
+  reach them, not safe with workspace admins in scope.
+- **API token scopes are enforced.** `api_tokens.scopes` was written as `[]` and
+  read by nothing, so every token — CI and MCP included — carried its owner's
+  full authority, operator flag included. Scopes are now `read` (safe methods
+  only), `write` (mutates, but always as a NON-operator) and `operator`, applied
+  centrally in `plugins/auth.ts` so new routes are covered on the day they are
+  added. A token can never outrank its owner. Tokens also accept
+  `expiresInDays`. Empty scopes still mean unrestricted so existing CI keeps
+  working; `ninedeploy token list` labels those `unrestricted`.
+
+### Added
+
+- **The `.ninedeploy` manifest actually shapes the build.** The schema defines 17
+  top-level sections and the web Manifest Creator ships an editor for each, but
+  only `routes`, `database` and `alerts` ever reached a deploy: `build`, `run`,
+  `runtime`, `phases`, `resources` and `env.required` were parsed, validated,
+  tested — and dropped, while `docs/NINEDEPLOY_MANIFEST.md` §6.1 described a
+  `nixpacks.toml` that nothing generated (`lib/ninedeployToNixpacks.ts` and
+  `lib/ninedeployApply.ts` had no importers at all). Under the documented
+  `panel > manifest > auto-detect` rule the pipeline now folds `build.*` into
+  the effective build config, fills `run.port`/`run.healthcheck`/`run.restart`
+  and `resources.*` where the panel is silent, warns on each missing
+  `env.required` key, and renders `runtime`/`phases` into a real `nixpacks.toml`
+  next to the source (a repo that already ships one keeps it). Every value the
+  manifest contributes is announced in the deploy log.
+- **`hooks` stays deliberately unwired, and now says so.** Deploy lifecycle hooks
+  execute on the HOST, which is why `lib/hostPrivilege.ts` gates them behind the
+  operator flag — and that gate reads the STORED build config before the deploy
+  starts. Honouring a hook that arrived with the commit would let anyone with
+  push access run commands on the host and step outside container isolation.
+  A manifest declaring `hooks` gets a deploy-log warning instead.
+
+### Fixed
+
+- **Service visibility was computed three different ways.** `GET /v1/services`
+  filtered on `owner_user_id` alone while `/dashboard`, `/domains` and the
+  per-service loader also honoured workspace tags — a teammate could open and
+  deploy a shared service by id but saw an empty list, while the dashboard
+  counted it. All callers now share `visibleServiceIdSet` in
+  `lib/resourceAccess.ts`.
+- `GET /v1/users` derived each row's operator badge from workspace seats, which
+  after the change above would have shown every member as an operator. It reads
+  the flag.
+
+### Docs
+
+- `ARCHITECTURE.md` rewritten against the actual tree: it had drifted a full
+  release behind (28 tables → 40, migrations 0000–0019 → 0000–0038, "two roles"
+  → workspace RBAC, single-project scoping → N-N project/workspace/label tags,
+  MCP 15 tools → 36, "100% coverage everywhere" → the real tiered gates), and
+  omitted workspaces, invitations, OIDC/SSO, the microkernel, Config Center,
+  firewall, log drains, volume backups, repo insights, the `.ninedeploy`
+  manifest, preview deployments and panel self-update entirely. A new "Known
+  gaps" section records where the implementation still trails the intent.
+- `docs/WORKSPACES_RBAC.md` now documents what the code enforces, including the
+  instance-operator flag as a separate concept from workspace roles.
+
 ---
 
 ## [0.3.4] - 2026-08-27

@@ -19,6 +19,7 @@ import { audit } from '../lib/audit.js';
 import { config } from '../config.js';
 import { badRequest, conflict, HttpError, notFound, parseId as num } from '../lib/errors.js';
 import { loadServiceForUser } from '../lib/serviceAccess.js';
+import { assertServiceRole, visibleServiceIdSet } from '../lib/resourceAccess.js';
 import { assertMayUseHostPrivilege } from '../lib/hostPrivilege.js';
 import { assertMayPublishPort } from '../lib/hostPort.js';
 import { slugify } from '../lib/slug.js';
@@ -154,16 +155,19 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
     const wantedWorkspaces = ids(query.tagWorkspaceIds);
     const wantedLabels = ids(query.tagLabelIds);
 
-    // Members only see their own services; operators see every service on the
-    // instance.
-    const conditions = [];
-    if (req.user?.isOperator !== true) conditions.push(eq(services.ownerUserId, req.user!.id));
-    const rows = await app.db.query.services.findMany({
+    // Visibility: owned services PLUS every service tagged into a workspace
+    // the caller belongs to; operators see the whole instance.
+    //
+    // This used to filter on `ownerUserId` alone, which disagreed with
+    // `/dashboard`, `/domains` and `loadServiceForUser` — all of which already
+    // honoured workspace tags. A teammate could therefore open and deploy a
+    // shared service by id while their own list came back empty and the
+    // dashboard counted it. All four now call `visibleServiceIdSet`.
+    const visibleIds = await visibleServiceIdSet(app.db, req.user!);
+    const allRows = await app.db.query.services.findMany({
       orderBy: (s, { desc }) => [desc(s.id)],
-      ...(conditions.length > 0 && {
-        where: conditions.length === 1 ? conditions[0]! : and(...conditions),
-      }),
     });
+    const rows = visibleIds === null ? allRows : allRows.filter((s) => visibleIds.has(s.id));
 
     const tagsById = await loadTagIds(app.db, rows.map((s) => s.id));
     const matches = (have: number[], wanted: number[]) =>
@@ -338,6 +342,8 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
   app.patch('/:id', async (req) => {
     const id = num((req.params as { id: string }).id);
     const existing = await loadServiceForUser(app.db, id, req.user!);
+    // Read access is any workspace seat; editing the definition is `member`+.
+    await assertServiceRole(app.db, existing, req.user!, 'member');
     const { build, ...patch } = updateService.parse(req.body ?? {});
     // The gate has to consider the MERGED result, not just the payload: a
     // member could otherwise switch `type` to pm2 on its own, or add a single
@@ -393,6 +399,8 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
   app.delete('/:id', async (req, reply) => {
     const id = num((req.params as { id: string }).id);
     const svc = await loadServiceForUser(app.db, id, req.user!);
+    // Destroying a service (and its volumes) is an `admin`+ action.
+    await assertServiceRole(app.db, svc, req.user!, 'admin');
     // A deployment queued or building for this service keeps writing state
     // against the row and its candidate runtime. Deleting now would orphan the
     // mid-flight build's runtime — refuse until the pipeline settles; the user
@@ -441,7 +449,8 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
   // Resource limits (applied on next deploy).
   app.patch('/:id/limits', async (req) => {
     const id = num((req.params as { id: string }).id);
-    await loadServiceForUser(app.db, id, req.user!);
+    const limitTarget = await loadServiceForUser(app.db, id, req.user!);
+    await assertServiceRole(app.db, limitTarget, req.user!, 'member');
     const input = setLimits.parse(req.body);
     const updateData: { cpuShares?: number; memLimitMb?: number } = {};
     if (input.cpuShares !== undefined) {
@@ -480,6 +489,7 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
 
   app.post('/:id/stop', async (req) => {
     const svc = await loadServiceForUser(app.db, num((req.params as { id: string }).id), req.user!);
+    await assertServiceRole(app.db, svc, req.user!, 'member');
     if (!svc?.runtimeId) throw notFound('Service not found or not deployed');
     // PM2 and Docker have disjoint runtimes — an unknown type must not silently
     // misroute to the docker CLI (which would no-op on a PM2 process name).
@@ -506,6 +516,7 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
 
   app.post('/:id/start', async (req) => {
     const svc = await loadServiceForUser(app.db, num((req.params as { id: string }).id), req.user!);
+    await assertServiceRole(app.db, svc, req.user!, 'member');
     if (!svc?.runtimeId) throw notFound('Service not found or not deployed');
     if (svc.type === 'pm2') {
       await pm2Start(svc.runtimeId).catch(async (err: unknown) => {
@@ -535,6 +546,7 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
 
   app.post('/:id/restart', async (req) => {
     const svc = await loadServiceForUser(app.db, num((req.params as { id: string }).id), req.user!);
+    await assertServiceRole(app.db, svc, req.user!, 'member');
     if (!svc?.runtimeId) throw notFound('Service not found or not deployed');
     if (svc.type === 'pm2') {
       await pm2Restart(svc.runtimeId).catch(async (err: unknown) => {

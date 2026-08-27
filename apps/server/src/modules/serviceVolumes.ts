@@ -10,6 +10,7 @@ import { audit } from '../lib/audit.js';
 import { createDockerVolume } from '../engine/database.js';
 import { capture } from '../lib/exec.js';
 import { loadServiceForUser } from '../lib/serviceAccess.js';
+import { assertServiceRole } from '../lib/resourceAccess.js';
 import { badRequest, conflict, notFound, parseId as num } from '../lib/errors.js';
 import { containerRunning, listManagedVolumeNames } from '../lib/inventory.js';
 
@@ -132,6 +133,7 @@ export const serviceVolumesRoutes: FastifyPluginAsync = async (app) => {
   // ── POST /:id/volumes — attach (or create+attach) ─────────────────────
   app.post('/:id/volumes', async (req) => {
     const svc = await loadServiceForUser(app.db, num((req.params as { id: string }).id), req.user!);
+    await assertServiceRole(app.db, svc, req.user!, 'member');
     ensureSupportsVolumes(svc);
     const input = createServiceVolumeAttachment.parse(req.body);
 
@@ -217,6 +219,7 @@ export const serviceVolumesRoutes: FastifyPluginAsync = async (app) => {
 
   app.post('/:id/volumes/config-repair', async (req) => {
     const svc = await loadServiceForUser(app.db, num((req.params as { id: string }).id), req.user!);
+    await assertServiceRole(app.db, svc, req.user!, 'member');
     ensureSupportsVolumes(svc);
     const input = repairConfig.parse(req.body ?? {});
 
@@ -252,6 +255,7 @@ export const serviceVolumesRoutes: FastifyPluginAsync = async (app) => {
   // ── PATCH /:id/volumes/:attId — change path / readonly ────────────────
   app.patch('/:id/volumes/:attId', async (req) => {
     const svc = await loadServiceForUser(app.db, num((req.params as { id: string }).id), req.user!);
+    await assertServiceRole(app.db, svc, req.user!, 'member');
     ensureSupportsVolumes(svc);
     const attId = num((req.params as { attId: string }).attId);
     const input = updateServiceVolumeAttachment.parse(req.body);
@@ -296,6 +300,7 @@ export const serviceVolumesRoutes: FastifyPluginAsync = async (app) => {
   // ── DELETE /:id/volumes/:attId — detach (volume survives) ─────────────
   app.delete('/:id/volumes/:attId', async (req, reply) => {
     const svc = await loadServiceForUser(app.db, num((req.params as { id: string }).id), req.user!);
+    await assertServiceRole(app.db, svc, req.user!, 'admin');
     ensureSupportsVolumes(svc);
     const attId = num((req.params as { attId: string }).attId);
 

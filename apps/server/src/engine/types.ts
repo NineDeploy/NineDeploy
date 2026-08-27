@@ -1,4 +1,5 @@
 import type { BuildConfig, Service, ServiceVolumeAttachment } from '@ninedeploy/db';
+import type { NinedeployManifest } from '@ninedeploy/schemas';
 
 export interface BuildContext {
   deploymentId: number;
@@ -38,6 +39,16 @@ export interface BuildContext {
    * be empty (then the builder only mounts the primary, if set).
    */
   volumeAttachments?: ServiceVolumeAttachment[];
+  /**
+   * The repo's `.ninedeploy` manifest, when it ships one.
+   *
+   * The pipeline has already folded the manifest's `build.*` fields into
+   * `buildConfig` (panel > manifest > auto-detect) before the builder sees
+   * this, so a builder only needs the raw manifest for the sections that
+   * cannot be expressed as a BuildConfig — `runtime` and `phases`, which the
+   * Docker builder renders into a `nixpacks.toml`.
+   */
+  manifest?: NinedeployManifest;
   /** Append a log line (persisted + broadcast to subscribers). */
   log: (line: string) => void;
 }

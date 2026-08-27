@@ -3,7 +3,7 @@ import { labels, serviceLabels } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { createLabel, labelPatch, type Label, type LabelColor } from '@ninedeploy/schemas';
 import { audit } from '../lib/audit.js';
-import { assertWorkspaceMember, isOperator } from '../lib/resourceAccess.js';
+import { assertWorkspaceMember } from '../lib/resourceAccess.js';
 import { badRequest, forbidden, notFound, parseId } from '../lib/errors.js';
 import { iso } from '../lib/serialize.js';
 
@@ -62,7 +62,9 @@ export const labelRoutes: FastifyPluginAsync = async (app) => {
   app.get('/', async (req) => {
     const query = req.query as { workspaceId?: string };
     const user = req.user!;
-    const operator = await isOperator(app.db, user);
+    // Request-resolved flag (see plugins/auth.ts) — a fresh DB read here
+    // would ignore API-token scope narrowing.
+    const operator = user.isOperator;
 
     // Restrict the result to labels the caller can see:
     //   • workspace labels → only in workspaces the user belongs to
@@ -109,7 +111,7 @@ export const labelRoutes: FastifyPluginAsync = async (app) => {
     const input = createLabel.parse(req.body);
     const user = req.user!;
     if (input.workspaceId == null) {
-      if (!(await isOperator(app.db, user))) {
+      if (!user.isOperator) {
         throw forbidden('Personal labels are operator-only; pick a workspace');
       }
     } else {
@@ -143,7 +145,7 @@ export const labelRoutes: FastifyPluginAsync = async (app) => {
     const existing = await app.db.query.labels.findFirst({ where: eq(labels.id, id) });
     if (!existing) throw notFound('Label not found');
     if (existing.workspaceId == null) {
-      if (!(await isOperator(app.db, user))) throw forbidden('Personal labels are operator-only');
+      if (!user.isOperator) throw forbidden('Personal labels are operator-only');
     } else {
       await assertWorkspaceMember(app.db, existing.workspaceId, user);
     }
@@ -178,7 +180,7 @@ export const labelRoutes: FastifyPluginAsync = async (app) => {
     const existing = await app.db.query.labels.findFirst({ where: eq(labels.id, id) });
     if (!existing) throw notFound('Label not found');
     if (existing.workspaceId == null) {
-      if (!(await isOperator(app.db, user))) throw forbidden('Personal labels are operator-only');
+      if (!user.isOperator) throw forbidden('Personal labels are operator-only');
     } else {
       await assertWorkspaceMember(app.db, existing.workspaceId, user);
     }

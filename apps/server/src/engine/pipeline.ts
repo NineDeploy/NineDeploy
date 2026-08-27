@@ -22,6 +22,8 @@ import type { BuildContext, Builder, DeployRuntime } from './types.js';
 import { reconcileTemplateDependencies } from './templateDependencies.js';
 import { applyManifestToService } from '../lib/applyManifestToService.js';
 import { loadNinedeployManifest } from '../lib/ninedeployManifest.js';
+import { applyManifestToBuildConfig, findMissingRequiredEnv } from '../lib/ninedeployApply.js';
+import type { NinedeployManifest } from '@ninedeploy/schemas';
 
 const builders: Record<string, Builder> = { docker: dockerBuilder, pm2: pm2Builder, compose: composeBuilder };
 const DEPLOY_HEARTBEAT_MS = 20_000;
@@ -309,6 +311,9 @@ export async function runDeployment(db: DB, deploymentId: number): Promise<void>
   // Resolved commit SHA (empty for image deploys). Lifted out of the try so the
   // success path (which persists it onto the service row) can read it.
   let sha = '';
+  // The repo's `.ninedeploy`, when it ships one. Loaded during PREPARE and
+  // consumed by the BUILD stage (see `applyManifestToBuildConfig` below).
+  let manifest: NinedeployManifest | undefined;
   // Fingerprint of the resolved managed-database env values — filled once the
   // runtime env is built inside the try; consumed by the success finalize.
   let managedFp: Record<string, string> = {};
@@ -351,9 +356,16 @@ export async function runDeployment(db: DB, deploymentId: number): Promise<void>
       // reflects what the repo declares. Idempotent — re-running an unchanged
       // manifest is a no-op. Best-effort: a stale manifest must never fail
       // the deploy itself.
+      //
+      // The manifest itself is kept in `manifest` so the BUILD stage below can
+      // fold in `build`/`resources`/`run` and hand `runtime`/`phases` to the
+      // Nixpacks generator. Before 0.3.5 only the operational sections were
+      // applied and every build-shaping section was parsed, validated, offered
+      // in the Manifest Creator — and then silently ignored.
       try {
         const loaded = loadNinedeployManifest(workDir);
         if (loaded) {
+          manifest = loaded.manifest;
           log(
             `📋 .ninedeploy loaded (${loaded.relativePath}) — applying operational sections`,
           );
@@ -394,10 +406,85 @@ export async function runDeployment(db: DB, deploymentId: number): Promise<void>
       managedFp = managedEnvFingerprint(runtimeEnvironment.values, runtimeEnvironment.managedDatabaseKeys);
     }
 
+    // ── `.ninedeploy` build-shaping sections ────────────────────────────
+    //
+    // Merge rule (docs/NINEDEPLOY_MANIFEST.md §3): panel/DB > manifest >
+    // auto-detect. `applyManifestToBuildConfig` only fills fields the operator
+    // left empty, so a value set in the panel is never overwritten by the repo.
+    //
+    // The overlay is per-deploy and deliberately NOT persisted: the manifest
+    // travels with the commit, so the next deploy of a different commit must
+    // re-derive it rather than inherit a stale copy in `build_configs`.
+    let effectiveBuildConfig = buildConfig;
+    if (manifest && buildConfig) {
+      const merged = applyManifestToBuildConfig(manifest, buildConfig);
+      const changed: string[] = [];
+      for (const key of ['installCmd', 'buildCmd', 'startCmd', 'baseDir', 'dockerfilePath', 'restartPolicy'] as const) {
+        if (merged[key] !== buildConfig[key]) changed.push(`${key}=${String(merged[key])}`);
+      }
+      if (changed.length > 0) {
+        log(`📋 .ninedeploy build config: ${changed.join(', ')} (panel values win; these fields were empty)`);
+      }
+      effectiveBuildConfig = merged;
+    }
+
+    // `env.required` is a contract the repo declares, not something the panel
+    // can know. A missing key is the classic "container boots, then crashes"
+    // failure, so it is surfaced loudly here — as a warning rather than a hard
+    // failure, because the value may legitimately arrive from the image itself.
+    if (manifest) {
+      const missing = findMissingRequiredEnv(manifest, runtimeEnvironment.values);
+      for (const key of missing) {
+        log(`⚠ .ninedeploy declares required env "${key}", which is not set for this service`);
+      }
+      // Lifecycle hooks run on the HOST, so accepting them from a repository
+      // would hand anyone with push access the host-execution capability that
+      // lib/hostPrivilege.ts gates behind the operator flag. Say so instead of
+      // ignoring the section silently.
+      if (manifest.hooks) {
+        log(
+          '⚠ .ninedeploy hooks are ignored: deploy hooks execute on the host, so they can only be set by an operator in Service → Settings',
+        );
+      }
+    }
+
+    // `resources` and `run.port`/`run.healthcheck` fill in only where the panel
+    // left the field unset — 0 means "unlimited/unset" for the two limits, and
+    // null means "unset" for the port. Same precedence rule as the build fields.
+    let serviceForBuild = service;
+    if (manifest) {
+      const patch: Partial<typeof service> = {};
+      const notes: string[] = [];
+      const cpu = manifest.resources?.cpuShares;
+      const mem = manifest.resources?.memMb;
+      if (service.cpuShares === 0 && cpu) {
+        patch.cpuShares = cpu;
+        notes.push(`cpuShares=${cpu}`);
+      }
+      if (service.memLimitMb === 0 && mem) {
+        patch.memLimitMb = mem;
+        notes.push(`memLimitMb=${mem}`);
+      }
+      if (service.port == null && manifest.run?.port) {
+        patch.port = manifest.run.port;
+        notes.push(`port=${manifest.run.port}`);
+      }
+      // healthPath is NOT NULL with default '/', so '/' is the "unset" marker.
+      if ((service.healthPath ?? '/') === '/' && manifest.run?.healthcheck) {
+        patch.healthPath = manifest.run.healthcheck;
+        notes.push(`healthPath=${manifest.run.healthcheck}`);
+      }
+      if (notes.length > 0) {
+        serviceForBuild = { ...service, ...patch };
+        log(`📋 .ninedeploy runtime config: ${notes.join(', ')} (panel values win)`);
+      }
+    }
+
     const ctx: BuildContext = {
       deploymentId,
-      service,
-      buildConfig: buildConfig ?? undefined,
+      service: serviceForBuild,
+      buildConfig: effectiveBuildConfig ?? undefined,
+      manifest,
       workDir,
       commitSha: sha,
       // For image rollback, pin the exact image by its stored digest.

@@ -98,6 +98,7 @@ function defaultRows(table: string, args: unknown): Row[] {
   return userId === null || userId === DEFAULT_OPERATOR_USER_ID ? [DEFAULT_MEMBERSHIP] : [];
 }
 
+
 export function createFakeDb(opts: FakeDbOpts = {}): DB {
   const resolveRows = (v: RowsResolver | undefined, fallback: Row[], ...args: unknown[]): Promise<Row[]> => {
     try {
@@ -298,7 +299,12 @@ export async function buildTestApp(opts: TestAppOpts = {}): Promise<FastifyInsta
     const role = (req.headers['x-test-role'] === 'member' ? 'member' : 'admin') as 'admin' | 'member';
     const isOperator =
       explicit === 'true' ? true : explicit === 'false' ? false : role === 'admin';
-    req.user = { id: Number(header), role, isOperator };
+    // `tokenScopes: null` = an interactive session, i.e. unrestricted. Tests
+    // that exercise API-token scoping set it explicitly.
+    const scopeHeader = req.headers['x-test-token-scopes'];
+    const tokenScopes =
+      typeof scopeHeader === 'string' ? scopeHeader.split(',').filter(Boolean) : null;
+    req.user = { id: Number(header), role, isOperator, tokenScopes };
     void reply;
   });
   app.decorate('requireAdmin', async (req: FastifyRequest) => {
@@ -418,6 +424,7 @@ export const userRow = (over: Record<string, unknown> = {}) => ({
   passwordHash: 'hash',
   name: 'Admin',
   isOperator: true,
+  isInstanceOperator: true,
   tokenVersion: 0,
   createdAt: NOW,
   updatedAt: NOW,

@@ -20,6 +20,10 @@ export interface ExecOptions {
 const SAFE_INHERITED_ENV = new Set([
   // OS / shell basics needed to locate and run binaries.
   'PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'TERM', 'TMPDIR',
+  // Windows equivalents: the Docker CLI locates its bundled compose plugin
+  // under %ProgramFiles%\Docker\Docker\resources\cli-plugins (plus
+  // %USERPROFILE%\.docker\cli-plugins), and children need SystemRoot.
+  'USERPROFILE', 'APPDATA', 'ProgramFiles', 'ProgramData', 'SystemRoot',
   // Locale — some tools refuse to start without it.
   'LANG', 'LC_ALL', 'LC_CTYPE', 'LC_MESSAGES',
   // Build mode is safe and often expected by toolchains.

@@ -26,7 +26,17 @@ export async function reconcileTemplateDependencies(
 ): Promise<TemplateDependencyResult> {
   if (!service.templateId) return null;
   const template = (await getTemplates(db)).find((candidate) => candidate.id === service.templateId);
-  if (!template) throw new Error(`Hub template '${service.templateId}' is no longer available`);
+  if (!template) {
+    // A vanished template must never brick redeploys of already-installed
+    // services. Managed-database stacks genuinely depend on the registry
+    // contract (databaseEnv mapping) — those still fail loudly. Everything
+    // else (compose stacks carry their DBs inside the stack) redeploys fine.
+    if (service.templateDatabaseEnv) {
+      throw new Error(`Hub template '${service.templateId}' is no longer available`);
+    }
+    log(`note: template '${service.templateId}' is no longer in the registry — no managed dependencies to reconcile`);
+    return null;
+  }
   if (!template.dbEngine) return null;
 
   const cfg = ENGINES[template.dbEngine];

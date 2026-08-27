@@ -18,6 +18,7 @@ import type { AuthedUser } from '../lib/resourceAccess.js';
 import { assertMayPublishPort } from '../lib/hostPort.js';
 import { slugify } from '../lib/slug.js';
 import { applyDefaultTags, replaceServiceTags } from './serviceTags.js';
+import { prepareComposeStack } from './composeStacks.js';
 
 const summary = (t: Template) => ({
   id: t.id,
@@ -51,7 +52,7 @@ function sameTemplateService(service: Service, template: Template, ownerUserId: 
 }
 
 /** Upsert template defaults and user overrides without rotating existing secrets on retry. */
-async function reconcileEnvironment(
+export async function reconcileEnvironment(
   app: FastifyInstance,
   serviceId: number,
   template: Template,
@@ -214,7 +215,21 @@ export const templateRoutes: FastifyPluginAsync = async (app) => {
     // host — admin-only, like the exec terminal.
     assertMayUseHostPrivilege(req.user!, { type: 'docker', dockerSocket: t.dockerSocket ?? false });
     assertMayPublishPort(req.user!, input.publishedPort);
-    const prepared = await prepareTemplateService(app, t, input, req.user!);
+    const prepared = t.composeContent
+      ? await (async () => {
+          const stack = await prepareComposeStack(app, t, input, req.user!);
+          const generatedSecrets = await reconcileEnvironment(app, stack.service.id, { ...t, env: stack.stackEnv }, input.env ?? []);
+          return {
+            service: stack.service,
+            generatedSecrets,
+            stages: [
+              { id: 'service' as const, status: 'success' as const, message: 'Compose stack service created' },
+              { id: 'environment' as const, status: 'success' as const, message: 'Magic variables resolved and persisted' },
+              ...stack.warnings.map((w) => ({ id: 'database' as const, status: 'skipped' as const, message: w })),
+            ],
+          };
+        })()
+      : await prepareTemplateService(app, t, input, req.user!);
     let deployment = await app.db.query.deployments.findFirst({
       where: and(
         eq(deployments.serviceId, prepared.service.id),

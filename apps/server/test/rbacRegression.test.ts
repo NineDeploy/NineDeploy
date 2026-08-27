@@ -132,28 +132,40 @@ describe('K2: service-scoped routes enforce ownership for members', () => {
     expect(inserted).toMatchObject({ ownerUserId: MEMBER });
   });
 
-  it('the list request carries an ownership filter for members but not admins', async () => {
-    const listArgs: Array<{ where?: unknown }> = [];
+  // Asserts the OUTCOME rather than the shape of the drizzle `where`: service
+  // visibility moved into the shared `visibleServiceIdSet` helper so
+  // `GET /v1/services`, `/dashboard` and `/domains` stop disagreeing, and the
+  // owner match is applied to the loaded rows instead of the SQL predicate.
+  it('the list shows a member only their own services, and admins everything', async () => {
+    const mine = svcRow({ id: 1, slug: 'mine', ownerUserId: MEMBER });
+    const theirs = svcRow({ id: 2, slug: 'theirs', ownerUserId: OWNER });
     const app = await buildTestApp({
       db: createFakeDb({
-        findMany: {
-          services: (args: { where?: unknown }) => {
-            listArgs.push(args);
-            return [];
-          },
+        findMany: { services: [mine, theirs] },
+        // `visibleServiceIdSet` re-selects the caller's owned rows; the fake db
+        // ignores `where`, so branch on the projection to model it.
+        select: {
+          services: (cols: unknown) => (cols ? [{ id: mine.id }] : [mine, theirs]),
         },
       }),
     });
     await app.register(servicesRoutes, { prefix: '/services' });
-    const asMember = await app.inject({ method: 'GET', url: '/services', headers: asUser({ id: MEMBER, isOperator: false }) });
+
+    const asMember = await app.inject({
+      method: 'GET',
+      url: '/services',
+      headers: asUser({ id: MEMBER, isOperator: false }),
+    });
     expect(asMember.statusCode).toBe(200);
-    const asAdmin = await app.inject({ method: 'GET', url: '/services', headers: asUser({ id: 1, isOperator: true }) });
+    expect(asMember.json().map((s: { id: number }) => s.id)).toEqual([1]);
+
+    const asAdmin = await app.inject({
+      method: 'GET',
+      url: '/services',
+      headers: asUser({ id: 1, isOperator: true }),
+    });
     expect(asAdmin.statusCode).toBe(200);
-    expect(listArgs).toHaveLength(2);
-    // The member's query is scoped (a drizzle where condition is present);
-    // the admin's is not.
-    expect(listArgs[0]!.where).toBeTypeOf('object');
-    expect(listArgs[1]!.where).toBeUndefined();
+    expect(asAdmin.json().map((s: { id: number }) => s.id)).toEqual([1, 2]);
   });
 });
 
@@ -248,10 +260,37 @@ describe('K6: database credentials are admin-only', () => {
     expect(res.json()[0]).toMatchObject({ connectionString: 'postgres://nine:secret@nd-db-pg:5432/app' });
   });
 
-  it('GET /databases/:id/credentials requires admin', async () => {
-    const app = await dbApp();
-    const denied = await app.inject({ method: 'GET', url: '/databases/1/credentials', headers: asUser({ id: MEMBER, isOperator: false }) });
+  // The line moved with the workspace role hierarchy: the gate is now `admin`
+  // ON THE DATABASE, not "instance operator". A plain member with access still
+  // cannot read the password; the database's own owner can — it used to be
+  // operator-only, so the creator of a database could not read its credentials,
+  // which is stricter than the published matrix and unusable for a team.
+  it('GET /databases/:id/credentials refuses a member who merely has access', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        // Owned by someone else, shared through a workspace the caller is a
+        // plain `member` of.
+        findFirst: {
+          databases: dbRow({ id: 1, ownerUserId: OWNER, projectId: 5, status: 'running', passwordEncrypted: encrypt('pw') }),
+          projects: { id: 5, workspaceId: 1, name: 'P', slug: 'p' },
+          workspaceMembers: { id: 1, workspaceId: 1, userId: MEMBER, role: 'member' },
+        },
+      }),
+    });
+    await app.register(databasesRoutes, { prefix: '/databases' });
+    const denied = await app.inject({
+      method: 'GET',
+      url: '/databases/1/credentials',
+      headers: asUser({ id: MEMBER, isOperator: false }),
+    });
     expect(denied.statusCode).toBe(403);
+  });
+
+  it('GET /databases/:id/credentials allows the owner and an operator', async () => {
+    const app = await dbApp();
+    const owner = await app.inject({ method: 'GET', url: '/databases/1/credentials', headers: asUser({ id: MEMBER, isOperator: false }) });
+    expect(owner.statusCode).toBe(200);
+    expect(owner.json()).toMatchObject({ password: 'pw' });
     const allowed = await app.inject({ method: 'GET', url: '/databases/1/credentials', headers: asUser({ id: 1, isOperator: true }) });
     expect(allowed.statusCode).toBe(200);
     expect(allowed.json()).toMatchObject({ password: 'pw' });

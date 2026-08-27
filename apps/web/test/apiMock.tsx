@@ -104,7 +104,7 @@ export function createFakeApiModule() {
     tunnels: { list: vi.fn(), create: vi.fn(), remove: vi.fn() },
     activity: { list: vi.fn() },
     alerts: { list: vi.fn(), create: vi.fn(), update: vi.fn(), remove: vi.fn() },
-    users: { list: vi.fn(), create: vi.fn(), remove: vi.fn(), resetPassword: vi.fn(), resetLink: vi.fn() },
+    users: { list: vi.fn(), create: vi.fn(), remove: vi.fn(), resetPassword: vi.fn(), resetLink: vi.fn(), setOperator: vi.fn() },
     settings: {
       get: vi.fn(),
       setAllowRegistration: vi.fn(),

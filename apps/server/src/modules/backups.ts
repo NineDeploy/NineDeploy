@@ -7,8 +7,8 @@ import type { FastifyPluginAsync } from 'fastify';
 import { config } from '../config.js';
 import { backupDatabase, createBackupReadStream, databaseSize, restoreDatabase } from '../engine/database.js';
 import { deleteRemoteBackup, fetchRemoteBackup, uploadBackup } from '../lib/backupRemote.js';
-import { type AuthedUser, loadDatabaseForUser, visibleDatabaseIds } from '../lib/resourceAccess.js';
-import { badRequest, notFound, parseId as num } from '../lib/errors.js';
+import { assertDatabaseRole, type AuthedUser, loadDatabaseForUser, visibleDatabaseIds } from '../lib/resourceAccess.js';
+import { badRequest, forbidden, notFound, parseId as num } from '../lib/errors.js';
 
 function serialize(b: typeof backups.$inferSelect) {
   return {
@@ -37,6 +37,32 @@ async function getDb(app: Parameters<FastifyPluginAsync>[0], id: number, user: A
   return loadDatabaseForUser(app.db, id, user);
 }
 
+/**
+ * Gate the instance-wide backup routes (`/backups/:bid`), which address a
+ * backup by its own id rather than through its database.
+ *
+ * These were `requireAdmin` with NO per-database check: correct while
+ * "operator" was the only way to reach them, but the moment a workspace admin
+ * can manage their own backups the ownership check has to exist, or one tenant
+ * could delete or download another's dump by guessing an id.
+ *
+ * Volume-scope backups carry no `databaseId`, so there is no workspace to
+ * derive a role from — those stay instance-operator-only.
+ */
+async function assertMayManageBackup(
+  app: Parameters<FastifyPluginAsync>[0],
+  row: { databaseId: number | null } | undefined,
+  user: AuthedUser,
+): Promise<void> {
+  if (user.isOperator) return;
+  // A missing row is reported as "not found" by the caller; refusing here would
+  // turn a 404 into a 403 and leak which ids exist.
+  if (!row) return;
+  if (row.databaseId == null) throw forbidden('Operator access required for this backup');
+  const d = await loadDatabaseForUser(app.db, row.databaseId, user);
+  await assertDatabaseRole(app.db, d, user, 'admin');
+}
+
 /** Per-database storage + backup actions. Mounted under /databases. */
 export const databaseBackupRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('onRequest', app.authenticate);
@@ -53,11 +79,15 @@ export const databaseBackupRoutes: FastifyPluginAsync = async (app) => {
     return rows.map(serialize);
   });
 
-  // Creating a backup means acquiring a full plaintext dump of the database —
-  // admin-only, consistent with exec/volume-file access.
-  app.post('/:id/backups', { preHandler: [app.requireAdmin] }, async (req) => {
+  // Creating a backup means acquiring a full plaintext dump of the database, so
+  // it sits at `admin` on that database rather than at `member`. It used to be
+  // instance-operator-only, which meant a workspace admin could not back up
+  // their OWN database — stricter than the published permission matrix and not
+  // usable by a team. Operators still qualify (they resolve as `owner`).
+  app.post('/:id/backups', async (req) => {
     const id = num((req.params as { id: string }).id);
     const d = await getDb(app, id, req.user!);
+    await assertDatabaseRole(app.db, d, req.user!, 'admin');
     const ts = new Date().toISOString().replace(/[:.]/g, '-');
     const file = path.join(config.paths.backupsDir, `${d.slug}-${ts}.dump`);
     const log = (line: string) => app.log.info({ component: 'backup' }, line);
@@ -79,10 +109,11 @@ export const databaseBackupRoutes: FastifyPluginAsync = async (app) => {
     return serialize(updated!);
   });
 
-  app.post('/:id/backups/:bid/restore', { preHandler: [app.requireAdmin] }, async (req) => {
+  app.post('/:id/backups/:bid/restore', async (req) => {
     const id = num((req.params as { id: string }).id);
     const bid = num((req.params as { bid: string }).bid);
     const d = await getDb(app, id, req.user!);
+    await assertDatabaseRole(app.db, d, req.user!, 'admin');
     const b = await app.db.query.backups.findFirst({ where: eq(backups.id, bid) });
     // Ownership: without this check a backup of database A could be restored
     // into database B (cross-database data corruption).
@@ -133,9 +164,10 @@ export const backupRoutes: FastifyPluginAsync = async (app) => {
     return scoped.map((b) => ({ ...serialize(b), databaseName: b.databaseId ? (name.get(b.databaseId) ?? null) : null }));
   });
 
-  app.delete('/:bid', { preHandler: [app.requireAdmin] }, async (req) => {
+  app.delete('/:bid', async (req) => {
     const bid = num((req.params as { bid: string }).bid);
     const b = await app.db.query.backups.findFirst({ where: eq(backups.id, bid) });
+    await assertMayManageBackup(app, b, req.user!);
     if (b && existsSync(b.path)) unlinkSync(b.path);
     if (b) await deleteRemoteBackup(app.db, b.remoteKey);
     await app.db.delete(backups).where(eq(backups.id, bid));
@@ -143,10 +175,11 @@ export const backupRoutes: FastifyPluginAsync = async (app) => {
     return { ok: true };
   });
 
-  // Downloading returns the decrypted plaintext dump — admin-only.
-  app.get('/:bid/download', { preHandler: [app.requireAdmin] }, async (req, reply) => {
+  // Downloading returns the decrypted plaintext dump.
+  app.get('/:bid/download', async (req, reply) => {
     const bid = num((req.params as { bid: string }).bid);
     const b = await app.db.query.backups.findFirst({ where: eq(backups.id, bid) });
+    await assertMayManageBackup(app, b, req.user!);
     if (!b || !existsSync(b.path)) throw notFound('Backup not found');
     // DB backups: encrypted at rest — hand the user the PLAINTEXT dump.
     // Volume backups: stored as plain tar.gz — stream the file directly.

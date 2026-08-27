@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "lint": "biome lint .",
     "test": "vitest run --coverage",
-    "clean": "rm -rf dist .turbo .data"
+    "clean": "rm -rf dist .turbo .data",
+    "templates:mirror": "tsx scripts/buildTemplateMirror.ts"
   },
   "dependencies": {
     "@fastify/cors": "^11.3.0",

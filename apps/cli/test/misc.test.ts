@@ -265,15 +265,28 @@ describe('deploysRollback', () => {
 
 describe('tokenCreate', () => {
   it('creates a token with a default name and prints it', async () => {
-    const create = vi.fn().mockResolvedValue({ token: 'raw-token' });
+    const create = vi.fn().mockResolvedValue({ token: 'raw-token', scopes: ['write'] });
     const client = { auth: { tokens: { create } } };
-    h.prompt.mockResolvedValueOnce('ci');
+    // Name prompt, then the scope prompt added when token scopes became
+    // enforced (an unscoped token carries its owner's full authority).
+    h.prompt.mockResolvedValueOnce('ci').mockResolvedValueOnce('write');
 
     await tokenCreate(client as never);
 
     expect(h.prompt).toHaveBeenCalledWith('Token name', 'ci');
-    expect(create).toHaveBeenCalledWith({ name: 'ci' });
+    expect(create).toHaveBeenCalledWith({ name: 'ci', scopes: ['write'] });
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('raw-token'));
+  });
+
+  it('names an unscoped token as unrestricted rather than showing nothing', async () => {
+    const create = vi.fn().mockResolvedValue({ token: 'raw-token', scopes: [] });
+    const client = { auth: { tokens: { create } } };
+    h.prompt.mockResolvedValueOnce('legacy').mockResolvedValueOnce('');
+
+    await tokenCreate(client as never);
+
+    expect(create).toHaveBeenCalledWith({ name: 'legacy', scopes: [] });
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('unrestricted (legacy)'));
   });
 
   it('reports a failure', async () => {

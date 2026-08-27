@@ -164,7 +164,7 @@ describe('composeBuilder.isHealthy', () => {
   it('returns true when the main container is running', async () => {
     const ok = await composeBuilder.isHealthy({ runtimeId: 'ndcmp-stack-api-1', port: 3000, healthPath: '/' }, 5000);
     expect(ok).toBe(true);
-    expect(h.capture).toHaveBeenCalledWith('docker', ['inspect', 'ndcmp-stack-api-1', '--format', '{{.State.Status}}']);
+    expect(h.capture).toHaveBeenCalledWith('docker', ['inspect', 'ndcmp-stack-api-1', '--format', '{{.State.Status}}|{{if .State.Health}}{{.State.Health.FailingStreak}}{{else}}0{{end}}|{{.RestartCount}}']);
   });
 
   it('returns false when the container never comes up', async () => {
@@ -180,6 +180,70 @@ describe('composeBuilder.isHealthy', () => {
     const ok = await composeBuilder.isHealthy({ runtimeId: 'x', port: null, healthPath: '/' }, 5000);
     expect(ok).toBe(true);
     expect(h.capture.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('composeBuilder redeploy safety gates', () => {
+  beforeEach(() => {
+    h.run.mockReset();
+    h.run.mockImplementation(async (_cmd: string, _args: unknown[], _opts: unknown, sink?: (line: string) => void) => {
+      sink?.('');
+    });
+    h.capture.mockClear();
+    h.capture.mockResolvedValue('running');
+  });
+
+  it('validates config and pre-pulls images BEFORE tearing the old stack down', async () => {
+    await composeBuilder.buildAndRun(makeCtx() as never);
+    const calls = h.run.mock.calls.map((c) => (c[1] as string[])[5]);
+    expect(calls.indexOf('config')).toBeGreaterThanOrEqual(0);
+    expect(calls.indexOf('pull')).toBeGreaterThan(calls.indexOf('config'));
+    expect(calls.indexOf('down')).toBeGreaterThan(calls.indexOf('pull'));
+    expect(calls.indexOf('up')).toBeGreaterThan(calls.indexOf('down'));
+  });
+
+  it('fails the deploy on a broken compose file without ever running down', async () => {
+    h.run.mockImplementation(async (_cmd: string, args: unknown[]) => {
+      if ((args as string[])[5] === 'config') throw new Error('invalid interpolation');
+      return Promise.resolve();
+    });
+    await expect(composeBuilder.buildAndRun(makeCtx() as never)).rejects.toThrow('invalid interpolation');
+    expect(h.run.mock.calls.some((c) => (c[1] as string[])[5] === 'down')).toBe(false);
+  });
+
+  it('fails the deploy on a dead registry without ever running down', async () => {
+    h.run.mockImplementation(async (_cmd: string, args: unknown[]) => {
+      if ((args as string[])[5] === 'pull') throw new Error('registry unreachable');
+      return Promise.resolve();
+    });
+    await expect(composeBuilder.buildAndRun(makeCtx() as never)).rejects.toThrow('registry unreachable');
+    expect(h.run.mock.calls.some((c) => (c[1] as string[])[5] === 'down')).toBe(false);
+  });
+
+  it('routes to the REAL container name when the stack pins container_name', async () => {
+    h.capture.mockResolvedValue(JSON.stringify([{ Name: '/pinned-name', State: 'running' }]));
+    const runtime = await composeBuilder.buildAndRun(makeCtx() as never);
+    expect(runtime.runtimeId).toBe('pinned-name');
+  });
+
+  it('falls back to the deterministic name on unparseable ps output', async () => {
+    h.capture.mockResolvedValue('not json at all');
+    const runtime = await composeBuilder.buildAndRun(makeCtx() as never);
+    expect(runtime.runtimeId).toBe('ndcmp-stack-api-1');
+  });
+  it('fails fast when the main container is crash-looping', async () => {
+    let poll = 0;
+    // First poll sets the restart baseline, the next one jumps past the
+    // crash-loop threshold (delta >= 3) so the test exits after one sleep.
+    h.capture.mockImplementation(async () => (poll++ === 0 ? 'restarting|0|0' : 'restarting|0|9'));
+    const ok = await composeBuilder.isHealthy({ runtimeId: 'x', port: null, healthPath: '/' }, 60_000);
+    expect(ok).toBe(false);
+  });
+
+  it('fails fast when healthcheck failing streak keeps growing', async () => {
+    h.capture.mockResolvedValue('starting|15|0');
+    const ok = await composeBuilder.isHealthy({ runtimeId: 'x', port: null, healthPath: '/' }, 60_000);
+    expect(ok).toBe(false);
   });
 });
 

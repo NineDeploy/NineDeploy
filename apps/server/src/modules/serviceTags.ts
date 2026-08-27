@@ -11,7 +11,7 @@ import {
 import type { FastifyPluginAsync } from 'fastify';
 import { setServiceTags, type ServiceTags } from '@ninedeploy/schemas';
 import { audit } from '../lib/audit.js';
-import { loadServiceForUser } from '../lib/resourceAccess.js';
+import { assertServiceRole, loadServiceForUser } from '../lib/resourceAccess.js';
 import { forbidden, parseId } from '../lib/errors.js';
 import { visibleLabelIds } from './labels.js';
 import { visibleProjectIds } from './projects.js';
@@ -27,10 +27,11 @@ import { visibleWorkspaceIds } from './workspaces.js';
  *   2. `GET /v1/services/:id/tags` — read the current membership with the
  *      resolved names so the UI can render chip labels.
  *
- * Authorization: the caller must be able to see the service
- * (`loadServiceForUser`) AND every target project/workspace/label must be
- * one they belong to (or operator). This keeps a member from re-homing their
- * service into another tenant's workspace.
+ * Authorization: reading needs any seat on the service. Writing needs `admin`
+ * or higher on it (`assertServiceRole`) AND every target
+ * project/workspace/label must be one the caller belongs to (or operator).
+ * This keeps a member from re-homing their service into another tenant's
+ * workspace, and keeps a `viewer` from re-homing it at all.
  */
 export const serviceTagRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('onRequest', app.authenticate);
@@ -48,7 +49,10 @@ export const serviceTagRoutes: FastifyPluginAsync = async (app) => {
     const id = parseId((req.params as { id: string }).id);
     const user = req.user!;
     const input = setServiceTags.parse(req.body);
-    await loadServiceForUser(app.db, id, user);
+    const svc = await loadServiceForUser(app.db, id, user);
+    // Re-homing a service between workspaces changes who can reach it at all,
+    // so it sits above ordinary configuration writes: `admin`+ on the service.
+    await assertServiceRole(app.db, svc, user, 'admin');
 
     // Validate every target id is one the caller is allowed to assign. We
     // also check that the workspace the service will end up in is one the

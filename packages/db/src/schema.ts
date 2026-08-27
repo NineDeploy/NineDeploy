@@ -72,6 +72,19 @@ export const users = sqliteTable('users', {
   // replaying one inside the +/-1-step (90 s) drift window is refused because
   // its step is no longer strictly greater than this. Null = none used yet.
   totpLastStep: integer('totp_last_step'),
+  // Instance-level operator flag.
+  //
+  // This is DELIBERATELY not derived from workspace membership. It used to be:
+  // "operator" meant "owner/admin in at least one workspace", and because any
+  // authenticated user can create a workspace they own (POST /v1/workspaces),
+  // every member could promote themselves to full instance operator — which
+  // gates host-privileged features (PM2/compose deploys, lifecycle hooks,
+  // docker-socket templates) and therefore meant host code execution.
+  //
+  // The flag is set at bootstrap (first user) and can only be granted or
+  // revoked by an existing instance operator. Workspace roles stay purely
+  // workspace-scoped. See `lib/resourceAccess.ts`.
+  isInstanceOperator: integer('is_instance_operator', { mode: 'boolean' }).notNull().default(false),
   createdAt: ts('created_at'),
   updatedAt: tsUpdatable('updated_at'),
 });

@@ -208,6 +208,22 @@ function DirectPortCard({ serviceId, svc }: { serviceId: number; svc?: Service |
 }
 
 // ── Domains ───────────────────────────────────────────────────────────────
+/** Accept pasted URLs (`https://app.example.com/`) as well as bare hosts:
+ *  everything but the hostname is discarded — scheme, credentials, port,
+ *  path/query/hash — then lowercased for DNS case-insensitivity. */
+function cleanDomainInput(raw: string): string {
+  let value = raw.trim().toLowerCase();
+  if (/^[a-z][a-z0-9+.-]*:\/\//.test(value)) {
+    try {
+      value = new URL(value).hostname;
+    } catch {
+      // Malformed URL: fall through to the scheme-less cleanup below.
+    }
+  }
+  value = value.split(/[/?#]/)[0] ?? '';
+  return value.replace(/:\d+$/, '').replace(/\.$/, '');
+}
+
 function DomainsCard({ serviceId }: { serviceId: number }) {
   const qc = useQueryClient();
   const { toast } = useToast();
@@ -215,7 +231,7 @@ function DomainsCard({ serviceId }: { serviceId: number }) {
 
   const domains = useQuery({ queryKey: ['domains', serviceId], queryFn: () => api.domains.list(serviceId) });
   const add = useMutation({
-    mutationFn: () => api.domains.create(serviceId, { hostname }),
+    mutationFn: (host: string) => api.domains.create(serviceId, { hostname: host }),
     onSuccess: () => {
       setHostname('');
       qc.invalidateQueries({ queryKey: ['domains', serviceId] });
@@ -234,14 +250,21 @@ function DomainsCard({ serviceId }: { serviceId: number }) {
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            if (hostname.trim()) add.mutate();
+            const host = cleanDomainInput(hostname);
+            setHostname(host);
+            if (host.includes('.')) add.mutate(host);
           }}
           className="flex gap-2"
         >
           <Input
             value={hostname}
             onChange={(e) => setHostname(e.target.value)}
+            onBlur={() => {
+              const host = cleanDomainInput(hostname);
+              if (host !== hostname) setHostname(host);
+            }}
             placeholder="app.example.com"
+            title="You can paste a full URL; only the hostname is kept."
             className="h-9"
           />
           <Button type="submit" size="sm" variant="secondary" disabled={!hostname.trim() || add.isPending}>

@@ -189,6 +189,55 @@ describe('domains routes', () => {
     expect(proxyMocks.writeDynamicConfig).toHaveBeenCalled();
   });
 
+  // Users paste full URLs into the domain field; only the bare hostname may
+  // reach Traefik, so normalisation is asserted on the stored row.
+  describe.each([
+    ['a pasted https URL with trailing slash', 'https://nextjs-test.ninedeploy.vm.oxog.net/', 'nextjs-test.ninedeploy.vm.oxog.net'],
+    ['an http URL with a deep path and query', 'http://App.Example.com/deep/path?x=1#frag', 'app.example.com'],
+    ['a scheme-less paste with a trailing slash', 'app.example.com/', 'app.example.com'],
+    ['a host with an explicit port', 'app.example.com:8080', 'app.example.com'],
+    ['credentials in the URL', 'https://user:pass@app.example.com:8443/p', 'app.example.com'],
+    ['a mixed-case hostname (DNS is case-insensitive)', 'MiXeD.Example.COM.', 'mixed.example.com'],
+  ])('normalises %s', (_label, input, expected) => {
+    it(`stores ${expected}`, async () => {
+      let stored: Record<string, unknown> | undefined;
+      const app = await buildTestApp({
+        db: createFakeDb({
+          findFirst: { services: svcRow() },
+          insert: {
+            domains: (value) => {
+              stored = value as Record<string, unknown>;
+              return [domainRow({ ...(stored as object), id: 3 })];
+            },
+          },
+        }),
+      });
+      await app.register(domainsRoutes);
+      const res = await app.inject({
+        method: 'POST',
+        url: '/1/domains',
+        headers: asUser(),
+        payload: { hostname: input },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(stored?.hostname).toBe(expected);
+      expect(res.json().hostname).toBe(expected);
+    });
+  });
+
+  it('rejects a paste that leaves no hostname once stripped', async () => {
+    const app = await buildTestApp({ db: createFakeDb({ findFirst: { services: svcRow() } }) });
+    await app.register(domainsRoutes);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/1/domains',
+      headers: asUser(),
+      payload: { hostname: 'https://' },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('bad_request');
+  });
+
   it('returns 404 when the service is missing', async () => {
     const app = await buildTestApp({ db: createFakeDb() });
     await app.register(domainsRoutes);

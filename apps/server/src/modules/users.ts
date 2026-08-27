@@ -1,12 +1,18 @@
 import { eq, sql } from 'drizzle-orm';
 import { audit } from '../lib/audit.js';
-import { users, workspaceMembers, workspaces } from '@ninedeploy/db';
+import { users, workspaceMembers } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
-import { passwordReset, userCreate } from '@ninedeploy/schemas';
+import { operatorGrant, passwordReset, userCreate } from '@ninedeploy/schemas';
 import { badRequest, forbidden, notFound, parseId } from '../lib/errors.js';
 import { hashPassword } from '../lib/crypto.js';
 import { issueResetToken } from '../lib/passwordReset.js';
 import { config } from '../config.js';
+
+/** How many accounts currently carry the instance-operator flag. */
+async function operatorCount(db: import('@ninedeploy/db').DB): Promise<number> {
+  const rows = await db.select({ id: users.id }).from(users).where(eq(users.isInstanceOperator, true));
+  return rows.length;
+}
 
 interface UserListEntry {
   id: number;
@@ -21,11 +27,10 @@ interface UserListEntry {
 export const userRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('onRequest', app.authenticate);
 
-  // Operator guard. The `isOperator` flag is computed by the auth plugin on
-  // every request (it queries `workspace_members` for an owner/admin seat),
-  // so we don't need to re-query here — the guard is a pure read of
-  // `req.user.isOperator`. Centralising the check in the auth plugin keeps
-  // the operator semantics in one place.
+  // Operator guard. The `isOperator` flag is resolved by the auth plugin on
+  // every request from `users.is_instance_operator`, so we don't need to
+  // re-query here — the guard is a pure read of `req.user.isOperator`.
+  // Centralising the check in the auth plugin keeps the semantics in one place.
   app.addHook('preHandler', async (req) => {
     if (req.user?.isOperator !== true) {
       throw forbidden('Operator access required');
@@ -42,26 +47,24 @@ export const userRoutes: FastifyPluginAsync = async (app) => {
     const memberships = await app.db
       .select({ userId: workspaceMembers.userId, workspaceId: workspaceMembers.workspaceId, role: workspaceMembers.role })
       .from(workspaceMembers);
-    const allWorkspaces = await app.db.select({ id: workspaces.id, ownerId: workspaces.ownerId }).from(workspaces);
     const byUser = new Map<number, Array<{ role: string }>>();
     for (const m of memberships) {
       const arr = byUser.get(m.userId) ?? [];
       arr.push({ role: m.role });
       byUser.set(m.userId, arr);
     }
-    const ownerCount = new Map<number, number>();
-    for (const w of allWorkspaces) {
-      ownerCount.set(w.ownerId, (ownerCount.get(w.ownerId) ?? 0) + 1);
-    }
     return rows.map<UserListEntry>((u) => {
       const ms = byUser.get(u.id) ?? [];
-      const isUserOperator =
-        ms.some((m) => m.role === 'owner' || m.role === 'admin') || (ownerCount.get(u.id) ?? 0) > 0;
       return {
         id: u.id,
         email: u.email,
         name: u.name,
-        isOperator: isUserOperator,
+        // Read the flag, don't infer it. This list previously derived
+        // "operator" from holding owner/admin in any workspace (or owning
+        // one), which is exactly the self-granting rule that migration 0038
+        // removed — leaving it here would have shown every member as an
+        // operator in the People view.
+        isOperator: u.isInstanceOperator === true,
         workspaceCount: ms.length,
         createdAt: u.createdAt instanceof Date ? u.createdAt.toISOString() : new Date(u.createdAt as unknown as number).toISOString(),
       };
@@ -97,14 +100,43 @@ export const userRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // NOTE: the legacy `PATCH /users/:id/role` endpoint was removed with the
-  // global `users.role` column. Role changes now go through
-  // `PATCH /v1/workspaces/:id/members/:memberId` (workspace-scoped role).
+  // global `users.role` column. WORKSPACE role changes go through
+  // `PATCH /v1/workspaces/:id/members/:memberId`. The endpoint below is a
+  // different thing: the INSTANCE-operator flag, which is what actually gates
+  // host-privileged deploys, user management and system import/export.
+  app.patch('/:id/operator', async (req) => {
+    const id = parseId((req.params as { id: string }).id);
+    const { isOperator } = operatorGrant.parse(req.body);
+    const target = await app.db.query.users.findFirst({ where: eq(users.id, id) });
+    if (!target) throw notFound('User not found');
+
+    // Never let the instance end up with zero operators — nobody could grant
+    // the flag back. Self-demotion is the realistic way to hit this.
+    if (!isOperator && (await operatorCount(app.db)) <= 1 && target.isInstanceOperator) {
+      throw badRequest('Cannot remove the last instance operator');
+    }
+
+    await app.db.update(users).set({ isInstanceOperator: isOperator }).where(eq(users.id, id));
+    void audit(
+      app.db,
+      req.user!.id,
+      isOperator ? 'user.operator.grant' : 'user.operator.revoke',
+      target.email,
+    );
+    return { ok: true, id, isOperator };
+  });
 
   app.delete('/:id', async (req) => {
     const id = parseId((req.params as { id: string }).id);
     if (id === req.user!.id) throw badRequest('Cannot delete yourself');
 
-    // No "last admin" guard is needed: there is no global admin anymore.
+    // Deleting the last operator would lock the instance out of every
+    // operator-only route, including the one that grants the flag back.
+    const target = await app.db.query.users.findFirst({ where: eq(users.id, id) });
+    if (target?.isInstanceOperator && (await operatorCount(app.db)) <= 1) {
+      throw badRequest('Cannot delete the last instance operator');
+    }
+
     // Deleting a user cascade-clears their sessions, api tokens, workspace
     // memberships, webauthn credentials, and detaches their owned resources.
     const deleted = await app.db.delete(users).where(eq(users.id, id)).returning({ id: users.id });

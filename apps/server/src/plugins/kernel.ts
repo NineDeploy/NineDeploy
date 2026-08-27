@@ -3,6 +3,8 @@ import { config } from '../config.js';
 import { LocalDockerDriver } from '../kernel/drivers/docker.js';
 import { TraefikProxyDriver } from '../kernel/drivers/traefik.js';
 import { NineDeployKernel } from '../kernel/kernel.js';
+import { bridgeAuditEvents } from '../kernel/auditBridge.js';
+import { eventBus } from '../lib/events.js';
 import { loadInstalledPlugins } from '../kernel/pluginLoader.js';
 import { CloudflareTunnelsPlugin } from '../kernel/plugins/cloudflareTunnels.js';
 import { NotificationsDispatcherPlugin } from '../kernel/plugins/notifications.js';
@@ -39,10 +41,18 @@ export default fp(
         },
       });
 
+      // Feed the kernel bus from the real application event stream. Without
+      // this the bus is inert: the built-in plugins subscribe to event names
+      // that no code ever emitted, so they ran on every install and did
+      // nothing. `audit()` is the one choke point every state change already
+      // passes through — see kernel/auditBridge.ts.
+      let detachAuditBridge: (() => void) | undefined;
+
       fastify.addHook('onReady', async () => {
         try {
           await loadInstalledPlugins(fastify.db, kernel);
           await kernel.boot();
+          detachAuditBridge = bridgeAuditEvents((cb) => eventBus.subscribe(cb), kernel.events);
           fastify.log.info({ state: kernel.state }, 'NineDeploy microkernel booted successfully');
         } catch (err) {
           fastify.log.error({ err }, 'Failed to boot NineDeploy microkernel');
@@ -51,6 +61,7 @@ export default fp(
 
       fastify.addHook('onClose', async () => {
         try {
+          detachAuditBridge?.();
           await kernel.shutdown();
           fastify.log.info('NineDeploy microkernel gracefully terminated');
         } catch (err) {

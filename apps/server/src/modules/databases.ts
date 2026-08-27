@@ -18,6 +18,7 @@ import {
 import { decrypt, encrypt, randomToken } from '../lib/crypto.js';
 import {
   assertWorkspaceMember,
+  assertDatabaseRole,
   loadDatabaseForUser,
   loadServiceForUser,
   visibleDatabaseIds,
@@ -208,7 +209,9 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // Start Web Studio (Adminer / Redis Commander GUI) for this database.
-  // Admin-only: it binds a host port serving a database GUI.
+  // Studio binds a HOST port serving a database GUI, so it stays operator-only
+  // even for a workspace admin: publishing on the host is a host-wide resource
+  // (same reasoning as lib/hostPort.ts).
   app.post('/:id/studio', { preHandler: [app.requireAdmin] }, async (req) => {
     const id = num((req.params as { id: string }).id);
     const d = await loadDatabaseForUser(app.db, id, req.user!);
@@ -236,7 +239,8 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
   app.delete('/:id', async (req) => {
     const id = num((req.params as { id: string }).id);
     // Destroying a database is irreversible — resolve access before reading it.
-    await loadDatabaseForUser(app.db, id, req.user!);
+    const target = await loadDatabaseForUser(app.db, id, req.user!);
+    await assertDatabaseRole(app.db, target, req.user!, 'admin');
     const d = await app.db.query.databases.findFirst({
       where: eq(databases.id, id),
       with: {
@@ -289,6 +293,7 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
   // Resource limits — recreates the container if running so they take effect.
   app.patch('/:id/limits', async (req) => {
     const d = await loadDatabaseForUser(app.db, num((req.params as { id: string }).id), req.user!);
+    await assertDatabaseRole(app.db, d, req.user!, 'member');
     const input = setLimits.parse(req.body);
     const updateData: { cpuShares?: number; memLimitMb?: number } = {};
     if (input.cpuShares !== undefined) {
@@ -308,6 +313,7 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
   app.post('/:id/restart', async (req) => {
     const id = num((req.params as { id: string }).id);
     const d = await loadDatabaseForUser(app.db, id, req.user!);
+    await assertDatabaseRole(app.db, d, req.user!, 'member');
     await restartDatabase(d, (line) => app.log.info({ component: 'database' }, line));
     await app.db.update(databases).set({ status: 'running' }).where(eq(databases.id, d.id));
     void audit(app.db, req.user!.id, 'database.restart', d.name);
@@ -317,6 +323,7 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
   app.post('/:id/stop', async (req) => {
     const id = num((req.params as { id: string }).id);
     const d = await loadDatabaseForUser(app.db, id, req.user!);
+    await assertDatabaseRole(app.db, d, req.user!, 'member');
     await stopDatabase(d, (line) => app.log.info({ component: 'database' }, line));
     await app.db.update(databases).set({ status: 'stopped' }).where(eq(databases.id, d.id));
     void audit(app.db, req.user!.id, 'database.stop', d.name);
@@ -326,6 +333,7 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
   app.post('/:id/start', async (req) => {
     const id = num((req.params as { id: string }).id);
     const d = await loadDatabaseForUser(app.db, id, req.user!);
+    await assertDatabaseRole(app.db, d, req.user!, 'member');
     await startDatabase(d, (line) => app.log.info({ component: 'database' }, line));
     await app.db.update(databases).set({ status: 'running' }).where(eq(databases.id, d.id));
     void audit(app.db, req.user!.id, 'database.start', d.name);
@@ -340,10 +348,17 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
     return { logs };
   });
 
-  // Credential reveal (password + full URI) — admin-only, audited surface.
-  app.get('/:id/credentials', { preHandler: [app.requireAdmin] }, async (req) => {
+  // Credential reveal (password + full URI) — audited.
+  //
+  // This was instance-operator-only, which is stricter than the published
+  // permission matrix and made the workspace model useless for teams: a
+  // workspace admin could not read the password of their OWN database. It is
+  // now `admin` on the database (operators still qualify, since they resolve as
+  // `owner` everywhere) — a `member` or `viewer` still cannot.
+  app.get('/:id/credentials', async (req) => {
     const id = num((req.params as { id: string }).id);
     const d = await loadDatabaseForUser(app.db, id, req.user!);
+    await assertDatabaseRole(app.db, d, req.user!, 'admin');
     const cfg = ENGINES[d.engine];
     const password = d.passwordEncrypted ? decrypt(d.passwordEncrypted) : '';
     const connStr = connectionString(d);

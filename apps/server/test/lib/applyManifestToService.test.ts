@@ -176,9 +176,10 @@ describe('applyManifestToService — database', () => {
     const { sql } = await import('drizzle-orm');
     await db.run(sql`INSERT INTO databases (name, slug, engine, status, password_encrypted, volume_name) VALUES ('app-db', 'app-db', 'postgres', 'ready', 'fake-ciphertext', 'nd-db-app-db')`);
 
-    // Operator owner (user 7, an 'owner' seat) → visibleDatabaseIds returns
-    // null = unrestricted, so the legacy attach flows stay green.
-    await db.insert(users).values({ id: 7, email: 'owner@example.com', passwordHash: 'h' });
+    // Operator owner (user 7) → visibleDatabaseIds returns null = unrestricted,
+    // so the legacy attach flows stay green. The flag is an explicit column
+    // now; an 'owner' workspace seat no longer implies it (migration 0038).
+    await db.insert(users).values({ id: 7, email: 'owner@example.com', passwordHash: 'h', isInstanceOperator: true });
     const [ws] = await db.insert(workspaces).values({ name: 'acme', slug: 'acme', ownerId: 7 }).returning();
     await db.insert(workspaceMembers).values({ workspaceId: ws!.id, userId: 7, role: 'owner' });
     // A second, seat-less user for cross-owner denial cases.

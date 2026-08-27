@@ -578,12 +578,26 @@ export const template = z.object({
    *  only settable from the admin-controlled template registry, never via
    *  the create-service API). */
   dockerSocket: z.boolean().optional(),
+  /** Full Docker Compose stack definition. When present the template deploys
+   *  as a multi-container compose project (`type: 'compose'`) instead of the
+   *  single-container image+port model; `image`/`port` then describe the MAIN
+   *  (routed) service for Hub display and health routing. */
+  composeContent: z.string().min(1).max(262_144).optional(),
+  /** Compose service name the router points at and that owns `# port`. */
+  composeService: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]*$/).optional(),
 }).superRefine((value, ctx) => {
   if (value.dbEngine && !value.databaseEnv) {
     ctx.addIssue({
       code: 'custom',
       path: ['databaseEnv'],
       message: 'databaseEnv is required when dbEngine is set',
+    });
+  }
+  if (value.composeContent && !value.composeService) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['composeService'],
+      message: 'composeService is required when composeContent is set',
     });
   }
 });

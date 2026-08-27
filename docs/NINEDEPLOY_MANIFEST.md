@@ -79,15 +79,16 @@ version: "1"
 
 ### 4.1 `runtime` — Language & Version
 
-> **Not applied at build time yet.** The deploy pipeline reads `.ninedeploy` and
-> applies its *operational* sections — `routes`, `alerts`, `database` — on every
-> deploy. The *build* sections (`runtime`, `phases`, `build`) are parsed and
-> validated but not yet handed to the builder: `engine/builders/docker.ts`
-> invokes the Nixpacks CLI with `--install-cmd` / `--build-cmd` / `--start-cmd`
-> and writes no `nixpacks.toml`. `generateNixpacksToml` exists and is tested,
-> but nothing calls it. Declare `runtime` for documentation and forward
-> compatibility; to pin a version today, use the mechanism your ecosystem
-> already has (`.nvmrc`, `go.mod`, `composer.json`, `.ruby-version`).
+> **Applied since 0.3.5.** The deploy pipeline reads `.ninedeploy` and applies
+> its *operational* sections (`routes`, `alerts`, `database`) in PREPARE, then
+> renders `runtime` and `phases` into a `nixpacks.toml` next to the source
+> before the build (§6.1). A `nixpacks.toml` the repository already ships wins
+> and is left alone.
+>
+> A version Nixpacks cannot express as a provider environment variable becomes a
+> deploy-log warning rather than a silently-wrong build — see the header comment
+> in `lib/ninedeployToNixpacks.ts` for exactly which pins the pinned Nixpacks
+> release (v1.41.0) accepts.
 
 Pins the language runtime Nixpacks should install. `version` is `<major>` or `<major>.<minor>` or `<major>.<minor>.<patch>`.
 
@@ -371,11 +372,13 @@ ninedeploy manifest apply      # push the operational sections to the panel
 
 ### 6.1 Build Stage (Nixpacks)
 
-`apps/server/src/lib/ninedeployToNixpacks.ts` translates the manifest into a `nixpacks.toml` that is written next to the checked-out source. The mapping is:
+`apps/server/src/lib/ninedeployToNixpacks.ts` translates the manifest into a `nixpacks.toml` that the Docker builder writes next to the checked-out source (inside `build.baseDir`) before invoking Nixpacks. If your repository already ships a `nixpacks.toml`, it is left untouched — a hand-written file is the more specific choice — and the manifest's `runtime`/`phases` are skipped with a log line.
+
+The mapping is:
 
 | Manifest field | nixpacks.toml key |
 | :--- | :--- |
-| `runtime.type` + `version` | `nixPkgs = ["nodejs_20"]` and `NIXPACKS_NODE_VERSION="20"` (analogous for other runtimes) |
+| `runtime.type` + `version` | `NIXPACKS_<TYPE>_VERSION` in `[variables]`. Version pins go through the provider's environment variable, never through a hand-built nixpkgs attribute: `nixPkgs` *replaces* the provider's package list, and the attribute would resolve against the provider's pinned (old) archive. A pin Nixpacks cannot express becomes a warning instead of a broken build. |
 | `phases.setup.pkgs` | `nixPkgs += […]` (additive) |
 | `phases.build.cmds` | `[phases.build].cmds += […]` |
 | `build.install` | `[phases.install].cmds = ["npm ci"]` |
@@ -386,21 +389,50 @@ ninedeploy manifest apply      # push the operational sections to the panel
 
 ### 6.2 Deploy Stage (Pipeline)
 
-`apps/server/src/lib/applyManifestToService.ts` runs in the `PREPARE` stage of every deploy. The wired sections are:
+Two things happen, in this order.
+
+**PREPARE** — `apps/server/src/lib/applyManifestToService.ts` writes real rows:
 
 | Manifest field | Pipeline action |
 | :--- | :--- |
 | `routes[]` | upsert into `domains` (one row per host, with path/SSL/headers/CIDR/rate-limit) |
 | `alerts[]` | upsert into `alert_rules` (one row per alert, with `when` and `channel`) |
-| `database` | lookup the DB by `ref` and inject the connection URL into the service's env under `env` |
+| `database` | look the DB up by `ref` and attach it, injecting the connection URL into the service env |
 
-The stubbed sections (emitted as deploy warnings, not yet applied) are:
+**BUILD** — `apps/server/src/lib/ninedeployApply.ts` folds the build-shaping
+sections into the effective configuration for this one deploy (nothing is
+persisted — the manifest travels with the commit, so the next deploy re-derives
+it):
+
+| Manifest field | Pipeline action |
+| :--- | :--- |
+| `build.install` / `build` / `start` / `baseDir` / `dockerfile` | fill the matching `BuildConfig` fields when the panel left them empty |
+| `run.port`, `run.healthcheck` | fill the service port / health path when unset |
+| `run.restart` | fill the container restart policy while it is still at the default |
+| `resources.cpuShares`, `resources.memMb` | fill the limits while the panel has them at 0 (unlimited) |
+| `env.required[]` | each missing key becomes a deploy-log warning |
+| `runtime`, `phases` | rendered into `nixpacks.toml` (§6.1) |
+
+Every value the manifest supplies is announced in the deploy log, so a build
+never silently differs from what the panel shows.
+
+### 6.3 What the Manifest Deliberately Cannot Do
+
+**`hooks` is ignored, on purpose.** Deploy lifecycle hooks (`preBuild`,
+`postBuild`, `preStop`) execute on the **host**, not inside your container —
+which is why the panel restricts them to instance operators
+(`lib/hostPrivilege.ts`). That check reads the stored build config *before* the
+deploy starts, so honouring a hook that arrived with the commit would let
+anyone able to push to the repository run commands on the host and step outside
+container isolation. A manifest that declares `hooks` gets a deploy-log warning;
+set them in Service → Settings instead.
+
+The remaining stubbed sections (also emitted as deploy warnings) are:
 
 - `volume.backups` — schedule + retention persistence
 - `notifications.*` — channel-name resolution into the notification router
 - `previews.*` — pattern registration with the preview controller
-
-These will be wired in the next minor release; until then, configure them through the panel.
+- `static`, `watch`, `network` — configure these through the panel for now
 
 ---
 

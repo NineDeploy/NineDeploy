@@ -89,6 +89,19 @@ export function Users() {
   // ── One-time reset link (works without an email channel) ──────────────
   const [revealedLink, setRevealedLink] = useState<{ url: string; expiresAt: string } | null>(null);
   const [pendingDelete, setPendingDelete] = useState<{ id: number; email: string } | null>(null);
+  // Instance-operator flag. This is NOT a workspace role: it gates the
+  // operator-only routes and the host-privilege boundary (PM2/compose deploys,
+  // lifecycle hooks, docker-socket templates). Creating a workspace used to
+  // confer it implicitly; it is now granted explicitly, here.
+  const setOperator = useMutation({
+    mutationFn: ({ id, isOperator }: { id: number; isOperator: boolean }) =>
+      api.users.setOperator(id, isOperator),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['users'] });
+    },
+    onError: (err: Error) => toast(err.message, 'error'),
+  });
+
   const resetLink = useMutation({
     mutationFn: (id: number) => api.users.resetLink(id),
     onSuccess: (res) => setRevealedLink(res),
@@ -213,11 +226,30 @@ export function Users() {
                             ? 'bg-indigo-500/15 text-indigo-300 ring-indigo-500/20'
                             : 'bg-slate-500/15 text-slate-300 ring-slate-500/20',
                         )}
-                        title={u.isOperator ? 'Owner/admin in at least one workspace' : 'No operator role'}
+                        title={
+                          u.isOperator
+                            ? 'Instance operator — full access, including host-privileged deploys'
+                            : 'Regular user — access comes from workspace membership only'
+                        }
                       >
                         {u.isOperator ? <ShieldCheck size={11} /> : null}
                         {u.isOperator ? 'Operator' : 'Member'}
                       </span>
+                      {!isMe && (
+                        <button
+                          type="button"
+                          onClick={() => setOperator.mutate({ id: u.id, isOperator: !u.isOperator })}
+                          disabled={setOperator.isPending}
+                          className="ml-2 text-xs text-slate-500 underline-offset-2 transition hover:text-indigo-300 hover:underline"
+                          title={
+                            u.isOperator
+                              ? 'Revoke instance-operator access'
+                              : 'Grant instance-operator access (full control of this server)'
+                          }
+                        >
+                          {u.isOperator ? 'Revoke' : 'Make operator'}
+                        </button>
+                      )}
                     </td>
                     <td className="px-5 py-3 text-right">
                       <div className="flex items-center justify-end gap-3">

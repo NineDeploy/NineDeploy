@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { Builder, DeployRuntime } from '../types.js';
 import { capture, run } from '../../lib/exec.js';
 import { repoRelative } from '../../lib/repoPath.js';
+import { connectTraefikToComposeNetwork } from '../../lib/serviceBridge.js';
 
 const DEPLOY_HEARTBEAT_MS = 20_000;
 
@@ -60,6 +61,36 @@ async function applyBootRestartPolicy(
   }
 }
 
+interface ComposePsEntry {
+  Name?: string;
+  State?: string;
+}
+
+/**
+ * `docker compose ps --format json` output varies by CLI version: a JSON
+ * array, or one JSON object per line. Accept both; null when unparseable.
+ */
+function parseComposePs(out: string): ComposePsEntry | null {
+  const text = out.trim();
+  if (!text) return null;
+  try {
+    const whole: unknown = JSON.parse(text);
+    if (Array.isArray(whole)) return (whole[0] ?? null) as ComposePsEntry | null;
+    if (whole && typeof whole === 'object') return whole as ComposePsEntry;
+  } catch {
+    /* fall through to line mode */
+  }
+  for (const line of text.split('\n')) {
+    try {
+      const entry = JSON.parse(line) as ComposePsEntry;
+      if (entry && typeof entry === 'object') return entry;
+    } catch {
+      /* skip non-JSON line */
+    }
+  }
+  return null;
+}
+
 export const composeBuilder: Builder = {
   async buildAndRun(ctx): Promise<DeployRuntime> {
     const { service, buildConfig, workDir, env, log } = ctx;
@@ -103,33 +134,62 @@ export const composeBuilder: Builder = {
       log(`Wrote ${overrides.length} volume attachment(s) into ${path.basename(overrideFile)}`);
     }
 
-    // Stop the previous project revision first — no blue-green for compose.
-    // Always pass -f: with a non-default compose file, plain `down` would look
-    // at docker-compose.yml and miss the real project.
-    const downArgs = ['compose', '-p', project, '-f', composeFile];
-    if (overrideFile) downArgs.push('-f', overrideFile);
-    downArgs.push('down', '--remove-orphans');
-    await run(
-      'docker',
-      downArgs,
-      { cwd: workDir, heartbeatMs: DEPLOY_HEARTBEAT_MS, heartbeatLabel: `Stopping previous Compose project ${project}` },
-      log,
-    ).catch(() => undefined);
+    // ── Preflight gates (BEFORE touching the running stack) ────────────────
+    // Validate interpolation and pre-pull images while the previous revision
+    // is still serving: a bad tag or a broken env reference must fail the
+    // deployment WITHOUT ever having torn the live stack down.
+    const stackArgs = ['compose', '-p', project, '-f', composeFile];
+    if (overrideFile) stackArgs.push('-f', overrideFile);
 
-    const args = ['compose', '-p', project, '-f', composeFile];
-    if (overrideFile) args.push('-f', overrideFile);
-    args.push('up', '-d', '--build', '--remove-orphans');
     // Compose reads project env vars from the working directory's .env — we
-    // write one temporarily so services see runtime secrets.
+    // write one so both interpolation below and container creation see the
+    // resolved runtime secrets. Deleted again in `finally`.
     const dotEnv = path.join(workDir, '.env');
     if (Object.keys(env).length > 0) {
       writeFileSync(dotEnv, `${Object.entries(env).map(([k, v]) => `${k}=${v.replace(/\n/g, '\\n')}`).join('\n')}\n`, { mode: 0o600 });
     }
+
     try {
+      const gateOpts = {
+        cwd: workDir,
+        // Export the resolved environment into the compose CLI process too:
+        // value-less list entries (`- SERVICE_URL_APP_3000`) are read from the
+        // parent process environment at config/up time, NOT from .env.
+        env: env as unknown as Record<string, string>,
+        heartbeatMs: DEPLOY_HEARTBEAT_MS,
+        heartbeatLabel: `Validating compose project ${project}`,
+      };
+      // Every step gets a hard ceiling so ONE hung docker call can never pin
+      // the worker's per-server deploy slot for the default 30-minute timeout.
+      await run('docker', [...stackArgs, 'config', '--quiet'], { ...gateOpts, timeoutMs: 120_000 }, log);
+      try {
+        await run('docker', [...stackArgs, 'pull', '--ignore-buildable', '--quiet'], { ...gateOpts, timeoutMs: 900_000, heartbeatLabel: `Pulling images for ${project} (can take minutes on slow links)` }, log);
+      } catch (pullErr) {
+        // Older compose CLI versions lack --ignore-buildable; retry plainly
+        // before giving up (still BEFORE `down`, so the live stack survives).
+        log(`retrying image pull without --ignore-buildable (${pullErr instanceof Error ? pullErr.message : pullErr})`);
+        await run('docker', [...stackArgs, 'pull', '--quiet'], { ...gateOpts, timeoutMs: 900_000, heartbeatLabel: `Pulling images for ${project} (can take minutes on slow links)` }, log);
+      }
+
+      // Stop the previous project revision first — no blue-green for compose.
+      // Always pass -f: with a non-default compose file, plain `down` would look
+      // at docker-compose.yml and miss the real project.
+      const downArgs = [...stackArgs, 'down', '--remove-orphans'];
       await run(
         'docker',
-        args,
-        { cwd: workDir, heartbeatMs: DEPLOY_HEARTBEAT_MS, heartbeatLabel: `Starting Compose project ${project}` },
+        downArgs,
+        { cwd: workDir, timeoutMs: 300_000, heartbeatMs: DEPLOY_HEARTBEAT_MS, heartbeatLabel: `Stopping previous Compose project ${project}` },
+        log,
+      ).catch(() => undefined);
+
+      const upArgs = [...stackArgs, 'up', '-d', '--build', '--remove-orphans'];
+      await run(
+        'docker',
+        upArgs,
+        // `up` blocks on the stack's own service_healthy chain (compose waits
+        // for dependencies before starting dependents) — hence the generous
+        // but bounded ceiling.
+        { ...gateOpts, timeoutMs: 1_200_000, heartbeatLabel: `Starting Compose project ${project} (waiting for service healthchecks)` },
         log,
       );
     } finally {
@@ -146,7 +206,33 @@ export const composeBuilder: Builder = {
     }
     await applyBootRestartPolicy(project, composeFile, workDir, log);
 
-    const runtimeId = mainContainer(service.slug, composeService);
+    // Route-ability: Traefik must share the project's default network to reach
+    // the stack's containers by DNS. Tolerant — routing failures surface as
+    // the finalize PROXY_SWAP warning instead of failing a live deployment.
+    try {
+      await connectTraefikToComposeNetwork(service.slug, log);
+    } catch (err) {
+      log(`warning: could not attach traefik to ${project}_default: ${err instanceof Error ? err.message : err}`);
+    }
+
+    // Resolve the ACTUAL main container. Compose's default suffix is `-1`,
+    // but templates that pin `container_name:` (or scale changes) produce a
+    // different name — routing must target what really runs. Strict JSON
+    // validation: anything unparseable falls back to the deterministic name.
+    let runtimeId = mainContainer(service.slug, composeService);
+    try {
+      const psOut = await capture('docker', [...stackArgs, 'ps', '--format', 'json', composeService], { cwd: workDir });
+      const parsed = parseComposePs(psOut);
+      if (parsed?.Name && parsed.State === 'running') {
+        runtimeId = parsed.Name.replace(/^\//, '');
+        if (runtimeId !== mainContainer(service.slug, composeService)) {
+          log(`main container resolved as ${runtimeId}`);
+        }
+      }
+    } catch (err) {
+      log(`warning: could not resolve main container name, using ${runtimeId}: ${err instanceof Error ? err.message : err}`);
+    }
+
     return {
       runtimeId,
       port: service.port ?? null,
@@ -157,10 +243,37 @@ export const composeBuilder: Builder = {
 
   async isHealthy(runtime, timeoutMs = 60_000, _directGraceMs, log): Promise<boolean> {
     const deadline = Date.now() + timeoutMs;
+    let baselineRestarts: number | undefined;
     while (Date.now() < deadline) {
       try {
-        const out = await capture('docker', ['inspect', runtime.runtimeId, '--format', '{{.State.Status}}']);
-        if (out.trim() === 'running') return true;
+        // Compose stacks author their own healthchecks; when present wait for
+        // Docker's Health.Status instead of a bare `running` process state.
+        // FailingStreak + RestartCount ride along so a crash-looping app fails
+        // EARLY instead of burning the whole window.
+        const out = await capture('docker', [
+          'inspect',
+          runtime.runtimeId,
+          '--format',
+          '{{.State.Status}}|{{if .State.Health}}{{.State.Health.FailingStreak}}{{else}}0{{end}}|{{.RestartCount}}',
+        ]);
+        const [status, failingStreak, restartCount] = out.trim().split('|');
+        if (status === 'running' || status === 'healthy') return true;
+        if (status === 'exited') {
+          log?.(`${runtime.runtimeId} exited before becoming healthy`);
+          return false;
+        }
+        const restarts = Number(restartCount);
+        if (Number.isFinite(restarts)) {
+          baselineRestarts ??= restarts;
+          if (restarts - baselineRestarts >= 3) {
+            log?.(`${runtime.runtimeId} is crash-looping (restart count ${restarts}) — failing fast`);
+            return false;
+          }
+        }
+        if (Number(failingStreak) >= 15) {
+          log?.(`${runtime.runtimeId} healthcheck keeps failing (streak ${failingStreak}) — failing fast`);
+          return false;
+        }
       } catch {
         /* container not up yet */
       }

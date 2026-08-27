@@ -5,6 +5,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { Cron } from 'croner';
 import { audit } from '../lib/audit.js';
 import { loadServiceForUser } from '../lib/serviceAccess.js';
+import { assertServiceRole } from '../lib/resourceAccess.js';
 import { badRequest, forbidden, notFound, parseId } from '../lib/errors.js';
 import { runJob } from '../lib/jobRunner.js';
 
@@ -47,7 +48,8 @@ export const jobRoutes: FastifyPluginAsync = async (app) => {
 
   app.post('/:id/jobs', async (req) => {
     const id = parseId((req.params as { id: string }).id);
-    await loadServiceForUser(app.db, id, req.user!);
+    const svc = await loadServiceForUser(app.db, id, req.user!);
+    await assertServiceRole(app.db, svc, req.user!, 'member');
     const input = jobCreate.parse(req.body ?? {});
     assertCron(input.cron);
     if (input.kind === 'exec' && !input.command) throw badRequest('command is required for exec jobs');
@@ -76,7 +78,8 @@ export const jobRoutes: FastifyPluginAsync = async (app) => {
   app.patch('/:id/jobs/:jobId', async (req) => {
     const id = parseId((req.params as { id: string }).id);
     const jobId = parseId((req.params as { jobId: string }).jobId);
-    await loadServiceForUser(app.db, id, req.user!);
+    const svc = await loadServiceForUser(app.db, id, req.user!);
+    await assertServiceRole(app.db, svc, req.user!, 'member');
     const input = jobPatch.parse(req.body ?? {});
     // The admin gate must consider the STORED job too: patching only `command`
     // on an existing exec job (no `kind` in the request body) is still editing
@@ -116,7 +119,8 @@ export const jobRoutes: FastifyPluginAsync = async (app) => {
   app.delete('/:id/jobs/:jobId', async (req) => {
     const id = parseId((req.params as { id: string }).id);
     const jobId = parseId((req.params as { jobId: string }).jobId);
-    await loadServiceForUser(app.db, id, req.user!);
+    const svc = await loadServiceForUser(app.db, id, req.user!);
+    await assertServiceRole(app.db, svc, req.user!, 'member');
     await app.db.delete(scheduledJobs).where(and(eq(scheduledJobs.id, jobId), eq(scheduledJobs.serviceId, id)));
     void audit(app.db, req.user!.id, 'job.delete', `#${jobId}`);
     return { ok: true };
@@ -126,7 +130,8 @@ export const jobRoutes: FastifyPluginAsync = async (app) => {
   app.post('/:id/jobs/:jobId/run', async (req) => {
     const id = parseId((req.params as { id: string }).id);
     const jobId = parseId((req.params as { jobId: string }).jobId);
-    await loadServiceForUser(app.db, id, req.user!);
+    const svc = await loadServiceForUser(app.db, id, req.user!);
+    await assertServiceRole(app.db, svc, req.user!, 'member');
     const job = await app.db.query.scheduledJobs.findFirst({
       where: and(eq(scheduledJobs.id, jobId), eq(scheduledJobs.serviceId, id)),
     });

@@ -5,6 +5,7 @@ import {
   serviceProjects,
   serviceWorkspaces,
   services,
+  users,
   workspaceMembers,
   workspaces,
   type DB,
@@ -50,9 +51,15 @@ import { forbidden, notFound, parseId } from './errors.js';
  *                database's project belongs to; NULL owner + NULL project is
  *                owner-of-any-workspace only.
  *
- * Operator-level actions (manage OIDC, list all users, view deploy logs) are
- * gated by `requireOperator` — true when the caller holds `owner` or `admin`
- * in at least one workspace. The legacy global `users.role` column is gone.
+ * Operator-level actions (manage OIDC, list all users, import/export the
+ * instance, host-privileged deploys) are gated by `requireOperator`, which
+ * reads the dedicated `users.is_instance_operator` column. It is deliberately
+ * NOT derived from workspace roles — see `isOperator` for why. The legacy
+ * global `users.role` column is gone.
+ *
+ * Within a workspace, the four roles form a hierarchy
+ * (owner > admin > member > viewer) enforced by `assertWorkspaceRole` and, for
+ * service-scoped writes, `assertServiceRole`. `viewer` is read-only.
  *
  * Not-found vs forbidden: loaders throw 404 (never 403) when a member is
  * denied, so resource ids cannot be enumerated by probing for a status-code
@@ -63,11 +70,12 @@ import { forbidden, notFound, parseId } from './errors.js';
 export interface AuthedUser {
   id: number;
   /**
-   * True when the user holds owner/admin in at least one workspace. The
-   * legacy `role: 'admin' | 'member'` field is gone; this flag is the new
-   * operator check. Routes that previously branched on `role === 'admin'`
-   * should now use `isOperator(user)` from this module, or the
-   * `assertOperator(db, user)` helper for guard-style checks.
+   * True when `users.is_instance_operator` is set — the instance-wide
+   * operator flag. The legacy `role: 'admin' | 'member'` field is gone, and
+   * this flag is NOT inferred from workspace membership (that inference was
+   * self-granting; see `isOperator`). Routes that previously branched on
+   * `role === 'admin'` use this, or `assertOperator(db, user)` for
+   * guard-style checks.
    */
   isOperator: boolean;
 }
@@ -150,19 +158,34 @@ export function maxRole(memberships: WorkspaceMembership[]): WorkspaceRole | nul
 }
 
 /**
- * True when the user can act as a system operator (manage OIDC, list all
- * users, view all deploy logs). Operators are owner/admin in at least one
- * workspace — replaces the old global `users.role === 'admin'` check.
+ * True when the user can act as a SYSTEM operator: manage OIDC and users,
+ * import/export the instance, run the self-updater, reach the container file
+ * browser, and — critically — use the host-privileged deploy features gated by
+ * `lib/hostPrivilege.ts` (PM2, compose, lifecycle hooks, docker-socket
+ * templates).
+ *
+ * This reads a dedicated `users.is_instance_operator` column and is NOT derived
+ * from workspace membership.
+ *
+ * History (why the column exists): the predecessor of this function returned
+ * "holds owner/admin in at least one workspace". Any authenticated user can
+ * create a workspace they own (`POST /v1/workspaces` has no role gate), and
+ * `GET /v1/workspaces` even auto-creates an owned workspace for a user with no
+ * memberships. One request therefore turned any member into a full instance
+ * operator — and because the host-privilege boundary hangs off this same flag,
+ * that was a path from "member" to arbitrary code execution on the host.
+ * Workspace roles are now strictly workspace-scoped; see `assertWorkspaceRole`
+ * for the in-workspace hierarchy.
  *
  * Accepts anything with a numeric `id` so the auth resolver can pass the
  * half-built user shape (tokenVersion, no operator flag yet).
  */
 export async function isOperator(db: DbLike, user: { id: number }): Promise<boolean> {
-  const ms = await userWorkspaceMemberships(db, user.id);
-  return ms.some((m) => m.role === 'owner' || m.role === 'admin');
+  const row = await db.query.users.findFirst({ where: eq(users.id, user.id) });
+  return row?.isInstanceOperator === true;
 }
 
-/** Throws 403 unless the user is an operator (owner/admin in some workspace). */
+/** Throws 403 unless the user carries the instance-operator flag. */
 export async function assertOperator(db: DbLike, user: { id: number }): Promise<void> {
   if (!(await isOperator(db, user))) {
     throw forbidden('Operator access required');
@@ -210,6 +233,90 @@ export async function loadServiceForUser(db: DbLike, id: number, user: AuthedUse
   throw notFound('Service not found');
 }
 
+/**
+ * The ONE answer to "which services may this user see?".
+ *
+ * Three call sites used to compute this independently and disagree:
+ * `GET /v1/services` filtered on `ownerUserId` alone, while `/dashboard` and
+ * `/domains` also honoured workspace tags and `loadServiceForUser` honoured
+ * both plus the operator flag. The visible symptom was a teammate who could
+ * open and deploy a shared service by id but never saw it in their own list,
+ * while the dashboard counted it. Everything now routes through here.
+ *
+ * `null` means "unrestricted" (instance operator) — callers should skip
+ * filtering entirely rather than materialising every id.
+ */
+export async function visibleServiceIdSet(db: DbLike, user: AuthedUser): Promise<Set<number> | null> {
+  if (user.isOperator) return null;
+  const set = new Set<number>();
+  const owned = await db.select({ id: services.id }).from(services).where(eq(services.ownerUserId, user.id));
+  for (const r of owned) set.add(r.id);
+  const wsIds = await userWorkspaceIds(db, user.id);
+  if (wsIds.length > 0) {
+    const tagged = await db
+      .select({ id: serviceWorkspaces.serviceId })
+      .from(serviceWorkspaces)
+      .where(inArray(serviceWorkspaces.workspaceId, wsIds));
+    for (const r of tagged) set.add(r.id);
+  }
+  return set;
+}
+
+/**
+ * The caller's effective role ON a service: the highest role they hold across
+ * the workspaces the service is tagged into.
+ *
+ * Two fallbacks keep pre-workspace data working:
+ *   • the service's `ownerUserId` always counts as `owner` (a personal service
+ *     that was never tagged into a workspace stays fully manageable), and
+ *   • instance operators are `owner` everywhere.
+ *
+ * `null` means the caller has no relationship to the service at all — callers
+ * that reach this after `loadServiceForUser` can treat it as `viewer`.
+ */
+export async function serviceRole(
+  db: DbLike,
+  service: Pick<Service, 'id' | 'ownerUserId'>,
+  user: AuthedUser,
+): Promise<WorkspaceRole | null> {
+  if (user.isOperator) return 'owner';
+  if (service.ownerUserId === user.id) return 'owner';
+  const tagWsIds = await serviceWorkspaceIds(db, service.id);
+  if (tagWsIds.length === 0) return null;
+  const seats = await db.query.workspaceMembers.findMany({
+    where: and(eq(workspaceMembers.userId, user.id), inArray(workspaceMembers.workspaceId, tagWsIds)),
+  });
+  if (seats.length === 0) return null;
+  return maxRole(seats.map((m) => ({ workspaceId: m.workspaceId, role: m.role as WorkspaceRole })));
+}
+
+/**
+ * Throws 403 unless the caller holds `required` or higher on the service.
+ *
+ * This is the enforcement point for the role hierarchy that
+ * `docs/WORKSPACES_RBAC.md` publishes. Before it existed, `assertWorkspaceRole`
+ * and `roleAtLeast` had no call sites anywhere in the route layer, so a
+ * `viewer` could create services, edit environment variables and trigger
+ * deploys exactly like an `owner`.
+ *
+ * Convention used by the routes:
+ *   • read      → `loadServiceForUser` alone (any seat, including viewer)
+ *   • write     → `assertServiceRole(..., 'member')` — deploys, env, domains
+ *   • destroy / → `assertServiceRole(..., 'admin')` — delete, transfer,
+ *     re-tag                                          host-privileged edits
+ */
+export async function assertServiceRole(
+  db: DbLike,
+  service: Pick<Service, 'id' | 'ownerUserId'>,
+  user: AuthedUser,
+  required: WorkspaceRole,
+): Promise<void> {
+  const actual = await serviceRole(db, service, user);
+  if (actual === null || !roleAtLeast(actual, required)) {
+    throw forbidden(`This action requires the "${required}" role or higher on this service`);
+  }
+}
+
 /** Throws 403 unless the user may manage a service row already in memory. */
 export function assertCanManageService(
   svc: Pick<Service, 'ownerUserId' | 'id'>,
@@ -241,7 +348,10 @@ export function assertCanManageService(
 export async function loadProjectForUser(db: DbLike, id: number, user: AuthedUser): Promise<Project> {
   const project = await db.query.projects.findFirst({ where: eq(projects.id, id) });
   if (!project) throw notFound('Project not found');
-  if (await isOperator(db, user)) return project;
+  // Use the flag already resolved for this request rather than re-reading the
+  // column: `plugins/auth.ts` narrows it for scope-restricted API tokens, and a
+  // fresh DB read here would silently undo that narrowing.
+  if (user.isOperator) return project;
   if (project.workspaceId == null) throw notFound('Project not found');
   if (!(await isWorkspaceMember(db, project.workspaceId, user))) throw notFound('Project not found');
   return project;
@@ -252,7 +362,7 @@ export async function loadProjectForUser(db: DbLike, id: number, user: AuthedUse
  * `null` when they may see nothing. Operators get `undefined` (no restriction).
  */
 export async function projectScopeFilter(db: DbLike, user: AuthedUser) {
-  if (await isOperator(db, user)) return undefined;
+  if (user.isOperator) return undefined;
   const ids = await userWorkspaceIds(db, user.id);
   if (ids.length === 0) return null;
   return inArray(projects.workspaceId, ids);
@@ -271,7 +381,7 @@ export async function projectScopeFilter(db: DbLike, user: AuthedUser) {
 export async function loadDatabaseForUser(db: DbLike, id: number, user: AuthedUser): Promise<Database> {
   const row = await db.query.databases.findFirst({ where: eq(databases.id, id) });
   if (!row) throw notFound('Database not found');
-  if (await isOperator(db, user)) return row;
+  if (user.isOperator) return row;
   if (row.ownerUserId === user.id) return row;
   if (row.projectId != null) {
     const project = await db.query.projects.findFirst({ where: eq(projects.id, row.projectId) });
@@ -284,7 +394,7 @@ export async function loadDatabaseForUser(db: DbLike, id: number, user: AuthedUs
 
 /** Ids of every database the user may see. Operators are unrestricted (`null`). */
 export async function visibleDatabaseIds(db: DbLike, user: AuthedUser): Promise<number[] | null> {
-  if (await isOperator(db, user)) return null;
+  if (user.isOperator) return null;
   const workspaceIds = await userWorkspaceIds(db, user.id);
   const projectIds =
     workspaceIds.length > 0
@@ -294,6 +404,60 @@ export async function visibleDatabaseIds(db: DbLike, user: AuthedUser): Promise<
   return rows
     .filter((d) => d.ownerUserId === user.id || (d.projectId != null && projectIds.includes(d.projectId)))
     .map((d) => d.id);
+}
+
+/**
+ * The caller's effective role ON a managed database.
+ *
+ * A database has no tag table of its own: its workspace is the one its PROJECT
+ * belongs to. As with services, the row's `ownerUserId` and the instance
+ * operator flag both count as `owner`, so a personal database created before
+ * projects existed stays fully manageable by its creator.
+ *
+ * `null` = no relationship at all.
+ */
+export async function databaseRole(
+  db: DbLike,
+  row: Pick<Database, 'ownerUserId' | 'projectId'>,
+  user: AuthedUser,
+): Promise<WorkspaceRole | null> {
+  if (user.isOperator) return 'owner';
+  if (row.ownerUserId === user.id) return 'owner';
+  if (row.projectId == null) return null;
+  const project = await db.query.projects.findFirst({ where: eq(projects.id, row.projectId) });
+  if (project?.workspaceId == null) return null;
+  const seat = await db.query.workspaceMembers.findFirst({
+    where: and(
+      eq(workspaceMembers.workspaceId, project.workspaceId),
+      eq(workspaceMembers.userId, user.id),
+    ),
+  });
+  return seat ? (seat.role as WorkspaceRole) : null;
+}
+
+/**
+ * Throws 403 unless the caller holds `required` or higher on the database.
+ *
+ * Same convention as `assertServiceRole`:
+ *   • read (list, detail, logs)          → `loadDatabaseForUser` alone
+ *   • write (limits, start/stop/restart) → `member`
+ *   • destroy / data (delete, backup,    → `admin`
+ *     restore, credentials)
+ *
+ * Backups and credentials sit at `admin` deliberately: a backup is a full copy
+ * of the data and the credentials reveal the password, so neither belongs to
+ * the same tier as "restart the container".
+ */
+export async function assertDatabaseRole(
+  db: DbLike,
+  row: Pick<Database, 'ownerUserId' | 'projectId'>,
+  user: AuthedUser,
+  required: WorkspaceRole,
+): Promise<void> {
+  const actual = await databaseRole(db, row, user);
+  if (actual === null || !roleAtLeast(actual, required)) {
+    throw forbidden(`This action requires the "${required}" role or higher on this database`);
+  }
 }
 
 // ── generic dispatcher ─────────────────────────────────────────────────────

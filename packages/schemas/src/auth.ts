@@ -59,6 +59,44 @@ export const passwordReset = z.object({
 });
 export type PasswordReset = z.infer<typeof passwordReset>;
 
+/**
+ * API-token scopes.
+ *
+ * Until 0.3.5 the `api_tokens.scopes` column existed but was never written
+ * (always `[]`) and never read, so every token carried its owner's FULL
+ * authority — including the instance-operator flag, which gates host-privileged
+ * deploys. A CI or MCP token was therefore an instance-root credential.
+ *
+ * The vocabulary is deliberately tiny and method-based, so it can be enforced
+ * in one place (`plugins/auth.ts`) instead of being annotated onto 51 route
+ * modules:
+ *
+ *   read      → safe methods only (GET / HEAD / OPTIONS)
+ *   write     → every method, but the request runs as a NON-operator even if
+ *               the owner is one
+ *   operator  → no restriction beyond the owner's own authority
+ *
+ * An EMPTY scope list means "unrestricted" and is what every pre-0.3.5 token
+ * has. That is deliberate back-compat: silently downgrading tokens already
+ * deployed in someone's CI would break their pipeline on upgrade. New tokens
+ * should always be created with an explicit scope.
+ */
+export const apiTokenScope = z.enum(['read', 'write', 'operator']);
+export type ApiTokenScope = z.infer<typeof apiTokenScope>;
+
+/**
+ * Grant or revoke the INSTANCE-operator flag (`PATCH /v1/users/:id/operator`).
+ *
+ * This is not a workspace role. It gates the operator-only routes and the
+ * host-privilege boundary (PM2/compose deploys, lifecycle hooks, docker-socket
+ * templates), so it can only be changed by an existing operator, and the last
+ * one cannot revoke itself.
+ */
+export const operatorGrant = z.object({
+  isOperator: z.boolean(),
+});
+export type OperatorGrant = z.infer<typeof operatorGrant>;
+
 /** Forgot-password request. Always answers 200 (no user enumeration). */
 export const forgotPassword = z.object({
   email: z.email(),
@@ -112,14 +150,34 @@ export type Session = z.infer<typeof session>;
 
 // ── API tokens (for the CLI / CI) ─────────────────────────────────────────
 export const createApiToken = z.object({
-  name: z.string().min(1).max(100).optional(),
+  // Lenient on purpose: this endpoint historically accepted any string, sliced
+  // it to 100 chars and fell back to "cli" when empty. Rejecting outright would
+  // break CLI/CI callers on upgrade.
+  name: z
+    .string()
+    .optional()
+    .transform((v) => (v ?? '').slice(0, 100) || 'cli'),
+  /** Empty = unrestricted (legacy behaviour). See `apiTokenScope`. */
+  scopes: z.array(apiTokenScope).max(3).default([]),
+  /** Optional lifetime; omitted = never expires (the pre-0.3.5 behaviour). */
+  expiresInDays: z.number().int().min(1).max(3650).optional(),
 });
+/** Parsed shape (post-defaults) — what the route handler works with. */
 export type CreateApiToken = z.infer<typeof createApiToken>;
+/**
+ * Caller-facing shape: `name` and `scopes` are optional on the wire and filled
+ * in by the schema's defaults. The SDK takes this so `tokens.create()` and
+ * `tokens.create({ name: 'ci' })` both stay valid.
+ */
+export type CreateApiTokenInput = z.input<typeof createApiToken>;
 
 export const apiToken = z.object({
   id: z.number().int(),
   name: z.string(),
+  /** Empty array = a legacy, unrestricted token. The UI should flag those. */
+  scopes: z.array(z.string()),
   lastUsedAt: z.string().datetime().nullable(),
+  expiresAt: z.string().datetime().nullable(),
   createdAt: z.string().datetime(),
 });
 export type ApiToken = z.infer<typeof apiToken>;
@@ -129,6 +187,8 @@ export const createdApiToken = z.object({
   id: z.number().int(),
   name: z.string(),
   token: z.string(),
+  scopes: z.array(z.string()),
+  expiresAt: z.string().datetime().nullable(),
   createdAt: z.string().datetime(),
 });
 export type CreatedApiToken = z.infer<typeof createdApiToken>;

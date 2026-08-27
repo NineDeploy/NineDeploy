@@ -2,6 +2,7 @@ import type { ManagedDatabase, TemplateSummary } from '@ninedeploy/sdk';
 import type { NineDeployClient } from '../client.js';
 import { c, error, fmtTime, header, info, kv, spinner, success, table, banner } from '../lib/format.js';
 import { prompt } from '../prompts.js';
+import { parseScopes } from './token.js';
 
 /** `ninedeploy databases list` */
 export async function dbList(client: NineDeployClient): Promise<void> {
@@ -75,9 +76,13 @@ export async function deploysRollback(client: NineDeployClient, svcIdStr: string
 /** `ninedeploy token create` */
 export async function tokenCreate(client: NineDeployClient): Promise<void> {
   const name = await prompt('Token name', 'ci');
+  // read = safe methods only · write = mutate as a non-operator ·
+  // operator = no extra restriction. Blank = unrestricted (legacy tokens).
+  const scopes = parseScopes(await prompt('Scopes (read,write,operator — blank = unrestricted)', 'write'));
   try {
-    const tok = await spinner('Creating token', () => client.auth.tokens.create({ name }));
+    const tok = await spinner('Creating token', () => client.auth.tokens.create({ name, scopes }));
     success(`Token created: ${c.cyan(tok.token)}`);
+    info(`Scopes: ${tok.scopes.length ? tok.scopes.join(', ') : 'unrestricted (legacy)'}`);
     info('Store this securely — it won\'t be shown again.');
   } catch (err) { error(err instanceof Error ? err.message : String(err)); }
 }

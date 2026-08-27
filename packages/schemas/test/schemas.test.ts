@@ -18,6 +18,7 @@ import {
   backupWithDb,
   notificationChannelCreate,
   containerStat,
+  apiTokenScope,
   createApiToken,
   createAttachment,
   createDatabase,
@@ -29,6 +30,7 @@ import {
   createTunnel,
   createWebhook,
   createdApiToken,
+  operatorGrant,
   createdWebhook,
   deployment,
   deployTemplate,
@@ -307,20 +309,59 @@ describe('auth', () => {
     it('createApiToken accepts a name or empty input', () => {
       expect(createApiToken.safeParse({ name: 'ci' }).success).toBe(true);
       expect(createApiToken.safeParse({}).success).toBe(true);
-      bad(createApiToken, { name: '' });
-      bad(createApiToken, { name: 'x'.repeat(101) });
+    });
+
+    it('createApiToken normalises the name instead of rejecting it', () => {
+      // The endpoint has always been lenient here (slice to 100, fall back to
+      // "cli"); rejecting would break CLI/CI callers on upgrade.
+      expect(createApiToken.parse({ name: '' }).name).toBe('cli');
+      expect(createApiToken.parse({}).name).toBe('cli');
+      expect(createApiToken.parse({ name: 'x'.repeat(150) }).name).toHaveLength(100);
+    });
+
+    it('createApiToken defaults to an unrestricted (empty) scope list', () => {
+      // Empty = legacy behaviour, i.e. the owner's full authority. New callers
+      // are expected to pass an explicit scope.
+      expect(createApiToken.parse({ name: 'ci' }).scopes).toEqual([]);
+      expect(createApiToken.parse({ name: 'ci', scopes: ['read'] }).scopes).toEqual(['read']);
+      bad(createApiToken, { name: 'ci', scopes: ['root'] });
+      bad(createApiToken, { name: 'ci', expiresInDays: 0 });
+      expect(createApiToken.parse({ name: 'ci', expiresInDays: 30 }).expiresInDays).toBe(30);
     });
 
     it('apiToken accepts a row with datetime fields', () => {
-      const data = ok(apiToken, { id: 1, name: 'ci', lastUsedAt: null, createdAt: '2026-01-01T00:00:00Z' });
+      const data = ok(apiToken, {
+        id: 1,
+        name: 'ci',
+        scopes: [],
+        lastUsedAt: null,
+        expiresAt: null,
+        createdAt: '2026-01-01T00:00:00Z',
+      });
       expect(data?.name).toBe('ci');
-      bad(apiToken, { id: 1, name: 'ci', lastUsedAt: 'not-a-date', createdAt: '2026-01-01T00:00:00Z' });
+      bad(apiToken, { id: 1, name: 'ci', scopes: [], lastUsedAt: 'not-a-date', expiresAt: null, createdAt: '2026-01-01T00:00:00Z' });
     });
 
     it('createdApiToken accepts the one-time response', () => {
-      const data = ok(createdApiToken, { id: 1, name: 'ci', token: 'secret', createdAt: '2026-01-01T00:00:00Z' });
+      const data = ok(createdApiToken, {
+        id: 1,
+        name: 'ci',
+        token: 'secret',
+        scopes: ['write'],
+        expiresAt: null,
+        createdAt: '2026-01-01T00:00:00Z',
+      });
       expect(data?.token).toBe('secret');
-      bad(createdApiToken, { id: 1, name: 'ci', createdAt: '2026-01-01T00:00:00Z' });
+      bad(createdApiToken, { id: 1, name: 'ci', scopes: [], expiresAt: null, createdAt: '2026-01-01T00:00:00Z' });
+    });
+
+    it('apiTokenScope is the enforced vocabulary', () => {
+      expect(apiTokenScope.options).toEqual(['read', 'write', 'operator']);
+    });
+
+    it('operatorGrant carries a single boolean', () => {
+      expect(operatorGrant.parse({ isOperator: true }).isOperator).toBe(true);
+      bad(operatorGrant, { isOperator: 'yes' });
     });
   });
 });
@@ -738,6 +779,20 @@ describe('service', () => {
         id: 'db', name: 'DB App', tagline: 'x', description: 'x', category: 'x', emoji: 'x', image: 'x', port: 3000,
         dbEngine: 'postgres', databaseEnv: { DATABASE_URL: 'url' },
       }).success).toBe(true);
+    });
+
+    it('requires composeService whenever a compose stack is supplied', () => {
+      // `image`/`port` describe the ROUTED service for a compose template, so
+      // without naming that service the router has nothing to point at.
+      const base = {
+        id: 'stack', name: 'Stack', tagline: 'x', description: 'x', category: 'x',
+        emoji: 'x', image: 'x', port: 3000,
+      };
+      const stack = 'services: { web: {} }';
+      bad(template, { ...base, composeContent: stack });
+      expect(template.safeParse({ ...base, composeContent: stack, composeService: 'web' }).success).toBe(true);
+      // A compose-less template is unaffected by the refinement.
+      expect(template.safeParse({ ...base, composeService: 'web' }).success).toBe(true);
     });
 
     it('accepts only caller-safe canonical template deploy controls', () => {

@@ -39,11 +39,12 @@ describe('OIDC and OAuth2 SSO endpoints', () => {
 
     const [admin] = await app.db
       .insert(users)
-      .values({ email: 'admin@oidc.test', passwordHash: 'hash', name: 'Admin' })
+      // Instance-operator is an explicit column now — holding an `owner` seat
+      // in a workspace no longer implies it (that inference was self-granting;
+      // see migration 0038).
+      .values({ email: 'admin@oidc.test', passwordHash: 'hash', name: 'Admin', isInstanceOperator: true })
       .returning();
-    // The global `users.role` column was removed. Operators are inferred from
-    // workspace membership (owner/admin). For the test to use the admin
-    // token as an operator, we need an actual workspace seat.
+    // The admin also needs a workspace seat for the team-scoped surfaces.
     const [adminWs] = await app.db
       .insert(workspaces)
       .values({ name: 'Admin', slug: 'admin', ownerId: admin.id })

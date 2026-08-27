@@ -2,7 +2,7 @@ import { and, count, eq, sql } from 'drizzle-orm';
 import type { FastifyPluginAsync } from 'fastify';
 import { apiTokens, type DB, oidcProviders, type OidcProvider, sessions as sessionsTable, users, webauthnCredentials, type User } from '@ninedeploy/db';
 import type { PublicUser, Register } from '@ninedeploy/schemas';
-import { forgotPassword, login, oidcProviderCreate, oidcProviderUpdate, type OidcProviderEntry, type OidcPublicProvider, passkeyLoginVerify, passkeyRegisterVerify, passwordChange, passwordResetWithToken, refresh, register, twoFactorCode, twoFactorDisable, twoFactorSetup } from '@ninedeploy/schemas';
+import { createApiToken, forgotPassword, login, oidcProviderCreate, oidcProviderUpdate, type OidcProviderEntry, type OidcPublicProvider, passkeyLoginVerify, passkeyRegisterVerify, passwordChange, passwordResetWithToken, refresh, register, twoFactorCode, twoFactorDisable, twoFactorSetup } from '@ninedeploy/schemas';
 import { config } from '../config.js';
 import { decrypt, encrypt, hashPassword, randomToken, sha256, verifyPassword } from '../lib/crypto.js';
 import { badRequest, conflict, forbidden, notFound, parseId, unauthorized } from '../lib/errors.js';
@@ -87,11 +87,15 @@ export async function createFirstAdmin(db: DB, input: Register) {
     const passwordHash = await hashPassword(input.password);
     const [user] = await tx
       .insert(users)
-      .values({ email: input.email, passwordHash, name: input.name ?? null })
+      // The bootstrap user is the only account that receives the
+      // instance-operator flag automatically. Everyone else must be granted it
+      // by an existing operator (PATCH /v1/users/:id/operator) — creating a
+      // workspace does NOT confer it (see lib/resourceAccess.ts:isOperator).
+      .values({ email: input.email, passwordHash, name: input.name ?? null, isInstanceOperator: true })
       .returning();
     if (!user) throw badRequest('Could not create user');
-    // First user is auto-promoted to owner of a personal workspace so they
-    // can perform operator-level actions (manage OIDC, list users, etc.).
+    // …and gets a personal workspace so the team surfaces have somewhere to
+    // start. The workspace role is unrelated to the operator flag above.
     await ensureDefaultWorkspace(tx, user);
     return { user: toUser(user, true), tokens: await issueSessionTokens(tx, user), rawUser: user };
   });
@@ -112,7 +116,9 @@ export async function registerAccount(db: DB, input: Register) {
     try {
       [user] = await tx
         .insert(users)
-        .values({ email: input.email, passwordHash, name: input.name ?? null })
+        // Only the very first registration on an empty instance is an
+        // operator; open registration must never mint one.
+        .values({ email: input.email, passwordHash, name: input.name ?? null, isInstanceOperator: isFirst })
         .returning();
     } catch {
       throw badRequest('Email is already registered', 'email_taken');
@@ -483,14 +489,37 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
 
   // ── API tokens (for the CLI / CI) ────────────────────────────────────────
   app.post('/tokens', { onRequest: [app.authenticate] }, async (req) => {
-    const name = String((req.body as { name?: string } | null)?.name ?? 'cli').slice(0, 100) || 'cli';
+    const input = createApiToken.parse(req.body ?? {});
+    // A token can never grant more than its creator holds: asking for the
+    // `operator` scope as a non-operator would otherwise mint a credential
+    // that outranks the account behind it.
+    if (input.scopes.includes('operator') && !req.user!.isOperator) {
+      throw forbidden('Only an instance operator can issue an operator-scoped token');
+    }
     const raw = randomToken(32);
+    const expiresAt = input.expiresInDays
+      ? new Date(Date.now() + input.expiresInDays * 24 * 60 * 60 * 1000)
+      : null;
     const [tok] = await app.db
       .insert(apiTokens)
-      .values({ userId: req.user!.id, name, hash: sha256(raw) })
+      .values({
+        userId: req.user!.id,
+        name: input.name,
+        hash: sha256(raw),
+        scopes: input.scopes,
+        expiresAt,
+      })
       .returning();
     if (!tok) throw badRequest('Could not create token');
-    return { id: tok.id, name: tok.name, token: raw, createdAt: tok.createdAt.toISOString() };
+    void audit(app.db, req.user!.id, 'token.create', `${tok.name} [${input.scopes.join(',') || 'unrestricted'}]`);
+    return {
+      id: tok.id,
+      name: tok.name,
+      token: raw,
+      scopes: input.scopes,
+      expiresAt: expiresAt ? expiresAt.toISOString() : null,
+      createdAt: tok.createdAt.toISOString(),
+    };
   });
 
   app.get('/tokens', { onRequest: [app.authenticate] }, async (req) => {
@@ -498,7 +527,9 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       .select({
         id: apiTokens.id,
         name: apiTokens.name,
+        scopes: apiTokens.scopes,
         lastUsedAt: apiTokens.lastUsedAt,
+        expiresAt: apiTokens.expiresAt,
         createdAt: apiTokens.createdAt,
       })
       .from(apiTokens)
@@ -506,7 +537,11 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     return rows.map((r) => ({
       id: r.id,
       name: r.name,
+      // An empty list is a legacy, unrestricted token — surfaced as-is so the
+      // UI can flag it rather than pretending it is scoped.
+      scopes: Array.isArray(r.scopes) ? r.scopes : [],
       lastUsedAt: r.lastUsedAt ? r.lastUsedAt.toISOString() : null,
+      expiresAt: r.expiresAt ? r.expiresAt.toISOString() : null,
       createdAt: r.createdAt.toISOString(),
     }));
   });
@@ -704,6 +739,11 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
           email: userInfo.email,
           passwordHash,
           name: userInfo.name ?? null,
+          // Same bootstrap rule as /auth/register: only the very first account
+          // on an empty instance becomes an instance operator. A provider's
+          // `defaultRole` is a WORKSPACE role and must never mint one — that
+          // would hand instance-wide control to whoever the IdP admits.
+          isInstanceOperator: firstUser,
         })
         .returning();
 

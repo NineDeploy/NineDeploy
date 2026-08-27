@@ -11,9 +11,12 @@ function makeDb(
   user?: { id: number; isOperator?: boolean; tokenVersion?: number },
 ) {
   const findFirst = vi.fn(async () => (rows.length ? rows[0] : undefined));
-  const userFindFirst = vi.fn(async () => (user ? { tokenVersion: 0, ...user } : undefined));
+  // The operator flag is a column on the user row now, not an inference from
+  // workspace seats — see lib/resourceAccess.ts:isOperator.
+  const userFindFirst = vi.fn(async () =>
+    user ? { tokenVersion: 0, isInstanceOperator: user.isOperator === true, ...user } : undefined,
+  );
   const workspaceMembersFindMany = vi.fn(async () =>
-    // If the user is an operator, return an owner membership; otherwise empty.
     user?.isOperator
       ? [{ workspaceId: 1, userId: user.id, role: 'owner', createdAt: new Date(), updatedAt: new Date() }]
       : [],
@@ -71,7 +74,7 @@ describe('auth plugin', () => {
       headers: { authorization: `Bearer ${token}` },
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ user: { id: 42, isOperator: true } });
+    expect(res.json()).toEqual({ user: { id: 42, isOperator: true, tokenScopes: null } });
     expect(db.update).not.toHaveBeenCalled();
     await app.close();
   });
@@ -108,7 +111,7 @@ describe('auth plugin', () => {
       headers: { authorization: 'Bearer api-token-no-dots' },
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ user: { id: 7, isOperator: true } });
+    expect(res.json()).toEqual({ user: { id: 7, isOperator: true, tokenScopes: null } });
     expect(db.findFirst).toHaveBeenCalled();
     expect(db.update).toHaveBeenCalledWith(apiTokens);
     const setFn = db.update.mock.results[0]!.value.set;
@@ -150,6 +153,19 @@ describe('auth plugin', () => {
     const token = await signAccessToken(1, 0);
     const res = await app.inject({ method: 'DELETE', url: '/admin', headers: { authorization: `Bearer ${token}` } });
     expect(res.statusCode).toBe(200);
+    await app.close();
+  });
+
+  it('requireOperator and requireAdmin 401 when no user was resolved', async () => {
+    // Both guards are documented as running AFTER `authenticate`. Registering
+    // them alone proves they fail closed rather than reading `undefined`.
+    const app = Fastify({ logger: false });
+    app.decorate('db', makeDb([]) as never);
+    await app.register(authPlugin);
+    app.get('/op', { preHandler: [app.requireOperator] }, async () => ({ ok: true }));
+    app.get('/adm', { preHandler: [app.requireAdmin] }, async () => ({ ok: true }));
+    expect((await app.inject({ method: 'GET', url: '/op' })).statusCode).toBe(401);
+    expect((await app.inject({ method: 'GET', url: '/adm' })).statusCode).toBe(401);
     await app.close();
   });
 

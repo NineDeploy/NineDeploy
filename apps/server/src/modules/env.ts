@@ -3,7 +3,7 @@ import { envVars, services } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { upsertEnvVar } from '@ninedeploy/schemas';
 import { decrypt, encrypt } from '../lib/crypto.js';
-import { loadProjectForUser, loadServiceForUser } from '../lib/resourceAccess.js';
+import { assertServiceRole, loadProjectForUser, loadServiceForUser } from '../lib/resourceAccess.js';
 import { badRequest, notFound, parseId as num } from '../lib/errors.js';
 
 function serialize(e: typeof envVars.$inferSelect) {
@@ -32,7 +32,9 @@ export const envRoutes: FastifyPluginAsync = async (app) => {
     // Existence check first: otherwise a bad service id surfaces as a
     // misleading "key already exists" (the FK violation is swallowed below).
     // Doubles as the ownership check for members.
-    await loadServiceForUser(app.db, id, req.user!);
+    const svc = await loadServiceForUser(app.db, id, req.user!);
+    // Environment variables are service configuration — `member`+ to write.
+    await assertServiceRole(app.db, svc, req.user!, 'member');
     if (input.overwriteExisting) {
       const existing = await app.db.query.envVars.findFirst({
         where: and(eq(envVars.serviceId, id), eq(envVars.key, input.key)),
@@ -66,7 +68,8 @@ export const envRoutes: FastifyPluginAsync = async (app) => {
   app.patch('/:id/env/:varId', async (req) => {
     const id = num((req.params as { id: string }).id);
     const varId = num((req.params as { varId: string }).varId);
-    await loadServiceForUser(app.db, id, req.user!);
+    const target = await loadServiceForUser(app.db, id, req.user!);
+    await assertServiceRole(app.db, target, req.user!, 'member');
     const input = upsertEnvVar.parse(req.body);
     const [updated] = await app.db
       .update(envVars)
@@ -80,7 +83,8 @@ export const envRoutes: FastifyPluginAsync = async (app) => {
   app.delete('/:id/env/:varId', async (req) => {
     const id = num((req.params as { id: string }).id);
     const varId = num((req.params as { varId: string }).varId);
-    await loadServiceForUser(app.db, id, req.user!);
+    const target = await loadServiceForUser(app.db, id, req.user!);
+    await assertServiceRole(app.db, target, req.user!, 'member');
     await app.db.delete(envVars).where(and(eq(envVars.id, varId), eq(envVars.serviceId, id)));
     return { ok: true };
   });

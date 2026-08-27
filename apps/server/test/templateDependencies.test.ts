@@ -44,6 +44,25 @@ const service = (over: Record<string, unknown> = {}) => svcRow({
  */
 const linkedToProject2 = { serviceProjects: [{ serviceId: 7, projectId: 2 }] };
 
+describe('vanished template resilience', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.templates = [];
+  });
+
+  it('redeploys compose stacks (no databaseEnv) even when the template left the registry', async () => {
+    await expect(
+      reconcileTemplateDependencies(createFakeDb(), service({ templateId: 'coolify-gone', templateDatabaseEnv: null }), vi.fn()),
+    ).resolves.toBeNull();
+  });
+
+  it('still fails loudly for managed-database services whose mapping disappeared', async () => {
+    await expect(
+      reconcileTemplateDependencies(createFakeDb(), service({ templateDatabaseEnv: { APP_DB: 'host' } }), vi.fn()),
+    ).rejects.toThrow('no longer available');
+  });
+});
+
 describe('template dependency recovery', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -58,9 +77,15 @@ describe('template dependency recovery', () => {
 
   it('rejects missing and invalid durable template contracts', async () => {
     mocks.templates = [];
-    await expect(reconcileTemplateDependencies(createFakeDb(), service(), vi.fn())).rejects.toThrow('no longer available');
+    // Real managed-database services carry the mapping on the row; compose
+    // stacks (templateDatabaseEnv: null) take the tolerant path instead.
+    await expect(
+      reconcileTemplateDependencies(createFakeDb(), service({ templateDatabaseEnv: { WORDPRESS_DB_HOST: 'host' } }), vi.fn()),
+    ).rejects.toThrow('no longer available');
     mocks.templates = [{ ...mysqlTemplate, databaseEnv: undefined }];
-    await expect(reconcileTemplateDependencies(createFakeDb(), service(), vi.fn())).rejects.toThrow('invalid database contract');
+    await expect(
+      reconcileTemplateDependencies(createFakeDb(), service({ templateDatabaseEnv: { WORDPRESS_DB_HOST: 'host' } }), vi.fn()),
+    ).rejects.toThrow('invalid database contract');
   });
 
   it('creates, starts and attaches a missing managed database', async () => {

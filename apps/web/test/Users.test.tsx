@@ -139,6 +139,39 @@ describe('Users', () => {
     await waitFor(() => expect(api.users.remove).toHaveBeenCalledWith(2));
   });
 
+  // The instance-operator flag is what actually gates the operator-only routes
+  // and the host-privilege boundary. It used to be implied by owning any
+  // workspace (self-grantable); it is now granted explicitly from this table.
+  it('grants the instance-operator flag to a member', async () => {
+    mockOf(api.users.list).mockResolvedValue(users as never);
+    mockOf(api.users.setOperator).mockResolvedValue({ ok: true, id: 2, isOperator: true } as never);
+    renderWithProviders(<Users />);
+    fireEvent.click(await screen.findByTitle('Grant instance-operator access (full control of this server)'));
+    await waitFor(() => expect(api.users.setOperator).toHaveBeenCalledWith(2, true));
+  });
+
+  it('revokes the flag from another operator', async () => {
+    mockOf(api.users.list).mockResolvedValue(users as never);
+    mockOf(api.users.setOperator).mockResolvedValue({ ok: true, id: 3, isOperator: false } as never);
+    renderWithProviders(<Users />);
+    // Only user 3 is a revocable operator — the signed-in admin (id 1) gets no
+    // control at all, so nobody can demote themselves out of the panel.
+    const revokes = await screen.findAllByTitle('Revoke instance-operator access');
+    expect(revokes).toHaveLength(1);
+    fireEvent.click(revokes[0]!);
+    await waitFor(() => expect(api.users.setOperator).toHaveBeenCalledWith(3, false));
+  });
+
+  it('toasts when an operator grant is refused', async () => {
+    mockOf(api.users.list).mockResolvedValue(users as never);
+    mockOf(api.users.setOperator).mockRejectedValue(new Error('Cannot remove the last instance operator') as never);
+    renderWithProviders(<Users />);
+    fireEvent.click(await screen.findByTitle('Grant instance-operator access (full control of this server)'));
+    await waitFor(() =>
+      expect(toastSpy.toast).toHaveBeenCalledWith('Cannot remove the last instance operator', 'error'),
+    );
+  });
+
   it('does not delete when the dialog is cancelled', async () => {
     mockOf(api.users.list).mockResolvedValue(users as never);
     renderWithProviders(<Users />);

@@ -101,7 +101,9 @@ describe('real e2e: applyManifestToService against in-memory DB with real schema
 
     // The deploying service's owner must resolve through the attachment gate:
     // an operator owner makes visibleDatabaseIds unrestricted for these tests.
-    await db.insert(users).values({ id: 9, email: 'deploy-owner@example.com', passwordHash: 'h' });
+    // `isInstanceOperator` is an explicit column since migration 0038 — an
+    // 'owner' workspace seat no longer implies operator rights.
+    await db.insert(users).values({ id: 9, email: 'deploy-owner@example.com', passwordHash: 'h', isInstanceOperator: true });
     const [ws] = await db.insert(workspaces).values({ name: 'acme', slug: 'acme', ownerId: 9 }).returning();
     await db.insert(workspaceMembers).values({ workspaceId: ws!.id, userId: 9, role: 'owner' });
 

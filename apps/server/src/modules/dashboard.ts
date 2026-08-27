@@ -1,7 +1,7 @@
 import { count, desc, eq, inArray } from 'drizzle-orm';
-import { databases, deployments, domains, services, serviceWorkspaces, webhooks, workspaceMembers } from '@ninedeploy/db';
+import { databases, deployments, domains, services, webhooks } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
-import { visibleDatabaseIds } from '../lib/resourceAccess.js';
+import { visibleDatabaseIds, visibleServiceIdSet } from '../lib/resourceAccess.js';
 import { capture } from '../lib/exec.js';
 import { containerIp } from '../engine/builders/docker.js';
 import { TRAEFIK_CONTAINER } from '../engine/proxy.js';
@@ -16,32 +16,6 @@ const NETNS_PROBE_IMAGE = 'curlimages/curl:latest';
  * (and reusable by other "list everything" endpoints) to keep the same
  * scoping rules that `loadServiceForUser` enforces one-row-at-a-time.
  */
-async function visibleServiceIdSet(
-  db: import('@ninedeploy/db').DB,
-  userId: number,
-  userWorkspaceIds: number[],
-): Promise<Set<number>> {
-  if (userWorkspaceIds.length === 0) {
-    // Fast path: no workspace membership → only owned services.
-    const owned = await db
-      .select({ id: services.id })
-      .from(services)
-      .where(eq(services.ownerUserId, userId));
-    return new Set(owned.map((s) => s.id));
-  }
-  // Two sources: owner_user_id match, or service_workspaces ∩ user's workspaces.
-  const [owned, tagged] = await Promise.all([
-    db.select({ id: services.id }).from(services).where(eq(services.ownerUserId, userId)),
-    db
-      .select({ id: serviceWorkspaces.serviceId })
-      .from(serviceWorkspaces)
-      .where(inArray(serviceWorkspaces.workspaceId, userWorkspaceIds)),
-  ]);
-  const set = new Set<number>();
-  for (const r of owned) set.add(r.id);
-  for (const r of tagged) set.add(r.id);
-  return set;
-}
 
 interface HealthStatus {
   serviceId: number;
@@ -167,18 +141,16 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
     // into workspaces they belong to. Without this, any member's dashboard
     // mapped every other tenant's services, databases, domains, webhooks and
     // recent deployments.
-    const [allServices, allDbs, visibleDbIds, userWsMemberships] = await Promise.all([
+    const [allServices, allDbs, visibleDbIds] = await Promise.all([
       app.db.select().from(services),
       app.db.select().from(databases),
       visibleDatabaseIds(app.db, user),
-      app.db.select({ id: workspaceMembers.workspaceId }).from(workspaceMembers).where(eq(workspaceMembers.userId, user.id)),
     ]);
-    const userWsIds = userWsMemberships.map((w) => w.id);
-    // Services the user can see: either owned by them, or tagged into a
-    // workspace they belong to, or (for operators) everything.
-    const visibleServiceIds = user.isOperator
-      ? new Set(allServices.map((s) => s.id))
-      : await visibleServiceIdSet(app.db, user.id, userWsIds);
+    // Services the user can see: owned by them, or tagged into a workspace they
+    // belong to, or (for operators) everything. Single source of truth, shared
+    // with `GET /v1/services` and `/v1/domains` (see lib/resourceAccess.ts).
+    const visible = await visibleServiceIdSet(app.db, user);
+    const visibleServiceIds = visible ?? new Set(allServices.map((s) => s.id));
     const scopedServices = allServices.filter((s) => visibleServiceIds.has(s.id));
     const scopedDbs = visibleDbIds === null ? allDbs : allDbs.filter((d) => visibleDbIds.includes(d.id));
     const svcIds = Array.from(visibleServiceIds);

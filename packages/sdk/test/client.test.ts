@@ -748,6 +748,15 @@ describe('createClient', () => {
       expect(last(calls).url).toBe('/v1/users/1/reset-link');
       expect(last(calls).init.method).toBe('POST');
 
+      // The INSTANCE-operator flag — distinct from a workspace role, and the
+      // only way to gain operator rights now that creating a workspace no
+      // longer confers them.
+      await client.users.setOperator(1, true);
+      expect(last(calls)).toMatchObject({ url: '/v1/users/1/operator', init: { method: 'PATCH' } });
+      expect(JSON.parse(last(calls).init.body ?? '{}')).toEqual({ isOperator: true });
+      await client.users.setOperator(1, false);
+      expect(JSON.parse(last(calls).init.body ?? '{}')).toEqual({ isOperator: false });
+
       await client.users.remove(1);
       expect(last(calls)).toMatchObject({ url: '/v1/users/1', init: { method: 'DELETE' } });
     });

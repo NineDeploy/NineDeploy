@@ -1,4 +1,5 @@
 import { type ReactNode, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router';
 import {
   ArrowLeftRight,
   Bell,
@@ -94,9 +95,22 @@ const SETTING_GROUPS: SectionCategory[] = [
   },
 ];
 
+/** Every valid section id, flattened for ?section= validation. */
+const ALL_SECTION_IDS: SectionId[] = SETTING_GROUPS.flatMap((group) =>
+  group.items.map((item) => item.id),
+);
+
 /** Settings page shell: clean vertical sidebar navigation layout with search filter. */
 export function Settings() {
-  const [section, setSection] = useState<SectionId>('account');
+  const [searchParams, setSearchParams] = useSearchParams();
+  // The active section lives in the URL (?section=…) so it deep-links and the
+  // help drawer can show section-specific help. Unknown or missing values fall
+  // back to the landing section instead of breaking the page.
+  const sectionParam = searchParams.get('section');
+  const section: SectionId = ALL_SECTION_IDS.includes(sectionParam as SectionId)
+    ? (sectionParam as SectionId)
+    : 'account';
+  const setSection = (next: SectionId) => setSearchParams({ section: next }, { replace: true });
   const [search, setSearch] = useState('');
 
   const filteredGroups = useMemo(() => {

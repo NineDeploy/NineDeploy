@@ -333,9 +333,14 @@ describe('webhook receiver', () => {
 
   it('queues a webhook push when the owner is an operator even for host-executing types (pm2)', async () => {
     const app = await buildTestApp({
-      // Owner 1 resolves through the default operator membership row.
+      // The webhook path has no request user, so it reads the owner's
+      // instance-operator flag straight off the users row.
       db: createFakeDb({
-        findFirst: { webhooks: hook(), services: svcRow({ ownerUserId: 1, type: 'pm2' }) },
+        findFirst: {
+          webhooks: hook(),
+          services: svcRow({ ownerUserId: 1, type: 'pm2' }),
+          users: { id: 1, isInstanceOperator: true },
+        },
         insert: { deployments: [depRow({ id: 11, trigger: 'webhook' })] },
       }),
       rawBody: true,

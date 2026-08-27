@@ -9,6 +9,7 @@ import { logBus } from '../engine/logs.js';
 import { resolveUser } from '../lib/auth.js';
 import { loadServiceForUser } from '../lib/serviceAccess.js';
 import { assertMayDeployStoredService } from '../lib/hostPrivilege.js';
+import { assertServiceRole } from '../lib/resourceAccess.js';
 import { badRequest, notFound, parseId as num } from '../lib/errors.js';
 import { websocketBearerToken } from '../lib/websocketAuth.js';
 
@@ -17,6 +18,8 @@ export const deploysRoutes: FastifyPluginAsync = async (app) => {
   app.post('/:id/deploys', { onRequest: [app.authenticate] }, async (req) => {
     const id = num((req.params as { id: string }).id);
     const svc = await loadServiceForUser(app.db, id, req.user!);
+    // Triggering a deploy is a write: `viewer` seats are read-only.
+    await assertServiceRole(app.db, svc, req.user!, 'member');
     // Definitions created before this rule (or by an admin) must not become a
     // back door: deploying them is what actually executes on the host.
     await assertMayDeployStoredService(app.db, req.user!, svc);
@@ -70,6 +73,7 @@ export const deploysRoutes: FastifyPluginAsync = async (app) => {
     const id = num((req.params as { id: string }).id);
     const depId = num((req.params as { depId: string }).depId);
     const svc = await loadServiceForUser(app.db, id, req.user!);
+    await assertServiceRole(app.db, svc, req.user!, 'member');
     await assertMayDeployStoredService(app.db, req.user!, svc);
     const old = await app.db.query.deployments.findFirst({ where: eq(deployments.id, depId) });
     if (!old || old.serviceId !== id) throw notFound('Deployment not found');
@@ -94,7 +98,8 @@ export const deploysRoutes: FastifyPluginAsync = async (app) => {
   app.post('/:id/deploys/:depId/cancel', { onRequest: [app.authenticate] }, async (req) => {
     const id = num((req.params as { id: string }).id);
     const depId = num((req.params as { depId: string }).depId);
-    await loadServiceForUser(app.db, id, req.user!);
+    const cancelTarget = await loadServiceForUser(app.db, id, req.user!);
+    await assertServiceRole(app.db, cancelTarget, req.user!, 'member');
     const dep = await app.db.query.deployments.findFirst({ where: eq(deployments.id, depId) });
     if (!dep || dep.serviceId !== id) throw notFound('Deployment not found');
     if (!['queued', 'building', 'deploying'].includes(dep.status)) {

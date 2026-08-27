@@ -1,7 +1,9 @@
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { Builder } from '../types.js';
 import type { BuildConfig } from '@ninedeploy/db';
+import type { NinedeployManifest } from '@ninedeploy/schemas';
+import { generateNixpacksToml } from '../../lib/ninedeployToNixpacks.js';
 import { buildEnv, capture, run, sleep } from '../../lib/exec.js';
 import { ensureDockerImage, pullDockerImage } from '../../lib/dockerPull.js';
 import { NETWORK } from '../proxy.js';
@@ -232,7 +234,36 @@ async function buildWithNixpacks(
   buildConfig: BuildConfig | undefined,
   workDir: string,
   log: (line: string) => void,
+  manifest?: NinedeployManifest,
 ): Promise<void> {
+  // `runtime` and `phases` cannot be expressed as CLI flags — they become a
+  // `nixpacks.toml` written next to the source. docs/NINEDEPLOY_MANIFEST.md
+  // §6.1 has described this since the manifest shipped, but the generator was
+  // never called: every `runtime`/`phases` block was validated and then
+  // silently dropped.
+  if (manifest) {
+    const { toml, warnings } = generateNixpacksToml(manifest);
+    for (const w of warnings) log(`⚠ .ninedeploy nixpacks: ${w}`);
+    if (toml) {
+      // `baseDir` here is REPO-RELATIVE (it is the operand handed to the
+      // nixpacks CLI, which runs with cwd=workDir). Writing to it directly
+      // would land the file next to the server process, not in the checkout —
+      // re-anchor through `resolveInRepo`, which also refuses a path that
+      // escapes the repository.
+      const tomlPath = resolveInRepo(workDir, baseDir, 'nixpacks.toml');
+      if (existsSync(tomlPath)) {
+        // A hand-written nixpacks.toml in the repo is a deliberate, more
+        // specific choice than the manifest — leave it alone and say so, rather
+        // than overwriting a file the author committed.
+        log('📋 .ninedeploy: repo already ships a nixpacks.toml — keeping it, manifest runtime/phases ignored');
+      } else {
+        writeFileSync(tomlPath, toml, 'utf8');
+        const lineCount = toml.split('\n').length;
+        log(`📋 .ninedeploy: generated nixpacks.toml from runtime/phases (${lineCount} lines)`);
+      }
+    }
+  }
+
   let hasCli = false;
   try {
     await capture('nixpacks', ['--version']);
@@ -351,7 +382,7 @@ export const dockerBuilder: Builder = {
       log(`Building image ${target} …`);
       if (useNixpacks) {
         builtWithNixpacks = true;
-        await buildWithNixpacks(target, baseDir, buildConfig, workDir, log);
+        await buildWithNixpacks(target, baseDir, buildConfig, workDir, log, ctx.manifest);
       } else {
         await run(
           'docker',

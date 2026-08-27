@@ -16,6 +16,8 @@ import { WorkspaceSwitcher } from './WorkspaceSwitcher.js';
 import { TopBarFilters } from './TopBarFilters.js';
 import { ModeToggle } from './ModeToggle.js';
 import { UpdateBanner } from './UpdateBanner.js';
+import { HelpButton, HelpDrawer } from './HelpDrawer.js';
+import { HelpProvider } from '../help/HelpContext.js';
 import { useExperienceMode } from '../lib/mode.js';
 import { installPanelAutofillGuard } from '../lib/autofill.js';
 
@@ -180,6 +182,7 @@ export function Layout() {
   const pageTitle = currentItem?.label ?? 'Dashboard';
 
   return (
+    <HelpProvider>
     <div className="flex h-screen overflow-hidden">
       {/* ── Activity Bar (far-left rail) ──────────────────── */}
       <div className="relative z-30 flex w-12 shrink-0 flex-col items-center border-r border-white/[0.06] bg-slate-950/70 py-3 backdrop-blur">
@@ -308,6 +311,7 @@ export function Layout() {
             >
               <Activity size={16} />
             </button>
+            <HelpButton />
           </div>
         </header>
 
@@ -325,7 +329,10 @@ export function Layout() {
       {/* ── Right drawer (activity) ──────────────────────── */}
       {drawerOpen && <ActivityDrawer onClose={() => setDrawerOpen(false)} />}
       {paletteOpen && <CommandPalette onClose={() => setPaletteOpen(false)} />}
+      {/* Help drawer mounts itself; it reads open state from HelpProvider. */}
+      <HelpDrawer />
     </div>
+    </HelpProvider>
   );
 }
 

@@ -65,3 +65,4 @@ cov-json/
 cov-json2/
 coverage/
 .tmp-real-validate/nextjs-test/.ninedeploy
+apps/server/templates-mirror.json

@@ -6,14 +6,31 @@ import { createDomain, domainPatch } from '@ninedeploy/schemas';
 import { parseHeaders, writeDynamicConfig } from '../engine/proxy.js';
 import { createDnsRecord, deleteDnsRecord, detectPublicIp, getDnsRecordsConfig } from '../lib/cloudflare.js';
 import { loadServiceForUser } from '../lib/serviceAccess.js';
-import { conflict, notFound, parseId as num } from '../lib/errors.js';
+import { assertServiceRole } from '../lib/resourceAccess.js';
+import { badRequest, conflict, notFound, parseId as num } from '../lib/errors.js';
 import { getSettingString } from '../lib/settings.js';
 import { challengeRecordName, checkOwnershipRecord, newChallengeToken, requiresOwnershipProof } from '../lib/domainVerification.js';
 
-/** Normalise a hostname for comparison: DNS is case-insensitive and the
- *  trailing root dot is not significant. */
+/** Normalise pasted input to a bare hostname. Users routinely paste a full
+ *  URL (`https://app.example.com/`) instead of the host, so scheme,
+ *  credentials, port and anything after the host are discarded first; what
+ *  remains is then lowercased — DNS is case-insensitive — and stripped of
+ *  the insignificant trailing root dot. Empty output means unusable input. */
 function normalizeHost(raw: string): string {
-  return raw.trim().toLowerCase().replace(/\.$/, '');
+  let value = raw.trim().toLowerCase();
+  if (/^[a-z][a-z0-9+.-]*:\/\//.test(value)) {
+    try {
+      // `URL.hostname` drops credentials, port and path in one step.
+      value = new URL(value).hostname;
+    } catch {
+      return '';
+    }
+  }
+  // Scheme-less pastes can still carry a path (`app.example.com/`, `app.example.com/about`).
+  value = value.split(/[/?#]/)[0] ?? '';
+  // Traefik's Host matcher never sees a port.
+  value = value.replace(/:\d+$/, '');
+  return value.replace(/\.$/, '');
 }
 
 /**
@@ -121,11 +138,13 @@ export const domainsRoutes: FastifyPluginAsync = async (app) => {
   app.post('/:id/domains', async (req) => {
     const id = num((req.params as { id: string }).id);
     const input = createDomain.parse(req.body);
-    await loadServiceForUser(app.db, id, req.user!);
+    const svc = await loadServiceForUser(app.db, id, req.user!);
+    await assertServiceRole(app.db, svc, req.user!, 'member');
     // Store normalised: DNS is case-insensitive, so `Victim.Example.com` and
     // `victim.example.com` are the same route to Traefik — and would otherwise
     // be two different rows to the unique index and to the check below.
     const hostname = normalizeHost(input.hostname);
+    if (!hostname) throw badRequest('Enter a valid hostname');
     await assertHostnameClaimable(app, hostname, id, req.user!);
 
     // H-2 layer 2: a hostname outside this instance's own zone is not routed
@@ -240,7 +259,8 @@ export const domainsRoutes: FastifyPluginAsync = async (app) => {
   app.patch('/:id/domains/:domainId', async (req) => {
     const id = num((req.params as { id: string }).id);
     const domainId = num((req.params as { domainId: string }).domainId);
-    await loadServiceForUser(app.db, id, req.user!);
+    const svc = await loadServiceForUser(app.db, id, req.user!);
+    await assertServiceRole(app.db, svc, req.user!, 'member');
     const input = domainPatch.parse(req.body ?? {});
     // Validate early so a malformed headers array never reaches Traefik.
     const values: Partial<typeof domains.$inferInsert> = {};
@@ -268,7 +288,8 @@ export const domainsRoutes: FastifyPluginAsync = async (app) => {
   app.delete('/:id/domains/:domainId', async (req) => {
     const id = num((req.params as { id: string }).id);
     const domainId = num((req.params as { domainId: string }).domainId);
-    await loadServiceForUser(app.db, id, req.user!);
+    const svc = await loadServiceForUser(app.db, id, req.user!);
+    await assertServiceRole(app.db, svc, req.user!, 'member');
     const existing = await app.db.query.domains.findFirst({
       where: and(eq(domains.id, domainId), eq(domains.serviceId, id)),
     });

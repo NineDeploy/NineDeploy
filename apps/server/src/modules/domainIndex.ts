@@ -1,11 +1,12 @@
-import { eq, inArray } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { audit } from '../lib/audit.js';
-import { domains, services, serviceWorkspaces, workspaceMembers } from '@ninedeploy/db';
+import { domains, services } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { readCertificates, writeDynamicConfig } from '../engine/proxy.js';
 import { notFound, parseId } from '../lib/errors.js';
 
 import { loadServiceForUser } from '../lib/serviceAccess.js';
+import { visibleServiceIdSet } from '../lib/resourceAccess.js';
 
 /** Centralized domain index: which domain → which service/container, plus SSL. Mounted under /domains. */
 export const domainIndexRoutes: FastifyPluginAsync = async (app) => {
@@ -13,38 +14,14 @@ export const domainIndexRoutes: FastifyPluginAsync = async (app) => {
 
   app.get('/', async (req) => {
     const user = req.user!;
-    const [rows, allServices, userWsMemberships] = await Promise.all([
+    const [rows, allServices] = await Promise.all([
       app.db.query.domains.findMany(),
       app.db.select().from(services),
-      app.db
-        .select({ id: workspaceMembers.workspaceId })
-        .from(workspaceMembers)
-        .where(eq(workspaceMembers.userId, user.id)),
     ]);
-    const userWsIds = userWsMemberships.map((w) => w.id);
-    const visibleServiceIds = user.isOperator
-      ? new Set(allServices.map((s) => s.id))
-      : await (async () => {
-          if (userWsIds.length === 0) {
-            const owned = await app.db
-              .select({ id: services.id })
-              .from(services)
-              .where(eq(services.ownerUserId, user.id));
-            return new Set(owned.map((s) => s.id));
-          }
-          const [owned, tagged] = await Promise.all([
-            app.db.select({ id: services.id }).from(services).where(eq(services.ownerUserId, user.id)),
-            app.db
-              .select({ id: serviceWorkspaces.serviceId })
-              .from(serviceWorkspaces)
-              .where(inArray(serviceWorkspaces.workspaceId, userWsIds)),
-          ]);
-          const set = new Set<number>();
-          for (const r of owned) set.add(r.id);
-          for (const r of tagged) set.add(r.id);
-          return set;
-        })();
-    const svcs = allServices.filter((s) => visibleServiceIds.has(s.id));
+    // Shared visibility rule — see lib/resourceAccess.ts. This route used to
+    // carry its own inline copy of the owner ∪ workspace-tag union.
+    const visible = await visibleServiceIdSet(app.db, user);
+    const svcs = visible === null ? allServices : allServices.filter((s) => visible.has(s.id));
     const byId = new Map(svcs.map((s) => [s.id, s]));
     const visibleRows = rows.filter((domain) => byId.has(domain.serviceId));
     // Certificate expiry comes from Traefik's ACME storage (empty without ACME).

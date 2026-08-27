@@ -485,6 +485,43 @@ export function getMarketplaceCatalog(installedIds: Set<string>): MarketplacePlu
   }));
 }
 
+/**
+ * Sources this build can actually honour.
+ *
+ * Nothing in this file ever `import()`s anything, so an "installed" npm, git or
+ * local plugin was only ever a DB row plus a shell object whose `init` emits
+ * one event and returns — while the panel reported it as active. An operator
+ * could therefore believe they had added functionality that does not exist.
+ * Only the official catalog (whose entries map onto behaviour compiled into the
+ * server) can be installed.
+ *
+ * Loading third-party code into the panel process is a real feature with real
+ * requirements — fetch, integrity verification, sandboxing, an upgrade story —
+ * not something to fake.
+ */
+const LOADABLE_SOURCES = new Set(['marketplace']);
+
+/** True when this build can actually run a plugin from `source`. */
+export function isLoadableSource(source: string): boolean {
+  return LOADABLE_SOURCES.has(source);
+}
+
+/**
+ * Thrown when someone tries to install a plugin from a source this build cannot
+ * load code from. Carries a 400-shaped status so the route answers with a
+ * client error rather than a generic failure.
+ */
+export class UnsupportedPluginSourceError extends Error {
+  readonly statusCode = 400;
+  constructor(readonly source: string) {
+    super(
+      `Installing plugins from "${source}" is not supported: NineDeploy does not load third-party plugin code. ` +
+        'Only the official marketplace catalog can be installed.',
+    );
+    this.name = 'UnsupportedPluginSourceError';
+  }
+}
+
 export function createDynamicPlugin(input: InstallPluginInput): KernelPlugin {
   let id = input.target;
   let name = input.name || input.target;
@@ -513,7 +550,7 @@ export function createDynamicPlugin(input: InstallPluginInput): KernelPlugin {
     menuItems = found.menuItems;
     dependencies = found.dependencies;
   } else if (input.source === 'npm') {
-    // Sanitize npm package name to safe plugin ID
+    // Sanitize npm package name to safe plugin ID.
     id = input.target.replace(/^@/, '').replace(/[/@.]/g, '-').toLowerCase();
   } else if (input.source === 'git') {
     const match = input.target.match(/\/([^/]+?)(?:\.git)?$/);
@@ -543,6 +580,10 @@ export async function installPlugin(
   kernel: KernelContext,
   input: InstallPluginInput,
 ): Promise<{ ok: boolean; id: string; status: string }> {
+  // Refuse here rather than inside `createDynamicPlugin`: that function is also
+  // used to RESTORE rows at boot, and throwing there would make every existing
+  // install log a failure on every start.
+  if (!isLoadableSource(input.source)) throw new UnsupportedPluginSourceError(input.source);
   const dynamicPlugin = createDynamicPlugin(input);
 
   // Check if already registered
@@ -620,8 +661,19 @@ export async function loadInstalledPlugins(db: DB, kernel: KernelContext): Promi
     if (!kernel.getPlugin(row.id)) {
       try {
         const manifest = (row.manifest || {}) as Record<string, any>;
+        const source = (manifest.source as string) || (row.isOfficial ? 'marketplace' : 'local');
+        if (!isLoadableSource(source)) {
+          // Installed by an older build that accepted npm/git/local. The row is
+          // inert — say so once per boot instead of restoring a shell that
+          // reports itself as "active".
+          console.warn(
+            `[PluginLoader] Plugin "${row.id}" was installed from an unsupported source ("${source}") and does nothing. ` +
+              'Uninstall it from Settings → Plugins.',
+          );
+          continue;
+        }
         const plugin = createDynamicPlugin({
-          source: (manifest.source as any) || (row.isOfficial ? 'marketplace' : 'local'),
+          source: source as any,
           target: (manifest.target as string) || row.id,
           name: row.name,
           version: row.version,

@@ -13,7 +13,7 @@ import type {
   UpdateServiceVolumeAttachmentInput,
   Backup,
   BackupWithDb,
-  CreateApiToken,
+  CreateApiTokenInput,
   CreateDatabaseInput,
   CreateDomainInput,
   CreateProjectInput,
@@ -194,7 +194,7 @@ export interface NineDeployClient {
     };
     me: () => Promise<PublicUser>;
     tokens: {
-      create: (input?: CreateApiToken) => Promise<CreatedApiToken>;
+      create: (input?: CreateApiTokenInput) => Promise<CreatedApiToken>;
       list: () => Promise<ApiToken[]>;
       remove: (id: number) => Promise<void>;
     };
@@ -423,6 +423,15 @@ export interface NineDeployClient {
     resetPassword: (id: number, input: PasswordReset) => Promise<{ ok: boolean }>;
     /** Mint a one-time reset link for a user (returned exactly once). */
     resetLink: (id: number) => Promise<{ url: string; expiresAt: string }>;
+    /**
+     * Operator-only: grant or revoke the INSTANCE-operator flag.
+     *
+     * Not a workspace role — this is the flag that gates operator-only routes
+     * and the host-privilege boundary (PM2/compose deploys, lifecycle hooks,
+     * docker-socket templates). Creating a workspace does NOT confer it. The
+     * last remaining operator cannot be demoted.
+     */
+    setOperator: (id: number, isOperator: boolean) => Promise<{ ok: boolean; id: number; isOperator: boolean }>;
   };
   projects: {
     /** `query` is appended verbatim, e.g. `?workspaceId=2` (workspace scoping). */
@@ -986,6 +995,8 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
       create: (input) => send<PublicUser>('POST', '/v1/users', input),
       resetPassword: (id, input) => send<{ ok: boolean }>('PATCH', `/v1/users/${id}/password`, input),
       resetLink: (id) => send<{ url: string; expiresAt: string }>('POST', `/v1/users/${id}/reset-link`),
+      setOperator: (id, isOperator) =>
+        send<{ ok: boolean; id: number; isOperator: boolean }>('PATCH', `/v1/users/${id}/operator`, { isOperator }),
       remove: async (id) => {
         await request(`/v1/users/${id}`, { method: 'DELETE' });
       },
