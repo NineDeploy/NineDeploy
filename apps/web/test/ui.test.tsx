@@ -397,6 +397,28 @@ describe('Modal', () => {
     );
     expect(screen.getByLabelText('target')).toHaveFocus();
   });
+
+  it('keeps focus in a controlled input while the owner re-renders per keystroke', async () => {
+    // Regression: every route passes `onClose` as a fresh inline arrow, so
+    // each keystroke in a controlled form field handed Modal a new callback
+    // identity. The trap effect treated that as an open transition, re-ran
+    // its "focus first element" step and yanked the caret to the ✕ button —
+    // one keypress typed, focus gone, everywhere a dialog had a text input.
+    function Host() {
+      const [name, setName] = useState('');
+      return (
+        <Modal title="New project" onClose={() => {}}>
+          <Input aria-label="name" value={name} onChange={(e) => setName(e.target.value)} />
+          <Input aria-label="slug" value="" onChange={() => {}} />
+        </Modal>
+      );
+    }
+    render(<Host />);
+    const name = screen.getByLabelText('name');
+    await userEvent.setup().type(name, 'abc');
+    expect(name).toHaveFocus();
+    expect(name).toHaveValue('abc');
+  });
 });
 
 describe('ConfirmDialog', () => {

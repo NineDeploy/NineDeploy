@@ -36,6 +36,27 @@ describe('VolumeBackupsPanel', () => {
     );
   });
 
+  it('names snapshots with an optional label and shows the name on the row', async () => {
+    mockOf(api.volumeBackups.list).mockResolvedValue([
+      backup({ id: 9, label: 'pre-upgrade' }),
+    ] as never);
+    mockOf(api.volumeBackups.create).mockResolvedValue(backup({ id: 10, label: 'pre-upgrade' }) as never);
+    renderWithProviders(<VolumeBackupsPanel volumeName="nd-svc-web-data" />);
+
+    // Existing rows display their snapshot name instead of only a timestamp.
+    await screen.findByTestId('backup-row-9');
+    expect(screen.getByText('pre-upgrade')).toBeInTheDocument();
+
+    // Typing a label names THIS snapshot; empty input stays "manual".
+    const input = screen.getByLabelText('Snapshot label') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: 'pre-deploy' } });
+    fireEvent.click(screen.getByTestId('trigger-backup-button'));
+    await waitFor(() =>
+      expect(api.volumeBackups.create).toHaveBeenCalledWith('nd-svc-web-data', { label: 'pre-deploy' }),
+    );
+    expect(input.value).toBe('');
+  });
+
   it('surfaces a failed manual backup', async () => {
     mockOf(api.volumeBackups.list).mockResolvedValue([] as never);
     mockOf(api.volumeBackups.create).mockRejectedValue(new Error('no space left') as never);

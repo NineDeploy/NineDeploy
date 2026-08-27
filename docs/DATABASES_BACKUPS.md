@@ -1,6 +1,6 @@
-# Managed Databases & Backup Destinations
+# Managed Databases & Backups
 
-NineDeploy provides one-click provisioning and lifecycle management for production-grade databases with automated snapshotting and offsite cloud storage.
+NineDeploy provides one-click provisioning and lifecycle management for production-grade databases, plus encrypted snapshots for both databases and attached volumes with offsite cloud storage.
 
 ---
 
@@ -36,9 +36,21 @@ Automated backup jobs run on configurable cron schedules and upload AES-encrypte
 - **MinIO / Self-Hosted S3**
 - **Wasabi / DigitalOcean Spaces**
 
+The same destination backs up attached volume snapshots; every archive is sealed with AES-256-GCM as it streams and requests to the destination are egress-gated like all outbound traffic.
+
 ---
 
-## 🛡️ 4. Restore & Tar-Slip Safety
+## 💾 4. Volume Snapshots & Labels
 
-- Restores can be initiated via Web UI, CLI (`ninedeploy database restore`), or MCP tool.
+Each managed Docker volume can be snapshotted (`tar.gz`), restored or downloaded from the Volumes tab:
+
+- **Labels**: manual snapshots accept an optional operator label (up to 40 chars, defaulting to `manual`); scheduled runs are labeled `schedule-YYYY-MM-DD`. Labels surface on the Backups page so a mixed database/volume list stays readable.
+- **Scheduling**: a recurring job can sweep multiple volumes in one pass, reusing the backup destination for off-site copies.
+- **Safe restore**: restores refuse to run while a service is still live on that volume.
+
+---
+
+## 🛡️ 5. Restore & Tar-Slip Safety
+
+- Restores can be initiated via Web UI, CLI (`ninedeploy backups restore`), or MCP tool.
 - The decompression engine enforces path validation to prevent **Tar-Slip** vulnerabilities, rejecting any archive entries targeting paths outside the allocated container volume.

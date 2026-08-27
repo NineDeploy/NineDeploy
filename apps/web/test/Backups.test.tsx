@@ -23,6 +23,13 @@ const backups = [
   { id: 4, databaseId: 13, databaseName: 'tiny', status: 'idle', sizeBytes: 100, createdAt: '2026-01-04T00:00:00Z' },
   { id: 5, databaseId: 14, databaseName: 'medium', status: 'idle', sizeBytes: 50 * 1024 * 1024, createdAt: '2026-01-05T00:00:00Z' },
   { id: 6, databaseId: 99, databaseName: null, status: 'idle', sizeBytes: 10, createdAt: '2026-01-06T00:00:00Z' },
+  // Volume snapshots now ride in the same list with their own NAME
+  // (label) instead of an anonymous dash under "Database".
+  {
+    id: 7, databaseId: null, databaseName: null, scope: 'volumes',
+    volumeName: 'nd-svc-web-data', label: 'pre-upgrade', status: 'completed',
+    sizeBytes: 4096, createdAt: '2026-02-01T00:00:00Z',
+  },
 ];
 
 describe('Backups', () => {
@@ -61,6 +68,13 @@ describe('Backups', () => {
     expect(screen.getByText('error')).toBeInTheDocument();
     expect(screen.getAllByText('idle').length).toBeGreaterThan(0); // multiple idle backups
     expect(screen.getByText(/01 Jan 2026/)).toBeInTheDocument(); // formatDateTime (en-GB)
+  });
+
+  it('names volume snapshots instead of showing an anonymous row', async () => {
+    mockOf(api.backups.list).mockResolvedValue(backups as never);
+    renderWithProviders(<Backups />);
+    await screen.findByText('pre-upgrade'); // the snapshot label…
+    expect(screen.getByText('nd-svc-web-data')).toBeInTheDocument(); // …and its volume
   });
 
   it('shows an error card with retry when the backups query fails', async () => {

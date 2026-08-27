@@ -1,6 +1,6 @@
 # Deployments & Pipeline Engine
 
-NineDeploy provides a robust, zero-downtime deployment engine supporting Docker, PM2, and static buildpacks with health checks, blue-green port flipping, rollback safety, and preview environments.
+NineDeploy provides a robust, zero-downtime deployment engine supporting Docker, PM2, Compose and Nixpacks builds with health checks, blue-green port flipping, rollback safety, and preview environments.
 
 ---
 
@@ -33,12 +33,14 @@ When deploying a containerized service:
 ## 🪟 4. Ephemeral PR Preview Environments
 
 - Automatically deploy isolated preview environments for Pull Requests / Merge Requests.
-- Each preview environment receives a unique dynamic subdomain (e.g. `pr-42.app.yourdomain.com`).
+- Each preview environment receives a unique dynamic subdomain (e.g. `pr-42.app.yourdomain.com`), constrained to the instance's own wildcard zone before routing goes active.
+- Previews inherit non-secret configuration from the parent service — secrets are withheld, and the webhook response reports how many were withheld.
 - When the PR is closed or merged, NineDeploy automatically tears down the containers, removes Traefik routes, and purges ephemeral storage.
 
 ---
 
-## ⏪ 5. Rollbacks
+## ⏪ 5. Rollbacks & Deployment History
 
 - Every deployment records an immutable image digest and exact configuration snapshot.
 - Rollback redeploys that exact verified digest — preventing unexpected changes from floating `:latest` tags.
+- Deployment history stays honest: when a new deploy goes live, older rows are settled into a `superseded` state instead of lingering as "Running", both at finalize time and during a reconciliation pass at panel boot.

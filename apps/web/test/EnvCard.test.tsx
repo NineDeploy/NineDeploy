@@ -192,4 +192,44 @@ describe('EnvCard', () => {
     expect(screen.queryByText('VAR_0')).not.toBeInTheDocument();
     expect(screen.getByText('VAR_3')).toBeInTheDocument();
   });
+
+  // ── Raw .env text mode ──────────────────────────────────────────────────
+
+  it('round-trips an edited .env through create / update / remove on apply', async () => {
+    renderCard();
+    await waitFor(() => expect(screen.getByText('PORT')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit as .env' }));
+    // Entering raw mode pre-fills the textarea with the current variables.
+    const text = screen.getByLabelText('Raw .env content') as HTMLTextAreaElement;
+    expect(text.value).toBe('PORT=3000\nAPI_KEY=hunter2');
+
+    fireEvent.change(text, { target: { value: 'PORT=8080\nNEW_FLAG=1\n# trailing comment\nexport OLD_STYLE="quoted"' } });
+    fireEvent.click(screen.getByRole('button', { name: /Apply 3 vars/ }));
+
+    await waitFor(() => {
+      expect(apiMock.api.env.update).toHaveBeenCalledWith(7, 1, { key: 'PORT', value: '8080' });
+      expect(apiMock.api.env.create).toHaveBeenCalledWith(7, { key: 'NEW_FLAG', value: '1', isSecret: false });
+      // export prefix and surrounding quotes are syntactic, not stored.
+      expect(apiMock.api.env.create).toHaveBeenCalledWith(7, { key: 'OLD_STYLE', value: 'quoted', isSecret: false });
+      // API_KEY no longer exists in the pasted text → deleted.
+      expect(apiMock.api.env.remove).toHaveBeenCalledWith(7, 2);
+    });
+  });
+
+  it('blocks Apply and lists problems when a line is malformed', async () => {
+    renderCard();
+    await waitFor(() => expect(screen.getByText('PORT')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'Edit as .env' }));
+    const text = screen.getByLabelText('Raw .env content') as HTMLTextAreaElement;
+    fireEvent.change(text, { target: { value: 'GOOD=1\nthis line has no equals' } });
+
+    expect(screen.getByText(/Line 2: expected KEY=VALUE/)).toBeInTheDocument();
+    const apply = screen.getByRole('button', { name: /Apply/ });
+    expect(apply).toBeDisabled();
+
+    // Fixing the line re-enables saving.
+    fireEvent.change(text, { target: { value: 'GOOD=1' } });
+    expect(screen.getByRole('button', { name: /Apply 1 var\b/ })).toBeEnabled();
+  });
 });

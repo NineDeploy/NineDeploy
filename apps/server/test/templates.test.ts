@@ -202,7 +202,7 @@ describe('template routes', () => {
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ serviceId: 7, deploymentId: 8, databaseId: null });
     expect(serviceInsert?.templateDatabaseEnv).toEqual({
-      WORDPRESS_DB_HOST: 'hostPort',
+      WORDPRESS_DB_HOST: 'host', // internal bridge alias — see registry note
       WORDPRESS_DB_USER: 'username',
       WORDPRESS_DB_PASSWORD: 'password',
       WORDPRESS_DB_NAME: 'database',

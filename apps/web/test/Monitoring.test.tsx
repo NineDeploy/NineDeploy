@@ -7,7 +7,7 @@ import { renderWithProviders } from './helpers.js';
 const apiMock = vi.hoisted(() => ({
   api: {
     stats: { snapshot: vi.fn(), metrics: vi.fn() },
-    alerts: { list: vi.fn(), create: vi.fn(), remove: vi.fn() },
+    alerts: { list: vi.fn(), create: vi.fn(), update: vi.fn(), remove: vi.fn() },
     services: { list: vi.fn() },
     servers: { list: vi.fn(), create: vi.fn(), remove: vi.fn(), test: vi.fn(), sshTest: vi.fn(), bootstrapLogs: vi.fn() },
     limits: { setService: vi.fn(), setDatabase: vi.fn() },
@@ -231,15 +231,40 @@ describe('Monitoring', () => {
   it('lists alert rules with status and current values', async () => {
     apiMock.api.stats.snapshot.mockResolvedValue(snapshot as never);
     apiMock.api.alerts.list.mockResolvedValue([
-      { id: 1, serviceId: null, name: 'high-cpu', metric: 'cpu', operator: '>', threshold: 80, durationWindows: 2, enabled: true, status: 'firing', lastValue: 93, firedAt: null, createdAt: 'x' },
-      { id: 2, serviceId: null, name: 'low-mem', metric: 'memory', operator: '<', threshold: 100, durationWindows: 1, enabled: true, status: 'ok', lastValue: null, firedAt: null, createdAt: 'x' },
+      { id: 1, serviceId: null, name: 'high-cpu', metric: 'cpu', operator: '>', threshold: 80, durationWindows: 2, enabled: true, status: 'firing', lastValue: 93, firedAt: '2026-08-27T00:00:00Z', lastEvaluatedAt: new Date().toISOString(), createdAt: 'x' },
+      { id: 2, serviceId: null, name: 'low-mem', metric: 'memory', operator: '<', threshold: 100, durationWindows: 1, enabled: true, status: 'ok', lastValue: null, firedAt: null, lastEvaluatedAt: new Date(Date.now() - 10 * 60_000).toISOString(), createdAt: 'x' },
     ] as never);
     renderWithProviders(<Monitoring />);
     await screen.findByText('high-cpu');
-    expect(screen.getByText('cpu > 80')).toBeInTheDocument();
-    expect(screen.getByText('93')).toBeInTheDocument();
-    expect(screen.getByText('low-mem')).toBeInTheDocument();
-    expect(screen.getByText('memory < 100')).toBeInTheDocument();
+    // Conditions carry their unit so thresholds are unambiguous.
+    expect(screen.getByText(/cpu > 80%/)).toBeInTheDocument();
+    expect(screen.getByText(/memory < 100 MiB/)).toBeInTheDocument();
+    // Current value is rendered with its unit; the firing rule also stamps its fire time.
+    expect(screen.getAllByText((_, el) => el?.textContent === '93%').length).toBeGreaterThan(0);
+    expect(screen.getByText(/· fired/)).toBeInTheDocument();
+    expect(screen.getByText(/· checked 10m ago/)).toBeInTheDocument();
+    // Header chips summarise live state counts.
+    expect(screen.getByText('1 firing')).toBeInTheDocument();
+    expect(screen.getByText('2 rules')).toBeInTheDocument();
+  });
+
+  it('pauses and resumes a rule through the enabled toggle', async () => {
+    apiMock.api.stats.snapshot.mockResolvedValue(snapshot as never);
+    apiMock.api.alerts.list.mockResolvedValue([
+      { id: 7, serviceId: null, name: 'stale', metric: 'cpu', operator: '>', threshold: 50, durationWindows: 1, enabled: true, status: 'ok', lastValue: 10, firedAt: null, lastEvaluatedAt: null, createdAt: 'x' },
+      { id: 8, serviceId: null, name: 'parked', metric: 'memory', operator: '>', threshold: 512, durationWindows: 2, enabled: false, status: 'ok', lastValue: null, firedAt: null, lastEvaluatedAt: null, createdAt: 'x' },
+    ] as never);
+    apiMock.api.alerts.update.mockResolvedValue({ id: 7 } as never);
+    renderWithProviders(<Monitoring />);
+    await screen.findByText('stale');
+    // Disabled rules surface as PAUSED rather than reusing deploy statuses;
+    // rules the collector has not sampled yet say so explicitly.
+    expect(screen.getByText('PAUSED')).toBeInTheDocument();
+    expect(screen.getAllByText(/not evaluated yet/).length).toBe(2);
+    fireEvent.click(screen.getByTitle('Pause this rule'));
+    await waitFor(() => expect(apiMock.api.alerts.update).toHaveBeenCalledWith(7, { enabled: false }));
+    fireEvent.click(screen.getByTitle('Re-enable this rule'));
+    await waitFor(() => expect(apiMock.api.alerts.update).toHaveBeenCalledWith(8, { enabled: true }));
   });
 
   it('creates an alert rule from the admin form', async () => {
@@ -249,8 +274,8 @@ describe('Monitoring', () => {
     renderWithProviders(<Monitoring />);
     await screen.findByPlaceholderText('rule name');
     await userEvent.type(screen.getByPlaceholderText('rule name'), 'disk-pressure');
-    await userEvent.clear(screen.getByPlaceholderText('threshold'));
-    await userEvent.type(screen.getByPlaceholderText('threshold'), '95');
+    await userEvent.clear(screen.getByPlaceholderText(/threshold/));
+    await userEvent.type(screen.getByPlaceholderText(/threshold/), '95');
     fireEvent.submit(screen.getByPlaceholderText('rule name').closest('form')!);
     await waitFor(() =>
       expect(apiMock.api.alerts.create).toHaveBeenCalledWith({ name: 'disk-pressure', metric: 'cpu', operator: '>', threshold: 95, serviceId: null, durationWindows: 2 }),
@@ -286,19 +311,23 @@ describe('Monitoring', () => {
     );
   });
 
-  it('submits a zero threshold when the field holds a non-numeric value', async () => {
+  it('rejects an unparsable threshold instead of silently submitting zero', async () => {
     apiMock.api.stats.snapshot.mockResolvedValue(snapshot as never);
     apiMock.api.alerts.list.mockResolvedValue([] as never);
     apiMock.api.alerts.create.mockResolvedValue({ id: 6 } as never);
     renderWithProviders(<Monitoring />);
     await screen.findByPlaceholderText('rule name');
     await userEvent.type(screen.getByPlaceholderText('rule name'), 'any-threshold');
-    await userEvent.clear(screen.getByPlaceholderText('threshold'));
-    await userEvent.type(screen.getByPlaceholderText('threshold'), 'lots');
+    // A number input cannot hold non-numeric junk; an empty threshold must
+    // block submission rather than create a threshold:0 rule that fires at once.
+    await userEvent.clear(screen.getByPlaceholderText(/threshold/));
     fireEvent.submit(screen.getByPlaceholderText('rule name').closest('form')!);
-    await waitFor(() =>
-      expect(apiMock.api.alerts.create).toHaveBeenCalledWith(expect.objectContaining({ threshold: 0 })),
-    );
+    await waitFor(() => expect(apiMock.api.alerts.create).not.toHaveBeenCalled());
+    expect(screen.getByText(/needs a name and a numeric threshold/)).toBeInTheDocument();
+    // Filling a numeric threshold unlocks the form.
+    await userEvent.type(screen.getByPlaceholderText(/threshold/), '10');
+    fireEvent.submit(screen.getByPlaceholderText('rule name').closest('form')!);
+    await waitFor(() => expect(apiMock.api.alerts.create).toHaveBeenCalledWith(expect.objectContaining({ threshold: 10 })));
   });
 
   it('falls back to one window for a non-numeric window count', async () => {
@@ -339,9 +368,11 @@ describe('Monitoring', () => {
     await screen.findByPlaceholderText('rule name');
     await userEvent.type(screen.getByPlaceholderText('rule name'), 'cert-renew');
     await userEvent.selectOptions(screen.getByDisplayValue('cpu %'), 'cert-expiry');
-    await userEvent.selectOptions(screen.getByDisplayValue('>'), '<');
-    await userEvent.clear(screen.getByPlaceholderText('threshold'));
-    await userEvent.type(screen.getByPlaceholderText('threshold'), '14');
+    // Switching to cert-expiry presets a sane operator/threshold (< 14 days).
+    expect(screen.getByDisplayValue('<')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/threshold/)).toHaveValue(14);
+    await userEvent.clear(screen.getByPlaceholderText(/threshold/));
+    await userEvent.type(screen.getByPlaceholderText(/threshold/), '14');
     fireEvent.submit(screen.getByPlaceholderText('rule name').closest('form')!);
     await waitFor(() =>
       expect(apiMock.api.alerts.create).toHaveBeenCalledWith({ name: 'cert-renew', metric: 'cert-expiry', operator: '<', threshold: 14, serviceId: null, durationWindows: 2 }),
@@ -351,10 +382,13 @@ describe('Monitoring', () => {
   it('covers breaching status, missing current values, and load errors', async () => {
     apiMock.api.stats.snapshot.mockResolvedValue(snapshot as never);
     apiMock.api.alerts.list.mockResolvedValue([
-      { id: 3, serviceId: null, name: 'warming', metric: 'memory', operator: '>', threshold: 512, durationWindows: 3, enabled: true, status: 'breaching', lastValue: null, firedAt: null, createdAt: 'x' },
+      { id: 3, serviceId: null, name: 'warming', metric: 'memory', operator: '>', threshold: 512, durationWindows: 3, enabled: true, status: 'breaching', lastValue: null, firedAt: null, lastEvaluatedAt: null, createdAt: 'x' },
     ] as never);
     renderWithProviders(<Monitoring />);
     await screen.findByText('warming');
+    // Breaching gets its own amber pill (no borrowed deploy statuses).
+    expect(screen.getByText('BREACHING')).toBeInTheDocument();
+    // The un-sampled rule shows a dash for its current value.
     expect(screen.getAllByText('—').length).toBeGreaterThan(0);
   });
 

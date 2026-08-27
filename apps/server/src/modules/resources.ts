@@ -7,6 +7,8 @@ import type { FastifyPluginAsync } from 'fastify';
 import { capture, run } from '../lib/exec.js';
 import { config } from '../config.js';
 import { checkForUpdate } from '../lib/updateCheck.js';
+import { getSelfUpdateStatus, startSelfUpdate } from '../lib/selfUpdate.js';
+import { selfUpdateStart } from '@ninedeploy/schemas';
 import { NETWORK } from '../engine/proxy.js';
 
 function parseDf(line: string): Record<string, string> | null {
@@ -22,6 +24,24 @@ export const systemRoutes: FastifyPluginAsync = async (app) => {
   // Latest-release check (GitHub Releases feed, 6h cache; "unknown" when
   // offline or disabled — never throws so the dashboard stays usable).
   app.get('/update-check', async (req) => checkForUpdate((req.query as { force?: string })?.force === '1'));
+
+  // ── Panel self-update ───────────────────────────────────────────────────
+  // State/resolution of a one-click upgrade; marker files, not memory — the
+  // panel that answers these polls is not the process that started the run.
+  app.get('/update-status', async () => getSelfUpdateStatus());
+
+  // Start is pinned to an exact tag on purpose: the operator confirmed that
+  // version in the UI, so nothing silently re-resolves to a newer tag that
+  // landed between the availability check and the click.
+  app.post('/update-start', async (req, reply) => {
+    const parsed = selfUpdateStart.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return reply.status(400).send({
+        error: { code: 'bad_request', message: parsed.error.issues[0]?.message ?? 'invalid body' },
+      });
+    }
+    return startSelfUpdate(parsed.data.version);
+  });
 
   app.get('/resources', async () => {
     let images: Array<{ repo: string; tag: string; size: string }> = [];

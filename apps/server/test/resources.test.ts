@@ -19,7 +19,12 @@ const updateCheckMock = vi.hoisted(() => ({
     checkedAt: '2026-08-15T00:00:00Z',
   })),
 }));
-vi.mock('../src/lib/updateCheck.js', () => updateCheckMock);
+// Only checkForUpdate is stubbed; the real module's other exports (isNewer,
+// used by lib/selfUpdate.js) stay live.
+vi.mock('../src/lib/updateCheck.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/lib/updateCheck.js')>()),
+  ...updateCheckMock,
+}));
 
 // Mutable config so each test gets its own isolated data dir under os.tmpdir().
 const configMock = vi.hoisted(() => ({

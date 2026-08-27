@@ -1,6 +1,7 @@
 import { and, desc, eq } from 'drizzle-orm';
 import type { FastifyPluginAsync } from 'fastify';
-import { deployments, services, serviceVolumeAttachments } from '@ninedeploy/db';
+import { z } from 'zod';
+import { deployments, serviceVolumeAttachments, type services } from '@ninedeploy/db';
 import {
   createServiceVolumeAttachment,
   updateServiceVolumeAttachment,
@@ -197,6 +198,57 @@ export const serviceVolumesRoutes: FastifyPluginAsync = async (app) => {
     return { attachment: row, deploymentId };
   });
 
+  // ── POST /:id/volumes/config-repair — regenerate a first-boot config ──
+  // Config-once images (WordPress et al.) write their settings file INTO a
+  // persistent volume on the very first boot and never refresh it from env.
+  // When managed-database values change later, the app keeps dialing the old
+  // ones and a green deploy "mysteriously" breaks it. This endpoint deletes
+  // that baked file from the volume and queues a redeploy, so the next boot
+  // regenerates it from the CURRENT environment — no manual volume spelunking.
+  const repairConfig = z
+    .object({
+      filePath: z.string().regex(/^[A-Za-z0-9._-]+$/, 'Single file name inside the volume root'),
+      volumeName: z.string().regex(/^nd-(svc|db)-[a-z0-9_.-]+$/).optional(),
+      attachmentId: z.number().int().positive().optional(),
+    })
+    .refine((v) => (v.volumeName != null) !== (v.attachmentId != null), {
+      message: 'Provide exactly one of volumeName or attachmentId',
+    });
+
+  app.post('/:id/volumes/config-repair', async (req) => {
+    const svc = await loadServiceForUser(app.db, num((req.params as { id: string }).id), req.user!);
+    ensureSupportsVolumes(svc);
+    const input = repairConfig.parse(req.body ?? {});
+
+    let volumeName: string;
+    if (input.attachmentId != null) {
+      const row = await app.db.query.serviceVolumeAttachments.findFirst({
+        where: and(eq(serviceVolumeAttachments.id, input.attachmentId), eq(serviceVolumeAttachments.serviceId, svc.id)),
+      });
+      if (!row) throw notFound('Volume attachment not found');
+      volumeName = row.volumeName;
+    } else {
+      volumeName = input.volumeName!;
+    }
+
+    // Same defense-in-depth as `volumeBackupDir`: the name is a host-side
+    // docker argument. Charset is already restricted upstream; assert again
+    // cheaply instead of trusting history.
+    if (/[^a-zA-Z0-9_.-]/.test(volumeName)) throw badRequest('Invalid volume name');
+
+    await capture('docker', [
+      'run', '--rm', '-v', `${volumeName}:/data`, 'alpine:latest', 'sh', '-c',
+      `rm -f -- '/data/${input.filePath}'`,
+    ]);
+    void audit(app.db, req.user!.id, 'service.volume.config_repair', `${svc.name}:${volumeName}/${input.filePath}`);
+
+    const deploymentId = await queueRedeploy(
+      svc.id,
+      `Config repaired: ${volumeName}/${input.filePath} removed — regenerates from current env on boot`,
+    );
+    return { ok: true, deploymentId };
+  });
+
   // ── PATCH /:id/volumes/:attId — change path / readonly ────────────────
   app.patch('/:id/volumes/:attId', async (req) => {
     const svc = await loadServiceForUser(app.db, num((req.params as { id: string }).id), req.user!);
@@ -252,16 +304,16 @@ export const serviceVolumesRoutes: FastifyPluginAsync = async (app) => {
     });
     if (!existing) throw notFound('Volume attachment not found');
 
-    // Refuse to detach if the container is currently running. Container must
-    // be stopped first (or a redeploy that will recreate it) — the
-    // alternative is to leave the container running with a mount that the
-    // DB no longer records, which makes rollback impossible.
-    if (await containerRunning(svc.runtimeId)) {
-      throw conflict('Service is running — stop the service before detaching a volume');
-    }
-
     await app.db.delete(serviceVolumeAttachments).where(eq(serviceVolumeAttachments.id, attId));
     void audit(app.db, req.user!.id, 'service.volume.detach', `${svc.name}:${existing.volumeName}`);
+
+    // The queued redeploy recreates the container WITHOUT this mount — the
+    // same mechanism attach/update use (Docker cannot hot-swap -v flags).
+    // No stop-first requirement: blue-green keeps the old container serving
+    // until the replacement is healthy, so detaching mid-run is safe; the DB
+    // and the runtime only disagree for the seconds before the worker claims
+    // the deployment.
+    await queueRedeploy(svc.id, `Volume detached: ${existing.volumeName}`);
 
     // Detaching a volume from the LAST service leaves an orphan managed
     // volume on the host. Inventory (nd-svc-* prefix) still tracks it; the

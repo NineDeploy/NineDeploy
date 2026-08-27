@@ -91,18 +91,26 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
   // Modal hygiene: focus the first field on open so keyboard/screen-reader
   // users land IN the dialog (not the page behind it), close on Escape, and
   // lock background scrolling while the wizard is up.
+  // Callers pass `onClose` as a fresh inline arrow per render, so keying this
+  // effect on it used to refocus the name field after EVERY keystroke typed
+  // anywhere else in the form. Read the latest closure through a ref instead
+  // and run the setup exactly once per mount of the dialog.
   const busyRef = useRef(false);
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  });
   useEffect(() => {
     nameInputRef.current?.focus();
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !busyRef.current) onClose(); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !busyRef.current) onCloseRef.current(); };
     window.addEventListener('keydown', onKey);
     return () => {
       document.body.style.overflow = prevOverflow;
       window.removeEventListener('keydown', onKey);
     };
-  }, [onClose]);
+  }, []);
   const [type, setType] = useState<'docker' | 'pm2' | 'compose'>('docker');
   const [mode, setMode] = useState<'repo' | 'image'>(template ? 'image' : 'repo');
   const [repoUrl, setRepoUrl] = useState('');

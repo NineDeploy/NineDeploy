@@ -1,5 +1,7 @@
 import path from 'node:path';
-import { and, eq, inArray } from 'drizzle-orm';
+import { mkdirSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { and, eq, inArray, ne } from 'drizzle-orm';
 import { buildConfigs, databaseAttachments, databases, type DB, deployments, domains, envVars, services, serviceProjects, serviceVolumeAttachments, sources } from '@ninedeploy/db';
 import { config } from '../config.js';
 import { decrypt } from '../lib/crypto.js';
@@ -24,10 +26,68 @@ import { loadNinedeployManifest } from '../lib/ninedeployManifest.js';
 const builders: Record<string, Builder> = { docker: dockerBuilder, pm2: pm2Builder, compose: composeBuilder };
 const DEPLOY_HEARTBEAT_MS = 20_000;
 
+/**
+ * Short stable fingerprint per resolved managed-database env value. Stored on
+ * each deployment row (inside `configSnapshot.managedEnv`) so the NEXT deploy
+ * can detect value drift — e.g. the database attachment was re-pointed or its
+ * password rotated. Drift itself is legitimate, but config-once images
+ * (WordPress et al.) keep serving a `wp-config.php` written from the OLD
+ * values inside their persistent volume, and only this warning surfaces why
+ * they suddenly cannot reach "their" database after an otherwise-green deploy.
+ */
+export function managedEnvFingerprint(values: Record<string, string>, keys: string[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const key of keys) {
+    const v = values[key];
+    if (v !== undefined) out[key] = createHash('sha256').update(v).digest('hex').slice(0, 16);
+  }
+  return out;
+}
+
+/**
+ * History hygiene: exactly ONE deployment per service may read `running` —
+ * the build currently serving traffic. Success finalize used to archive
+ * nothing, so the Deploys tab listed every past deploy as Running forever;
+ * a hard kill mid-chain could strand the same lie. Called at boot: per
+ * service keep the newest running row only while the SERVICE is actually
+ * running; demote everything else to `superseded`. Returns the count.
+ */
+export async function reconcileDeploymentHistory(db: DB): Promise<number> {
+  const running = await db.select().from(deployments).where(eq(deployments.status, 'running'));
+  if (running.length === 0) return 0;
+
+  // Newest running row per service (highest id wins the claim).
+  const newestByService = new Map<number, number>();
+  for (const r of running) {
+    const cur = newestByService.get(r.serviceId);
+    if (cur === undefined || r.id > cur) newestByService.set(r.serviceId, r.id);
+  }
+
+  const svcRows = await db
+    .select({ id: services.id, status: services.status })
+    .from(services)
+    .where(inArray(services.id, [...newestByService.keys()]));
+  const liveServices = new Set(svcRows.filter((s) => s.status === 'running').map((s) => s.id));
+
+  let demoted = 0;
+  for (const [serviceId, keepId] of newestByService) {
+    const live = liveServices.has(serviceId);
+    for (const r of running.filter((x) => x.serviceId === serviceId && (!live || x.id !== keepId))) {
+      await db.update(deployments).set({ status: 'superseded' }).where(eq(deployments.id, r.id));
+      demoted++;
+    }
+  }
+  return demoted;
+}
+
 /** Execute a lifecycle hook command in the service workDir with resolved environment. */
 async function runHook(cmd: string, cwd: string, env: Record<string, string>, log: (line: string) => void): Promise<void> {
   const [bin, ...args] = cmd.trim().split(/\s+/);
   if (!bin) return;
+  // Hooks must be usable from EVERY service shape — including pure-image
+  // deploys that never run a git checkout. Without this the very first
+  // hook died on ENOENT against a not-yet-created repo directory.
+  mkdirSync(cwd, { recursive: true });
   await run(
     bin,
     args,
@@ -249,6 +309,9 @@ export async function runDeployment(db: DB, deploymentId: number): Promise<void>
   // Resolved commit SHA (empty for image deploys). Lifted out of the try so the
   // success path (which persists it onto the service row) can read it.
   let sha = '';
+  // Fingerprint of the resolved managed-database env values — filled once the
+  // runtime env is built inside the try; consumed by the success finalize.
+  let managedFp: Record<string, string> = {};
   try {
     // Cancel checkpoint: the route may have flipped the row between claim and here.
     if (await isCancelled(db, deploymentId)) throw new DeploymentCancelled();
@@ -328,6 +391,7 @@ export async function runDeployment(db: DB, deploymentId: number): Promise<void>
     }
     if (runtimeEnvironment.managedDatabaseKeys.length > 0) {
       log(`Managed database environment ready: ${runtimeEnvironment.managedDatabaseKeys.join(', ')}`);
+      managedFp = managedEnvFingerprint(runtimeEnvironment.values, runtimeEnvironment.managedDatabaseKeys);
     }
 
     const ctx: BuildContext = {
@@ -439,9 +503,48 @@ export async function runDeployment(db: DB, deploymentId: number): Promise<void>
   // last checkpoint and the finalize must not be overwritten with `running`.
   // This runs FIRST — otherwise the service row below could end up pointing
   // at a container that a late cancel then retires.
+  // Persist THIS deploy's managed-env fingerprint onto its row so the NEXT
+  // one can compare, then warn loudly when a value drifted from the previous
+  // successful deployment (config-once images break silently in that case).
+  let finalizeSnapshot: string | undefined;
+  if (Object.keys(managedFp).length > 0) {
+    let prev: { managedEnv?: Record<string, string> } | null = null;
+    try {
+      prev = JSON.parse(dep.configSnapshot ?? 'null') as { managedEnv?: Record<string, string> } | null;
+    } catch {
+      prev = null;
+    }
+    const prevFp = prev?.managedEnv;
+    if (prevFp) {
+      for (const key of Object.keys(managedFp)) {
+        if (prevFp[key] !== undefined && prevFp[key] !== managedFp[key]) {
+          log(`⚠ Managed database value "${key}" differs from the previous deployment.`);
+          log(
+            `⚠ Config-once apps (WordPress et al.) write these values INTO their persistent volume on first boot — ` +
+              `if "${key}" feeds such an app and it now cannot reach its database, delete the generated config file ` +
+              `(e.g. wp-config.php) from the volume — or edit it — and redeploy.`,
+          );
+        }
+      }
+    }
+    let base: Record<string, unknown> = {};
+    try {
+      base = JSON.parse(dep.configSnapshot ?? '{}') as Record<string, unknown>;
+    } catch {
+      /* old/corrupt snapshot — start fresh */
+    }
+    base['managedEnv'] = managedFp;
+    finalizeSnapshot = JSON.stringify(base);
+  }
+
   const finalized = await db
     .update(deployments)
-    .set({ status: 'running', finishedAt: new Date(), imageDigest: runtime!.imageDigest ?? null })
+    .set({
+      status: 'running',
+      finishedAt: new Date(),
+      imageDigest: runtime!.imageDigest ?? null,
+      ...(finalizeSnapshot !== undefined ? { configSnapshot: finalizeSnapshot } : {}),
+    })
     .where(and(eq(deployments.id, deploymentId), eq(deployments.status, 'building')))
     .returning({ id: deployments.id });
   if (finalized.length === 0) {
@@ -474,6 +577,14 @@ export async function runDeployment(db: DB, deploymentId: number): Promise<void>
     await builder.stop(newRuntimeId).catch(() => undefined);
     return;
   }
+
+  // This build is now THE live one: demote every OLDER row still marked
+  // `running` for this service. Without this, the Deploys tab listed every
+  // past successful deploy as Running forever.
+  await db
+    .update(deployments)
+    .set({ status: 'superseded' })
+    .where(and(eq(deployments.serviceId, service.id), eq(deployments.status, 'running'), ne(deployments.id, deploymentId)));
 
   // Auto-provision wildcard domain if configured and not already present.
   // Isolated: a failure here must not affect the already-running container.

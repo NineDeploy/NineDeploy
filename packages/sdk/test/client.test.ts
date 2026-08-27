@@ -508,6 +508,13 @@ describe('createClient', () => {
       expect(last(calls).url).toBe('/v1/system/update-check');
       await client.system.updateCheck(true);
       expect(last(calls).url).toBe('/v1/system/update-check?force=1');
+
+      await client.system.updateStatus();
+      expect(last(calls)).toMatchObject({ url: '/v1/system/update-status', init: { method: 'GET' } });
+
+      await client.system.updateStart('v0.3.4');
+      expect(last(calls)).toMatchObject({ url: '/v1/system/update-start', init: { method: 'POST' } });
+      expect(String(last(calls).init?.body)).toContain('"version":"v0.3.4"');
     });
 
     it('exportUrl returns the export path without fetching', () => {
@@ -1564,6 +1571,9 @@ describe('createClient', () => {
 
       await client.serviceVolumes.remove(9, 2);
       expect(last(calls)).toMatchObject({ url: '/v1/services/9/volumes/2', init: { method: 'DELETE' } });
+
+      await client.serviceVolumes.repairConfig(9, { filePath: 'wp-config.php', volumeName: 'nd-svc-web-data' });
+      expect(last(calls)).toMatchObject({ url: '/v1/services/9/volumes/config-repair', init: { method: 'POST' } });
     });
 
     it('exercises volume backup list, create, restore and downloadUrl', async () => {

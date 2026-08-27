@@ -3,14 +3,14 @@
 # 🚀 NineDeploy
 
 **Self-hosted Deployment Platform & PaaS.**  
-Deploy apps from Git or container registries with zero downtime, automatic rollback, durable worker recovery, managed databases, encrypted backups, Traefik ingress, and an AI-native 35-tool MCP server.
+Deploy apps from Git or container registries with zero downtime, automatic rollback, durable worker recovery, managed databases, encrypted backups, Traefik ingress, one-click panel self-updates, and an AI-native 35-tool MCP server.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js](https://img.shields.io/badge/Node.js-%E2%89%A522.13-green.svg)](https://nodejs.org)
 [![Version](https://img.shields.io/badge/Version-0.3.3-blue.svg)](./CHANGELOG.md)
 [![TypeScript](https://img.shields.io/badge/TypeScript-7-blue.svg)](https://www.typescriptlang.org)
 [![Docker](https://img.shields.io/badge/Docker-required-blue.svg)](https://docker.com)
-[![Tests](https://img.shields.io/badge/Tests-4405%20passing-brightgreen.svg)](https://github.com/NineDeploy/NineDeploy)
+[![Tests](https://img.shields.io/badge/Tests-4%2C592%20passing-brightgreen.svg)](https://github.com/NineDeploy/NineDeploy)
 [![CI](https://github.com/NineDeploy/NineDeploy/actions/workflows/ci.yml/badge.svg)](https://github.com/NineDeploy/NineDeploy/actions/workflows/ci.yml)
 
 [Website](https://ninedeploy.com) • [Documentation](./docs/QUICKSTART.md) • [1-Click Templates](https://ninedeploy.com/templates) • [Changelog](https://ninedeploy.com/changelog)
@@ -112,17 +112,19 @@ For in-depth guides, operational workflows, and configuration references:
 
 ## 🌟 Key Features
 
-- 🚀 **Zero-Downtime Blue-Green Deploys**: Deploy without dropping connections. Health-gated traffic switchover ensures instant rollback if a new build fails.
+- 🚀 **Zero-Downtime Blue-Green Deploys**: Deploy without dropping connections. Health-gated traffic switchover ensures instant rollback if a new build fails, and past deploys settle into an honest `superseded` history instead of staying "Running" forever.
+- 🧑‍🔧 **One-Click Panel Self-Update**: A dashboard banner offers the new release and runs this install's own `install.sh --version <tag>` detached from systemd, snapshotting data first and restarting the panel onto the pinned version — progress survives the restart it performs.
 - 🏢 **Workspaces & Multi-Tenancy**: Organize projects, servers, databases, and teams across isolated workspaces with 4-tier RBAC.
 - 🔑 **Enterprise SSO & Passkeys**: Authenticate via OpenID Connect (Google, GitHub, Keycloak, Okta), biometric Passkeys (WebAuthn), or TOTP 2FA.
 - 🗄️ **1-Click Databases & Encrypted S3 Backups**: Instant Postgres (with `pgvector`), MySQL, Redis, MongoDB, ClickHouse, and RabbitMQ with streaming AES-256-GCM snapshots and automated offsite sync to Cloudflare R2 / AWS S3.
 - 🏷️ **Projects, Workspaces & Labels**: Tag a service into as many projects, workspaces and labels as it belongs to, then filter the whole panel by all three at once — AND across the groups, OR inside one.
-- 💾 **Volume Attachments & Backups**: Mount any number of managed Docker volumes into a service at explicit paths, then snapshot, restore or download each one — with retention pruning and off-site copies.
+- 💾 **Volume Attachments & Backups**: Mount any number of managed Docker volumes into a service at explicit paths, then snapshot, restore or download each one — snapshots carry operator labels for the backups page, retention pruning and off-site copies are built in.
+- ⏰ **Scheduled Jobs & Cron Presets**: Attach 5-field cron jobs to any service with preset-driven editors, human-readable schedule descriptions and per-job run history.
 - 📄 **`.ninedeploy` Manifest**: Keep runtime, build, routes, alerts and backup policy next to the code. `ninedeploy manifest validate` schema-checks it and blocks credential-shaped values before they reach git history.
 - ♻️ **Durable Deployment Recovery**: Worker-owned Hub provisioning survives browser disconnects and server restarts, then idempotently resumes template databases, attachments, environment reconciliation, and application deployment.
 - 🤖 **Native AI Superpowers**: Built-in 35-tool Model Context Protocol (MCP) server enables AI coding agents (Claude, Cursor, Antigravity, Cline) to query logs, trigger builds, and manage resources, with an optional fail-closed read-only mode.
 - 🌐 **Automated Ingress & Tunnels**: Built-in Traefik with automated wildcard Let's Encrypt certificates and zero-configuration Cloudflare Tunnels for NAT-restricted nodes.
-- 💯 **Enforced Coverage Gates**: 4,405 Vitest specs run in CI. `db`, `schemas`, `sdk` and the CLI hold a strict 100% gate; the web dashboard enforces 99% statements and the server 95%, so a regression fails the build rather than sliding through.
+- 💯 **Enforced Coverage Gates**: 4,592 Vitest specs run in CI. `db`, `schemas`, `sdk`, `mcp`, `plugin-sdk` and the CLI hold a strict 100% gate; the web dashboard enforces a 99% floor and the server 95%, so a regression fails the build rather than sliding through.
 
 ---
 

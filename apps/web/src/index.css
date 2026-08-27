@@ -309,6 +309,88 @@ html[data-theme='light'] body .bg-slate-500\/15 {
   border: 1px solid #cbd5e1;
 }
 
+/* ── Semantic text tokens in light mode ───────────────────────────────────
+   Emerald/rose/amber/sky/... text steps 100–400 were tuned for dark navy and
+   sit near-invisible on white (emerald-400 ≈ 1.9:1, amber-300 ≈ 1.4:1).
+   Each family collapses onto its darkest readable step (≥ 4.5:1 on white,
+   matching the badge trio below) so every component inherits it without
+   per-file edits. Alpha variants of the same step are listed explicitly. */
+html[data-theme='light'] body :is(
+  .text-emerald-200, .text-emerald-300, .text-emerald-300\/80, .text-emerald-300\/90,
+  .text-emerald-400, .text-emerald-400\/80, .text-emerald-400\/90, .text-emerald-500,
+  .fill-emerald-400
+) { color: #047857; }
+html[data-theme='light'] body :is(
+  .text-rose-200, .text-rose-300, .text-rose-300\/70,
+  .text-rose-400, .text-rose-400\/80, .text-rose-500
+) { color: #be123c; }
+html[data-theme='light'] body :is(
+  .text-amber-100, .text-amber-200, .text-amber-200\/60, .text-amber-200\/70,
+  .text-amber-200\/80, .text-amber-200\/90, .text-amber-300, .text-amber-300\/90,
+  .text-amber-400, .text-amber-400\/80, .text-amber-500
+) { color: #b45309; }
+html[data-theme='light'] body :is(.text-sky-200, .text-sky-300, .text-sky-400) { color: #0369a1; }
+html[data-theme='light'] body :is(.text-blue-300, .text-blue-400) { color: #1d4ed8; }
+html[data-theme='light'] body :is(.text-cyan-200, .text-cyan-300, .text-cyan-400) { color: #0e7490; }
+html[data-theme='light'] body :is(.text-violet-200, .text-violet-300, .text-violet-400) { color: #6d28d9; }
+html[data-theme='light'] body :is(.text-purple-300, .text-purple-400) { color: #7e22ce; }
+html[data-theme='light'] body :is(.text-orange-300, .text-orange-400) { color: #c2410c; }
+html[data-theme='light'] body .text-lime-200 { color: #4d7c0f; }
+/* indigo-100/200 fall outside the dynamic 300–600 range; -500 resolves to the
+   bright accent fill which is too light for text on white */
+html[data-theme='light'] body :is(.text-indigo-100, .text-indigo-200, .text-indigo-200\/80, .text-indigo-200\/90) { color: #4338ca; }
+html[data-theme='light'] body .text-indigo-500 { color: #0c6d66; }
+
+/* Colored hover echoes — Tailwind emits these as their own escaped
+   classes, so the base-token rules above don't reach them. */
+html[data-theme='light'] body .hover\:text-rose-400:hover,
+html[data-theme='light'] body .hover\:text-rose-300:hover { color: #be123c; }
+html[data-theme='light'] body .hover\:text-emerald-400:hover,
+html[data-theme='light'] body .hover\:text-emerald-300:hover { color: #047857; }
+html[data-theme='light'] body :is(.hover\:text-amber-400:hover, .hover\:text-amber-300:hover, .hover\:text-amber-100:hover) { color: #b45309; }
+html[data-theme='light'] body .hover\:text-sky-300:hover { color: #0369a1; }
+html[data-theme='light'] body :is(.hover\:text-cyan-200:hover, .hover\:text-cyan-300:hover) { color: #0e7490; }
+
+/* Solid colored hover fills become soft-tint chips (dark text sits on top) */
+html[data-theme='light'] body :is(.hover\:bg-emerald-500:hover, .hover\:bg-emerald-500\/10:hover, .hover\:bg-emerald-500\/15:hover, .hover\:bg-emerald-500\/20:hover, .hover\:bg-emerald-500\/25:hover) { background-color: #d1fae5; }
+html[data-theme='light'] body :is(.hover\:bg-rose-500:hover, .hover\:bg-rose-500\/10:hover, .hover\:bg-rose-500\/15:hover, .hover\:bg-rose-500\/20:hover) { background-color: #ffe4e6; }
+html[data-theme='light'] body :is(.hover\:bg-amber-500:hover, .hover\:bg-amber-500\/20:hover, .hover\:bg-amber-500\/25:hover) { background-color: #fef3c7; }
+html[data-theme='light'] body :is(.hover\:bg-sky-500:hover, .hover\:bg-sky-500\/20:hover, .hover\:bg-sky-500\/25:hover) { background-color: #e0f2fe; }
+html[data-theme='light'] body :is(.hover\:bg-cyan-500\/20:hover) { background-color: #cffafe; }
+
+/* ── Remaining surface ladder in light mode ───────────────────────────────
+   Elevations were only mapped up to a few alphas; higher-alpha panels
+   (bg-slate-800/900/950 with /30–/95) kept their dark values while their
+   text was forced dark, producing dark-on-dark islands. */
+html[data-theme='light'] body .bg-slate-800 { background-color: #e2e8f0; }
+html[data-theme='light'] body .bg-slate-800\/60 { background-color: #eaeff5; }
+html[data-theme='light'] body .bg-slate-800\/80 { background-color: #e5ebf2; }
+html[data-theme='light'] body .bg-slate-900\/30 { background-color: #f4f7fa; }
+html[data-theme='light'] body .bg-slate-900\/40 { background-color: #f2f5f9; }
+html[data-theme='light'] body .bg-slate-900\/60 { background-color: #edf1f6; }
+html[data-theme='light'] body .bg-slate-900\/80 { background-color: #e7ecf3; }
+html[data-theme='light'] body .bg-slate-950\/50 { background-color: #fafbfd; }
+html[data-theme='light'] body .bg-slate-950\/85 { background-color: #f4f7fa; }
+html[data-theme='light'] body .bg-slate-950\/90 { background-color: #f2f5f9; }
+html[data-theme='light'] body .bg-slate-950\/95 { background-color: #eff3f7; }
+html[data-theme='light'] body :is(.bg-white\/15, .bg-white\/20) { background-color: #f1f5f9; }
+html[data-theme='light'] body :is(.hover\:bg-white\/15:hover, .hover\:bg-white\/20:hover) { background-color: #eef2f7; }
+html[data-theme='light'] body .divide-white\/5 > :not([hidden]) ~ :not([hidden]) { border-color: #e2e8f0; }
+
+/* Placeholders one step darker: #94a3b8 is ≈2.9:1 on white */
+html[data-theme='light'] body input::placeholder,
+html[data-theme='light'] body textarea::placeholder {
+  color: #64748b;
+}
+
+/* Terminal-style log islands keep their dark look instead of flipping —
+   forced-dark utility text would land on near-black otherwise. Their plain
+   log lines inherit this light tone. */
+html[data-theme='light'] body .font-mono.bg-black\/90 {
+  background-color: #0b1220;
+  color: #cbd5e1;
+}
+
 /* Secondary & Ghost Buttons in Light Mode */
 html[data-theme='light'] body button.bg-white\/\[0\.06\] {
   background-color: #ffffff;

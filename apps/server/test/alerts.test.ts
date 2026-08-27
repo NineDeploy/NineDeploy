@@ -56,6 +56,7 @@ describe('alert routes', () => {
         enabled: true,
         status: 'firing',
         lastValue: 42,
+        lastEvaluatedAt: '2026-01-01T00:00:00.000Z',
         firedAt: null,
         createdAt: '2026-01-01T00:00:00.000Z',
       },

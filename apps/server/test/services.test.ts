@@ -164,7 +164,7 @@ describe('services routes', () => {
       cmd: null,
       dockerSocket: false,
       templateDatabaseEnv: {
-        WORDPRESS_DB_HOST: 'hostPort',
+        WORDPRESS_DB_HOST: 'host', // internal bridge alias — see registry note
         WORDPRESS_DB_USER: 'username',
         WORDPRESS_DB_PASSWORD: 'password',
         WORDPRESS_DB_NAME: 'database',

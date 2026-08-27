@@ -72,7 +72,7 @@ describe('database backup routes', () => {
     const app = await buildTestApp({
       db: createFakeDb({
         findFirst: { databases: dbRow({ id: 1 }) },
-        findMany: { backups: [backupRow({ id: 2, databaseId: 1, status: 'completed' })] },
+        findMany: { backups: [backupRow({ id: 2, databaseId: 1, status: 'completed', volumeName: null })] },
       }),
     });
     await app.register(databaseBackupRoutes);
@@ -82,8 +82,11 @@ describe('database backup routes', () => {
       {
         id: 2,
         databaseId: 1,
+        scope: 'db',
+        volumeName: null,
         status: 'completed',
         sizeBytes: 100,
+        label: null,
         createdAt: '2026-01-01T00:00:00.000Z',
       },
     ]);

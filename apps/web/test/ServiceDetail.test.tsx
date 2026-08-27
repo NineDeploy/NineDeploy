@@ -705,10 +705,11 @@ describe('ServiceDetail', () => {
     expect(screen.getByText('0 3 * * *')).toBeInTheDocument();
     expect(screen.getByText('rm -rf /tmp/*')).toBeInTheDocument();
 
-    // Create an exec job.
+    // Create an exec job: pick the custom preset, then hand-write the cron.
     fireEvent.change(screen.getByPlaceholderText('nightly-rebuild'), { target: { value: 'purge' } });
-    fireEvent.change(screen.getByPlaceholderText('0 3 * * *'), { target: { value: '15 2 * * *' } });
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'exec' } });
+    fireEvent.change(screen.getByLabelText('Schedule preset'), { target: { value: 'custom' } });
+    fireEvent.change(screen.getByLabelText('Cron expression'), { target: { value: '15 2 * * *' } });
+    fireEvent.change(screen.getByLabelText('Job action'), { target: { value: 'exec' } });
     fireEvent.change(screen.getByPlaceholderText(/pg_dump/), { target: { value: 'echo done' } });
     fireEvent.click(screen.getByRole('button', { name: /Add job/ }));
     await waitFor(() =>
@@ -723,6 +724,22 @@ describe('ServiceDetail', () => {
     await waitFor(() => expect(api.jobs.remove).toHaveBeenCalledWith(1, 3));
   });
 
+  it('creates a daily job straight from a ready-made preset', async () => {
+    mockOf(api.jobs.create).mockResolvedValue({ id: 6 } as never);
+    mockOf(api.jobs.list).mockResolvedValue([] as never);
+    renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+    await openTab('Environment');
+    expect(await screen.findByText('No scheduled jobs.')).toBeInTheDocument();
+
+    // Default preset is Daily · 03:00 — only a name is needed.
+    fireEvent.change(screen.getByPlaceholderText('nightly-rebuild'), { target: { value: 'nightly' } });
+    expect(await screen.findByText(/next /)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Time of day'), { target: { value: '04:30' } });
+    fireEvent.click(screen.getByRole('button', { name: /Add job/ }));
+    await waitFor(() =>
+      expect(api.jobs.create).toHaveBeenCalledWith(1, { name: 'nightly', cron: '30 4 * * *', kind: 'deploy', command: undefined }));
+  });
+
   it('reports job action failures', async () => {
     mockOf(api.jobs.list).mockResolvedValue([
       { id: 3, name: 'nightly', cron: '0 3 * * *', kind: 'deploy', command: '', enabled: true, lastRunAt: null },
@@ -734,7 +751,8 @@ describe('ServiceDetail', () => {
     fireEvent.click(await screen.findByText('run'));
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Job run failed', 'error'));
     fireEvent.change(screen.getByPlaceholderText('nightly-rebuild'), { target: { value: 'z' } });
-    fireEvent.change(screen.getByPlaceholderText('0 3 * * *'), { target: { value: '* * * * *' } });
+    fireEvent.change(screen.getByLabelText('Schedule preset'), { target: { value: 'custom' } });
+    fireEvent.change(screen.getByLabelText('Cron expression'), { target: { value: '* * * * *' } });
     fireEvent.click(screen.getByRole('button', { name: /Add job/ }));
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Could not create the job', 'error'));
   });

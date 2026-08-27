@@ -17,6 +17,9 @@ function serialize(rule: typeof alertRules.$inferSelect, state?: typeof alertSta
     enabled: !!rule.enabled,
     status: state?.status ?? 'ok',
     lastValue: state?.lastValue ?? null,
+    // Proof of liveness for the UI — null means the collector hasn't
+    // evaluated this rule yet (fresh rule, or the target has no samples).
+    lastEvaluatedAt: state?.updatedAt ? new Date(state.updatedAt).toISOString() : null,
     firedAt: state?.firedAt?.toISOString() ?? null,
     createdAt: rule.createdAt.toISOString(),
   };

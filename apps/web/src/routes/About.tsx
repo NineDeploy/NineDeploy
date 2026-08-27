@@ -1,11 +1,15 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ExternalLink, GitBranch, Heart, Layers, Package, Shield, Sparkles, Terminal } from 'lucide-react';
 import { api } from '../lib/api.js';
-import { Card, CardBody, Skeleton } from '../components/ui.js';
+import { usePanelUpdate } from '../lib/usePanelUpdate.js';
+import { Button, ConfirmDialog, Card, CardBody, Skeleton } from '../components/ui.js';
 
 export function About() {
   const about = useQuery({ queryKey: ['about'], queryFn: () => api.about.get(), staleTime: 60000 });
   const update = useQuery({ queryKey: ['update-check'], queryFn: () => api.system.updateCheck(), staleTime: 60000 });
+  const upd = usePanelUpdate();
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   if (about.isLoading) {
     return (
@@ -137,6 +141,26 @@ export function About() {
               You're running <span className="font-mono font-medium text-indigo-300">v{data.version}</span>.
             </p>
           )}
+          {upd.ready && !upd.supported ? (
+            upd.supportReason && <p className="mb-3 text-xs text-slate-500">{upd.supportReason}</p>
+          ) : (
+            <div className="mb-3 flex flex-wrap items-center gap-3">
+              {update.data?.updateAvailable && update.data.latest && upd.available && (
+                <Button size="sm" disabled={upd.starting || upd.phase === 'updating'} onClick={() => setConfirmOpen(true)}>
+                  Update &amp; Restart
+                </Button>
+              )}
+              <span className="text-xs text-slate-500">
+                {upd.phase === 'updating'
+                  ? 'Updating — the panel rebuilds and restarts itself; this page reconnects automatically.'
+                  : upd.phase === 'done'
+                    ? 'Update complete — every surface of the panel now runs the new release.'
+                    : upd.phase === 'failed'
+                      ? 'The last attempt failed mid-way; the previous release keeps running.'
+                      : 'One click runs the installer for you: data snapshot, rebuild, migrations, restart.'}
+              </span>
+            </div>
+          )}
           <p className="text-xs text-slate-500">To upgrade, re-run the installer (defaults to the latest release tag):</p>
           <pre className="mt-2 overflow-auto rounded-lg bg-black/30 p-3 font-mono text-xs text-slate-300 ring-1 ring-inset ring-white/5">
 {`curl -fsSL https://raw.githubusercontent.com/NineDeploy/NineDeploy/main/install.sh | bash
@@ -150,6 +174,32 @@ export function About() {
       <div className="mt-6 flex items-center justify-center gap-1.5 text-xs text-slate-600">
         Built with <Heart size={11} className="text-rose-500" /> using TypeScript, React, Fastify &amp; Docker
       </div>
+
+      {/* Same confirmation as the layout banner's update button */}
+      {upd.supported && (
+        <ConfirmDialog
+          open={confirmOpen}
+          title={`Update NineDeploy to ${update.data?.latest ?? ''}`}
+          confirmLabel="Update and Restart"
+          onClose={() => setConfirmOpen(false)}
+          onConfirm={() => {
+            if (update.data?.latest) upd.startUpdating(update.data.latest);
+          }}
+          message={
+            <div className="space-y-2">
+              <p>
+                This runs the official installer against this installation: snapshot the database, fetch{' '}
+                <span className="font-mono font-medium">{update.data?.latest}</span>, clear build output, rebuild everything,
+                run database migrations and restart the panel service.
+              </p>
+              <p className="text-slate-400">
+                The panel goes down mid-way and comes back on the new release — plan for roughly 5–15 minutes of downtime,
+                longer on slow mirrors. Deployed services keep running throughout.
+              </p>
+            </div>
+          }
+        />
+      )}
     </div>
   );
 }

@@ -39,6 +39,10 @@ export const deploymentStatus = [
   'building',
   'deploying',
   'running',
+  // Was live once, replaced by a newer successful deploy of the same service.
+  // History keeps these so the Deploys tab shows which build SERVED when —
+  // without it every past deploy would read "running" forever.
+  'superseded',
   'failed',
   'cancelled',
 ] as const;
@@ -565,6 +569,9 @@ export const backups = sqliteTable(
     // Docker volume name (managed: nd-svc-* / nd-db-*). Required for
     // scope='volumes' rows; NULL for scope='db'.
     volumeName: text('volume_name'),
+    // Human-friendly snapshot name ('manual', 'schedule-2026-08-27', or an
+    // operator-chosen tag at trigger time). NULL for legacy rows / db scope.
+    label: text('label'),
     scope: text('scope', { enum: backupScope }).notNull(),
     status: text('status', { enum: backupStatus }).notNull().default('pending'),
     path: text('path').notNull(),

@@ -42,7 +42,7 @@ export const docs: Doc[] = [
           "No host ports exposed on apps — healthchecks probe internal container IPs, Traefik routes traffic by hostname.",
           "Every subprocess has a hard timeout with tree-kill; a hung build or script can never stall the deployment queue.",
           "Secrets are AES-256-GCM encrypted in versioned envelopes with a rotatable key ring.",
-          "100% test coverage enforced in CI across every package — no exceptions.",
+          "Coverage floors enforced in CI across every package: 100% on the data, schema, SDK, CLI, MCP and plugin-sdk packages; 99% on the web dashboard and 95% on the server.",
         ],
       },
       {

@@ -15,6 +15,7 @@ import { CommandPalette } from './CommandPalette.js';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher.js';
 import { TopBarFilters } from './TopBarFilters.js';
 import { ModeToggle } from './ModeToggle.js';
+import { UpdateBanner } from './UpdateBanner.js';
 import { useExperienceMode } from '../lib/mode.js';
 import { installPanelAutofillGuard } from '../lib/autofill.js';
 
@@ -309,6 +310,9 @@ export function Layout() {
             </button>
           </div>
         </header>
+
+        {/* Self-update availability / progress / result (operators only) */}
+        <UpdateBanner />
 
         {/* Content */}
         <main className="nd-fade flex-1 overflow-auto">

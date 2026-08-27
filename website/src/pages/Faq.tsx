@@ -4,7 +4,7 @@ import { ChevronDown } from "lucide-react";
 const faqs = [
   {
     q: "How is this different from Dokploy / Coolify?",
-    a: "NineDeploy is deliberately smaller, faster, and stricter: a single SQLite core with zero external database dependencies, coverage gates enforced in CI across the entire monorepo (100% on the data, schema, SDK and CLI packages), a typed-operation agent protocol instead of raw arbitrary shell over the wire, digest-pinned rollbacks, and an integrated microkernel plugin SDK. If you want a self-hosted PaaS that reads like an enterprise-audited codebase, this is it.",
+    a: "NineDeploy is deliberately smaller, faster, and stricter: a single SQLite core with zero external database dependencies, coverage floors enforced in CI across the entire monorepo (100% on the data, schema, SDK, CLI, MCP and plugin-sdk packages; 99% on the web dashboard; 95% on the server), a typed-operation agent protocol instead of raw arbitrary shell over the wire, digest-pinned rollbacks, and an integrated microkernel plugin SDK. If you want a self-hosted PaaS that reads like an enterprise-audited codebase, this is it.",
   },
   {
     q: "Does it really need only SQLite?",
@@ -12,7 +12,7 @@ const faqs = [
   },
   {
     q: "Can I run it in Docker?",
-    a: "Yes — the published Docker image mounts the host Docker socket with a persistent /data volume. PM2-managed bare-metal services require the systemd install because they run natively on the host; Docker containers, Docker Compose stacks, and the 15 runtime-certified template apps work in both modes.",
+    a: "Yes — the published Docker image mounts the host Docker socket with a persistent /data volume. PM2-managed bare-metal services require the systemd install because they run natively on the host; Docker containers, Docker Compose stacks, and the 88 hub templates (16 runtime-certified) work in both modes.",
   },
   {
     q: "How does zero-downtime blue-green deployment work?",

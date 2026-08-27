@@ -1,6 +1,6 @@
 # Workspaces & Role-Based Access Control (RBAC)
 
-NineDeploy v0.2.0 introduces multi-tenant Workspaces, allowing engineering organizations to partition services, databases, secrets, and servers into isolated scopes with team access controls.
+NineDeploy provides multi-tenant Workspaces, allowing engineering organizations to partition services, databases, secrets, and servers into isolated scopes with team access controls.
 
 ---
 

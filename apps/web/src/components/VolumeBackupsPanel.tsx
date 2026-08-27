@@ -1,22 +1,26 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import { Archive, Download, History, Loader2, RotateCcw, ShieldCheck, Trash2, X } from 'lucide-react';
+import { Archive, Download, History, Loader2, RotateCcw, ShieldCheck, Tag, Trash2, X } from 'lucide-react';
 import type { Backup } from '@ninedeploy/sdk';
 import { api } from '../lib/api.js';
-import { Button, Card } from './ui.js';
+import { Button, Card, Input } from './ui.js';
 import { formatBytes } from '../lib/format.js';
 
 export function VolumeBackupsPanel({ volumeName }: { volumeName: string }) {
   const qc = useQueryClient();
   const [restoringId, setRestoringId] = useState<number | null>(null);
+  const [label, setLabel] = useState('');
 
   const backups = useQuery({
     queryKey: ['volume-backups', volumeName],
     queryFn: () => api.volumeBackups.list(volumeName),
   });
   const trigger = useMutation({
-    mutationFn: () => api.volumeBackups.create(volumeName, { label: 'manual' }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['volume-backups', volumeName] }),
+    mutationFn: () => api.volumeBackups.create(volumeName, { label: label.trim() || 'manual' }),
+    onSuccess: () => {
+      setLabel('');
+      qc.invalidateQueries({ queryKey: ['volume-backups', volumeName] });
+    },
   });
   const restore = useMutation({
     mutationFn: (id: number) => api.volumeBackups.restore(volumeName, id),
@@ -32,16 +36,29 @@ export function VolumeBackupsPanel({ volumeName }: { volumeName: string }) {
           <Archive size={16} className="text-amber-400" />
           <h3 className="text-sm font-semibold text-slate-200 uppercase tracking-wide">Volume Backups ({list.length})</h3>
         </div>
-        <Button
-          size="sm"
-          variant="secondary"
-          onClick={() => trigger.mutate()}
-          disabled={trigger.isPending}
-          data-testid="trigger-backup-button"
-        >
-          {trigger.isPending ? <Loader2 size={14} className="animate-spin" /> : <Archive size={14} />}
-          Backup now
-        </Button>
+        <div className="flex items-center gap-2">
+          {/* Optional name for THIS snapshot — ends up on the row and in the
+              tar.gz filename; leaving it empty falls back to "manual". */}
+          <Input
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            placeholder="Label (optional)"
+            aria-label="Snapshot label"
+            maxLength={40}
+            className="h-8 w-36 font-mono text-xs"
+            data-testid="snapshot-label-input"
+          />
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => trigger.mutate()}
+            disabled={trigger.isPending}
+            data-testid="trigger-backup-button"
+          >
+            {trigger.isPending ? <Loader2 size={14} className="animate-spin" /> : <Archive size={14} />}
+            Backup now
+          </Button>
+        </div>
       </div>
 
       {trigger.isError && (
@@ -111,7 +128,13 @@ function BackupRow({
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="font-mono text-xs text-slate-300">
+            {/* Snapshot name first — the timestamp alone made rows
+                indistinguishable at a glance. */}
+            <span className="flex items-center gap-1 text-xs font-semibold text-slate-200">
+              <Tag size={11} className="shrink-0 text-slate-500" />
+              {backup.label ?? 'Snapshot'}
+            </span>
+            <span className="font-mono text-[11px] text-slate-500">
               {date.toISOString().slice(0, 16).replace('T', ' ')}
             </span>
             <StatusBadge status={backup.status} />

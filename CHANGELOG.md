@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **One-Click Panel Self-Update**: operators can upgrade the panel from the dashboard. New `GET /v1/system/update-status` and `POST /v1/system/update-start` endpoints run this install's own `install.sh --version <tag>` for an operator-pinned exact release tag; on systemd hosts the updater launches through `systemd-run` into a transient cgroup so it survives stopping the unit it belongs to, state lives in marker files under `<dataDir>/self-update/`, and the updater's environment is deliberately narrow (no JWT/DB secrets reachable via `systemctl show`). A layout banner plus About-card button share the new `usePanelUpdate` poller, whose phase survives panel restarts via localStorage and reports installer output tails on failure.
+- **Volume Backup Labels**: manual volume snapshots accept an operator label (≤40 chars, default `manual`) and scheduled runs are labeled `schedule-YYYY-MM-DD`; migration 0037 persists `backups.label`, serialization exposes `scope`/`volumeName` too, and the Backups page names every row instead of showing bare timestamps.
+- **Webhook URLs Honor The Panel Domain**: auto-deploy payload URLs are now built from the Settings → Security "panel domain" (`panel_domain`), falling back to `NINEDEPLOY_DOMAIN` then `NINEDEPLOY_PUBLIC_URL`; scheme mirrors the Traefik router (https only when an ACME email exists). The environment tab warns amber when stored webhook URLs point at localhost so git providers cannot silently fail delivery.
+- **Honest Deployment History**: finalizing a successful deploy demotes older `running` rows to a new `superseded` status, and boot-time `reconcileDeploymentHistory` keeps at most the newest running deployment per actually-running service — past deploys stop displaying "Running" forever.
+- **Cron-Preset Jobs Editor & Raw Env Editing**: the scheduled-jobs card is rebuilt around presets (time/weekday/monthday pickers, custom-cron input with validation) backed by a new frontend `lib/cron.ts` (`parseCron`, `nextCronRun`, `describeCron`); env vars gain a table ⇄ raw `.env` bulk-edit mode accepting comments, blank lines and quotes, saving added/updated/removed diffs in parallel.
+
+### Changed
+
+- **Detaching A Volume No Longer Requires Stopping The Service**: detach now queues a blue-green recreate without the mount, matching attach/update behavior since Docker cannot hot-swap `-v`.
+- **Alert Rules Expose `lastEvaluatedAt`** so the monitoring page can distinguish "never evaluated yet" from a lapsed collector.
+
+### Docs
+
+- README, docs/ and the website were re-verified against the code: MCP tool count (35), nine managed-database engines, 88 hub templates with 16 runtime-certified, kernel event/hook names, the supported ACME DNS-provider list, Docker-mode upgrade instructions, OIDC configuration path (admin UI, not env vars), and coverage floors stated per package instead of a blanket 100% claim.
+
 ---
 
 ## [0.3.3] - 2026-08-27

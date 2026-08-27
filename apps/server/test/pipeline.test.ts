@@ -300,6 +300,87 @@ describe('runDeployment', () => {
     expect(db.query.domains.findFirst).not.toHaveBeenCalled();
   });
 
+  it('demotes older running rows to superseded when the build goes live', async () => {
+    const { db, updates } = makeDb();
+    baseSetup(db, { image: 'nginx:latest' });
+    h.builder.buildAndRun.mockResolvedValue({ runtimeId: 'c-2', port: 3000, healthPath: '/' });
+
+    await runDeployment(db as never, 1);
+
+    // The finalize itself flips THIS row to running; a sibling update demotes
+    // every OTHER running row of the service so history no longer shows past
+    // deploys as still-Running.
+    expect(updates.some((u) => u.table === deployments && u.values.status === 'running')).toBe(true);
+    const demote = updates.find((u) => u.table === deployments && u.values.status === 'superseded');
+    expect(demote).toBeDefined();
+  });
+
+  it('stores a managed-env fingerprint and warns loudly when it drifts', async () => {
+    const wpMapping = {
+      WORDPRESS_DB_HOST: 'host',
+      WORDPRESS_DB_USER: 'username',
+      WORDPRESS_DB_PASSWORD: 'password',
+      WORDPRESS_DB_NAME: 'database',
+    };
+    const dbRow = {
+      id: 2,
+      engine: 'mysql',
+      status: 'running',
+      containerName: 'nd-db-web-db',
+      internalHost: 'nd-db-web-db',
+      internalPort: 3306,
+      username: 'nine',
+      dbName: 'app',
+      passwordEncrypted: 'enc:secret-one',
+    };
+
+    // ── First deploy: capture the fingerprint persisted onto its row. ──
+    const first = makeDb();
+    baseSetup(first.db, { image: 'nginx:latest' });
+    first.db.query.services.findFirst.mockResolvedValue({
+      ...service,
+      image: 'nginx:latest',
+      templateId: 'wordpress',
+      templateDatabaseEnv: wpMapping,
+    });
+    first.db.query.databaseAttachments.findMany.mockResolvedValue([{ serviceId: 5, databaseId: 2, envAlias: 'DATABASE_URL' }]);
+    first.db.query.databases.findFirst.mockResolvedValue(dbRow);
+    h.builder.buildAndRun.mockResolvedValue({ runtimeId: 'c-1', port: 3000, healthPath: '/' });
+
+    await runDeployment(first.db as never, 1);
+
+    const snap1Update = first.updates.find((u) => u.table === deployments && u.values.status === 'running');
+    const snap1 = JSON.parse(snap1Update!.values.configSnapshot as string) as { managedEnv: Record<string, string> };
+    expect(Object.keys(snap1.managedEnv).sort()).toEqual([
+      'WORDPRESS_DB_HOST', 'WORDPRESS_DB_NAME', 'WORDPRESS_DB_PASSWORD', 'WORDPRESS_DB_USER',
+    ]);
+
+    // ── Second deploy with the SAME volume-backed app but the managed DB's
+    // stored password changed underneath it: the old wp-config.php baked on
+    // first boot can no longer authenticate, and the operator needs to know
+    // WHY a green deploy broke their site. ──
+    const second = makeDb();
+    baseSetup(second.db, {
+      image: 'nginx:latest',
+      templateId: 'wordpress',
+      templateDatabaseEnv: wpMapping,
+    });
+    second.db.query.deployments.findFirst.mockResolvedValue({ ...dep, configSnapshot: JSON.stringify(snap1) });
+    second.db.query.databaseAttachments.findMany.mockResolvedValue([{ serviceId: 5, databaseId: 2, envAlias: 'DATABASE_URL' }]);
+    second.db.query.databases.findFirst.mockResolvedValue({ ...dbRow, passwordEncrypted: 'enc:secret-two' });
+    second.db.query.serviceProjects.findMany.mockResolvedValue([]);
+    const lines2 = collectLogs(1);
+
+    await runDeployment(second.db as never, 1);
+
+    expect(lines2.some((l) => l.includes('Managed database value "WORDPRESS_DB_PASSWORD" differs'))).toBe(true);
+    expect(lines2.some((l) => l.includes('wp-config.php'))).toBe(true);
+    // And the fresh fingerprint is persisted so chains of redeploys keep comparing.
+    const snap2Update = second.updates.find((u) => u.table === deployments && u.values.status === 'running');
+    const snap2 = JSON.parse(snap2Update!.values.configSnapshot as string) as { managedEnv: Record<string, string> };
+    expect(snap2.managedEnv.WORDPRESS_DB_PASSWORD).not.toBe(snap1.managedEnv.WORDPRESS_DB_PASSWORD);
+  });
+
   it('persists a runtime port repaired during the healthcheck', async () => {
     const { db, updates } = makeDb();
     baseSetup(db, { image: 'n8nio/n8n', port: 80 });

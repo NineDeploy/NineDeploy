@@ -1,9 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import { Archive, ArrowUpRight, Database, ExternalLink, FolderOpen, HardDrive, Info, Layers, Plus, Server, ShieldAlert, ShieldCheck, Trash2, X } from 'lucide-react';
+import { Archive, ArrowUpRight, Database, ExternalLink, FolderOpen, HardDrive, Info, Layers, Plus, Server, ShieldAlert, ShieldCheck, Trash2, Wrench, X } from 'lucide-react';
 import { Link } from 'react-router';
 import type { Service, ServiceVolumeAttachment as SdkServiceVolumeAttachment } from '@ninedeploy/sdk';
 import { api } from '../../lib/api.js';
+import { useToast } from '../../components/Toast.js';
 import { Button, Card, cn } from '../../components/ui.js';
 import { formatBytes } from '../../lib/format.js';
 import { VolumeBrowser } from '../../components/VolumeBrowser.js';
@@ -167,6 +168,9 @@ export function VolumesTab({ serviceId, svc }: { serviceId: number; svc: Service
                 >
                   <FolderOpen size={14} /> Browse Files
                 </Button>
+                {hostsOneTimeConfig(svc, svc.volumeMount ?? '/var/www/html') && (
+                  <RepairConfigButton serviceId={serviceId} volumeName={serviceVolume?.name ?? `nd-vol-${svc.slug}`} />
+                )}
                 <Button
                   size="sm"
                   variant="ghost"
@@ -268,6 +272,9 @@ export function VolumesTab({ serviceId, svc }: { serviceId: number; svc: Service
                       >
                         <Archive size={13} /> Backups
                       </Button>
+                      {hostsOneTimeConfig(svc, a.containerPath) && (
+                        <RepairConfigButton serviceId={serviceId} attachmentId={a.id} />
+                      )}
                       <DetachButton serviceId={serviceId} attachment={a} />
                     </div>
                   </div>
@@ -405,15 +412,65 @@ function getExistingPaths(svc: Service, attachments: ServiceVolumeAttachment[]):
   return paths;
 }
 
+/**
+ * True for services running images known to bake their DB settings into a
+ * config file INSIDE the persistent volume on first boot (WordPress' hidden
+ * wp-config.php pattern). On those, "just redeploy" does not refresh config —
+ * the Regenerate button exists precisely for that trap.
+ */
+const ONE_TIME_CONFIG_IMAGES = ['wordpress'];
+function hostsOneTimeConfig(svc: Service, containerPath: string): boolean {
+  const image = (svc.image ?? '').toLowerCase();
+  return ONE_TIME_CONFIG_IMAGES.some((img) => image.includes(img)) && containerPath === (svc.volumeMount ?? '/var/www/html');
+}
+
+function RepairConfigButton(
+  props: { serviceId: number } & ({ attachmentId: number } | { volumeName: string }),
+) {
+  const { serviceId } = props;
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const repair = useMutation({
+    mutationFn: () =>
+      api.serviceVolumes.repairConfig(serviceId, {
+        filePath: 'wp-config.php',
+        ...('attachmentId' in props ? { attachmentId: props.attachmentId } : { volumeName: props.volumeName }),
+      }),
+    onSuccess: () => {
+      toast('wp-config.php removed from the volume — the queued redeploy regenerates it from current env', 'success');
+      qc.invalidateQueries({ queryKey: ['service-volume-attachments', serviceId] });
+    },
+    onError: (err: Error) => toast(err.message || 'Could not regenerate wp-config', 'error'),
+  });
+  return (
+    <Button
+      size="sm"
+      variant="ghost"
+      onClick={() => repair.mutate()}
+      disabled={repair.isPending}
+      className="text-xs h-7 px-2 text-sky-300 hover:text-sky-200"
+      title="Delete the first-boot wp-config.php from this volume and queue a redeploy so WordPress rewrites it from the current database settings"
+    >
+      <Wrench size={13} /> {repair.isPending ? 'Fixing…' : 'Regenerate config'}
+    </Button>
+  );
+}
+
 function DetachButton({ serviceId, attachment }: { serviceId: number; attachment: ServiceVolumeAttachment }) {
   const qc = useQueryClient();
+  const { toast } = useToast();
   const [confirming, setConfirming] = useState(false);
   const detach = useMutation({
     mutationFn: () => api.serviceVolumes.remove(serviceId, attachment.id),
     onSuccess: () => {
+      toast(`Volume detached — a redeploy was queued to drop the mount`, 'success');
       qc.invalidateQueries({ queryKey: ['service-volume-attachments', serviceId] });
       setConfirming(false);
     },
+    // Server rejections (auth, 404, docker errors) must be visible — a silent
+    // failure here looked exactly like "the button does nothing".
+    onError: (err: Error) =>
+      toast(err instanceof Error && err.message ? err.message : 'Could not detach the volume', 'error'),
   });
   if (confirming) {
     return (

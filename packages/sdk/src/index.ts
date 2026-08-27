@@ -75,6 +75,7 @@ import type {
   VolumePathCreateInput,
   TriggerDeploy,
   UpdateCheckResult,
+  SelfUpdateStatus,
   UpdateServiceInput,
   UpsertEnvVarInput,
   VolumeEntry,
@@ -331,6 +332,10 @@ export interface NineDeployClient {
     exportUrl: () => string;
     /** Latest-release check (admin). updateAvailable is null when offline/disabled. */
     updateCheck: (force?: boolean) => Promise<UpdateCheckResult>;
+    /** State of a panel-initiated upgrade (idle/running/success/failed/unsupported). */
+    updateStatus: () => Promise<SelfUpdateStatus>;
+    /** Start upgrading the panel itself to an exact release tag; the updater survives the restart it performs. */
+    updateStart: (version: string) => Promise<{ ok: boolean }>;
     /** Recent docker daemon events (single-shot, for the Docker dashboard feed). */
     dockerEvents: (minutes?: number) => Promise<{ events: Array<{ time: string; type: string; action: string; name: string }> }>;
   };
@@ -513,6 +518,14 @@ export interface NineDeployClient {
     update: (serviceId: number, attachmentId: number, input: UpdateServiceVolumeAttachmentInput) => Promise<{ attachment: ServiceVolumeAttachment; deploymentId: number }>;
     /** Detach. The underlying Docker volume is NOT deleted (data persists). */
     remove: (serviceId: number, attachmentId: number) => Promise<void>;
+    /** Delete a first-boot-baked config file from the volume and queue a
+     *  redeploy so the app regenerates it from the current environment
+     *  (WordPress wp-config.php et al.). Exactly one of `attachmentId` /
+     *  `volumeName` must be set; `filePath` is a single path segment. */
+    repairConfig: (
+      serviceId: number,
+      input: { filePath: string; attachmentId?: number; volumeName?: string },
+    ) => Promise<{ ok: boolean; deploymentId: number }>;
   };
   env: {
     list: (serviceId: number) => Promise<EnvVar[]>;
@@ -895,6 +908,8 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
       resources: () => get<DockerResources>('/v1/system/resources'),
       pruneImages: () => send<{ ok: boolean }>('POST', '/v1/system/prune-images'),
       updateCheck: (force) => get<UpdateCheckResult>(`/v1/system/update-check${force ? '?force=1' : ''}`),
+      updateStatus: () => get<SelfUpdateStatus>('/v1/system/update-status'),
+      updateStart: (version) => send<{ ok: boolean }>('POST', '/v1/system/update-start', { version }),
       exportUrl: () => '/v1/system/export',
       dockerEvents: (minutes) =>
         get<{ events: Array<{ time: string; type: string; action: string; name: string }> }>(
@@ -1061,6 +1076,8 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
       remove: async (serviceId, attachmentId) => {
         await request(`/v1/services/${serviceId}/volumes/${attachmentId}`, { method: 'DELETE' });
       },
+      repairConfig: (serviceId, input) =>
+        send<{ ok: boolean; deploymentId: number }>('POST', `/v1/services/${serviceId}/volumes/config-repair`, input),
     },
     volumeBackups: {
       list: (volumeName) => get<Backup[]>(`/v1/volumes/${volumeName}/backups`),

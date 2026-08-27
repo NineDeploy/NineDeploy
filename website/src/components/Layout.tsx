@@ -390,9 +390,9 @@ export function Layout({
               <li className="flex items-center gap-2">
                 <span className="w-2 h-2 bg-phosphor-dim animate-pulse" /> v0.3.3 GA
               </li>
-              <li>4,405 tests in CI</li>
+              <li>4,592 tests in CI</li>
               <li>SQLite core · Zero external DB</li>
-              <li>15 runtime-certified templates</li>
+              <li>88 templates · 16 runtime-certified</li>
             </ul>
           </div>
         </div>

@@ -1394,7 +1394,7 @@
       "dbEngine": "mysql",
       "featured": true,
       "databaseEnv": {
-        "WORDPRESS_DB_HOST": "hostPort",
+        "WORDPRESS_DB_HOST": "host",
         "WORDPRESS_DB_USER": "username",
         "WORDPRESS_DB_PASSWORD": "password",
         "WORDPRESS_DB_NAME": "database"

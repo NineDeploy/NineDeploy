@@ -1,0 +1,322 @@
+﻿import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { VERSION } from '../../src/version.js';
+
+// Mutable config so tests control isProd and every test gets an isolated
+// data dir — mirroring the pattern in resources.test.ts.
+const configMock = vi.hoisted(() => ({
+  isProd: false,
+  paths: { dataDir: '' },
+}));
+vi.mock('../../src/config.js', () => ({ config: configMock }));
+
+// Full child_process replacement: launches must be observed, never executed.
+const spawnMock = vi.hoisted(() => ({
+  spawn: null as unknown,
+  calls: [] as Array<{ cmd: string; args: string[]; opts?: unknown }>,
+}));
+function installSpawn() {
+  const fn = (cmd: string, args: string[], opts?: unknown) => {
+    spawnMock.calls.push({ cmd, args, opts });
+    const handlers: Record<string, Array<(...a: unknown[]) => void>> = {};
+    const register = (ev: string, cb: (...a: unknown[]) => void) => {
+      const list = handlers[ev] ?? [];
+      list.push(cb);
+      handlers[ev] = list;
+    };
+    queueMicrotask(() => {
+      // systemd-run probe resolves through 'spawn' (job accepted); anything
+      // else rejects through 'error' so the fallback detached branch runs.
+      if (cmd === 'systemd-run') {
+        for (const cb of handlers['spawn'] ?? []) cb();
+        for (const cb of handlers['once-spawn'] ?? []) cb();
+      }
+    });
+    return {
+      on: (ev: string, cb: (...a: unknown[]) => void) => register(ev, cb),
+      once: (ev: string, cb: (...a: unknown[]) => void) => register(`once-${ev}`, cb),
+      unref: () => undefined,
+    };
+  };
+  return fn;
+}
+vi.mock('node:child_process', async (importOriginal) => {
+  const real = await importOriginal<typeof import('node:child_process')>();
+  void real;
+  spawnMock.spawn = installSpawn();
+  return { spawn: (...a: unknown[]) => (spawnMock.spawn as (...a: unknown[]) => unknown)(...(a as [string, string[], unknown])) };
+});
+
+const createdDirs: string[] = [];
+function newDataDir(): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nd-selfupd-'));
+  createdDirs.push(dir);
+  configMock.paths.dataDir = dir;
+  return dir;
+}
+
+/** A fake installation directory that passes the support gate. */
+function newInstallDir(): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nd-selfinst-'));
+  createdDirs.push(dir);
+  fs.writeFileSync(path.join(dir, 'package.json'), '{}');
+  fs.writeFileSync(path.join(dir, 'install.sh'), '#!/usr/bin/env bash\nexit 0');
+  return dir;
+}
+
+async function loadLib() {
+  return await import('../../src/lib/selfUpdate.js');
+}
+
+function stateDir(): string {
+  return path.join(configMock.paths.dataDir, 'self-update');
+}
+
+function readState(): Record<string, unknown> | null {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(stateDir(), 'state.json'), 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+beforeEach(() => {
+  newDataDir();
+  spawnMock.calls = [];
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.useRealTimers();
+});
+
+afterAll(() => {
+  for (const dir of createdDirs) fs.rmSync(dir, { recursive: true, force: true });
+});
+
+describe('self-update support gating', () => {
+  it('is unsupported outside production, with a reason', async () => {
+    configMock.isProd = false;
+    const lib = await loadLib();
+    expect(lib.selfUpdateSupported(newInstallDir()).supported).toBe(false);
+    const status = await lib.getSelfUpdateStatus({ installDir: newInstallDir() });
+    expect(status.supported).toBe(false);
+    expect(status.phase).toBe('unsupported');
+    expect(status.reason).toContain('production');
+  });
+
+  it('is unsupported for container installs', async () => {
+    configMock.isProd = true;
+    const lib = await loadLib();
+    // A real file standing in for /.dockerenv proves the branch without
+    // needing to spy on node:fs internals under ESM.
+    const marker = path.join(newDataDir(), 'fake-dockerenv');
+    fs.writeFileSync(marker, '');
+    const res = lib.selfUpdateSupported(newInstallDir(), marker);
+    expect(res.supported).toBe(false);
+    expect(res.reason).toContain('docker compose');
+  });
+
+  it('is unsupported when install.sh is missing next to the install dir', async () => {
+    configMock.isProd = true;
+    const lib = await loadLib();
+    const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'nd-bare-'));
+    createdDirs.push(bare);
+    expect(lib.selfUpdateSupported(bare).supported).toBe(false);
+  });
+
+  it('reports idle when supported and never run', async () => {
+    configMock.isProd = true;
+    const lib = await loadLib();
+    const status = await lib.getSelfUpdateStatus({ installDir: newInstallDir() });
+    expect(status.phase).toBe('idle');
+    expect(status.targetVersion).toBeNull();
+  });
+});
+
+describe('startSelfUpdate', () => {
+  it('launches the updater through systemd-run with a pinned tag and persists the run state', async () => {
+    configMock.isProd = true;
+    const lib = await loadLib();
+    const res = await lib.startSelfUpdate('v99.0.0', { installDir: newInstallDir() });
+    expect(res.ok).toBe(true);
+
+    expect(spawnMock.calls).toHaveLength(1);
+    const call = spawnMock.calls[0]!;
+    expect(call.cmd).toBe('systemd-run');
+    expect(call.args[0]).toBe('--unit');
+    expect(call.args).toContain('--collect');
+    // The target travels twice: as --setenv into the transient unit (validated)
+    // and inside the generated wrapper script.
+    expect(call.args.join(' ')).toContain('--setenv=ND_SELF_UPDATE_TARGET=v99.0.0');
+
+    const state = readState();
+    expect(state).toMatchObject({ phase: 'running', to: 'v99.0.0' });
+
+    const script = fs.readFileSync(path.join(stateDir(), 'run-update.sh'), 'utf8');
+    expect(script).toContain('--version "$ND_SELF_UPDATE_TARGET"');
+    expect(script).toContain('install.sh');
+  });
+
+  it('rejects a target that is not newer than the running version', async () => {
+    configMock.isProd = true;
+    const lib = await loadLib();
+    await expect(lib.startSelfUpdate(`v${VERSION}`, { installDir: newInstallDir() })).rejects.toMatchObject({
+      code: 'not_newer',
+      statusCode: 400,
+    });
+    await expect(lib.startSelfUpdate('v0.0.1', { installDir: newInstallDir() })).rejects.toMatchObject({
+      code: 'not_newer',
+    });
+  });
+
+  it('rejects malformed tags before touching the filesystem', async () => {
+    configMock.isProd = true;
+    const lib = await loadLib();
+    await expect(
+      lib.startSelfUpdate('v1.2.3; rm -rf /', { installDir: newInstallDir() }),
+    ).rejects.toMatchObject({ code: 'bad_request' });
+    expect(readState()).toBeNull();
+    expect(spawnMock.calls).toHaveLength(0);
+  });
+
+  it('refuses to start while another update is already running', async () => {
+    configMock.isProd = true;
+    const lib = await loadLib();
+    await lib.startSelfUpdate('v99.0.0', { installDir: newInstallDir() });
+    await expect(lib.startSelfUpdate('v99.0.1', { installDir: newInstallDir() })).rejects.toMatchObject({
+      statusCode: 409,
+      code: 'conflict',
+    });
+  });
+
+  it('falls back to a plain detached bash child when systemd-run is unavailable', async () => {
+    configMock.isProd = true;
+    const lib = await loadLib();
+
+    const spawnOverride = (cmd: string, args: string[], opts?: unknown) => {
+      spawnMock.calls.push({ cmd, args, opts });
+      const handlers: Record<string, Array<(...a: unknown[]) => void>> = {};
+      const emitErr = () => {
+        for (const cb of handlers['error'] ?? []) cb(new Error('ENOENT'));
+        for (const cb of handlers['once-error'] ?? []) cb(new Error('ENOENT'));
+      };
+      return {
+        on: (ev: string, cb: (...a: unknown[]) => void) => {
+          const list = handlers[ev] ?? [];
+          list.push(cb);
+          handlers[ev] = list;
+          if (ev === 'error') queueMicrotask(emitErr);
+        },
+        once: (ev: string, cb: (...a: unknown[]) => void) => {
+          const key = `once-${ev}`;
+          const list = handlers[key] ?? [];
+          list.push(cb);
+          handlers[key] = list;
+          if (ev === 'error') queueMicrotask(emitErr);
+        },
+        unref: () => undefined,
+      };
+    };
+    (spawnMock as unknown as { spawn: unknown }).spawn = spawnOverride;
+
+    await lib.startSelfUpdate('v99.0.0', { installDir: newInstallDir() });
+    expect(spawnMock.calls.map((c) => c.cmd)).toEqual(['systemd-run', '/bin/bash']);
+  });
+});
+
+describe('status resolution from marker files', () => {
+  async function started(target = 'v99.0.0'): Promise<void> {
+    configMock.isProd = true;
+    const lib = await loadLib();
+    await lib.startSelfUpdate(target, { installDir: newInstallDir() });
+  }
+
+  it('keeps reporting running until a marker appears', async () => {
+    await started();
+    const lib = await loadLib();
+    const status = await lib.getSelfUpdateStatus({ installDir: newInstallDir() });
+    expect(status.phase).toBe('running');
+  });
+
+  it('resolves a zero exit code to success and remembers it across reads', async () => {
+    await started();
+    fs.writeFileSync(path.join(stateDir(), 'exit-code'), '0');
+    const lib = await loadLib();
+    const first = await lib.getSelfUpdateStatus({ installDir: newInstallDir() });
+    expect(first.phase).toBe('success');
+    expect(first.finishedAt).toBeTruthy();
+    // Second read takes the persisted terminal-phase branch, not re-resolution.
+    const second = await lib.getSelfUpdateStatus({ installDir: newInstallDir() });
+    expect(second.phase).toBe('success');
+    expect(second.finishedAt).toBe(first.finishedAt);
+  });
+
+  it('resolves a non-zero exit code to failure with a log tail', async () => {
+    await started();
+    fs.writeFileSync(path.join(stateDir(), 'update.log'), 'line1\nline2\nboom: pnpm build failed\n');
+    fs.writeFileSync(path.join(stateDir(), 'exit-code'), '1');
+    const lib = await loadLib();
+    const status = await lib.getSelfUpdateStatus({ installDir: newInstallDir() });
+    expect(status.phase).toBe('failed');
+    expect(status.errorTail).toContain('pnpm build failed');
+  });
+
+  it('fails a run whose updater went silent past the staleness bound', async () => {
+    await started();
+    const state = readState()!;
+    const started90minAgo = new Date(Date.now() - 90 * 60 * 1000).toISOString();
+    fs.writeFileSync(path.join(stateDir(), 'state.json'), JSON.stringify({ ...state, startedAt: started90minAgo }));
+    const lib = await loadLib();
+    const status = await lib.getSelfUpdateStatus({ installDir: newInstallDir() });
+    expect(status.phase).toBe('failed');
+  });
+
+  it('promotes a rebooted panel onto the target release to success after the boot grace', async () => {
+    // Scenario: this process IS the upgraded panel — the persisted target tag
+    // equals the RUNNING version — but the installer never got to write its
+    // exit marker. Crafted directly: startSelfUpdate refuses equal tags.
+    configMock.isProd = true;
+    const p = {
+      dir: stateDir(),
+      log: path.join(stateDir(), 'update.log'),
+      script: path.join(stateDir(), 'run-update.sh'),
+      exitCode: path.join(stateDir(), 'exit-code'),
+      state: path.join(stateDir(), 'state.json'),
+    };
+    fs.mkdirSync(p.dir, { recursive: true });
+    fs.writeFileSync(p.state, JSON.stringify({
+      phase: 'running',
+      from: 'v0.0.9',
+      to: `v${VERSION}`,
+      startedAt: new Date().toISOString(),
+    }));
+    const lib = await loadLib();
+
+    // Immediately after boot: still "running" — the installer may still be
+    // finishing its health gate.
+    let status = await lib.getSelfUpdateStatus({ installDir: newInstallDir() });
+    expect(status.phase).toBe('running');
+
+    // After the grace window passes with no exit marker: success.
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.now() + 5 * 60 * 1000);
+    status = await lib.getSelfUpdateStatus({ installDir: newInstallDir() });
+    expect(status.phase).toBe('success');
+  });
+});
+
+describe('updaterEnvironment', () => {
+  it('passes operator settings and host tooling through, forcing production mode', async () => {
+    vi.stubEnv('PATH', '/usr/local/bin:/usr/bin');
+    vi.stubEnv('NINEDEPLOY_PORT', '3000');
+    vi.stubEnv('NINEDEPLOY_JWT_SECRET', 'do-not-leak-but-must-propagate');
+    const lib = await loadLib();
+    const env = lib.updaterEnvironment();
+    expect(env['NINEDEPLOY_PORT']).toBe('3000');
+    expect(env['NINEDEPLOY_JWT_SECRET']).toBe('do-not-leak-but-must-propagate');
+    expect(env['NODE_ENV']).toBe('production');
+  });
+});

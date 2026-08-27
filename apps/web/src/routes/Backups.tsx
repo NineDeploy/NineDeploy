@@ -59,7 +59,7 @@ export function Backups() {
       <PageHeader
         icon={<HardDrive size={18} />}
         title="Backups"
-        subtitle="Database snapshots — back up, restore and download. Daily auto-backups keep the latest 7 per database."
+        subtitle="Database and volume snapshots — back up, restore and download. Daily auto-backups keep the latest 7 per database."
       />
 
       {list.isLoading ? (
@@ -75,7 +75,7 @@ export function Backups() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-white/5 text-left text-xs uppercase tracking-wide text-slate-500">
-                <th className="px-5 py-3 font-medium">Database</th>
+                <th className="px-5 py-3 font-medium">Resource</th>
                 <th className="px-5 py-3 font-medium">Status</th>
                 <th className="px-5 py-3 font-medium">Size</th>
                 <th className="px-5 py-3 font-medium">Created</th>
@@ -85,7 +85,16 @@ export function Backups() {
             <tbody>
               {list.data.map((b) => (
                 <tr key={b.id} className="border-b border-white/5 last:border-0 hover:bg-white/[0.02]">
-                  <td className="px-5 py-3 font-medium text-slate-200">{b.databaseName ?? '—'}</td>
+                  <td className="px-5 py-3">
+                    {b.scope === 'volumes' ? (
+                      <div className="leading-tight">
+                        <div className="font-medium text-slate-200">{b.label ?? 'Volume snapshot'}</div>
+                        {b.volumeName && <div className="font-mono text-[10px] text-slate-600">{b.volumeName}</div>}
+                      </div>
+                    ) : (
+                      <span className="font-medium text-slate-200">{b.databaseName ?? '—'}</span>
+                    )}
+                  </td>
                   <td className="px-5 py-3"><StatusBadge status={b.status} /></td>
                   <td className="px-5 py-3 font-mono text-xs text-slate-400">{formatBytes(b.sizeBytes)}</td>
                   <td className="px-5 py-3 text-xs text-slate-500">{formatDateTime(b.createdAt)}</td>

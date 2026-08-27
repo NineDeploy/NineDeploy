@@ -14,17 +14,10 @@ NineDeploy follows a defense-in-depth security model to protect secrets at rest,
 
 ## 🌐 2. OpenID Connect (OIDC) Single Sign-On
 
-Integrate enterprise identity providers for unified authentication:
-- **Supported Providers**: Google Workspace, GitHub OAuth/Enterprise, Okta, Keycloak, Authentik, Microsoft Entra ID.
-- **Automated User Provisioning**: Auto-create user accounts based on verified OIDC claims (`email`, `email_verified`, `name`).
+Integrate enterprise identity providers for unified authentication — configured per provider from **Settings → SSO** by an operator (no `.env` values involved):
+- **Supported Providers**: Google Workspace, GitHub OAuth/Enterprise, Okta, Keycloak, Authentik, Microsoft Entra ID, and any generic OIDC issuer.
+- **Automated User Provisioning**: Auto-create user accounts based on verified OIDC claims (`email`, `email_verified`, `name`), with auto-enrollment toggles per provider.
 - **Domain Restriction**: Enforce organizational domain matching (e.g. only allow `@company.com`).
-
-```bash
-# Example OIDC Configuration in .env
-NINEDEPLOY_OIDC_ISSUER="https://auth.company.com/realms/main"
-NINEDEPLOY_OIDC_CLIENT_ID="ninedeploy"
-NINEDEPLOY_OIDC_CLIENT_SECRET="your-oidc-secret"
-```
 
 ---
 
@@ -40,3 +33,7 @@ NINEDEPLOY_OIDC_CLIENT_SECRET="your-oidc-secret"
 
 - **Per-Account Lockout**: 5 consecutive failed login attempts lock an account for 15 minutes.
 - **IP Rate Limiting**: Tiered token bucket rate limits on public endpoints to prevent credential stuffing and DoS attacks.
+
+## 🕳️ 5. Egress Controls
+
+Operator-supplied URLs — notification webhooks, OIDC issuers, S3 destinations, log drains, templates sources, git clones and PR inspections — are resolved through a guarded fetch that refuses private, loopback, link-local, CGNAT and multicast addresses (including the cloud metadata endpoint `169.254.169.254`). Self-hosted LAN remotes keep working with `NINEDEPLOY_ALLOW_PRIVATE_EGRESS=1`.

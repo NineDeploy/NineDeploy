@@ -46,7 +46,7 @@ const groups: {
       {
         icon: GitBranch,
         title: "Git, registry, or hub",
-        body: "Clone with PAT or SSH deploy keys (scrubbed after checkout), pull from private registries with per-source credentials, or start from 15 runtime-certified templates.",
+        body: "Clone with PAT or SSH deploy keys (scrubbed after checkout), pull from private registries with per-source credentials, or start from one of 88 hub templates — 16 of them runtime-certified.",
       },
       {
         icon: FileCode,
@@ -221,7 +221,7 @@ const groups: {
       {
         icon: MonitorSmartphone,
         title: "Every interface",
-        body: "Web dashboard (dark/light + 6 accents, ⌘K palette), ninedeploy CLI, REST API + typed SDK, and an MCP server with 28 tools for AI assistants.",
+        body: "Web dashboard (dark/light + 6 accents, ⌘K palette), ninedeploy CLI, REST API + typed SDK, and an MCP server with 35 tools for AI assistants.",
       },
     ],
   },

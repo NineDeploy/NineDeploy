@@ -704,13 +704,13 @@ describe('service', () => {
 
   describe('backups', () => {
     it('backup accepts a row', () => {
-      const data = ok(backup, { id: 1, databaseId: 2, volumeName: null, scope: 'db', status: 'done', sizeBytes: 1024, createdAt: '2026-01-01T00:00:00Z' });
+      const data = ok(backup, { id: 1, databaseId: 2, volumeName: null, scope: 'db', status: 'done', sizeBytes: 1024, label: null, createdAt: '2026-01-01T00:00:00Z' });
       expect(data?.sizeBytes).toBe(1024);
       bad(backup, { id: 1, databaseId: 2, volumeName: null, scope: 'db', status: 'done', sizeBytes: 1024, createdAt: 'x' });
     });
 
     it('backupWithDb extends backup', () => {
-      const data = ok(backupWithDb, { id: 1, databaseId: null, volumeName: null, scope: 'db', status: 'done', sizeBytes: 1, createdAt: '2026-01-01T00:00:00Z', databaseName: null });
+      const data = ok(backupWithDb, { id: 1, databaseId: null, volumeName: null, scope: 'db', status: 'done', sizeBytes: 1, label: 'manual', createdAt: '2026-01-01T00:00:00Z', databaseName: null });
       expect(data?.databaseName).toBeNull();
       bad(backupWithDb, { id: 1, databaseId: null, volumeName: null, scope: 'db', status: 'done', sizeBytes: 1, createdAt: '2026-01-01T00:00:00Z' });
     });

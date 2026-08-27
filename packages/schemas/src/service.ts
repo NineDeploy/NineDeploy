@@ -217,7 +217,7 @@ export type TriggerDeploy = z.infer<typeof triggerDeploy>;
 
 export const deployment = z.object({
   id: z.number().int(),
-  status: z.enum(['queued', 'building', 'deploying', 'running', 'failed', 'cancelled']),
+  status: z.enum(['queued', 'building', 'deploying', 'running', 'superseded', 'failed', 'cancelled']),
   commitSha: z.string().nullable(),
   message: z.string().nullable(),
   author: z.string().nullable(),
@@ -512,6 +512,8 @@ export const backup = z.object({
   scope: z.enum(['db', 'volumes']),
   status: z.string(),
   sizeBytes: z.number().int(),
+  /** Snapshot name ('manual', 'schedule-…' or an operator tag); volume rows only. */
+  label: z.string().nullable(),
   hasRemoteCopy: z.boolean().optional(),
   createdAt: z.string().datetime(),
 });

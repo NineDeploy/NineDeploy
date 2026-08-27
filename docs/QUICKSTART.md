@@ -122,11 +122,19 @@ Before pulling updates or applying migrations, the installer automatically snaps
 
 ### Docker Upgrade:
 ```bash
+# Compose installs (docker-compose.prod.yml):
+docker compose -f docker-compose.prod.yml pull
+docker compose -f docker-compose.prod.yml up -d
+
+# Plain `docker run` installs: stop + remove, then re-run your original
+# command with the existing ninedeploy-data volume and a fresh image:
 docker pull ghcr.io/ninedeploy/ninedeploy:latest
 docker stop ninedeploy && docker rm ninedeploy
-# Re-run docker run command with existing ninedeploy-data volume
 ```
 Migrations apply automatically upon server boot.
+
+### One-Click Self-Update (Bare-Metal Panels):
+On systemd bare-metal installations an operator can upgrade the panel from the dashboard itself — an amber banner appears under the header when a new release is available (and the same button lives on **About**). Confirming it runs this install's own installer for the pinned release tag: snapshot of `.data`, source swap, rebuild, migrations, service restart. The panel is briefly offline mid-run (~5–15 minutes) while deployed services keep running; progress survives the restart and reports success or failure with the installer output tail. Container-mode installs don't offer self-update — pull the new image instead.
 
 ---
 

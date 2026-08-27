@@ -21,6 +21,34 @@ export const updateCheckResult = z.object({
 });
 export type UpdateCheckResult = z.infer<typeof updateCheckResult>;
 
+// ── Panel self-update (admin) ──────────────────────────────────────────────
+/** Body of POST /v1/system/update-start: an exact release tag, e.g. "v0.3.4". */
+export const selfUpdateStart = z.object({
+  version: z.string().regex(/^v\d+\.\d+\.\d+$/, 'version must be a release tag like v0.3.4'),
+});
+export type SelfUpdateStart = z.infer<typeof selfUpdateStart>;
+
+/**
+ * Live state of a panel-initiated upgrade. The updater deliberately runs
+ * outside the panel service's cgroup, so `running` and the terminal phases
+ * survive the panel restart that every upgrade performs mid-way; phase is
+ * resolved by reading marker files, not by process liveness.
+ */
+export const selfUpdateStatus = z.object({
+  /** False when this install cannot update itself (container mode, dev checkout, no install.sh). */
+  supported: z.boolean(),
+  phase: z.enum(['idle', 'running', 'success', 'failed', 'unsupported']),
+  currentVersion: z.string(),
+  targetVersion: z.string().nullable(),
+  startedAt: z.string().nullable(),
+  finishedAt: z.string().nullable(),
+  /** Short excerpt of the update log when phase === 'failed'. */
+  errorTail: z.string().nullable(),
+  /** Present when unsupported: why self-update is unavailable here. */
+  reason: z.string().optional(),
+});
+export type SelfUpdateStatus = z.infer<typeof selfUpdateStatus>;
+
 export const webhookCreate = z.object({
   branch: z.string().max(255).optional(),
   /** Newline/comma-separated globs — deploy only when a changed file matches. */
@@ -300,6 +328,8 @@ export interface AlertRule {
   enabled: boolean;
   status: 'ok' | 'breaching' | 'firing';
   lastValue: number | null;
+  /** When the collector last evaluated the rule (null = never evaluated). */
+  lastEvaluatedAt: string | null;
   firedAt: string | null;
   createdAt: string;
 }

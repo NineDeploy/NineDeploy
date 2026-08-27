@@ -1,8 +1,10 @@
 import { useQueryClient, useMutation, useQuery } from '@tanstack/react-query';
-import { Clock, Copy, GitBranch, Plus, Trash2, Webhook } from 'lucide-react';
-import { useState } from 'react';
+import { CalendarClock, Clock, Copy, GitBranch, Plus, Trash2, Webhook } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { Link } from 'react-router';
 import { api } from '../../lib/api.js';
-import { useCopy } from '../../lib/format.js';
+import { PRESETS, describeCron, isValidCron, nextCronRun, presetCron, WEEKDAY_LABELS } from '../../lib/cron.js';
+import { formatDateTime, formatRelative, useCopy } from '../../lib/format.js';
 import { AttachmentsCard } from '../../components/AttachmentsCard.js';
 import { EnvCard } from '../../components/EnvCard.js';
 import { useToast } from '../../components/Toast.js';
@@ -12,7 +14,7 @@ import { SecretRow } from './SecretRow.js';
 /** Environment variables, auto-deploy webhooks, file attachments and cron jobs. */
 export function EnvironmentTab({ serviceId }: { serviceId: number }) {
   return (
-    <div className="mt-5 grid max-w-5xl grid-cols-1 gap-5 lg:grid-cols-2">
+    <div className="mt-5 grid max-w-6xl grid-cols-1 gap-5 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
       <div className="space-y-5">
         <EnvCard serviceId={serviceId} />
         <WebhooksCard serviceId={serviceId} />
@@ -96,6 +98,15 @@ function WebhooksCard({ serviceId }: { serviceId: number }) {
           </div>
         )}
 
+        {!hooks.isLoading && hooks.data?.some((w) => /\/\/(localhost|127\.0\.0\.1|\[::1\])/.test(w.url)) && (
+          <div className="mb-3 rounded-lg border border-amber-500/25 bg-amber-500/[0.05] p-2.5 text-[11px] text-amber-200/90">
+            These URLs point at <code className="font-mono">localhost</code> because no panel domain is set. Git
+            providers can&apos;t reach that — set your real address under{' '}
+            <Link to="/settings" className="font-medium underline underline-offset-2">Settings → Security</Link>{' '}
+            ("Panel Domain").
+          </div>
+        )}
+
         <div className="space-y-1.5">
           {hooks.isLoading ? (
             <Skeleton className="h-8 w-full" />
@@ -142,20 +153,57 @@ function WebhooksCard({ serviceId }: { serviceId: number }) {
 }
 
 // ── Scheduled jobs (cron) ─────────────────────────────────────────────────
+const selectCls = 'h-8 min-w-0 rounded-lg bg-black/30 px-2 text-xs text-slate-100 ring-1 ring-inset ring-white/10';
+
+function parseTimeField(raw: string | undefined, fallback: number, max: number): number {
+  const n = Number.parseInt(raw ?? '', 10);
+  if (!Number.isFinite(n)) return fallback;
+  if (n < 0 || n > max) return fallback;
+  return n;
+}
+
+/** "in ~4h" / "on 12 Aug, 03:00" — next-run chip text. */
+function untilLabel(d: Date): string {
+  const ms = d.getTime() - Date.now();
+  const min = Math.round(ms / 60000);
+  if (min <= 1) return 'within a minute';
+  if (min < 60) return `in ~${min}m`;
+  const hr = Math.round(min / 60);
+  if (hr < 24) return `in ~${hr}h`;
+  const day = Math.round(hr / 24);
+  if (day <= 7) return `in ~${day}d`;
+  return `on ${formatDateTime(d)}`;
+}
+
+interface JobEntry {
+  id: number;
+  name: string;
+  cron: string;
+  kind: 'deploy' | 'exec';
+  command: string;
+  enabled: boolean;
+  lastRunAt: string | null;
+}
+
 function JobsCard({ serviceId }: { serviceId: number }) {
   const qc = useQueryClient();
   const { toast } = useToast();
   const [name, setName] = useState('');
-  const [cron, setCron] = useState('');
+  // Preset-driven schedule entry; "custom" reveals the raw cron field.
+  const [presetId, setPresetId] = useState('daily');
+  const [time, setTime] = useState('03:00');
+  const [weekday, setWeekday] = useState(0);
+  const [monthday, setMonthday] = useState(1);
+  const [customCron, setCustomCron] = useState('');
   const [kind, setKind] = useState<'deploy' | 'exec'>('deploy');
   const [command, setCommand] = useState('');
 
   const jobs = useQuery({ queryKey: ['jobs', serviceId], queryFn: () => api.jobs.list(serviceId) });
   const create = useMutation({
-    mutationFn: () => api.jobs.create(serviceId, { name, cron, kind, command: kind === 'exec' ? command : undefined }),
+    mutationFn: () => api.jobs.create(serviceId, { name, cron: cronExpr, kind, command: kind === 'exec' ? command : undefined }),
     onSuccess: () => {
       setName('');
-      setCron('');
+      setCustomCron('');
       setCommand('');
       qc.invalidateQueries({ queryKey: ['jobs', serviceId] });
       toast('Job created — active within 5 minutes', 'success');
@@ -176,15 +224,30 @@ function JobsCard({ serviceId }: { serviceId: number }) {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs', serviceId] }),
   });
 
-  const canCreate = name.trim() && cron.trim() && (kind === 'deploy' || command.trim());
+  const preset = PRESETS.find((p) => p.id === presetId) ?? PRESETS[0]!;
+  const isCustom = preset.id === 'custom';
+  const [hourRaw, minuteRaw] = time.split(':');
+  const hour = parseTimeField(hourRaw, 3, 23);
+  const minute = parseTimeField(minuteRaw, 0, 59);
+  const cronExpr = isCustom ? customCron.trim() : presetCron(preset, { hour, minute, weekday, monthday }) ?? '';
+  const cronValid = isValidCron(cronExpr);
+
+  const description = isCustom
+    ? cronValid
+      ? describeCron(cronExpr) ?? 'Custom expression.'
+      : 'Not a valid 5-field expression yet.'
+    : preset.hint || describeCron(cronExpr) || '';
+  const nextRun = useMemo(() => (cronValid ? nextCronRun(cronExpr) : null), [cronValid, cronExpr]);
+
+  const canCreate = Boolean(name.trim()) && cronValid && (kind === 'deploy' || command.trim());
 
   return (
     <Card>
       <CardBody>
         <div className="mb-2 flex items-center gap-2 text-sm font-medium text-slate-300">
-          <Clock size={15} className="text-slate-500" /> Scheduled jobs
+          <CalendarClock size={15} className="text-slate-500" /> Scheduled jobs
         </div>
-        <p className="mb-3 text-xs text-slate-500">Cron-scheduled redeploys or container commands (5-field expressions, server timezone).</p>
+        <p className="mb-3 text-xs text-slate-500">Cron-scheduled redeploys or container commands (server timezone).</p>
 
         <form
           onSubmit={(e) => {
@@ -194,22 +257,70 @@ function JobsCard({ serviceId }: { serviceId: number }) {
           className="space-y-2"
         >
           <div className="grid grid-cols-2 gap-2">
-            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="nightly-rebuild" className="h-8 text-xs" />
-            <Input value={cron} onChange={(e) => setCron(e.target.value)} placeholder="0 3 * * *" className="h-8 font-mono text-xs" />
-          </div>
-          <div className="flex gap-2">
-            <select
-              value={kind}
-              onChange={(e) => setKind(e.target.value as 'deploy' | 'exec')}
-              className="h-8 flex-1 rounded-lg bg-black/30 px-2 text-xs text-slate-100 ring-1 ring-inset ring-white/10"
-            >
+            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="nightly-rebuild" aria-label="Job name" className="h-8 text-xs" />
+            <select value={kind} onChange={(e) => setKind(e.target.value as 'deploy' | 'exec')} aria-label="Job action" className={selectCls}>
               <option value="deploy">Redeploy the service</option>
               <option value="exec">Run a command in the container</option>
             </select>
-            {kind === 'exec' && (
-              <Input value={command} onChange={(e) => setCommand(e.target.value)} placeholder="pg_dump … / npm run cache:clean" className="h-8 flex-1 font-mono text-xs" />
+          </div>
+          {kind === 'exec' && (
+            <Input value={command} onChange={(e) => setCommand(e.target.value)} placeholder="pg_dump … / npm run cache:clean" className="h-8 font-mono text-xs" />
+          )}
+
+          <div className="flex gap-2">
+            <select
+              value={presetId}
+              onChange={(e) => setPresetId(e.target.value)}
+              aria-label="Schedule preset"
+              className={cn(selectCls, 'flex-1')}
+            >
+              {PRESETS.map((p) => (
+                <option key={p.id} value={p.id}>{p.label}</option>
+              ))}
+            </select>
+            {preset.needs && (
+              <Input
+                type="time"
+                value={time}
+                onChange={(e) => setTime(e.target.value)}
+                aria-label="Time of day"
+                className="h-8 w-[7.5rem] shrink-0 px-2 font-mono text-xs"
+              />
+            )}
+            {preset.needs === 'weekday-time' && (
+              <select value={weekday} onChange={(e) => setWeekday(Number(e.target.value))} aria-label="Day of week" className={cn(selectCls, 'shrink-0')}>
+                {WEEKDAY_LABELS.map((label, i) => (
+                  <option key={label} value={i}>{label}</option>
+                ))}
+              </select>
+            )}
+            {preset.needs === 'monthday-time' && (
+              <select value={monthday} onChange={(e) => setMonthday(Number(e.target.value))} aria-label="Day of month" className={cn(selectCls, 'shrink-0')}>
+                {Array.from({ length: 28 }, (_, i) => i + 1).map((d) => (
+                  <option key={d} value={d}>{d}</option>
+                ))}
+              </select>
             )}
           </div>
+          {isCustom && (
+            <Input
+              value={customCron}
+              onChange={(e) => setCustomCron(e.target.value)}
+              placeholder="0 3 * * *"
+              aria-label="Cron expression"
+              className={cn('h-8 font-mono text-xs', customCron.trim() !== '' && !cronValid && 'ring-rose-500/50')}
+            />
+          )}
+
+          <p className={cn('text-[11px]', isCustom && !cronValid ? 'text-rose-300/90' : 'text-slate-600')}>
+            {cronValid && nextRun && (
+              <span className="mr-2 inline-flex items-center gap-1 rounded bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-300">
+                <Clock size={9} /> next {untilLabel(nextRun)}
+              </span>
+            )}
+            {description || '\u00A0'}
+          </p>
+
           <Button type="submit" size="sm" variant="secondary" disabled={!canCreate || create.isPending}>
             <Plus size={13} /> Add job
           </Button>
@@ -221,37 +332,46 @@ function JobsCard({ serviceId }: { serviceId: number }) {
           ) : !jobs.data || jobs.data.length === 0 ? (
             <p className="py-2 text-xs text-slate-600">No scheduled jobs.</p>
           ) : (
-            jobs.data.map((j) => (
-              <div key={j.id} className="group flex items-center justify-between rounded-lg bg-white/[0.02] px-3 py-2 ring-1 ring-inset ring-white/5">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2 text-xs">
-                    <span className="font-medium text-slate-200">{j.name}</span>
-                    <code className="rounded bg-black/30 px-1.5 py-0.5 font-mono text-[10px] text-indigo-300">{j.cron}</code>
-                    <span className="text-[10px] uppercase tracking-wide text-slate-500">{j.kind}</span>
+            jobs.data.map((j: JobEntry) => {
+              const summary = describeCron(j.cron);
+              return (
+                <div key={j.id} className="group flex items-center justify-between rounded-lg bg-white/[0.02] px-3 py-2 ring-1 ring-inset ring-white/5">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
+                      <span className="font-medium text-slate-200">{j.name}</span>
+                      <code className="rounded bg-black/30 px-1.5 py-0.5 font-mono text-[10px] text-indigo-300" title={summary ?? undefined}>{j.cron}</code>
+                      <span className="text-[10px] uppercase tracking-wide text-slate-500">{j.kind}</span>
+                    </div>
+                    <div className="mt-0.5 flex items-center gap-2 text-[10px] text-slate-500">
+                      {summary && <span>{summary}</span>}
+                      {j.kind === 'exec' && j.command && (
+                        <span className="truncate font-mono" title={j.command}>{j.command}</span>
+                      )}
+                      {j.lastRunAt && (
+                        <span title={formatDateTime(j.lastRunAt)} className="shrink-0 text-slate-600">last ran {formatRelative(j.lastRunAt)}</span>
+                      )}
+                    </div>
                   </div>
-                  {j.kind === 'exec' && j.command && (
-                    <div className="mt-0.5 truncate font-mono text-[10px] text-slate-500" title={j.command}>{j.command}</div>
-                  )}
+                  <div className="flex shrink-0 items-center gap-2">
+                    <button type="button"
+                      onClick={() => toggle.mutate({ id: j.id, enabled: j.enabled })}
+                      className={cn(
+                        'rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset transition',
+                        j.enabled ? 'bg-emerald-500/15 text-emerald-300 ring-emerald-500/20' : 'bg-slate-500/15 text-slate-400 ring-slate-500/20',
+                      )}
+                    >
+                      {j.enabled ? 'on' : 'off'}
+                    </button>
+                    <button type="button" onClick={() => runNow.mutate(j.id)} className="text-[11px] text-slate-500 hover:text-indigo-300" title="Run now">
+                      run
+                    </button>
+                    <button type="button" onClick={() => remove.mutate(j.id)} className="text-slate-600 transition hover:text-rose-400" title="Delete job">
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
                 </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  <button type="button"
-                    onClick={() => toggle.mutate({ id: j.id, enabled: j.enabled })}
-                    className={cn(
-                      'rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset transition',
-                      j.enabled ? 'bg-emerald-500/15 text-emerald-300 ring-emerald-500/20' : 'bg-slate-500/15 text-slate-400 ring-slate-500/20',
-                    )}
-                  >
-                    {j.enabled ? 'on' : 'off'}
-                  </button>
-                  <button type="button" onClick={() => runNow.mutate(j.id)} className="text-[11px] text-slate-500 hover:text-indigo-300" title="Run now">
-                    run
-                  </button>
-                  <button type="button" onClick={() => remove.mutate(j.id)} className="text-slate-600 transition hover:text-rose-400" title="Delete job">
-                    <Trash2 size={13} />
-                  </button>
-                </div>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
       </CardBody>

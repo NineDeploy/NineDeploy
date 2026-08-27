@@ -13,7 +13,8 @@ import { isOperator } from '../lib/resourceAccess.js';
 import { dockerBuilder } from '../engine/builders/docker.js';
 import { pm2Builder } from '../engine/builders/pm2.js';
 import { composeBuilder } from '../engine/builders/compose.js';
-import { writeDynamicConfig } from '../engine/proxy.js';
+import { writeDynamicConfig, getAcmeEmail } from '../engine/proxy.js';
+import { getSettingString } from '../lib/settings.js';
 import { getServiceTags, replaceServiceTags } from './serviceTags.js';
 
 async function stopRuntimeFor(service: { runtimeId: string | null; type: string }) {
@@ -377,13 +378,14 @@ export const webhookMgmtRoutes: FastifyPluginAsync = async (app) => {
     const id = parseId((req.params as { id: string }).id);
     await loadServiceForUser(app.db, id, req.user!);
     const rows = await app.db.query.webhooks.findMany({ where: eq(webhooks.serviceId, id) });
+    const origin = await panelOrigin(app.db);
     return rows.map((w) => ({
       id: w.id,
       branch: w.branch,
       active: w.active,
       watchPaths: w.watchPaths ?? '',
       sourceId: w.sourceId ?? null,
-      url: webhookUrl(w.id),
+      url: `${origin}/v1/hooks/${w.id}`,
       createdAt: w.createdAt.toISOString(),
     }));
   });
@@ -410,7 +412,7 @@ export const webhookMgmtRoutes: FastifyPluginAsync = async (app) => {
       })
       .returning();
     // The raw secret is returned exactly once.
-    return { id: w!.id, branch: w!.branch, active: w!.active, sourceId: w!.sourceId, url: webhookUrl(w!.id), secret };
+    return { id: w!.id, branch: w!.branch, active: w!.active, sourceId: w!.sourceId, url: await webhookUrl(app.db, w!.id), secret };
   });
 
   app.delete('/:id/webhooks/:hookId', async (req) => {
@@ -422,6 +424,28 @@ export const webhookMgmtRoutes: FastifyPluginAsync = async (app) => {
   });
 };
 
-function webhookUrl(id: number): string {
-  return `${config.publicUrl}/v1/hooks/${id}`;
+/**
+ * Webhook URLs are pasted into GitHub/GitLab by the operator, so they must
+ * point at the address the panel is actually reachable on. The
+ * Settings→Security "panel domain" (or NINEDEPLOY_DOMAIN) is that runtime
+ * truth; NINEDEPLOY_PUBLIC_URL defaults to http://localhost:3000 and would
+ * otherwise leak a localhost URL into every copied hook. Scheme mirrors the
+ * Traefik panel router: TLS only when an ACME email is configured.
+ */
+async function panelOrigin(db: DB): Promise<string> {
+  let host = '';
+  try {
+    host = String((await getSettingString(db, 'panel_domain', null)) ?? process.env['NINEDEPLOY_DOMAIN'] ?? '')
+      .replace(/[^A-Za-z0-9.\-*]/g, '')
+      .replace(/^\.+|\.+$/g, '');
+  } catch {
+    host = '';
+  }
+  if (!host || host === '*' || host.startsWith('.')) return config.publicUrl;
+  const tls = await getAcmeEmail(db).catch(() => config.acmeEmail);
+  return `${tls ? 'https' : 'http'}://${host}`;
+}
+
+async function webhookUrl(db: DB, id: number): Promise<string> {
+  return `${await panelOrigin(db)}/v1/hooks/${id}`;
 }

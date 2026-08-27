@@ -235,6 +235,28 @@ function SettingsCard({ serviceId }: { serviceId: number }) {
               <div className="col-span-full mt-2 border-t border-white/5 pt-4 text-xs font-medium uppercase tracking-wide text-slate-500 flex items-center gap-1.5">
                 <Layers size={13} className="text-indigo-400" /> CI/CD Lifecycle Hooks
               </div>
+              <div className="col-span-full rounded-lg border border-white/[0.05] bg-white/[0.02] p-3 text-[11px] leading-relaxed text-slate-500 space-y-1">
+                <p>
+                  <span className="font-medium text-slate-300">Order:</span> pre-deploy runs right after the code checkout (before build) · post-deploy
+                  runs once the healthcheck passes and the new container is live · pre-stop during old-container shutdown.
+                </p>
+                <p>
+                  Commands run on the HOST inside this service&apos;s repo directory and receive the full runtime env — including managed-database keys
+                  (<code className="font-mono text-[10px] text-indigo-200">DATABASE_URL</code>,{" "}
+                  <code className="font-mono text-[10px] text-indigo-200">WORDPRESS_DB_*</code>, …). That makes volume/repair one-liners possible, e.g.
+                  regenerating a baked config:
+                </p>
+                <code className="block overflow-x-auto rounded bg-black/30 px-2 py-1 font-mono text-[10px] text-indigo-200">
+                  docker run --rm -v nd-svc-web-html:/data alpine sh -c &quot;rm -f /data/wp-config.php&quot;
+                </code>
+                <p>
+                  Pre-deploy failure <span className="text-slate-300">fails the deploy</span>; post-deploy failure is logged but non-fatal. Everything
+                  streams into the deployment log.
+                </p>
+                <p>Fields take ONE command (argv-style) — wrap compound logic yourself, e.g.{" "}
+                  <code className="font-mono text-[10px] text-indigo-200">sh -c &quot;a &amp;&amp; b&quot;</code>.
+                </p>
+              </div>
               <Field label="Pre-deploy command (e.g. DB migrations)">
                 <Input value={form.preDeployCmd} onChange={set('preDeployCmd')} placeholder="npm run db:migrate" className="h-9 font-mono text-xs" />
               </Field>

@@ -36,7 +36,11 @@ describe('bundled Hub template contract', () => {
     }
 
     expect(templates.find((template) => template.id === 'wordpress')?.databaseEnv).toEqual({
-      WORDPRESS_DB_HOST: 'hostPort',
+      // 'host' (internal bridge alias), NOT 'hostPort': WordPress writes
+      // DB_HOST into wp-config.php INSIDE its persistent volume on first boot
+      // and never rewrites it — the mapping must resolve to something that
+      // stays valid across database container recreation.
+      WORDPRESS_DB_HOST: 'host',
       WORDPRESS_DB_USER: 'username',
       WORDPRESS_DB_PASSWORD: 'password',
       WORDPRESS_DB_NAME: 'database',

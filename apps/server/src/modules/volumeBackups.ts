@@ -45,6 +45,7 @@ function serialize(b: typeof backups.$inferSelect) {
     scope: b.scope,
     status: b.status,
     sizeBytes: b.sizeBytes,
+    label: b.label ?? null,
     hasRemoteCopy: Boolean(b.remoteKey),
     createdAt: b.createdAt.toISOString(),
   };
@@ -118,6 +119,9 @@ export const volumeBackupRoutes: FastifyPluginAsync = async (app) => {
     if (!(await volumeExists(name))) throw notFound(`Volume '${name}' disappeared`);
 
     const { file } = newBackupFile(name, input.label);
+    // Persist the label so the panel can NAME the snapshot; the filename only
+    // embeds it. Default matches what "Backup now" has always meant.
+    const label = input.label?.trim() || 'manual';
     const log = (line: string) => req.log.info({ component: 'volume-backup' }, line);
 
     // Reserve the row up front so the worker / UI can observe status. The
@@ -131,6 +135,7 @@ export const volumeBackupRoutes: FastifyPluginAsync = async (app) => {
         scope: 'volumes',
         status: 'running',
         path: file,
+        label,
       })
       .returning();
 
@@ -298,10 +303,11 @@ export async function backupServiceVolumes(
       failed++;
       continue;
     }
-    const { file } = newBackupFile(name, `schedule-${new Date().toISOString().slice(0, 10)}`);
+    const scheduledLabel = `schedule-${new Date().toISOString().slice(0, 10)}`;
+    const { file } = newBackupFile(name, scheduledLabel);
     const [row] = await app.db
       .insert(backups)
-      .values({ databaseId: null, volumeName: name, scope: 'volumes', status: 'running', path: file })
+      .values({ databaseId: null, volumeName: name, scope: 'volumes', status: 'running', path: file, label: scheduledLabel })
       .returning();
     try {
       await backupVolume(name, file, log);

@@ -99,7 +99,7 @@ export function createFakeApiModule() {
       downloadUrl: vi.fn((volumeName: string, id: number) => `/v1/volumes/${volumeName}/backups/${id}/download`),
     },
     containers: { inspect: vi.fn(), compose: vi.fn(), listFiles: vi.fn(), readFile: vi.fn(), writeFile: vi.fn(), mkdir: vi.fn(), deleteFile: vi.fn() },
-    system: { resources: vi.fn(), pruneImages: vi.fn(), exportUrl: vi.fn(), updateCheck: vi.fn(), dockerEvents: vi.fn() },
+    system: { resources: vi.fn(), pruneImages: vi.fn(), exportUrl: vi.fn(), updateCheck: vi.fn(), updateStatus: vi.fn(), updateStart: vi.fn(), dockerEvents: vi.fn() },
     networks: { list: vi.fn(), create: vi.fn(), remove: vi.fn(), attach: vi.fn(), detach: vi.fn() },
     tunnels: { list: vi.fn(), create: vi.fn(), remove: vi.fn() },
     activity: { list: vi.fn() },

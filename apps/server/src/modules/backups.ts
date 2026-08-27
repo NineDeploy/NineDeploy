@@ -14,8 +14,15 @@ function serialize(b: typeof backups.$inferSelect) {
   return {
     id: b.id,
     databaseId: b.databaseId,
+    // Present on scope='volumes' rows so the Backups page can show WHICH
+    // volume a snapshot belongs to (and tell the two scopes apart).
+    scope: b.scope,
+    volumeName: b.volumeName,
     status: b.status,
     sizeBytes: b.sizeBytes,
+    // Volume-scope rows carry their snapshot name ('manual', 'schedule-…');
+    // NULL for database rows, which are named by `databaseName`.
+    label: b.scope === 'volumes' ? (b.label ?? null) : null,
     createdAt: b.createdAt.toISOString(),
   };
 }

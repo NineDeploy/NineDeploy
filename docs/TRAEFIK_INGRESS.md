@@ -15,7 +15,7 @@ NineDeploy embeds Traefik as its reverse proxy and ingress controller, providing
 ## 🔒 2. Let's Encrypt SSL Certificates
 
 - **HTTP-01 Challenge**: Automatic SSL issuance for apex and subdomains on port 80/443.
-- **DNS-01 Challenge**: Automatic wildcard SSL certificates (`*.yourdomain.com`) via Cloudflare, Route53, or DigitalOcean DNS API integration.
+- **DNS-01 Challenge**: Automatic wildcard SSL certificates (`*.yourdomain.com`) via Cloudflare, DigitalOcean, Hetzner, Linode, Gandi or DuckDNS DNS API integration.
 - **Auto-Renewal**: Traefik automatically renews certificates 30 days before expiration.
 
 ---

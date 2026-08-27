@@ -204,5 +204,96 @@ describe('service volume attachments', () => {
       const res = await app.inject({ method: 'DELETE', url: '/1/volumes/9', headers: asUser() });
       expect(res.statusCode).toBe(404);
     });
+
+    it('detaches even while the container is RUNNING and queues the mount-drop redeploy', async () => {
+      const queuedDeploys: Array<Record<string, unknown>> = [];
+      const app = await buildTestApp({
+        db: createFakeDb({
+          // runtimeId present + running: the old stop-first guard would have
+          // answered 409 here and silently swallowed the detach in the UI.
+          findFirst: {
+            services: svcRow({ id: 1, slug: 'web', type: 'docker', runtimeId: 'c-web-1', status: 'running' }),
+            service_volume_attachments: {
+              id: 9, serviceId: 1, volumeName: 'nd-svc-web-uploads',
+              containerPath: '/uploads', readOnly: false,
+              createdAt: new Date(0), updatedAt: new Date(0),
+            },
+          },
+          select: { serviceVolumeAttachments: [] },
+          insert: {
+            deployments: (values: Record<string, unknown>) => {
+              queuedDeploys.push(values);
+              return [{ id: 77 }];
+            },
+          },
+        }),
+      });
+      await app.register(serviceVolumesRoutes);
+      const res = await app.inject({ method: 'DELETE', url: '/1/volumes/9', headers: asUser() });
+      expect(res.statusCode).toBe(204);
+      expect(queuedDeploys).toHaveLength(1);
+      expect(String(queuedDeploys[0]?.message)).toContain('Volume detached');
+    });
+
+    it('deletes the baked config from the volume and queues a redeploy (config repair)', async () => {
+      const queuedDeploys: Array<Record<string, unknown>> = [];
+      const app = await buildTestApp({
+        db: createFakeDb({
+          findFirst: {
+            services: svcRow({ id: 1, slug: 'web', type: 'docker' }),
+            service_volume_attachments: {
+              id: 9, serviceId: 1, volumeName: 'nd-svc-web-html',
+              containerPath: '/var/www/html', readOnly: false,
+              createdAt: new Date(0), updatedAt: new Date(0),
+            },
+          },
+          select: { serviceVolumeAttachments: [] },
+          insert: {
+            deployments: (values: Record<string, unknown>) => {
+              queuedDeploys.push(values);
+              return [{ id: 78 }];
+            },
+          },
+        }),
+      });
+      await app.register(serviceVolumesRoutes);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/1/volumes/config-repair',
+        headers: asUser(),
+        payload: { attachmentId: 9, filePath: 'wp-config.php' },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toMatchObject({ ok: true, deploymentId: 78 });
+      expect(queuedDeploys).toHaveLength(1);
+      expect(String(queuedDeploys[0]?.message)).toContain('Config repaired');
+
+      // The docker call removed exactly the requested file from the volume root.
+      const shCmds = execMocks.capture.mock.calls.map(
+        ([_cmd, args]) => (Array.isArray(args) ? ((args.at(-1) as string | undefined) ?? '') : ''),
+      );
+      expect(shCmds.some((cmd) => cmd.includes("rm -f -- '/data/wp-config.php'"))).toBe(true);
+    });
+
+    it.each([
+      [{ filePath: '../etc/passwd' }, 'path traversal attempt'],
+      [{ filePath: 'sub/dir/wp-config.php' }, 'nested path'],
+      [{}, 'no selector'],
+      [{ attachmentId: 9, volumeName: 'nd-svc-web-html', filePath: 'wp-config.php' }, 'both selectors'],
+    ])('rejects config-repair payload: %j (%s)', async (payload) => {
+      const app = await buildTestApp({
+        db: createFakeDb({ findFirst: { services: svcRow({ id: 1, slug: 'web', type: 'docker' }) } }),
+      });
+      await app.register(serviceVolumesRoutes);
+      const res = await app.inject({
+        method: 'POST',
+        url: '/1/volumes/config-repair',
+        headers: asUser(),
+        payload,
+      });
+      expect([400, 404]).toContain(res.statusCode); // validation error before any docker call
+      expect(execMocks.capture).not.toHaveBeenCalledWith('docker', expect.arrayContaining(['sh']));
+    });
   });
 });

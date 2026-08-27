@@ -1,8 +1,36 @@
 const releases = [
   {
-    version: "0.3.2",
+    version: "0.3.3",
     date: "2026-08",
     status: "current",
+    notes: [
+      {
+        t: "Full-System Audit Hardening",
+        items: [
+          "Preview domains could route hosts nobody verified: PR-preview Traefik domains went active with a free-form pattern and skipped ownership proof — rendered preview hostnames are now constrained to the instance wildcard zone before routing goes active",
+          "The .ninedeploy manifest's database.ref resolved by slug with no access decision, letting repo pushes pull another tenant's managed-database connection string into their runtime — attachments now require the deploying service's owner to see that database",
+          "Webhook-created deploys bypassed the host-privilege gate manual deploys honor: both webhook branches now authorize against the service owner",
+          "PR previews copied the parent's secrets into environments built from PR code — previews inherit non-secret configuration only, and the webhook response reports how many secrets were withheld",
+          "Server-side git clones are egress-gated across all three transports; every DNS answer must be public (LAN remotes keep working via NINEDEPLOY_ALLOW_PRIVATE_EGRESS=1)",
+          "Log drains moved onto the same guarded fetch as notification webhooks — drain bodies carry raw log lines, making them the better exfil sink",
+        ],
+      },
+      {
+        t: "Reliability Fixes",
+        items: [
+          "Compose redeploys deleted the deployment they had just shipped — finalize now recognizes in-place redeploys instead of tearing the stack down two seconds after go-live",
+          "A Docker daemon outage at boot no longer kills the panel; the readiness hook heals failed-open like every other background subsystem",
+          "Migration 0031 sorted before 0030 and would never apply on databases migrated during the interim window; reordered monotonically with replay-safe guards",
+          "Deleting a service mid-deploy returns 409 instead of orphaning a fully running candidate container",
+          "Pre-upgrade backup archives are created under umask 077 — master.key used to land world-readable on shared hosts",
+        ],
+      },
+    ],
+  },
+  {
+    version: "0.3.2",
+    date: "2026-08",
+    status: "stable",
     notes: [
       {
         t: "Honest Runtimes",

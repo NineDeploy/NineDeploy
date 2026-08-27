@@ -13,6 +13,8 @@ import {
   LayoutGrid,
   List,
   MemoryStick,
+  Pause,
+  Play,
   Radio,
   Search,
   Server,
@@ -35,7 +37,7 @@ import {
   cn,
 } from '../components/ui.js';
 import { Sparkline } from '../components/Sparkline.js';
-import { formatBytes, toInt } from '../lib/format.js';
+import { formatBytes, formatRelative, toInt } from '../lib/format.js';
 
 export function Monitoring() {
   const { user: me } = useAuth();
@@ -459,14 +461,36 @@ export function Monitoring() {
   );
 }
 
+type AlertMetric = 'cpu' | 'memory' | 'cert-expiry';
+
+/** Display metadata per rule metric: label, value unit, sane default threshold. */
+const METRIC_META: Record<AlertMetric, { label: string; unit: string; threshold: number }> = {
+  cpu: { label: 'CPU', unit: '%', threshold: 80 },
+  memory: { label: 'Memory', unit: 'MiB', threshold: 512 },
+  'cert-expiry': { label: 'Cert expiry', unit: 'days', threshold: 14 },
+};
+
+const ALERT_STATUS_UI: Record<string, { label: string; cls: string }> = {
+  ok: { label: 'OK', cls: 'bg-emerald-500/15 text-emerald-300 ring-emerald-500/20' },
+  breaching: { label: 'BREACHING', cls: 'bg-amber-500/15 text-amber-300 ring-amber-500/20' },
+  firing: { label: 'FIRING', cls: 'bg-rose-500/15 text-rose-300 ring-rose-500/20 animate-pulse' },
+};
+const PAUSED_UI = { label: 'PAUSED', cls: 'bg-slate-500/15 text-slate-400 ring-slate-500/20' };
+
+/** Human duration for a run of 30s collector samples ("~1m", "~5m"). */
+function windowHint(windows: number): string {
+  const sec = windows * 30;
+  return sec % 60 === 0 ? `~${sec / 60}m` : `~${sec}s`;
+}
+
 function AlertRulesCard({ isAdmin }: { isAdmin: boolean }) {
   const qc = useQueryClient();
   const { toast } = useToast();
-  const rules = useQuery({ queryKey: ['alerts'], queryFn: () => api.alerts.list() });
+  const rules = useQuery({ queryKey: ['alerts'], queryFn: () => api.alerts.list(), refetchInterval: 15_000 });
   const [name, setName] = useState('');
-  const [metric, setMetric] = useState<'cpu' | 'memory' | 'cert-expiry'>('cpu');
+  const [metric, setMetric] = useState<AlertMetric>('cpu');
   const [operator, setOperator] = useState<'>' | '<'>('>');
-  const [threshold, setThreshold] = useState('80');
+  const [threshold, setThreshold] = useState(String(METRIC_META.cpu.threshold));
   // cert-expiry is host-wide — the server rejects service-scoped rules for it.
   const services = useQuery({ queryKey: ['services'], queryFn: () => api.services.list(), staleTime: 60_000 });
   const [serviceId, setServiceId] = useState('');
@@ -480,7 +504,7 @@ function AlertRulesCard({ isAdmin }: { isAdmin: boolean }) {
         operator,
         threshold: toInt(threshold) ?? 0,
         serviceId: metric === 'cert-expiry' ? null : serviceId ? Number(serviceId) : null,
-        durationWindows: toInt(windows, 1)!,
+        durationWindows: Math.min(Math.max(toInt(windows, 1)!, 1), 120),
       }),
     onSuccess: () => {
       setName('');
@@ -499,97 +523,216 @@ function AlertRulesCard({ isAdmin }: { isAdmin: boolean }) {
     onError: () => toast('Could not delete the alert rule', 'error'),
   });
 
+  const toggle = useMutation({
+    mutationFn: (r: { id: number; enabled: boolean }) => api.alerts.update(r.id, { enabled: r.enabled }),
+    onSuccess: (_data, vars) => {
+      void qc.invalidateQueries({ queryKey: ['alerts'] });
+      toast(vars.enabled ? 'Alert rule enabled' : 'Alert rule paused', 'success');
+    },
+    onError: () => toast('Could not update the alert rule', 'error'),
+  });
+
   const rulesList = rules.data ?? [];
+  const firingCount = rulesList.filter((r) => r.status === 'firing').length;
+  const breachingCount = rulesList.filter((r) => r.status === 'breaching').length;
+  const serviceNames = new Map((services.data ?? []).map((s) => [s.id, s.name]));
+
+  /** Metric switch resets the form to that metric's sensible defaults. */
+  const pickMetric = (next: AlertMetric) => {
+    setMetric(next);
+    setThreshold(String(METRIC_META[next].threshold));
+    if (next === 'cert-expiry') setOperator('<'); // fewer days remaining is the danger
+  };
+
+  const parsedThreshold = toInt(threshold);
+  const canSubmit = Boolean(name.trim()) && parsedThreshold !== undefined;
 
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
-    if (name.trim() && threshold) create.mutate();
+    if (canSubmit) create.mutate();
   };
 
   return (
     <>
-      <h2 className="mb-3 mt-8 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
-        <BellRing size={14} /> Alert Rules
-      </h2>
+      <div className="mb-3 mt-8 flex flex-wrap items-center justify-between gap-2">
+        <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
+          <BellRing size={14} /> Alert Rules
+        </h2>
+        {rulesList.length > 0 && (
+          <div className="flex items-center gap-1.5 text-[11px] font-medium">
+            {firingCount > 0 && (
+              <span className="rounded-full bg-rose-500/15 px-2 py-0.5 text-rose-300 ring-1 ring-inset ring-rose-500/20">
+                {firingCount} firing
+              </span>
+            )}
+            {breachingCount > 0 && (
+              <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-amber-300 ring-1 ring-inset ring-amber-500/20">
+                {breachingCount} breaching
+              </span>
+            )}
+            <span className="text-slate-500">{rulesList.length} rules</span>
+          </div>
+        )}
+      </div>
+
       <Card className="p-4">
+        {/* Explain what actually happens behind the table — the rules are
+            evaluated by the collector's real state machine, not this page. */}
+        <p className="mb-3 border-b border-white/5 pb-3 text-[11px] leading-relaxed text-slate-500">
+          Evaluated every 30s by the metrics collector. A breach must persist for the configured samples before the
+          rule fires; fired alerts re-notify after a 30 min cooldown and recover automatically when the metric returns
+          within its threshold. Notifications are delivered to your configured channels under{' '}
+          <Link to="/settings" className="text-indigo-400 hover:text-indigo-300">Settings</Link>.
+        </p>
+
         {rules.isLoading ? (
           <Skeleton className="h-16 w-full" />
         ) : rules.isError ? (
           <ErrorCard title="Couldn't load alert rules" error={rules.error} onRetry={() => rules.refetch()} />
         ) : rulesList.length === 0 ? (
           <p className="py-4 text-center text-sm text-slate-500">
-            No alert rules yet — add one to get notified when a metric crosses a threshold.
+            No alert rules yet{isAdmin ? ' — add one below to get notified when a metric crosses a threshold.' : '.'}
           </p>
         ) : (
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-xs uppercase tracking-wide text-slate-500">
-                <th className="pb-2">Rule</th>
-                <th className="pb-2">Condition</th>
-                <th className="pb-2">Current</th>
-                <th className="pb-2">Status</th>
-                <th className="pb-2" />
-              </tr>
-            </thead>
-            <tbody>
-              {rulesList.map((r) => (
-                <tr key={r.id} className="border-t border-white/5">
-                  <td className="py-2 font-medium">{r.name}</td>
-                  <td className="py-2 font-mono text-xs text-slate-400">
-                    {r.metric} {r.operator} {r.threshold}
-                  </td>
-                  <td className="py-2 tabular-nums text-slate-300">{r.lastValue ?? '—'}</td>
-                  <td className="py-2">
-                    <StatusBadge status={r.status === 'firing' ? 'error' : r.status === 'breaching' ? 'deploying' : 'running'} />
-                  </td>
-                  <td className="py-2 text-right">
-                    {isAdmin && (
+          <ul className="divide-y divide-white/5">
+            {rulesList.map((r) => {
+              const meta = METRIC_META[r.metric as AlertMetric] ?? METRIC_META.cpu;
+              const ui = !r.enabled ? PAUSED_UI : ALERT_STATUS_UI[r.status] ?? ALERT_STATUS_UI.ok!;
+              const firedMinutesAgo = r.firedAt ? formatRelative(r.firedAt) : null;
+              return (
+                <li key={r.id} className={cn('flex flex-wrap items-center gap-x-4 gap-y-2 py-3 first:pt-1 last:pb-1', !r.enabled && 'opacity-60')}>
+                  <span
+                    className={cn('inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[10px] font-semibold tracking-wider ring-1 ring-inset', ui.cls)}
+                  >
+                    <span className="h-1.5 w-1.5 rounded-full bg-current" />
+                    {ui.label}
+                  </span>
+
+                  <div className="min-w-40 flex-1 basis-56">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={cn('text-sm font-medium text-slate-200', r.status === 'firing' && r.enabled && 'font-semibold')}>{r.name}</span>
+                      <span
+                        title={r.serviceId ? 'Scoped to one service' : 'Evaluated against host metrics'}
+                        className={cn(
+                          'rounded px-1.5 py-0.5 text-[10px] font-medium ring-1 ring-inset',
+                          r.serviceId ? 'bg-indigo-500/10 text-indigo-300 ring-indigo-500/20' : 'bg-white/[0.04] text-slate-400 ring-white/10',
+                        )}
+                      >
+                        {r.serviceId ? (serviceNames.get(r.serviceId) ?? `service #${r.serviceId}`) : 'host-wide'}
+                      </span>
+                    </div>
+                    <div className="mt-0.5 text-[11px] text-slate-500">
+                      Fires after {r.durationWindows} sample{r.durationWindows > 1 ? 's' : ''} ({windowHint(r.durationWindows)})
+                      {firedMinutesAgo ? ` · fired ${firedMinutesAgo}` : r.lastEvaluatedAt ? ` · checked ${formatRelative(r.lastEvaluatedAt)}` : ' · not evaluated yet'}
+                    </div>
+                  </div>
+
+                  <code className="shrink-0 rounded bg-white/[0.04] px-2 py-1 font-mono text-[11px] text-slate-300 ring-1 ring-inset ring-white/[0.06]">
+                    {meta.label.toLowerCase()} {r.operator} {r.threshold}
+                    {meta.unit === '%' ? '%' : ` ${meta.unit}`}
+                  </code>
+
+                  <div className="w-16 shrink-0 text-right tabular-nums" title="Latest sampled value for this rule">
+                    {r.lastValue == null ? (
+                      <span className="text-sm text-slate-600">—</span>
+                    ) : (
+                      <span className="text-lg font-semibold text-slate-100">
+                        {r.lastValue}
+                        <span className="ml-0.5 text-[10px] font-normal text-slate-500">{meta.unit}</span>
+                      </span>
+                    )}
+                  </div>
+
+                  {isAdmin && (
+                    <div className="ml-auto flex shrink-0 items-center gap-1">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 w-7 p-0"
+                        title={r.enabled ? 'Pause this rule' : 'Re-enable this rule'}
+                        onClick={() => toggle.mutate({ id: r.id, enabled: !r.enabled })}
+                        disabled={toggle.isPending}
+                      >
+                        {r.enabled ? <Pause size={13} /> : <Play size={13} />}
+                      </Button>
                       <Button size="sm" variant="ghost" className="h-7 px-2 text-[11px]" onClick={() => remove.mutate(r.id)}>
                         Delete
                       </Button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                    </div>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
         )}
 
         {isAdmin && (
-          <form onSubmit={onSubmit} className="mt-4 flex flex-wrap items-center gap-2 border-t border-white/5 pt-3">
-            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="rule name" className="h-8 w-40 text-xs" />
-            <Select value={metric} onChange={(e) => setMetric(e.target.value as typeof metric)} className="h-8 w-32 text-xs">
-              <option value="cpu">cpu %</option>
-              <option value="memory">memory MiB</option>
-              <option value="cert-expiry">cert-expiry days</option>
-            </Select>
-            <Select value={operator} onChange={(e) => setOperator(e.target.value as typeof operator)} className="h-8 w-16 text-xs">
-              <option value=">">&gt;</option>
-              <option value="<">&lt;</option>
-            </Select>
-            <Input value={threshold} onChange={(e) => setThreshold(e.target.value)} placeholder="threshold" className="h-8 w-20 font-mono text-xs" />
-            <Select
-              value={metric === 'cert-expiry' ? '' : serviceId}
-              onChange={(e) => setServiceId(e.target.value)}
-              disabled={metric === 'cert-expiry'}
-              className="h-8 w-36 text-xs"
-              title={metric === 'cert-expiry' ? 'cert-expiry rules are host-wide' : 'Scope (empty = host-wide)'}
-            >
-              <option value="">host-wide</option>
-              {(services.data ?? []).map((svc) => (
-                <option key={svc.id} value={svc.id}>{svc.name}</option>
-              ))}
-            </Select>
-            <Input
-              value={windows}
-              onChange={(e) => setWindows(e.target.value)}
-              placeholder="windows"
-              className="h-8 w-20 font-mono text-xs"
-              title="Consecutive 30s samples before firing"
-            />
-            <Button type="submit" size="sm" variant="ghost" className="ml-auto h-8 px-3 text-xs" disabled={create.isPending}>
-              {create.isPending ? '…' : 'Add rule'}
-            </Button>
+          <form onSubmit={onSubmit} className="mt-4 space-y-2 border-t border-white/5 pt-3">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+              <label className="block">
+                <span className="mb-0.5 block text-[10px] uppercase tracking-wide text-slate-500">Rule name</span>
+                <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="rule name" className="h-8 text-xs" />
+              </label>
+              <label className="block">
+                <span className="mb-0.5 block text-[10px] uppercase tracking-wide text-slate-500">Metric</span>
+                <Select value={metric} onChange={(e) => pickMetric(e.target.value as AlertMetric)} className="h-8 text-xs">
+                  <option value="cpu">cpu %</option>
+                  <option value="memory">memory MiB</option>
+                  <option value="cert-expiry">cert-expiry days</option>
+                </Select>
+              </label>
+              <label className="block">
+                <span className="mb-0.5 block text-[10px] uppercase tracking-wide text-slate-500">When</span>
+                <Select value={operator} onChange={(e) => setOperator(e.target.value as typeof operator)} className="h-8 text-xs">
+                  <option value=">">&gt;</option>
+                  <option value="<">&lt;</option>
+                </Select>
+              </label>
+              <label className="block">
+                <span className="mb-0.5 block text-[10px] uppercase tracking-wide text-slate-500">Threshold</span>
+                <Input
+                  type="number"
+                  min={0}
+                  value={threshold}
+                  onChange={(e) => setThreshold(e.target.value)}
+                  placeholder={`threshold (${METRIC_META[metric].unit})`}
+                  className="h-8 font-mono text-xs"
+                />
+              </label>
+              <Select
+                value={metric === 'cert-expiry' ? '' : serviceId}
+                onChange={(e) => setServiceId(e.target.value)}
+                disabled={metric === 'cert-expiry'}
+                className="mt-auto h-8 text-xs"
+                title={metric === 'cert-expiry' ? 'cert-expiry rules are host-wide' : 'Scope (empty = host-wide)'}
+              >
+                <option value="">host-wide</option>
+                {(services.data ?? []).map((svc) => (
+                  <option key={svc.id} value={svc.id}>{svc.name}</option>
+                ))}
+              </Select>
+              <label className="block">
+                <span className="mb-0.5 block text-[10px] uppercase tracking-wide text-slate-500">Fire after</span>
+                <Input
+                  type="number"
+                  min={1}
+                  max={120}
+                  value={windows}
+                  onChange={(e) => setWindows(e.target.value)}
+                  placeholder="windows"
+                  className="h-8 font-mono text-xs"
+                  title="Consecutive 30s samples before firing"
+                />
+              </label>
+            </div>
+            {!canSubmit && (
+              <p className="text-[11px] text-slate-500">A rule needs a name and a numeric threshold before it can be added.</p>
+            )}
+            <div className="flex justify-end">
+              <Button type="submit" size="sm" variant="ghost" className="h-8 px-3 text-xs" disabled={!canSubmit || create.isPending}>
+                {create.isPending ? '…' : 'Add rule'}
+              </Button>
+            </div>
           </form>
         )}
       </Card>

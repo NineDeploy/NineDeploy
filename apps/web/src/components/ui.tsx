@@ -240,6 +240,7 @@ export function Tabs({
 const STATUS_TONES: Record<string, string> = {
   running: 'bg-emerald-500/15 text-emerald-300 ring-emerald-500/20',
   idle: 'bg-slate-500/15 text-slate-300 ring-slate-500/20',
+  superseded: 'bg-slate-500/10 text-slate-400 ring-slate-500/15',
   deploying: 'bg-amber-500/15 text-amber-300 ring-amber-500/20',
   error: 'bg-rose-500/15 text-rose-300 ring-rose-500/20',
   stopped: 'bg-slate-500/15 text-slate-400 ring-slate-500/20',
@@ -352,6 +353,22 @@ export function Modal({
   const panelRef = useRef<HTMLDivElement>(null);
   const isOpen = open !== false;
 
+  // The scroll lock, key trap and initial focus must depend on whether the
+  // dialog IS open — not on whether the caller re-created its callbacks this
+  // render. Every page passes `onClose` as a fresh inline arrow, so keying
+  // this effect on it used to reinstall everything on every keystroke in a
+  // controlled input, and the "focus first element" step yanked the caret
+  // out of whatever field the user was typing in. Read callbacks through
+  // refs so the listener always sees the latest closure while the effect
+  // itself only runs on open/close transitions.
+  const onCloseRef = useRef(onClose);
+  const initialFocusRefSnapshot = useRef(initialFocusRef);
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+    initialFocusRefSnapshot.current = initialFocusRef;
+  });
+
   useEffect(() => {
     // The portal only mounts when isOpen; skip side-effects when closed.
     if (!isOpen) return;
@@ -366,13 +383,13 @@ export function Modal({
         (el) => !(el as HTMLButtonElement).disabled,
       );
 
-    const target = initialFocusRef?.current ?? focusables()[0];
+    const target = initialFocusRefSnapshot.current?.current ?? focusables()[0];
     target?.focus();
 
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.stopPropagation();
-        onClose();
+        onCloseRef.current();
       } else if (e.key === 'Tab') {
         // The header close button is always focusable, so the list is never empty.
         const els = focusables();
@@ -392,7 +409,7 @@ export function Modal({
       document.body.style.overflow = prevOverflow;
       window.removeEventListener('keydown', onKey);
     };
-  }, [onClose, initialFocusRef, isOpen]);
+  }, [isOpen]);
 
   const modalContent = (
     <div className="fixed inset-0 z-[9999] flex items-end justify-center sm:items-center p-4 sm:p-6">

@@ -52,7 +52,7 @@ const bento = [
   {
     icon: Database,
     title: "Managed databases",
-    body: "PostgreSQL, MySQL, MariaDB, Redis, MongoDB — one click, encrypted credentials, connection strings auto-injected into attached services.",
+    body: "PostgreSQL, MySQL, MariaDB, Redis, Valkey, MongoDB, ClickHouse, Meilisearch and RabbitMQ — one click, encrypted credentials, connection strings auto-injected into attached services.",
     tag: "data",
   },
   {
@@ -89,7 +89,7 @@ const compare: Array<{
 }> = [
   { label: "your data stays on your server", us: "✓ always", rawDocker: "✓ yes", managedPaaS: "✗ vendor cloud" },
   { label: "zero-downtime deploys out of the box", us: "✓ blue-green", rawDocker: "✗ DIY scripts", managedPaaS: "✓ yes" },
-  { label: "managed databases + backups", us: "✓ 5 engines, S3", rawDocker: "✗ manual", managedPaaS: "✓ metered" },
+  { label: "managed databases + backups", us: "✓ 9 engines, S3", rawDocker: "✗ manual", managedPaaS: "✓ metered" },
   { label: "automatic HTTPS + wildcard domains", us: "✓ ACME DNS-01", rawDocker: "✗ manual proxy", managedPaaS: "✓ yes" },
   { label: "price at 50 services", us: "$0 · your hardware", rawDocker: "$0 · your weekends", managedPaaS: "$$$ per seat" },
   { label: "lock-in", us: "✗ none · MIT", rawDocker: "✗ none", managedPaaS: "✓ proprietary" },
@@ -106,7 +106,7 @@ const steps = [
     icon: GitBranch,
     n: "02",
     title: "Connect a repo or image",
-    body: "Git (PAT or SSH deploy key), a container image, a Compose stack, or one of 15 runtime-certified hub templates. Watch-path globs keep monorepos quiet.",
+    body: "Git (PAT or SSH deploy key), a container image, a Compose stack, or one of 88 hub templates (16 runtime-certified). Watch-path globs keep monorepos quiet.",
   },
   {
     icon: Rocket,
@@ -128,7 +128,7 @@ export function Home() {
                 self-hosted PaaS
               </span>
               <span className="tag font-bold">v0.3.3</span>
-              <span className="tag">4,405 tests in CI</span>
+              <span className="tag">4,592 tests in CI</span>
             </div>
             <h1 className="text-5xl md:text-7xl font-bold leading-[0.95] tracking-tight">
               Ship like you
@@ -287,9 +287,9 @@ export function Home() {
       {/* ---------------- stats ---------------- */}
       <section className="mx-auto max-w-7xl px-4 py-16 grid grid-cols-2 md:grid-cols-4 gap-5">
         {[
-          { icon: LayoutGrid, k: 15, suffix: "", v: "runtime-certified templates" },
+          { icon: LayoutGrid, k: 16, suffix: "", v: "runtime-certified templates" },
           { icon: Boxes, k: 41, suffix: "", v: "tables, one SQLite file" },
-          { icon: RotateCcw, k: 4405, suffix: "", v: "tests in CI" },
+          { icon: RotateCcw, k: 4592, suffix: "", v: "tests in CI" },
           { icon: KeyRound, k: 95, suffix: "%+", v: "enforced coverage floor" },
         ].map((s, i) => (
           <Reveal key={s.v} delay={i * 60}>

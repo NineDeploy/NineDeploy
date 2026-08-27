@@ -1,6 +1,7 @@
 import { createDb, runMigrations, sql, type DB } from '@ninedeploy/db';
 import fp from 'fastify-plugin';
 import { config } from '../config.js';
+import { reconcileDeploymentHistory } from '../engine/pipeline.js';
 
 // Augment the Fastify instance so `fastify.db` is typed everywhere.
 declare module 'fastify' {
@@ -65,6 +66,16 @@ export default fp(
 
       // Run runtime self-healing column check
       await ensureEssentialColumns(db);
+
+      // Heal stale deployment history once per boot: at most one `running`
+      // row per live service, everything else reads `superseded`. Must never
+      // block startup on a hiccup.
+      try {
+        const demoted = await reconcileDeploymentHistory(db);
+        if (demoted > 0) fastify.log.info({ demoted }, 'stale running deployments marked superseded');
+      } catch (err) {
+        fastify.log.warn({ err }, 'deployment history reconciliation skipped');
+      }
 
       fastify.decorate('db', db);
     }
