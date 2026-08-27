@@ -66,7 +66,10 @@ function renderTab() {
 
 /** The `build` object the form sent on the first PATCH. */
 async function savedBuild(): Promise<Record<string, unknown>> {
-  await waitFor(() => expect(apiMock.api.services.update).toHaveBeenCalled());
+  // Generous timeout: on shared CI runners this whole suite can be starved of
+  // CPU while dozens of sibling vitest processes boot, and the default 1 s has
+  // been observed to expire before react-query dispatches the PATCH.
+  await waitFor(() => expect(apiMock.api.services.update).toHaveBeenCalled(), { timeout: 10_000 });
   const [, patch] = apiMock.api.services.update.mock.calls[0] as [number, { build: Record<string, unknown> }];
   return patch.build;
 }

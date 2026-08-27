@@ -15,6 +15,17 @@ const h = vi.hoisted(() => ({
 
 vi.mock('../../src/lib/exec.js', () => ({ capture: h.capture, run: h.run, sleep: h.sleep }));
 
+// Pin the containerd socket probe to "absent" so `containerdCliArgs` never
+// prepends `--address`: runners where a standalone containerd daemon happens to
+// be listening (e.g. GitHub's Ubuntu images since late August 2026) would
+// otherwise make every literal ctr argument array below diverge from the
+// expectation. Socket discovery itself is covered directly in the
+// "targets Docker managed containerd" case above.
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return { ...actual, existsSync: () => false };
+});
+
 describe('pullDockerImage', () => {
   beforeEach(() => vi.clearAllMocks());
 
