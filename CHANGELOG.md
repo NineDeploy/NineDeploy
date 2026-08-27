@@ -11,6 +11,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.3] - 2026-08-27
+
+### Security
+
+- **Preview Domain Patterns Could Route Hosts Nobody Verified**: webhook-created PR previews inserted their Traefik domain row directly with `status: 'active'`, skipping the ownership proof every other domain path requires — and the pattern (`previewDomainPattern`) was free-form member input. A pattern like `*.victim-tld.com` rendered a router that claimed every subdomain of that zone, cookie and Authorization headers included; only the panel's own priority guard survived. Rendered preview hostnames are now constrained to the instance wildcard zone with a strict label shape before anything goes active. A rejected pattern skips only routing: the preview still deploys and serves on its internal port, and the webhook response names the skip reason.
+- **`.ninedeploy` Could Attach Any Managed Database By Slug**: `database.ref` was resolved by slug with no access decision at all, so anyone who could push to the tracked repository could have another tenant's managed-database connection string — password included — injected into their own runtime environment on the next deploy. Attachments now require the database to be visible to the deploying service's owner (mirroring `loadDatabaseForUser`, minus any session bypass), and are refused outright for services without a recorded owner.
+- **Webhook Deployments Bypassed The Host-Privilege Gate**: manual deploys refuse PM2/compose/hook-capable/docker-socket services to non-operators, but a verified webhook event queued the very same deployment straight into the table — handing push access on any tracked repo a path back to host command execution. Both webhook branches (push deploys and preview creation) now authorize against the service owner through `assertMayDeployStoredService`.
+- **PR Previews Inherited Production Secrets**: creating a preview copied the parent service's entire environment, secrets included, into an environment built from PR-supplied code. Previews now inherit non-secret configuration only, and the webhook response reports how many secrets were withheld so operators can diff intent instead of discovering the policy by surprise.
+- **Server-Side Git Clones Are Egress-Gated**: deploys, PR previews and pre-deploy inspections all cloned user-supplied URLs from the panel's network position, next to every managed container and the cloud metadata service. One gate now covers all three transports (https, ssh://, scp-style remotes) before any git operation starts; every DNS answer must be public. Self-hosted LAN remotes keep working via `NINEDEPLOY_ALLOW_PRIVATE_EGRESS=1`, matching notification webhooks.
+- **Log Drains Now Honor The Same Egress Policy As Webhooks**: drain dispatch used raw `fetch` while its sibling notifier had deliberately moved to a guarded fetch — and drain bodies carry raw log lines, frequently secrets, making it the better exfil sink.
+
+### Fixed
+
+- **Compose Redeploys Deleted The Deployment They Just Shipped**: docker compose recreates containers under one deterministic name per project/service, unlike the deployment-id-suffixed names of the docker and pm2 builders. The blue-green finalize therefore ran `docker compose down --remove-orphans` against the *same* runtime id it had just routed traffic to, removing every container of the stack about two seconds after go-live — a guaranteed outage plus a spurious `error` state on every redeploy of every compose service. The finalize stage now recognizes in-place redeploys (previous and new runtime id identical) and skips the retirement; a cancellation landing just before finalizing records reality ("the swap already happened and cannot be unwound") instead of stopping the live instance. Blue-green retirement behavior is unchanged and covered by new regression tests.
+- **A Docker Daemon Outage At Boot Killed The Panel**: the readiness hook awaited the infra heal unguarded, so a container that started before dockerd exited via `process.exit(1)` — in a codebase where every other background subsystem treats daemon-down as recoverable. The heal is now failed-open with an error log; the five-minute Traefik watchdog remains the recovery path.
+- **Migration 0031 Sorted Before 0030 And Would Never Apply**: its journal timestamp sat ~58 minutes *earlier* than 0030's, so drizzle's strict ordering meant any database that migrated during the interim window stopped at 0030 forever and then hit "no such table: repo_insights". The entry is reordered monotonically and made replay-safe with `IF NOT EXISTS` guards in case a mid-fix journal replays it.
+- **Deleting A Service Mid-Deploy Orphaned Its Candidate Container**: the delete route ignored in-flight deployments, so a build finishing after the DELETE left a fully running container tracked by nothing — holding its published port indefinitely behind `--restart unless-stopped`. Deleting now returns 409 while a deployment is queued or building (cancel first), and as defense-in-depth the pipeline retires the candidate when its final service-row update matches zero rows.
+- **Pre-Upgrade Backup Archives Were World-Readable**: the snapshot containing `.data/master.key` — the key that decrypts every stored secret — inherited the ambient umask. On shared hosts any local account could read routine upgrade artifacts. Archives are created under `umask 077` and asserted `chmod 600`.
+- **bump-version.js Corrupted The Changelog It Was Supposed To Track**: its `/version: '.*?',/` rule matched the newest `ChangelogEntry` literal inside `version.ts`, relabeling the top entry to the new version while keeping the previous release's notes — masked until now only because both read `0.3.2`. The rule is gone (the About surface reads the `VERSION` constant), a dead health-test rule that always printed "✓ Synchronized" without changing bytes is removed, unmatched patterns now warn instead of claiming success, and a README badge rule means the version shield stops silently rotting.
+
+### Docs
+
+- The README claimed watchdog supervision (`sd_notify`) while the shipped unit explicitly ships `WatchdogSec=0` / `Type=simple`, and drew master↔agent links as "mTLS" while the protocol is tokened HTTP over plain TLS-less HTTP between trusted hosts. Both now describe reality; the QUICKSTART manual-upgrade snippet still targets compose deployments and needs its own pass.
+
+_Installer changes take effect immediately — `install.sh` is fetched from `main`, not from the release tarball._
+
+---
+
 ## [0.3.2] - 2026-08-26
 
 ### Added

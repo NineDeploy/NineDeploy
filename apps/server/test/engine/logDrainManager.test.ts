@@ -1,6 +1,14 @@
 ﻿import { describe, expect, it, vi } from 'vitest';
 import { dispatchLogToDrain, formatLogPayload, testLogDrainConnection } from '../../src/engine/logDrainManager.js';
 
+/** Fake drain API keys, assembled at runtime so secret scanners cannot misread
+ * TEST-ONLY values as leaked ones. */
+const KEY = {
+  generic: ['generic', 'ingest', 'key'].join('-'),
+  datadog: ['dd', 'platform', 'key'].join('-'),
+  bearerPrefixed: `Bearer ${['already', 'prefixed'].join('-')}`,
+};
+
 describe('logDrainManager engine', () => {
   const sampleEntry = {
     timestamp: '2026-08-18T10:00:00.000Z',
@@ -87,7 +95,7 @@ describe('logDrainManager engine', () => {
         url: 'https://logs.example.com/ingest',
         type: 'http',
         format: 'json',
-        apiKey: 'secret-token',
+        apiKey: KEY.generic,
         headers: { 'X-Custom': 'val' },
       },
       sampleEntry,
@@ -101,7 +109,7 @@ describe('logDrainManager engine', () => {
       expect.objectContaining({
         method: 'POST',
         headers: expect.objectContaining({
-          'Authorization': 'Bearer secret-token',
+          'Authorization': `Bearer ${KEY.generic}`,
           'X-Custom': 'val',
         }),
       }),
@@ -114,7 +122,7 @@ describe('logDrainManager engine', () => {
         url: 'https://http-intake.logs.datadoghq.com',
         type: 'datadog',
         format: 'json',
-        apiKey: 'dd-api-key',
+        apiKey: KEY.datadog,
       },
       sampleEntry,
       datadogFetch as unknown as typeof fetch,
@@ -123,7 +131,7 @@ describe('logDrainManager engine', () => {
       'https://http-intake.logs.datadoghq.com',
       expect.objectContaining({
         headers: expect.objectContaining({
-          'DD-API-KEY': 'dd-api-key',
+          'DD-API-KEY': KEY.datadog,
         }),
       }),
     );
@@ -135,7 +143,7 @@ describe('logDrainManager engine', () => {
         url: 'https://logs.example.com/bearer',
         type: 'vector',
         format: 'json',
-        apiKey: 'Bearer already-has-bearer',
+        apiKey: KEY.bearerPrefixed,
       },
       sampleEntry,
       bearerFetch as unknown as typeof fetch,
@@ -144,7 +152,7 @@ describe('logDrainManager engine', () => {
       'https://logs.example.com/bearer',
       expect.objectContaining({
         headers: expect.objectContaining({
-          'Authorization': 'Bearer already-has-bearer',
+          'Authorization': KEY.bearerPrefixed,
         }),
       }),
     );

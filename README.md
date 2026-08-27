@@ -7,7 +7,7 @@ Deploy apps from Git or container registries with zero downtime, automatic rollb
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js](https://img.shields.io/badge/Node.js-%E2%89%A522.13-green.svg)](https://nodejs.org)
-[![Version](https://img.shields.io/badge/Version-0.3.0-blue.svg)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/Version-0.3.3-blue.svg)](./CHANGELOG.md)
 [![TypeScript](https://img.shields.io/badge/TypeScript-7-blue.svg)](https://www.typescriptlang.org)
 [![Docker](https://img.shields.io/badge/Docker-required-blue.svg)](https://docker.com)
 [![Tests](https://img.shields.io/badge/Tests-4405%20passing-brightgreen.svg)](https://github.com/NineDeploy/NineDeploy)
@@ -27,7 +27,7 @@ Deploy apps from Git or container registries with zero downtime, automatic rollb
 curl -fsSL https://raw.githubusercontent.com/NineDeploy/NineDeploy/main/install.sh | bash
 ```
 
-> NineDeploy runs as a hardened `systemd` service with watchdog supervision (`sd_notify`), automated database snapshots, and direct Docker/PM2 management.
+> NineDeploy runs as a hardened `systemd` service (`NoNewPrivileges`, `ProtectSystem=full`, `Restart=always`) with automated database snapshots and direct Docker/PM2 management.
 
 ### Or Run with Docker
 
@@ -83,7 +83,7 @@ graph TD
     end
     
     subgraph "Multi-Node Fleet"
-        API -->|"mTLS / SSH"| Agent["Remote NineDeploy Agents (Worker Nodes)"]
+        API -->|"Token Auth (HTTP) / SSH Bootstrap"| Agent["Remote NineDeploy Agents (Worker Nodes)"]
     end
 ```
 

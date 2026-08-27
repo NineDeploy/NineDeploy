@@ -1,4 +1,4 @@
-export const VERSION = '0.3.2';
+export const VERSION = '0.3.3';
 
 export interface ChangelogEntry {
   version: string;
@@ -8,6 +8,26 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.3.3',
+    date: '2026-08-27',
+    title: 'Full-System Audit Hardening',
+    changes: [
+      'A compose redeploy no longer tears down the deployment it just shipped: the finalize stage recognizes in-place redeploys (the new runtime reuses the previous deterministic id) and skips the retirement instead of running `compose down` against the live project',
+      'A cancelled in-place redeploy records reality — the swap already happened under a shared runtime id and cannot be unwound — instead of stopping the still-serving instance',
+      'The deploy pipeline verifies its final service-row update actually matched a row; when a service was deleted mid-build the candidate runtime is retired instead of holding its port forever, and deleting a service with a queued or building deployment is refused with 409 up front',
+      'A Docker daemon outage at boot no longer crash-exits the panel: the readiness heal stays failed-open and the five-minute Traefik watchdog remains the recovery path',
+      'Migration 0031 sorted BEFORE migration 0030 by journal timestamp, so any database migrated during that interim window would never receive it; the entry is reordered monotonically and made replay-safe with IF NOT EXISTS guards',
+      'Webhook-triggered deploys (push and PR previews alike) now pass the same host-privilege gate as manual deploys, authorized against the service owner',
+      'PR preview environments inherit only non-secret environment variables from their parent; skipped secrets are reported in the webhook response',
+      'Preview domain patterns are constrained to the instance wildcard zone with a strict hostname shape before routing goes active — a hostile `*.victim.tld` pattern can no longer claim hosts nobody verified; routing is skipped while the preview still deploys',
+      '.ninedeploy manifests can only attach managed databases visible to the deploying service owner — a pushed manifest can no longer inject another tenant database connection string into its runtime env',
+      'Every server-side git clone (deploys, PR previews, pre-deploy inspections) passes through one egress gate that refuses private-network remotes; NINEDEPLOY_ALLOW_PRIVATE_EGRESS=1 keeps self-hosted LAN Gitea instances working',
+      'Log drains dispatch through the same guarded fetch as notification webhooks, so raw log lines cannot be POSTed at internal or metadata addresses',
+      'Pre-upgrade backup archives in install.sh are created operator-only (umask 077 + chmod 600) because they contain master.key',
+      'bump-version.js no longer relabels the newest changelog entry via an over-broad regex, warns instead of claiming success when a sync pattern matches nothing, and updates the README version badge',
+    ],
+  },
   {
     version: '0.3.2',
     date: '2026-08-26',
