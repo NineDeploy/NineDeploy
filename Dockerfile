@@ -26,8 +26,10 @@
 FROM node:26-slim AS build
 WORKDIR /app
 
-# Install pnpm via corepack (no network fetch of package managers).
-RUN corepack enable
+# Node ≥ 26 images no longer bundle corepack, so install pnpm via npm.
+# Keep PNPM_VERSION in sync with "packageManager" in package.json.
+ARG PNPM_VERSION=11.23.0
+RUN npm install -g pnpm@${PNPM_VERSION}
 
 # Copy workspace manifests first for layer-cached installs.
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
@@ -72,7 +74,10 @@ RUN apt-get update \
   && rm -f "/tmp/${NIXPACKS_ASSET}" \
   && rm -rf /var/lib/apt/lists/*
 
-RUN corepack enable
+# Node ≥ 26 images no longer bundle corepack — see stage 1. Keep in sync with
+# "packageManager" in package.json.
+ARG PNPM_VERSION=11.23.0
+RUN npm install -g pnpm@${PNPM_VERSION}
 
 # Production dependencies only (dev deps are stripped). apps/web's manifest is
 # copied just to satisfy the workspace resolution — its deps are never installed

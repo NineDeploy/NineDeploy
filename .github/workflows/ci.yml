@@ -25,9 +25,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup pnpm
+        # No `version:` input on purpose: action-setup derives the pnpm version
+        # from "packageManager" in package.json. Pinning a second version here
+        # makes every job fail with ERR_PNPM_BAD_PM_VERSION once they disagree.
         uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
-        with:
-          version: 11.22.0
 
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -104,9 +105,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup pnpm
+        # No `version:` input on purpose: action-setup derives the pnpm version
+        # from "packageManager" in package.json. Pinning a second version here
+        # makes every job fail with ERR_PNPM_BAD_PM_VERSION once they disagree.
         uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
-        with:
-          version: 11.22.0
 
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0

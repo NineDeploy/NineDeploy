@@ -7,7 +7,7 @@ Deploy apps from Git or container registries with zero downtime, automatic rollb
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js](https://img.shields.io/badge/Node.js-%E2%89%A522.13-green.svg)](https://nodejs.org)
-[![Version](https://img.shields.io/badge/Version-0.3.3-blue.svg)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/Version-0.3.4-blue.svg)](./CHANGELOG.md)
 [![TypeScript](https://img.shields.io/badge/TypeScript-7-blue.svg)](https://www.typescriptlang.org)
 [![Docker](https://img.shields.io/badge/Docker-required-blue.svg)](https://docker.com)
 [![Tests](https://img.shields.io/badge/Tests-4%2C592%20passing-brightgreen.svg)](https://github.com/NineDeploy/NineDeploy)
@@ -66,25 +66,31 @@ docker run -d --name ninedeploy \
 
 ```mermaid
 graph TD
-    User["Developer / AI Agent"] -->|"HTTPS / CLI / MCP (35 Tools)"| Ingress["Traefik Reverse Proxy"]
-    Ingress -->|"HTTP / WS / SSL Term"| API["NineDeploy Fastify Core & Dashboard"]
-    
+    User["Developer / AI Agent"] -->|"HTTPS · CLI · MCP (35 Tools)"| Ingress["Traefik Reverse Proxy"]
+    GitProvider["Git Provider (HMAC Webhook)"] -->|"push event"| API2["Webhook Receiver /v1/hooks"]
+    Ingress -->|"HTTP / WS · SSL Term"| API["NineDeploy Fastify Core & Dashboard"]
+    API2 --> Engine
+
     subgraph "Core Microkernel & State"
-        API --> Engine["Deploy & Pipeline Engine"]
+        API --> Engine["Deploy & Pipeline Engine<br/>(docker · pm2 · compose + nixpacks builds)"]
         API --> Microkernel["Microkernel & Waterfall Hooks"]
         API --> DB[(SQLite + Drizzle ORM)]
         API --> Secrets["Dual-Vault AES-256-GCM"]
+        API --> SelfUpdate["Panel Self-Update<br/>(runs install.sh detached)"]
     end
-    
+
     subgraph "Managed Workloads"
-        Engine -->|"Blue-Green"| Apps["Application Containers (Node, Go, Rust, Python, etc.)"]
-        Engine -->|"1-Click"| Databases["Databases (Postgres, MySQL, Redis, Mongo, ClickHouse)"]
-        Engine -->|"Auto-Sync"| S3["Offsite S3 Backups (R2, AWS, MinIO, Wasabi)"]
+        Ingress -->|"routes by hostname"| Apps["Apps — Containers, PM2 Processes & Compose Stacks<br/>(Node, Go, Rust, Python, …)"]
+        Engine -->|"blue-green · health-gated"| Apps
+        Engine -->|"1-click · 9 engines"| Databases["Databases (Postgres, MySQL/MariaDB,<br/>Redis/Valkey, Mongo, ClickHouse,<br/>Meilisearch, RabbitMQ)"]
+        Engine -->|"snapshots → off-site"| S3["S3 Backups (R2, AWS, MinIO, Wasabi)<br/>db + volume archives"]
     end
-    
+
     subgraph "Multi-Node Fleet"
         API -->|"Token Auth (HTTP) / SSH Bootstrap"| Agent["Remote NineDeploy Agents (Worker Nodes)"]
     end
+
+    AltIngress["Cloudflare Tunnel"] -.->|"CF edge → local service ports<br/>(NAT-restricted nodes)"| Apps
 ```
 
 ---

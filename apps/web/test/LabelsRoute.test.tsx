@@ -132,9 +132,13 @@ describe('Labels route', () => {
   });
 
   it('shows a retryable error card when the query fails', async () => {
-    mockOf(api.labels.list).mockRejectedValue(new Error('403') as never);
+    mockOf(api.labels.list).mockRejectedValueOnce(new Error('403') as never);
     renderWithProviders(<Labels />);
     expect(await screen.findByText("Couldn't load labels")).toBeInTheDocument();
+
+    // Retry re-runs the query; the resolved second attempt restores the list.
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(await screen.findByText('production')).toBeInTheDocument();
   });
 
   it('creates a label with the chosen colour and workspace', async () => {
@@ -164,6 +168,24 @@ describe('Labels route', () => {
     await waitFor(() =>
       expect(api.labels.create).toHaveBeenCalledWith({ name: 'edge', color: 'indigo', workspaceId: null }),
     );
+  });
+
+  it('moves the create form between operator-shared and workspace scopes via the select', async () => {
+    mockOf(api.labels.create).mockResolvedValue(label({ id: 10 }) as never);
+    renderWithProviders(<Labels />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /New label/ }));
+    const formRoot = screen.getByText('Workspace').closest('div')?.parentElement ?? document.body;
+    const scopeSelect = formRoot.querySelector('select');
+    if (!scopeSelect) throw new Error('workspace select not rendered');
+    expect(scopeSelect.value).toBe('');
+
+    // '' → number: scope the draft to Core.
+    fireEvent.change(scopeSelect, { target: { value: '2' } });
+    expect(scopeSelect.value).toBe('2');
+    // Back to '': operator-shared again.
+    fireEvent.change(scopeSelect, { target: { value: '' } });
+    expect(scopeSelect.value).toBe('');
   });
 
   it('surfaces a create failure without closing the form', async () => {

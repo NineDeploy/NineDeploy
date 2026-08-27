@@ -5,7 +5,7 @@
  * client-side secret-lint surfaces obvious slips.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { recommendedRuntimeVersion } from '@ninedeploy/schemas';
 import { ManifestCreator } from '../src/routes/ManifestCreator.js';
@@ -404,5 +404,85 @@ describe('ManifestCreator', () => {
     await user.click(downloadButtons[0]!);
     expect(anchorClickCount).toBeGreaterThan(0);
     createElementSpy.mockRestore();
+  });
+
+  it('previews the modal, closes it via the header X, and reopens cleanly', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(screen.getByText(NODE_NPM_PRESET));
+    await user.click(screen.getByRole('button', { name: /Preview/ }));
+    expect(await screen.findByText(/potential secret risks|no secret/i)).toBeInTheDocument();
+
+    // The modal's close control sits in the header.
+    const dialog = screen.getByRole('dialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close dialog' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  });
+
+  // Touches eleven sections sequentially; under parallel suite load this can
+  // outlive the default 5s budget.
+  it('persists every section edit into the draft it saves', { timeout: 30_000 }, async () => {
+    const user = userEvent.setup();
+    renderPage();
+    window.localStorage.removeItem('ninedeploy.manifest.draft');
+
+    const draftKeys = () => Object.keys(JSON.parse(window.localStorage.getItem('ninedeploy.manifest.draft') ?? '{}'));
+    const visit = async (name: RegExp) => {
+      await user.click(screen.getByRole('button', { name }));
+    };
+    // ChipInput-backed fields only commit their draft on Enter/comma/blur.
+    const type = async (placeholder: string | RegExp, value: string, chips = false) => {
+      await user.type(screen.getByPlaceholderText(placeholder), chips ? `${value}{enter}` : value);
+    };
+
+    // Runtime: switching the runtime type pushes the whole block at once.
+    await visit(/Runtime section/);
+    await user.selectOptions(screen.getAllByRole('combobox')[0]!, 'go');
+    expect(draftKeys()).toContain('runtime');
+
+    await visit(/Run section/);
+    await type('3000', '8080');
+    expect(draftKeys()).toContain('run');
+
+    // Static: enabling SPA fallback creates the block, then the root field.
+    await visit(/Static section/);
+    await user.click(screen.getByRole('switch'));
+    await type(/dist/, 'public');
+    expect(draftKeys()).toContain('static');
+
+    await visit(/Phases section/);
+    await type('python310', 'nodejs_24', true);
+    expect(draftKeys()).toContain('phases');
+
+    await visit(/Hooks section/);
+    await type('./scripts/gen-types.sh', './scripts/gen.sh');
+    expect(draftKeys()).toContain('hooks');
+
+    await visit(/Watch section/);
+    await type('apps/web/**', 'services/api/**', true);
+    expect(draftKeys()).toContain('watch');
+
+    await visit(/PR previews section/);
+    // The pattern field stays disabled until previews are switched on.
+    await user.click(screen.getByRole('switch'));
+    await type(/pr-\{n\}/, 'pr-{n}.dev.example.com');
+    expect(draftKeys()).toContain('previews');
+
+    await visit(/Volume section/);
+    await type('/data', '/srv/data');
+    expect(draftKeys()).toContain('volume');
+
+    await visit(/Database section/);
+    await type('app-db', 'main-db');
+    await type('DATABASE_URL', 'DB_URL');
+    expect(draftKeys()).toContain('database');
+
+    await visit(/Network section/);
+    await type('internal-mesh', 'backend', true);
+    expect(draftKeys()).toContain('network');
+
+    await visit(/Notifications section/);
+    await type('ops', 'ops@acme.dev', true);
+    expect(draftKeys()).toContain('notifications');
   });
 });

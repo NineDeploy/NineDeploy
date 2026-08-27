@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [0.3.4] - 2026-08-27
+
 ### Added
 
 - **One-Click Panel Self-Update**: operators can upgrade the panel from the dashboard. New `GET /v1/system/update-status` and `POST /v1/system/update-start` endpoints run this install's own `install.sh --version <tag>` for an operator-pinned exact release tag; on systemd hosts the updater launches through `systemd-run` into a transient cgroup so it survives stopping the unit it belongs to, state lives in marker files under `<dataDir>/self-update/`, and the updater's environment is deliberately narrow (no JWT/DB secrets reachable via `systemctl show`). A layout banner plus About-card button share the new `usePanelUpdate` poller, whose phase survives panel restarts via localStorage and reports installer output tails on failure.
@@ -25,6 +29,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Docs
 
 - README, docs/ and the website were re-verified against the code: MCP tool count (35), nine managed-database engines, 88 hub templates with 16 runtime-certified, kernel event/hook names, the supported ACME DNS-provider list, Docker-mode upgrade instructions, OIDC configuration path (admin UI, not env vars), and coverage floors stated per package instead of a blanket 100% claim.
+- The README system-architecture diagram now matches the engine: three workload types (containers, PM2 processes, Compose stacks), nine database engines, Traefik routing published apps in addition to the panel, the HMAC webhook ingress path, Cloudflare Tunnel as a parallel ingress for NAT-restricted nodes, and the new panel self-update machinery.
+
+### Fixed
+
+- **Every CI Job Died Before Running A Single Test**: `pnpm/action-setup` was pinned to `11.22.0` in the workflows while `packageManager` declares `pnpm@11.23.0` — action-setup refuses the conflict with `ERR_PNPM_BAD_PM_VERSION`, which is why "Typecheck · Lint · Build · Test" failed in seconds alongside everything else. The workflow pin is removed; the version derives from `packageManager` (the same pattern website.yml already used successfully).
+- **The Release Workflow Would Have Failed The Same Way On The First v0.3.4 Tag**: `release.yml` carried the identical pinned-setup block and is fixed identically.
+- **Node 26 Images No Longer Bundle Corepack**: the Dockerfile's `RUN corepack enable` (both build and runtime stages) died with `/bin/sh: corepack: not found`, breaking the CI "Docker image build" job and any tagged release image. Both stages now install a pinned pnpm via npm (`ARG PNPM_VERSION`), kept in sync with `packageManager`.
 
 ---
 

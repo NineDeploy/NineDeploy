@@ -1,8 +1,46 @@
 const releases = [
   {
-    version: "0.3.3",
+    version: "0.3.4",
     date: "2026-08",
     status: "current",
+    notes: [
+      {
+        t: "One-Click Panel Self-Update",
+        items: [
+          "A banner under the header offers new releases to operators; confirming runs this install's own installer for the pinned exact tag — data snapshot, source swap, rebuild, migrations, service restart",
+          "On systemd hosts the updater detaches through systemd-run into its own cgroup so it survives stopping the unit it belongs to; progress survives the panel restart it performs and failure reports the installer output tail",
+          "The updater's environment is deliberately narrow — no JWT or database secrets are reachable via systemctl show while it runs",
+        ],
+      },
+      {
+        t: "Records Tell The Truth",
+        items: [
+          "Deployment history no longer shows every past deploy as Running forever — a new superseded state settles older rows both at finalize time and during a boot-time reconciliation pass",
+          "Volume snapshots carry labels (manual / schedule-… / operator tags) across the Backups page, alongside scope and volume names",
+          "Auto-deploy webhook URLs are built from the Settings panel domain instead of falling back to localhost, and the environment tab warns when a stored URL is unreachable from git providers",
+        ],
+      },
+      {
+        t: "Smaller but real",
+        items: [
+          "The scheduled-jobs editor is rebuilt around cron presets with human-readable descriptions and next-run chips; env vars gain a raw .env bulk-editing mode",
+          "Detaching a volume now queues a redeploy instead of demanding the service be stopped first",
+          "Alert rules expose lastEvaluatedAt so a lapsed collector cannot masquerade as a passing rule",
+        ],
+      },
+      {
+        t: "CI & Packaging",
+        items: [
+          "Every CI job had been dying in seconds on ERR_PNPM_BAD_PM_VERSION — workflows pinned pnpm 11.22.0 while package.json declares 11.23.0; the pin is removed and the version derives from packageManager",
+          "Node ≥ 26 images no longer bundle corepack, so the Dockerfile installs a pinned pnpm via npm in both stages — the CI Docker-image-build job and tagged release images work again",
+        ],
+      },
+    ],
+  },
+  {
+    version: "0.3.3",
+    date: "2026-08",
+    status: "stable",
     notes: [
       {
         t: "Full-System Audit Hardening",
