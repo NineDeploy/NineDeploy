@@ -64,6 +64,7 @@ describe('bare-metal systemd installation policy', () => {
     const containerfile = rootFile('Dockerfile');
 
     // The installer accepts an override (NINEDEPLOY_NIXPACKS_VERSION) but defaults to the latest verified release.
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: installer shell parameter expansion under test
     expect(installer).toContain('NIXPACKS_VERSION="${NINEDEPLOY_NIXPACKS_VERSION:-1.41.0}"');
     expect(installer).toContain('NIXPACKS_ACTUAL_SHA=$(sha256sum');
     expect(installer).toContain('sudo install -m 0755 "$NIXPACKS_STAGE/nixpacks" /usr/local/bin/nixpacks');

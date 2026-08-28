@@ -1,9 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Fingerprint, KeyRound, MonitorSmartphone, QrCode, Smartphone } from 'lucide-react';
-import QRCode from 'qrcode';
 import { api, setSessionTokens } from '../../lib/api.js';
 import { useToast } from '../../components/Toast.js';
+import { QrCode as QrCodeImage } from '../../components/QrCode.js';
 import { Button, Card, CardBody, Skeleton } from '../../components/ui.js';
 import { formatDateTime, useCopy } from '../../lib/format.js';
 
@@ -248,30 +248,12 @@ function SessionsCard() {
 function TwoFactorCard() {
   const { toast } = useToast();
   const [setup, setSetup] = useState<{ secret: string; otpauthUri: string } | null>(null);
-  const [qrUrl, setQrUrl] = useState<string | null>(null);
   const [code, setCode] = useState('');
   const [setupPassword, setSetupPassword] = useState('');
   const [showSetupPassword, setShowSetupPassword] = useState(false);
   const [disablePassword, setDisablePassword] = useState('');
   const [disableCode, setDisableCode] = useState('');
   const [showDisable, setShowDisable] = useState(false);
-
-  useEffect(() => {
-    if (setup?.otpauthUri) {
-      QRCode.toDataURL(setup.otpauthUri, {
-        margin: 2,
-        width: 220,
-        color: {
-          dark: '#000000',
-          light: '#ffffff',
-        },
-      })
-        .then(setQrUrl)
-        .catch(() => setQrUrl(null));
-    } else {
-      setQrUrl(null);
-    }
-  }, [setup?.otpauthUri]);
 
   // The server requires the account password when regenerating the secret of
   // an already-enabled 2FA — always offer the field.
@@ -374,21 +356,12 @@ function TwoFactorCard() {
               </p>
             </div>
 
-            {/* Visual QR Code Box */}
+            {/* Visual QR Code Box. `components/QrCode` owns the rendering —
+                this card used to carry a second, hand-rolled copy of the same
+                `QRCode.toDataURL` effect while the shared component sat unused
+                (and hi-DPI: it renders at 2× the CSS size). */}
             <div className="flex justify-center py-2">
-              <div className="rounded-2xl bg-white p-3.5 shadow-xl ring-4 ring-white/10">
-                {qrUrl ? (
-                  <img
-                    src={qrUrl}
-                    alt="Two-factor authentication QR code"
-                    className="h-44 w-44 rounded-lg object-contain block"
-                  />
-                ) : (
-                  <div className="h-44 w-44 flex items-center justify-center text-xs text-slate-500 font-mono">
-                    Generating QR…
-                  </div>
-                )}
-              </div>
+              <QrCodeImage value={setup.otpauthUri} size={176} alt="Two-factor authentication QR code" />
             </div>
 
             <div className="space-y-2 pt-1">

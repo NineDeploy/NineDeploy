@@ -213,7 +213,19 @@ export const templateRoutes: FastifyPluginAsync = async (app) => {
     // Templates that mount the Docker socket (Portainer, Dockge, Dozzle,
     // Homepage) hand the container control of every other container on the
     // host — admin-only, like the exec terminal.
-    assertMayUseHostPrivilege(req.user!, { type: 'docker', dockerSocket: t.dockerSocket ?? false });
+    //
+    // The service type must be the one that will actually be CREATED. A
+    // template carrying `composeContent` becomes a `type: 'compose'` service
+    // (see composeStacks.ts), and `hostPrivilege.ts` treats compose as a host
+    // privilege because a compose file can bind-mount host paths or ask for a
+    // privileged container. Hard-coding `'docker'` here skipped that check, so
+    // a member could stand up and queue a compose stack through this route —
+    // while `assertMayDeployStoredService` correctly refused them the *next*
+    // deploy of the very same service.
+    assertMayUseHostPrivilege(req.user!, {
+      type: t.composeContent ? 'compose' : 'docker',
+      dockerSocket: t.dockerSocket ?? false,
+    });
     assertMayPublishPort(req.user!, input.publishedPort);
     const prepared = t.composeContent
       ? await (async () => {

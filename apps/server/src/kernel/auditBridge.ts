@@ -61,8 +61,11 @@ function entityId(entity: string | null): number | undefined {
 export function mapAuditToDomainEvent(event: AppEvent): MappedEvent | null {
   const { action, entity } = event;
 
-  // Deploy lifecycle. `audit()` records deploy.start / deploy.success /
-  // deploy.failed / deploy.rollback / deploy.cancel with the service name.
+  // Deploy lifecycle. The routes record deploy.trigger / deploy.rollback /
+  // deploy.cancel; `engine/pipeline.ts` records the OUTCOME — deploy.success /
+  // deploy.failed / deploy.cancelled — as `"<service name> #<deployment id>"`,
+  // which is what `entityName`/`entityId` below decompose. Any future
+  // `deploy.*` action maps here automatically.
   if (action.startsWith('deploy.')) {
     return {
       name: 'deployment.status_changed',

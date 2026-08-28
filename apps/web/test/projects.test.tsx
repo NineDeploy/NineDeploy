@@ -25,10 +25,28 @@ function ScopeProbe() {
   );
 }
 
-const PROJECTS = [
-  { id: 1, name: 'Alpha', slug: 'alpha', description: null, serviceCount: 0, databaseCount: 0, createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' },
-  { id: 2, name: 'Beta', slug: 'beta', description: null, serviceCount: 3, databaseCount: 1, createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' },
-];
+// The provider loads the project list through the api client module — mock it.
+// The test fixtures and mock factory both need access to the same project
+// list, so they are declared inside `vi.hoisted` (which runs before every
+// `vi.mock` factory is hoisted to the top of the file). Referencing a plain
+// `const PROJECTS` from inside the factory triggers a TDZ error at import
+// time, which is what made this file flaky on full-suite runs.
+const { PROJECTS } = vi.hoisted(() => {
+  const PROJECTS: Array<{
+    id: number;
+    name: string;
+    slug: string;
+    description: string | null;
+    serviceCount: number;
+    databaseCount: number;
+    createdAt: string;
+    updatedAt: string;
+  }> = [
+    { id: 1, name: 'Alpha', slug: 'alpha', description: null, serviceCount: 0, databaseCount: 0, createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' },
+    { id: 2, name: 'Beta', slug: 'beta', description: null, serviceCount: 3, databaseCount: 1, createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' },
+  ];
+  return { PROJECTS };
+});
 
 function renderProvider(list: Promise<typeof PROJECTS> | undefined = Promise.resolve(PROJECTS)) {
   const client = makeClient();
@@ -43,7 +61,6 @@ function renderProvider(list: Promise<typeof PROJECTS> | undefined = Promise.res
   return utils;
 }
 
-// The provider loads the project list through the api client module — mock it.
 vi.mock('../src/lib/api.js', () => {
   const state = { projects: [...PROJECTS] };
   return {

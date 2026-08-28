@@ -8,6 +8,7 @@ import {
   ManifestValidationError,
   parseManifestYaml,
   starterManifest,
+  buildManifestFromTemplate,
 } from '../src/manifest.js';
 
 describe('parseManifestYaml', () => {
@@ -188,7 +189,7 @@ notifications:
     expect(runtimeNoVersion).toContain('type: node');
     // The header comment mentions the word "version" so check more specifically
     // for the indented `  version: "..."` line which is what runtime.version would emit.
-    expect(runtimeNoVersion).not.toMatch(/\n  version:/);
+    expect(runtimeNoVersion).not.toMatch(/\n {2}version:/);
   });
 
   it('omits run/static/env sub-fields when not present', () => {
@@ -398,5 +399,93 @@ describe('starterManifest', () => {
   it('returns a minimal placeholder for unknown projects', () => {
     const m = starterManifest('unknown');
     expect(m.runtime?.type).toBe('auto');
+  });
+});
+
+describe('buildManifestFromTemplate (G-04)', () => {
+  it('produces a canonical starter with port + healthcheck + restart defaults', () => {
+    const manifest = buildManifestFromTemplate({
+      id: 'n8n',
+      name: 'n8n',
+      image: 'n8nio/n8n',
+      port: 5678,
+    });
+
+    expect(manifest.version).toBe('1');
+    expect(manifest.runtime).toEqual({ type: 'auto' });
+    expect(manifest.run?.port).toBe(5678);
+    expect(manifest.run?.healthcheck).toBe('/');
+    expect(manifest.run?.restart).toBe('unless-stopped');
+    expect(manifest.env).toBeUndefined();
+    expect(manifest.routes).toEqual([{ host: '', path: '/', ssl: true }]);
+  });
+
+  it('copies volumeMount into volume.mount when present', () => {
+    const manifest = buildManifestFromTemplate({
+      id: 'n8n',
+      name: 'n8n',
+      image: 'n8nio/n8n',
+      port: 5678,
+      volumeMount: '/home/node/.n8n',
+    });
+    expect(manifest.volume).toEqual({ mount: '/home/node/.n8n' });
+  });
+
+  it('collects env keys but never their values', () => {
+    const manifest = buildManifestFromTemplate({
+      id: 'activepieces',
+      name: 'Activepieces',
+      image: 'activepieces/activepieces:latest',
+      port: 80,
+      env: [
+        { key: 'AP_ENCRYPTION_KEY', value: 'should-never-appear', secret: true },
+        { key: 'AP_JWT_SECRET', value: 'should-never-appear', secret: true },
+      ],
+    });
+
+    expect(manifest.env?.required).toEqual(['AP_ENCRYPTION_KEY', 'AP_JWT_SECRET']);
+    const serialised = JSON.stringify(manifest);
+    expect(serialised).not.toContain('should-never-appear');
+  });
+
+  it('omits env entirely when the registry entry has no env vars', () => {
+    const manifest = buildManifestFromTemplate({
+      id: 'plausible',
+      name: 'Plausible',
+      image: 'plausible/plausible:latest',
+    });
+    expect(manifest.env).toBeUndefined();
+  });
+
+  it('omits volume when the registry entry has no volumeMount', () => {
+    const manifest = buildManifestFromTemplate({
+      id: 'plausible',
+      name: 'Plausible',
+      image: 'plausible/plausible:latest',
+    });
+    expect(manifest.volume).toBeUndefined();
+  });
+
+  it('uses the supplied defaultHost for the starter route', () => {
+    const manifest = buildManifestFromTemplate(
+      { id: 'n8n', name: 'n8n', image: 'n8nio/n8n', port: 5678 },
+      'automation.example.com',
+    );
+    expect(manifest.routes?.[0]).toEqual({
+      host: 'automation.example.com',
+      path: '/',
+      ssl: true,
+    });
+  });
+
+  it('produces output that round-trips through the manifest schema', () => {
+    const manifest = buildManifestFromTemplate(
+      { id: 'plausible', name: 'Plausible', image: 'plausible/plausible:latest', port: 3000 },
+      'automation.example.com',
+    );
+    // The builder must produce data that the schema accepts — otherwise the
+    // loader would reject the file at deploy time.
+    const yaml = formatManifestYaml(manifest);
+    expect(() => parseManifestYaml(yaml)).not.toThrow();
   });
 });

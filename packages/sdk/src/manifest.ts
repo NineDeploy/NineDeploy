@@ -333,3 +333,69 @@ export function starterManifest(kind: ProjectKind): NinedeployManifest {
       };
   }
 }
+
+// ── Template-bundle manifest generation (G-04) ──────────────────────────
+
+/**
+ * Minimal subset of a template-registry entry that the manifest generator
+ * needs. The full server-side `Template` type carries fields that the
+ * manifest does not need (category, emoji, website, …), so the SDK pins
+ * the smaller shape and the server adapts its full entry down to it.
+ */
+export interface TemplateRegistryEntry {
+  id: string;
+  name: string;
+  image: string;
+  port?: number;
+  volumeMount?: string;
+  env?: Array<{ key: string; value: string; secret: boolean }>;
+}
+
+/**
+ * Pure mapping from a template-registry entry to a starter `.ninedeploy`
+ * manifest. Used by the server-side `manifest-generator` plugin (which
+ * listens for `template.bundle.observed`) and by the CLI's
+ * `ninedeploy template-bundles init` command.
+ *
+ * Contract:
+ *   - Always sets `version: "1"` and `runtime.type: "auto"`.
+ *   - Copies `port` from the registry entry into `run.port`.
+ *   - Default `run.healthcheck` is `/` and `run.restart` is `unless-stopped`
+ *     (matches the host-privilege boundary — restart-on-failure is operator
+ *     territory, so the panel decides, not the bundle).
+ *   - Copies `volumeMount` into `volume.mount` when present.
+ *   - Pulls every `env.key` from the registry into `env.required`. We never
+ *     copy values, only the names — the manifest is committed to the repo,
+ *     and the loader's secret scan refuses credential-shaped values anyway.
+ *   - Emits a single starter route (`host: provided`, `path: '/'`, `ssl: true`)
+ *     for the operator to edit.
+ */
+export function buildManifestFromTemplate(
+  entry: TemplateRegistryEntry,
+  defaultHost: string = '',
+): NinedeployManifest {
+  // Start with the bare minimum and layer optional fields only when the
+  // registry entry has something to contribute. Leaving `env` undefined
+  // (rather than `env: { required: [] }`) keeps the rendered YAML clean
+  // — `env:` with no children would otherwise parse back as `env: null`,
+  // which the schema rejects.
+  const manifest: NinedeployManifest = {
+    version: '1',
+    runtime: { type: 'auto' },
+    run: {
+      healthcheck: '/',
+      restart: 'unless-stopped',
+    },
+    routes: [{ host: defaultHost, path: '/', ssl: true }],
+  };
+  if (typeof entry.port === 'number') {
+    manifest.run = { ...manifest.run, port: entry.port };
+  }
+  if (entry.volumeMount) {
+    manifest.volume = { mount: entry.volumeMount };
+  }
+  if (entry.env && entry.env.length > 0) {
+    manifest.env = { required: entry.env.map((e) => e.key) };
+  }
+  return manifest;
+}

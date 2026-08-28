@@ -313,7 +313,9 @@ network:
     - api.internal
 ```
 
-`aliases` are useful for service-to-service discovery when multiple services share a network.
+> **Not wired yet.** The section validates, and the deploy log says it was read
+> and ignored. Publish a host port and attach networks from the panel
+> (Service → Network); see §6.3.
 
 ### 4.15 `notifications` — Channel References
 
@@ -326,7 +328,12 @@ notifications:
   onAlert:   ["oncall"]                # notify when an alert fires
 ```
 
-The resolver looks up each name in the workspace's channel list; an unknown name is logged as a warning and skipped.
+> **Not wired yet.** There is no per-service channel resolver: notification
+> delivery is instance-wide and driven by each channel's own event filter in
+> Settings → Notifications. A manifest that declares `notifications` gets a
+> deploy-log warning listing the names it saw, and nothing else happens. Deploy
+> outcomes themselves (`deploy.success` / `deploy.failed`) do reach those
+> channels — through the global filter, not through this section.
 
 ### 4.16 `alerts` — Monitoring Rules
 
@@ -346,7 +353,19 @@ alerts:
     channel: oncall
 ```
 
-`thresholdPct` (1–100) is required for `highMemory` and `highCpu`; the other `when` values do not accept a threshold. Each rule fires into exactly one named channel.
+`thresholdPct` (1–100) is required for `highMemory` and `highCpu`; the other
+`when` values do not accept a threshold.
+
+Only the three **metric** triggers become `alert_rules` rows: `highMemory`,
+`highCpu` and `certExpiry`. `deployFailed` and `restartLoop` are events, not
+thresholds the alert engine can sample, so they are reported as skipped in the
+deploy log rather than written out. (They used to be stored as a `cert-expiry`
+rule with a threshold of 0 — a rule that renders in Monitoring like a
+configured alert and can never fire.)
+
+`channel` is recorded in the generated rule *name*, which is what lets two
+alerts with the same `when` coexist. It does not route the alert: delivery
+follows the per-channel event filters in Settings → Notifications.
 
 ---
 
@@ -396,7 +415,7 @@ Two things happen, in this order.
 | Manifest field | Pipeline action |
 | :--- | :--- |
 | `routes[]` | upsert into `domains` (one row per host, with path/SSL/headers/CIDR/rate-limit) |
-| `alerts[]` | upsert into `alert_rules` (one row per alert, with `when` and `channel`) |
+| `alerts[]` | upsert into `alert_rules`, one row per **metric** alert (`highMemory`, `highCpu`, `certExpiry`); the event-shaped `deployFailed` / `restartLoop` are reported as skipped |
 | `database` | look the DB up by `ref` and attach it, injecting the connection URL into the service env |
 
 **BUILD** — `apps/server/src/lib/ninedeployApply.ts` folds the build-shaping
@@ -540,7 +559,9 @@ alerts:
 
 What happens on push:
 
-1. Webhook fires; the `watch.paths` glob matches the diff → deploy starts.
+1. Webhook fires; the watch-path globs configured for that webhook match the
+   diff → deploy starts. (The manifest's own `watch` section is not wired —
+   see §6.3.)
 2. The docker builder generates `nixpacks.toml` with `nodejs_20`, the install/build/start cmds, and the `prisma generate` hook from `phases.build.cmds` (if you had one).
 3. The container boots on port 3000; `/healthz` is probed; Traefik routes `api.example.com` to it.
 4. The `primary-postgres` DB is looked up; its connection URL is injected as `DATABASE_URL` (rewritten from the DB's default `POSTGRES_URL`).

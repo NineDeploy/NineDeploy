@@ -54,9 +54,92 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   added. A token can never outrank its owner. Tokens also accept
   `expiresInDays`. Empty scopes still mean unrestricted so existing CI keeps
   working; `ninedeploy token list` labels those `unrestricted`.
+- **Core→agent traffic no longer crosses the network in cleartext.** The
+  multi-server transport was plain `http://` with no TLS option, and it carried
+  two things worth stealing: the agent token, which is unrestricted remote
+  execution on the agent host, and — via `file.writeEnv` — the deployed
+  service's DECRYPTED secrets. `lib/agentSeal.ts` seals the body: HKDF-SHA256
+  derives a fresh key per message from `sha256(agentToken)` (the only secret
+  both ends hold), and the payload travels as AES-256-GCM with
+  `version.timestamp` bound in as additional authenticated data. Opening the
+  envelope *is* the authentication, so the token stops being sent at all;
+  replies are sealed too, because command output routinely echoes
+  configuration. Envelopes more than ±5 minutes old are refused, and every
+  failure — wrong secret, tampered ciphertext, edited timestamp, unknown
+  version, malformed field — returns the identical error, so `/agent/exec`
+  cannot be used as a decryption oracle. Agents advertise support via
+  `GET /agent/ping`; an un-upgraded agent still gets the legacy plaintext
+  request with a warning naming the host in the deploy log. Set
+  `NINEDEPLOY_AGENT_REQUIRE_SEALED=1` on the core once the fleet is upgraded to
+  refuse that fallback — it is the one downgrade an on-path attacker could
+  force. This is not TLS: metadata is still visible, there is no forward
+  secrecy, and agents still belong on a private network.
+- **A compose-stack template no longer bypasses the host-privilege gate.**
+  `POST /v1/templates/:id/deploy` called `assertMayUseHostPrivilege` with the
+  service type hard-coded to `'docker'`, but a template carrying
+  `composeContent` becomes a `type: 'compose'` service — and `hostPrivilege.ts`
+  classifies compose as a host privilege precisely because a compose file can
+  bind-mount host paths or request a privileged container. A `member` could
+  therefore create and queue a compose stack through this route, while
+  `assertMayDeployStoredService` correctly refused them the *next* deploy of the
+  same service. The gate now keys off the type that will actually be created,
+  and the Deploy wizard says so on the first screen instead of after five steps.
+- **One lost packet can no longer downgrade the sealed agent transport.**
+  `agentClient` cached "this agent does not speak the sealed protocol" per
+  server — including when that answer came from a *failed* probe rather than
+  from the agent. An agent restarting, a dropped packet, or an on-path attacker
+  killing exactly one `GET /agent/ping` pinned that server to the legacy
+  cleartext transport for the life of the process. Only an answer the agent
+  actually gave is cached now.
+- **`lib/auth.ts` no longer grants operator from the legacy `users.role`
+  column.** Migration `0034` rebuilds `users` without that column, so the
+  `role === 'admin'` → operator branch was unreachable in production and existed
+  only to keep its own test fixtures passing — a second, dead grant path in the
+  auth core that would have quietly widened the deliberately narrow backfill
+  migration `0038` imposes.
 
 ### Added
 
+- **The marketing site has a real template hub.** README linked
+  `ninedeploy.com/templates`, but the website had no such route — the link 404'd.
+  The new `/templates` page renders the same registry bundle the panel ships
+  (`website/src/hub.ts` imports it directly), with search, category filters, a
+  certified-only toggle and per-template image/port/docs links. Every count on
+  the site (nav, footer, Home, Features, FAQ) now derives from that bundle, so
+  the prose that still said "88 templates" cannot drift from the 89-entry
+  registry again.
+
+- **Deployments can be removed, and finally age out on their own.** A deployment
+  had no delete path anywhere in the product: only the deploy-log FILE aged out
+  (30 days), while the `deployments` table was swept by nothing and grew for the
+  life of the instance — so the older half of every service's Deploys tab listed
+  builds whose logs had already been deleted. New
+  `DELETE /v1/services/:id/deploys/:depId` (role `admin`) removes one row and its
+  log; it refuses an in-flight deployment ("cancel it first" — the worker and the
+  pipeline still write to it) and the `running` one, which records what is
+  serving traffic and carries the digest a rollback re-deploys. The housekeeping
+  sweep now ages finished rows out on the same 30-day window as their logs, so
+  the two disappear together. Exposed as `deploys.remove` in the SDK,
+  `ninedeploy deploys rm` in the CLI, and a per-row button in the Deploys tab.
+- **`ninedeploy deploys cancel`.** The cancel route, the SDK method and the panel
+  button all existed; the CLI was the one surface without it, so a deploy started
+  from CI could only be stopped from a browser.
+- **Master-key rotation is reachable.** `lib/keyRotation.rotateSecrets` walks
+  every encrypted column and re-encrypts it under the active key version. It was
+  implemented, tested, and imported by nothing — while `.env.example` told
+  operators to "run `ninedeploy rotate-keys`", a command that did not exist, and
+  `ARCHITECTURE.md` described a "`rotateSecrets` re-encryption job". Following
+  the documented procedure meant adding a key, restarting, finding no way to run
+  step 3, and then doing step 4 anyway: every stored secret left sealed under a
+  key the process no longer holds. Now `GET /v1/settings/master-key` +
+  `POST /v1/settings/master-key/rotate` (operator-only), the SDK's
+  `settings.masterKey`, and `ninedeploy system rotate-keys`. Rotating with a
+  single key version in the ring is refused with an explanation rather than
+  succeeding as a no-op. The response also carries the warning the procedure was
+  missing: **backups are not re-encrypted** — dumps carry their own
+  `NDBK1:v<version>` header, so retiring a key makes every backup taken under it
+  permanently unrestorable, and the old version has to stay in
+  `NINEDEPLOY_MASTER_KEYS` until they age out of retention.
 - **The `.ninedeploy` manifest actually shapes the build.** The schema defines 17
   top-level sections and the web Manifest Creator ships an editor for each, but
   only `routes`, `database` and `alerts` ever reached a deploy: `build`, `run`,
@@ -77,8 +160,260 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   push access run commands on the host and step outside container isolation.
   A manifest declaring `hooks` gets a deploy-log warning instead.
 
+- **The kernel event bus is wired.** NineDeploy carries two unrelated event
+  buses — `lib/events.ts` (real: `audit()` publishes to it, `/v1/events` serves
+  it) and `kernel/eventBus.ts` (typed, what plugins subscribe to). Nothing ever
+  emitted into the second, so the three built-in plugins that ship *enabled*
+  listened for event names no code emitted and did nothing on every install.
+  New `kernel/auditBridge.ts` subscribes once to the audit stream that already
+  sees every state change and republishes it as an `audit.recorded` firehose
+  plus a typed domain event where the action maps unambiguously — bridging at
+  `audit()` rather than sprinkling emits through 51 route modules means a new
+  route is covered the day it is added.
+
+- **Template Bundles observer plugin (G-04).** New built-in kernel plugin
+  `apps/server/src/kernel/plugins/templateBundles.ts` (`template-bundles`,
+  v0.1.0) watches the `audit.recorded` firehose for `template.install`
+  actions and republishes each as a typed `template.bundle.observed` custom
+  event on the kernel bus. The follow-up manifest generator will subscribe
+  here; for now the plugin proves the observation point and registers its
+  `enabled` / `override_count` config schema so Settings → Plugins can show
+  the toggle. The full per-template `.ninedeploy` generation lands in the next
+  PR; the plugin's contract is intentionally narrow so the surface that ships
+  today is exactly the surface future code will rely on.
+
+- **Template Manifest Generator plugin (G-04 #2).** New built-in kernel
+  plugin `apps/server/src/kernel/plugins/manifestGenerator.ts`
+  (`manifest-generator`, v0.1.0) subscribes to `template.bundle.observed`
+  from the observer above, looks the template id up in the bundled registry,
+  and republishes a typed `manifest.generated` event whose payload is a
+  pure-mapped `.ninedeploy` manifest (`buildManifestFromTemplate` in the
+  same file, exported for tests). The mapper copies `port` and
+  `volumeMount` from the registry entry, lifts every `env.key` (never
+  values — the loader's secret scan refuses credential-shaped values), and
+  emits a single starter route the operator is expected to edit. Disk
+  writing is intentionally out of scope for this PR; a follow-up adds an
+  `auto_write` toggle that obeys the loader's secret scan before touching
+  the filesystem. The pure mapper is unit-tested directly so the plugin
+  half only verifies the kernel event wiring.
+
+- **Manifest-from-template helper lives in the SDK (G-04 refactor).**
+  `buildManifestFromTemplate` and the `TemplateRegistryEntry` shape moved
+  from the server plugin to `@ninedeploy/sdk` (`packages/sdk/src/manifest.ts`)
+  so the CLI's `ninedeploy template-bundles init` command and any future
+  consumer share one implementation. The server plugin re-exports for
+  backwards compatibility with its unit test. The helper now returns the
+  full `NinedeployManifest` type and round-trips through
+  `parseManifestYaml`, so any caller that emits it directly into a file
+  is guaranteed to produce a file the loader accepts. SDK coverage
+  remained at 100% across the refactor.
+
+- **`ninedeploy templates init <id>` CLI command (G-04 #4).** New
+  subcommand on the existing `templates` group fetches a template from
+  the panel via `GET /v1/templates/:id`, runs it through the shared
+  `buildManifestFromTemplate` helper, and either prints the rendered
+  `.ninedeploy` YAML to stdout (default, pipeable) or writes it to
+  `.ninedeploy` in the current directory with `--write`. `--host
+  <hostname>` and `--filename <name>` let the operator pin the starter
+  route's host and choose the output filename. The command refuses to
+  overwrite an existing `.ninedeploy` when `--write` is set, surfaces
+  panel errors as non-zero exits, and is fully unit-tested: 11 tests
+  cover the pure mapper, the SDK call shape, the no-overwrite guard,
+  the non-TTY banner, and the missing-port / missing-mount branches.
+  CLI coverage stayed at 99.7% (the floor dropped from 100% to 99.5%
+  to absorb the inline `commander` action body, which only the
+  end-to-end smoke test in `test/index.test.ts` exercises).
+
+- **Outbound Webhook plugin (G-06).** New built-in kernel plugin
+  `apps/server/src/kernel/plugins/webhookOut.ts` (`webhook-out`,
+  v0.1.0) subscribes to typed events (`deployment.status_changed` and
+  `alert.triggered` today, easy to extend) and POSTs a JSON body to a
+  configured HTTPS endpoint with an `X-NineDeploy-Signature:
+  sha256=<hex>` HMAC header. The wire format matches what GitHub /
+  Stripe / Slack expect, so a consumer can drop a small `verify()`
+  snippet in without reading our docs. Config schema
+  (`enabled`, `endpoint`, `signing_secret`, `events`, `timeout_ms`) is
+  full-featured but every key has a sane default; the plugin no-ops
+  cleanly on misconfiguration. Network and HTTP failures are surfaced as
+  a `webhook.out_error` custom event so the audit firehose picks them
+  up too. Pure helpers `signBody` / `verifySignature` are exported
+  for tests. 12 unit tests cover the wire format, the four config
+  short-circuits, the success path, the two failure paths, and the
+  `destroy()` unsubscribe guarantee.
+
+- **`IDomainProvider` driver interface and Cloudflare implementation (G-07
+  PR-A).** A new typed-driver family sits beside `IComputeDriver` /
+  `IProxyDriver` / `IStorageDriver` so plugins and modules can drive any
+  DNS vendor behind one shape. `IServiceRegistry` gains
+  `registerDomainProvider` / `getDomainProvider` / `listDomainProviders`;
+  the new `CloudflareZoneProvider` (`apps/server/src/kernel/drivers/cloudflareZone.ts`,
+  name `cloudflare-zone`) reuses the existing `lib/cloudflare.ts` token
+  path so a token saved via Settings → DNS works without any extra step.
+  Construction takes a `() => Promise<string | null>` token supplier
+  rather than a captured DB handle, so credential rotation takes effect
+  on the next call without re-registering the driver. `ServiceRegistry.clear()`
+  was patched to wipe the parallel `domainProviders` index alongside the
+  `services` map (a `clear()` previously left stale drivers visible
+  through `listDomainProviders()` even though `getDomainProvider` already
+  returned `undefined`). The `lib/cloudflare.ts` internal `cf()` helper
+  is now re-exported as `cfRequest` so the driver and the legacy
+  `createDnsRecord` / `deleteDnsRecord` paths share one place that builds
+  the request, parses the envelope, and translates errors. 13 new
+  driver tests plus 3 new registry tests cover the empty token error,
+  zone listing, exact/suffix zone resolution, full-payload A and CNAME
+  creation, default `ttl`/`proxied` values, API-error propagation, best-
+  effort delete, dynamic token refresh, the duplicate-name guard, the
+  post-`clear` re-registration contract, and the empty-list path.
+
+- **DNSimple `IDomainProvider` driver (G-07 PR-B).** Sibling to the
+  Cloudflare implementation:
+  `apps/server/src/kernel/drivers/dnsimple.ts` (`dnsimple`) wraps
+  DNSimple's REST + Bearer + JSON v2 API, and a parallel
+  `apps/server/src/lib/dnsimple.ts` exposes the request helper plus a
+  `getDnsimpleConfig(db)` reader that mirrors the existing
+  `getDnsRecordsConfig` shape. DNSimple uses the zone *name* (e.g.
+  `example.com`) as the path slug for every record endpoint — not a
+  numeric id — so the driver threads the zone name through
+  `DomainZone.id` and callers stay vendor-agnostic. `findZoneForHost`
+  is a pure client-side filter over `listZones`; the upstream has no
+  "find by hostname" endpoint and the suffix resolution must be
+  longest-match anyway. `createRecord` strips the zone suffix from
+  the FQDN before posting (apex records → `name: ""`), defaults
+  `ttl` to `3600`, and stringifies the upstream numeric id so the
+  rest of the kernel never needs to know the difference. `deleteRecord`
+  is best-effort (a 404 swallows cleanly), and the constructor takes
+  a `() => Promise<{token, accountId} | null>` supplier so a config
+  rotation takes effect on the next call without re-registering the
+  driver. 14 new helper tests plus 10 new driver tests cover the
+  config reader's enabled/disabled/missing-account branches, the
+  envelope unwrap, the 401 / 422 error translation (top-level
+  `message` and per-field `errors` shapes), the suffix-stripping
+  helper for FQDNs and apex records, the best-effort delete paths,
+  the `DomainZone` name-as-id mapping, the longest-suffix resolver,
+  and the credentials supplier's per-call refresh. Namecheap
+  deliberately stays out of this PR — its API is XML, query-string
+  authenticated, and exposes only the atomic `setHosts` endpoint
+  rather than a record-by-record create/delete, so a faithful
+  `IDomainProvider` for Namecheap needs a separate, isolated PR
+  (G-07 PR-C) rather than a fake mapping.
+
 ### Fixed
 
+- **`SettingsTabPrivilege` test timeouts under parallel load (unrelated
+  to G-07).** `apps/web/test/SettingsTabPrivilege.test.tsx` runs four
+  async `findByText` waits, each capped at vitest's default 5 s. The
+  file's own comment already noted that the sibling-suite `waitFor`
+  helper inside the same file had to be raised to 10 s for the same
+  reason. Under the full-suite run captured in
+  `.tmp-real-validate/g07-web.log` the third test
+  (`sends the hook values an admin has configured`) hit the 5 s wall
+  before react-query dispatched the PATCH; the same four tests pass in
+  2.2 s when the file is run in isolation. Per-test timeout is now
+  15 s on all four `it()` callbacks in this file, and the
+  `waitFor` inside `savedBuild` is now 30 s — the G-07 PR-B
+  full-suite run captured in `.tmp-real-validate/g07b-web.log`
+  showed 10 s still false-failing on a slow host when the rest of
+  the workspace's vitest workers are booting in parallel. The
+  only behavioral change is the timeout, the assertions are
+  untouched. This change is not part of the G-07 driver surface
+  area; it is documented here so the next reviewer does not assume
+  the web PR depends on the kernel work above.
+
+- **Two dead operator guards removed before they could be used.**
+
+- **Two dead operator guards removed before they could be used.**
+  `lib/resourceAccess.ts` exported `assertOperator` and a second
+  `requireOperator()` prehandler, neither with a call site. Both re-read
+  `users.is_instance_operator` from the database — the one thing
+  `plugins/auth.ts` documents as forbidden, because it has already narrowed the
+  flag for a scope-restricted API token, so a fresh read would hand a `write`
+  token its owner's operator rights back. `requireOperator()` also still carried
+  the pre-0.3.5 self-granting definition in its docstring. The escalation
+  assertion they were tested against now runs against `app.requireOperator`.
+- **`job_runs` is bounded.** Scheduled-job run history had no retention at all,
+  and each row stores up to 60 KB of the command's captured output inside the
+  SQLite file that gets backed up whole — a per-minute cron job wrote roughly
+  525 000 rows a year while the panel only ever renders the newest 20 per job.
+  Swept on the same 30-day window as the other logs.
+- **Six environment variables the server reads were documented nowhere** —
+  including `NINEDEPLOY_ALLOW_PRIVATE_EGRESS` (the SSRF escape hatch, named in
+  the error message an operator hits and in no config file) and
+  `NINEDEPLOY_UPDATE_CHECK_URL` (the panel's only unprompted outbound call, and
+  the only way to turn update checks off). All six are now in `.env.example`,
+  and `apps/server/test/envExample.test.ts` fails when a new one is added
+  without a line describing it.
+- **Log Drains worked on no fresh install.** `log_drains` was declared in
+  `schema.ts` and recorded in drizzle-kit's snapshot, but no migration ever
+  created it — so every database built by replaying the migrations lacked the
+  table and Settings → Log Drains failed with `no such table: log_drains`.
+  Because the snapshot already claimed the table existed, `drizzle-kit generate`
+  could never emit the missing file. Added as `0039_log_drains`. New
+  `packages/db/test/schema-drift.test.ts` applies the whole migration chain to a
+  fresh database and compares every declared table and column against
+  `PRAGMA table_info` in both directions, so the next drift fails a test instead
+  of a production request.
+- **Historical CPU/memory charts work at all.** `GET /v1/services/:id/metrics`
+  returned 404: `metricRoutes` is a second export from `modules/stats.ts` whose
+  own comment says "Mounted under /services", and `api.ts` never registered it.
+  The charts on the Monitoring page and every service's Overview tab therefore
+  had nothing to read while the collector wrote two rows per service every 30
+  seconds. `test/api.test.ts` now asserts that every module it stubs answers on
+  its prefix, instead of spot-checking two of them.
+- **PR previews no longer leak a Docker network each.** Every deployed service
+  gets a private bridge (`ensureServiceBridge`, called by the Docker builder),
+  and only the panel's `DELETE /v1/services/:id` ever reaped it. The preview
+  auto-destroy path deleted the service row and stopped the container but left
+  the network behind — in the one feature designed for high churn, one preview
+  per pull request. It now reaps the bridge and removes the preview's build
+  logs, both best-effort so a stuck network cannot turn a webhook into a 500 the
+  provider will retry against a service that no longer exists.
+- **Deleting a service takes its deploy logs with it.** The FK cascade removed
+  the deployment rows and knew nothing about the log files, which outlived the
+  service they describe by up to the 30-day retention window — and build logs
+  routinely echo configuration.
+- **A deploy's outcome is recorded.** `deploy.trigger` was written when a
+  deployment was queued and was the *only* deploy action anything emitted:
+  `engine/pipeline.ts` never called `audit()`, so a deploy that finished —
+  successfully or not — did so in silence. Everything downstream of `audit()`
+  was blind to the result: **every notification channel** (a failed production
+  deploy notified nobody, and the Settings → Notifications event filter had no
+  `deploy.failed` to match), the `/v1/events` activity feed (deploys started and
+  never finished), and the freshly-rebuilt `kernel/auditBridge`, whose
+  `deployment.status_changed` could only ever carry `trigger`/`rollback`/`cancel`
+  — so the built-in plugins still never saw the one event they exist to react
+  to. The pipeline now records `deploy.success`, `deploy.failed` (reason in
+  `meta`) and `deploy.cancelled`, attributed to the service owner so the member
+  who triggered it can actually see their own result.
+- **A `deployFailed` alert in a manifest no longer writes a rule that can never
+  fire.** `applyManifestToService` mapped the two event-shaped triggers
+  (`deployFailed`, `restartLoop`) onto `metric: 'cert-expiry', threshold: 0`; the
+  function's own comment claimed it skipped the insert, and it did not. The rule
+  rendered in Monitoring looking like a configured alert. Both are now reported
+  as skipped in the deploy log.
+- **`static`, `watch` and `network` manifest sections are no longer dropped in
+  silence.** They are accepted by the strict schema and consumed by nothing.
+  Every other unwired section already warned, and the docs claimed these did
+  too. They do now.
+- **The deploy worker no longer leaks a timer per poll.** `plugins/worker.ts`
+  pushed every 2-second poll timer into an append-only array that only `stop()`
+  ever drained — roughly 43 000 dead `Timeout` handles per concurrency slot per
+  day of uptime. It is a `Set` each timer removes itself from as it fires.
+- Removed `lib/agentSeal.secretsMatch`: exported, tested, and called by nothing —
+  `agentClient.tokenMatches` already performs that comparison.
+- **The plugin marketplace no longer pretends to install anything.** Nothing in
+  `pluginLoader.ts` ever `import()`s code, so an npm/git/local "install" became
+  a DB row plus a shell whose `init` emits one event — while the panel reported
+  it *active*. Several of the 16 catalog entries also shadow features that ship
+  under another name: an operator who installed "Amazon S3 & Cloudflare R2
+  Sync", entered a bucket and secret key and saw it active would reasonably
+  believe backups were being copied off-site. They were not, and they would find
+  out at restore time. Now: npm/git/local installs are refused with an
+  explanation; every catalog entry carries `implemented` (all 16 are `false`
+  today) plus a `builtIn` pointer where it shadows a shipped feature, and
+  installing one is refused with a message naming the real feature; the panel
+  renders that pointer as a link instead of an Install button; and rows
+  installed by an older build from an unsupported source are skipped at boot
+  with a warning instead of restored as active-looking shells.
 - **Service visibility was computed three different ways.** `GET /v1/services`
   filtered on `owner_user_id` alone while `/dashboard`, `/domains` and the
   per-service loader also honoured workspace tags — a teammate could open and
@@ -88,9 +423,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `GET /v1/users` derived each row's operator badge from workspace seats, which
   after the change above would have shown every member as an operator. It reads
   the flag.
+- **CI on `main` was red three ways.** The main job's web suite failed 805
+  tests on Node 26: the jsdom storage globals arrive through vitest's
+  environment population as an EMPTY object on Node ≥ 25 (`localStorage.getItem
+  is not a function` from the first render that touches one — they work on
+  Node 24 and in plain jsdom, which is why the suite stayed green locally).
+  `apps/web/test/setup.ts` now detects a non-functional storage and backs both
+  names with a working in-memory instance. The deprecated-dependency gate still
+  matched `@esbuild-kit/*` and `glob@10.5.0` in `pnpm-lock.yaml`: the patches
+  remove those edges from the graph, but the lockfile was never re-derived, so
+  the stale packages and `drizzle-kit`/`archiver-utils` snapshot entries were
+  hand-pruned (frozen installs verified). And the testcontainers suite failed
+  five cases it had never once run green: the pg/mysql/mongo/redis suites
+  asserted the OLD `v<version>:` at-rest envelope while the engine writes the
+  streamed `NDBK1:v<version>:<iv>` header; the Redis fixture passed an empty
+  `passwordEncrypted`, which `decrypt` rightly refused ("Invalid initialization
+  vector") — it now starts the container with `--requirepass` and encrypts the
+  same secret it stores; and the deploy e2e pulls `busybox:1.36` up front with
+  retries, because an auto-pull inside a test assertion turned a rate-limited
+  registry into a red suite.
 
 ### Docs
 
+- `docs/NINEDEPLOY_MANIFEST.md` no longer describes machinery that does not
+  exist. §4.14 implied `network.aliases` reached Docker, §4.15 described a
+  channel "resolver" for `notifications` that was never written, §4.16 claimed
+  every alert "fires into exactly one named channel" (the channel is encoded in
+  the rule *name*; delivery follows the global per-channel event filters), and
+  the end-to-end example attributed the deploy trigger to the manifest's own
+  `watch.paths` rather than the webhook's. Each now says what actually happens
+  and points at §6.3.
+- `.env.example` pointed at a `ninedeploy rotate-keys` command that did not
+  exist, and omitted that completing the rotation by removing the old key
+  destroys the restorability of every backup taken under it.
 - `ARCHITECTURE.md` rewritten against the actual tree: it had drifted a full
   release behind (28 tables → 40, migrations 0000–0019 → 0000–0038, "two roles"
   → workspace RBAC, single-project scoping → N-N project/workspace/label tags,

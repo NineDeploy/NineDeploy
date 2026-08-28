@@ -1,7 +1,8 @@
-import type { IServiceRegistry } from './types.js';
+import type { IDomainProvider, IServiceRegistry } from './types.js';
 
 export class ServiceRegistry implements IServiceRegistry {
   private readonly services = new Map<string, unknown>();
+  private readonly domainProviders: IDomainProvider[] = [];
 
   register<T>(name: string, service: T): void {
     if (this.services.has(name)) {
@@ -32,6 +33,11 @@ export class ServiceRegistry implements IServiceRegistry {
 
   clear(): void {
     this.services.clear();
+    // The domain-provider index is a parallel list; without this reset a
+    // `clear()` would leave stale drivers visible via `listDomainProviders`
+    // while `getDomainProvider` already returned undefined. Pin the
+    // contract: a clear wipes both the typed-driver map AND the index.
+    this.domainProviders.length = 0;
   }
 
   registerCompute(driver: import('./types.js').IComputeDriver): void {
@@ -56,5 +62,21 @@ export class ServiceRegistry implements IServiceRegistry {
 
   getStorage(name: string): import('./types.js').IStorageDriver | undefined {
     return this.getOptional(`storage:${name}`);
+  }
+
+  registerDomainProvider(driver: IDomainProvider): void {
+    if (this.domainProviders.some((d) => d.name === driver.name)) {
+      throw new Error(`Domain provider "${driver.name}" is already registered`);
+    }
+    this.domainProviders.push(driver);
+    this.register(`domain:${driver.name}`, driver);
+  }
+
+  getDomainProvider(name: string): IDomainProvider | undefined {
+    return this.getOptional(`domain:${name}`);
+  }
+
+  listDomainProviders(): IDomainProvider[] {
+    return [...this.domainProviders];
   }
 }

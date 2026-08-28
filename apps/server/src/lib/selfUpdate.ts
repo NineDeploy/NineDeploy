@@ -312,11 +312,17 @@ export async function startSelfUpdate(version: string, opts: { installDir?: stri
   if (existing.phase === 'running') throw conflict(`An update to ${existing.targetVersion} is already in progress`);
 
   const p = paths(opts.stateDir);
-  mkdirSync(p.dir, { recursive: true });
+  // 0700: this directory holds the generated updater script and the captured
+  // installer output. `install.sh` is careful to chmod 600 the .env it writes;
+  // the place its output lands deserves the same treatment.
+  mkdirSync(p.dir, { recursive: true, mode: 0o700 });
 
   writeFileSync(p.script, updaterScript(p, support.installDir!), { mode: 0o700 });
   try { unlinkSync(p.exitCode); } catch { /* first run */ }
-  writeFileSync(p.log, '');
+  // Truncate with the same restriction as the script beside it. The updater
+  // appends the installer's whole stream here, and `errorTail` surfaces the
+  // last lines of it through the API on failure.
+  writeFileSync(p.log, '', { mode: 0o600 });
 
   const state: SelfUpdateState = {
     phase: 'running',

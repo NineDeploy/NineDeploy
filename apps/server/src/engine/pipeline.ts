@@ -21,6 +21,7 @@ import { getBundledTemplates } from '../templates/registry.js';
 import type { BuildContext, Builder, DeployRuntime } from './types.js';
 import { reconcileTemplateDependencies } from './templateDependencies.js';
 import { applyManifestToService } from '../lib/applyManifestToService.js';
+import { audit } from '../lib/audit.js';
 import { loadNinedeployManifest } from '../lib/ninedeployManifest.js';
 import { applyManifestToBuildConfig, findMissingRequiredEnv } from '../lib/ninedeployApply.js';
 import type { NinedeployManifest } from '@ninedeploy/schemas';
@@ -245,6 +246,48 @@ async function safeFail(db: DB, deploymentId: number, serviceId: number, runtime
 }
 
 /**
+ * Record the OUTCOME of a deploy on the audit stream.
+ *
+ * `deploy.trigger` is written by the route when the deployment is queued, and
+ * until now that was the ONLY deploy action anything emitted — the pipeline
+ * finished, successfully or not, in silence. Three consumers hang off `audit()`
+ * and all three were blind to the result an operator actually cares about:
+ *
+ *   • `lib/notifier.notifyEvent` — every Slack/Telegram/webhook/email channel,
+ *     so a failed production deploy notified nobody;
+ *   • the `/v1/events` socket behind the panel's live activity feed, which
+ *     showed a deploy starting and never finishing;
+ *   • `kernel/auditBridge`, whose `deployment.status_changed` could therefore
+ *     only ever carry `trigger`/`rollback`/`cancel`. The built-in plugins that
+ *     ship enabled listen for a deploy RESULT and never saw one.
+ *
+ * The actor is the service OWNER rather than `null` on purpose: `canReceiveEvent`
+ * treats a null actor as a system event and delivers it to operators only, which
+ * would hide a member's own deploy result from them.
+ *
+ * Best-effort by construction — `audit()` swallows its own failures, and this is
+ * awaited only so the notification dispatch is started before the worker moves
+ * on to the next tick.
+ */
+async function auditOutcome(
+  db: DB,
+  service: typeof services.$inferSelect,
+  deploymentId: number,
+  outcome: 'success' | 'failed' | 'cancelled',
+  reason?: string,
+): Promise<void> {
+  // `name #id` is the entity shape `kernel/auditBridge` parses back into
+  // { serviceName, deploymentId }.
+  await audit(
+    db,
+    service.ownerUserId ?? null,
+    `deploy.${outcome}`,
+    `${service.name} #${deploymentId}`,
+    reason ? { reason: reason.slice(0, 500) } : undefined,
+  );
+}
+
+/**
  * Snapshot the effective build config + env key fingerprint for this deploy —
  * stored on the deployment row and diffed against the previous deployment to
  * answer "what changed between these two deploys?". Values are never included
@@ -295,6 +338,7 @@ export async function runDeployment(db: DB, deploymentId: number): Promise<void>
   if (!builder) {
     log(`✗ Unknown service type: ${service.type}`);
     await safeFail(db, deploymentId, service.id, service.runtimeId);
+    await auditOutcome(db, service, deploymentId, 'failed', `Unknown service type: ${service.type}`);
     return;
   }
 
@@ -573,6 +617,13 @@ export async function runDeployment(db: DB, deploymentId: number): Promise<void>
     } else {
       await safeFail(db, deploymentId, service.id, null);
     }
+    await auditOutcome(
+      db,
+      service,
+      deploymentId,
+      cancelled ? 'cancelled' : 'failed',
+      cancelled ? undefined : msg(err),
+    );
     return;
   }
 
@@ -650,6 +701,7 @@ export async function runDeployment(db: DB, deploymentId: number): Promise<void>
       log('⏹ Cancelled just before finalizing — in-place redeploy already applied, live runtime stays up');
       await db.update(services).set({ status: 'running', runtimeId: newRuntimeId }).where(eq(services.id, service.id));
     }
+    await auditOutcome(db, service, deploymentId, 'cancelled');
     return;
   }
   const persisted = await db
@@ -737,4 +789,5 @@ export async function runDeployment(db: DB, deploymentId: number): Promise<void>
   }
   log('##[stage:COMPLETE:success] Service is live and healthy on production');
   log('✓ Deployment successful');
+  await auditOutcome(db, service, deploymentId, 'success');
 }

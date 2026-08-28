@@ -10,8 +10,8 @@ import {
   servicesGet, servicesInspect, servicesLifecycle, servicesList, servicesLogs,
 } from './commands/services.js';
 import {
-  dbCreate, dbList, deploysList, deploysRollback,
-  systemDashboard, systemInfo, systemUpdateCheck, tplDeploy, tplList,
+  dbCreate, dbList, deploysCancel, deploysList, deploysRemove, deploysRollback,
+  systemDashboard, systemInfo, systemRotateKeys, systemUpdateCheck, tplDeploy, tplList,
   tokenCreate, tokenList,
 } from './commands/misc.js';
 import {
@@ -50,6 +50,7 @@ import {
 } from './commands/webhooks.js';
 import { deployFromGithub } from './commands/deploy.js';
 import { manifestApply, manifestInit, manifestShow, manifestValidate } from './commands/manifest.js';
+import { templatesInit } from './commands/templates.js';
 
 const program = new Command();
 
@@ -155,7 +156,7 @@ databases.command('list').description('List all databases').action(() => dbList(
 databases.command('create').description('Create a database (interactive)').action(() => dbCreate(getClient()));
 
 // ── Templates ─────────────────────────────────────────────────────────────
-const templates = program.command('templates').description('Browse the template hub');
+const templates = program.command('templates').description('Browse the template hub and scaffold starter manifests from it');
 
 templates.command('list').description('List all templates').action(() => tplList(getClient()));
 
@@ -167,6 +168,13 @@ const deploys = program.command('deploys').description('Manage deployments');
 deploys.command('list <serviceId>').description('List deployments for a service').action((id: string) => deploysList(getClient(), id));
 
 deploys.command('rollback <serviceId> <deployId>').description('Rollback to a previous deployment').action((svcId: string, depId: string) => deploysRollback(getClient(), svcId, depId));
+
+deploys.command('cancel <serviceId> <deployId>').description('Cancel a queued or in-flight deployment').action((svcId: string, depId: string) => deploysCancel(getClient(), svcId, depId));
+
+deploys.command('rm <serviceId> <deployId>')
+  .description('Remove a finished deployment from history, with its build log')
+  .option('-y, --yes', 'Skip the confirmation prompt')
+  .action((svcId: string, depId: string, opts: { yes?: boolean }) => deploysRemove(getClient(), svcId, depId, opts.yes === true));
 
 // ── Token ─────────────────────────────────────────────────────────────────
 const token = program.command('token').description('Manage API tokens');
@@ -184,6 +192,9 @@ system.command('dashboard').description('Live dashboard with service health').ac
 system.command('update-check').description('Compare the running version with the latest release')
   .option('-f, --force', 'Bypass the 6h cache')
   .action((opts: { force?: boolean }) => systemUpdateCheck(getClient(), opts.force === true));
+system.command('rotate-keys')
+  .description('Re-encrypt every stored secret onto the newest NINEDEPLOY_MASTER_KEYS version')
+  .action(() => systemRotateKeys(getClient()));
 
 // ── Env vars ──────────────────────────────────────────────────────────────
 const envCmd = program.command('env').description('Manage service environment variables');
@@ -423,6 +434,21 @@ manifest
   .command('apply <serviceId>')
   .description('Apply the manifest to a service (placeholder — wired in the next release)')
   .action((serviceId: string) => manifestApply(getClient(), process.cwd(), Number(serviceId)));
+
+// ── Templates (one-click starter manifests from the panel registry) ───────
+templates
+  .command('init <templateId>')
+  .description('Fetch a template from the panel and emit a starter .ninedeploy')
+  .option('--host <host>', 'Default `routes[0].host` for the starter manifest')
+  .option('--filename <name>', 'Filename to write when --write is set (default .ninedeploy)')
+  .option('--write', 'Write to a file in the current directory instead of stdout')
+  .action((templateId: string, opts: { host?: string; filename?: string; write?: boolean }) =>
+    templatesInit(getClient(), templateId, process.cwd(), {
+      host: opts.host,
+      filename: opts.filename,
+      write: Boolean(opts.write),
+    }),
+  );
 
 // ── Banner on bare `ninedeploy` ───────────────────────────────────────────
 if (process.argv.length <= 2) {

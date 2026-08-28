@@ -1,13 +1,18 @@
-﻿import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { NineDeployKernel } from '../../src/kernel/kernel.js';
 import { CloudflareTunnelsPlugin } from '../../src/kernel/plugins/cloudflareTunnels.js';
+import { ManifestGeneratorPlugin } from '../../src/kernel/plugins/manifestGenerator.js';
 import { NotificationsDispatcherPlugin } from '../../src/kernel/plugins/notifications.js';
+import { TemplateBundlesPlugin } from '../../src/kernel/plugins/templateBundles.js';
 import { TelemetryStreamerPlugin } from '../../src/kernel/plugins/telemetry.js';
 
 describe('Official Kernel Plugins', () => {
   const mockDb = {
     query: {
-      configEntries: { findMany: vi.fn().mockResolvedValue([]) },
+      configEntries: {
+        findMany: vi.fn().mockResolvedValue([]),
+        findFirst: vi.fn().mockResolvedValue(undefined),
+      },
     },
     insert: vi.fn().mockReturnValue({ values: vi.fn().mockReturnValue({ onConflictDoUpdate: vi.fn().mockResolvedValue([]) }) }),
   };
@@ -158,4 +163,62 @@ describe('Official Kernel Plugins', () => {
       plugin.destroy();
     });
   });
+
+  describe('TemplateBundlesPlugin', () => {
+    it('republishes template.install audit events and ignores the rest', async () => {
+      const kernel = new NineDeployKernel(mockDb as never, mockConfig);
+      const plugin = new TemplateBundlesPlugin();
+      await kernel.registerPlugin(plugin);
+
+      const observed: unknown[] = [];
+      kernel.events.onCustom('template.bundle.observed', (payload) => observed.push(payload));
+
+      kernel.events.emit('audit.recorded', {
+        action: 'template.install',
+        entity: 'template:n8n',
+        actorUserId: 42,
+        ts: '2026-08-28T12:00:00.000Z',
+      });
+      kernel.events.emit('audit.recorded', {
+        action: 'service.created',
+        entity: 'service:1',
+        actorUserId: 7,
+        ts: '2026-08-28T12:00:01.000Z',
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(observed).toHaveLength(1);
+      expect(observed[0]).toMatchObject({ action: 'template.install', entity: 'template:n8n' });
+
+      plugin.destroy();
+    });
+  });
+
+  describe('ManifestGeneratorPlugin', () => {
+    it('reacts to template.bundle.observed and emits manifest.generated', async () => {
+      const kernel = new NineDeployKernel(mockDb as never, mockConfig);
+      const plugin = new ManifestGeneratorPlugin();
+      await kernel.registerPlugin(plugin);
+
+      const generated: unknown[] = [];
+      kernel.events.onCustom('manifest.generated', (payload) => generated.push(payload));
+
+      kernel.events.emitCustom('template.bundle.observed', {
+        action: 'template.install',
+        entity: 'template:n8n',
+        actorUserId: 1,
+        ts: '2026-08-28T12:00:00.000Z',
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(generated).toHaveLength(1);
+      expect(generated[0]).toMatchObject({
+        templateId: 'n8n',
+        manifest: { version: '1', run: { port: 5678 } },
+      });
+    });
+  });
 });
+

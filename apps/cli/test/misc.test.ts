@@ -2,10 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   dbCreate,
   dbList,
+  deploysCancel,
   deploysList,
+  deploysRemove,
   deploysRollback,
   systemDashboard,
   systemInfo,
+  systemRotateKeys,
   systemUpdateCheck,
   tokenCreate,
   tokenList,
@@ -263,6 +266,93 @@ describe('deploysRollback', () => {
   });
 });
 
+/**
+ * The cancel route, the SDK method and the panel button all existed; the CLI
+ * was the one surface without it, so a deploy started from CI could only be
+ * stopped from a browser.
+ */
+describe('deploysCancel', () => {
+  it('requires numeric service and deploy ids', async () => {
+    await deploysCancel({ deploys: { cancel: vi.fn() } } as never, 'abc', '1');
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Usage'));
+  });
+
+  it('cancels the deployment', async () => {
+    const cancel = vi.fn().mockResolvedValue({ ok: true, status: 'cancelled' });
+
+    await deploysCancel({ deploys: { cancel } } as never, '21', '99');
+
+    expect(cancel).toHaveBeenCalledWith(21, 99);
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('#99 cancelled'));
+  });
+
+  it('reports the server message when the deploy already finished', async () => {
+    const client = { deploys: { cancel: vi.fn().mockRejectedValue(new Error('Deployment is not in progress')) } };
+
+    await deploysCancel(client as never, '21', '99');
+
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('not in progress'));
+  });
+
+  it('reports a non-Error rejection', async () => {
+    const client = { deploys: { cancel: vi.fn().mockRejectedValue('boom') } };
+    await deploysCancel(client as never, '21', '99');
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('boom'));
+  });
+});
+
+describe('deploysRemove', () => {
+  it('requires numeric service and deploy ids', async () => {
+    await deploysRemove({ deploys: { remove: vi.fn() } } as never, '21', 'nope');
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Usage'));
+  });
+
+  it('asks before destroying history and aborts on anything but yes', async () => {
+    const remove = vi.fn();
+    h.prompt.mockResolvedValue('no');
+
+    await deploysRemove({ deploys: { remove } } as never, '21', '99');
+
+    expect(remove).not.toHaveBeenCalled();
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Aborted.'));
+  });
+
+  it('removes after confirmation', async () => {
+    const remove = vi.fn().mockResolvedValue({ ok: true, id: 99 });
+    h.prompt.mockResolvedValue('yes');
+
+    await deploysRemove({ deploys: { remove } } as never, '21', '99');
+
+    expect(remove).toHaveBeenCalledWith(21, 99);
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('#99 removed'));
+  });
+
+  it('skips the prompt with --yes', async () => {
+    const remove = vi.fn().mockResolvedValue({ ok: true, id: 99 });
+
+    await deploysRemove({ deploys: { remove } } as never, '21', '99', true);
+
+    expect(h.prompt).not.toHaveBeenCalled();
+    expect(remove).toHaveBeenCalledWith(21, 99);
+  });
+
+  it('relays the refusal for the deployment that is serving traffic', async () => {
+    const client = {
+      deploys: { remove: vi.fn().mockRejectedValue(new Error('This deployment is the version currently serving traffic and cannot be removed')) },
+    };
+
+    await deploysRemove(client as never, '21', '99', true);
+
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('currently serving traffic'));
+  });
+
+  it('reports a non-Error rejection', async () => {
+    const client = { deploys: { remove: vi.fn().mockRejectedValue('boom') } };
+    await deploysRemove(client as never, '21', '99', true);
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('boom'));
+  });
+});
+
 describe('tokenCreate', () => {
   it('creates a token with a default name and prints it', async () => {
     const create = vi.fn().mockResolvedValue({ token: 'raw-token', scopes: ['write'] });
@@ -472,5 +562,61 @@ describe('systemUpdateCheck', () => {
     await systemUpdateCheck({ system: { updateCheck } } as never, false);
     const text = logSpy.mock.calls.map((call) => call[0]).join('\n');
     expect(text).toContain('Latest release unknown');
+  });
+});
+
+/**
+ * `ninedeploy system rotate-keys`.
+ *
+ * `.env.example` has told operators to run this command since the master-key
+ * ring landed, and it did not exist: `lib/keyRotation.rotateSecrets` was
+ * implemented and tested on the server but had no caller anywhere. Following
+ * the documented procedure and then dropping the retired key version left a
+ * database full of secrets nothing could decrypt.
+ */
+describe('systemRotateKeys', () => {
+  const clientWith = (get: unknown, rotate = vi.fn()) =>
+    ({ settings: { masterKey: { get: vi.fn().mockResolvedValue(get), rotate } } }) as never;
+
+  it('refuses when the ring holds a single key version', async () => {
+    const rotate = vi.fn();
+    await systemRotateKeys(clientWith({ activeVersion: 0, knownVersions: [0], rotatable: false }, rotate));
+    expect(rotate).not.toHaveBeenCalled();
+    const text = errorSpy.mock.calls.map((call) => call[0]).join('\n');
+    expect(text).toContain('nothing to rotate onto');
+  });
+
+  it('aborts without rotating unless the operator confirms', async () => {
+    const rotate = vi.fn();
+    h.prompt.mockResolvedValue('no');
+    await systemRotateKeys(clientWith({ activeVersion: 1, knownVersions: [0, 1], rotatable: true }, rotate));
+    expect(rotate).not.toHaveBeenCalled();
+    expect(logSpy.mock.calls.map((call) => call[0]).join('\n')).toContain('Aborted.');
+  });
+
+  it('rotates on confirmation and reports the count', async () => {
+    const rotate = vi.fn().mockResolvedValue({ rotated: 12, activeVersion: 1, backupsNotRotated: 0, warning: null });
+    h.prompt.mockResolvedValue('yes');
+    await systemRotateKeys(clientWith({ activeVersion: 1, knownVersions: [0, 1], rotatable: true }, rotate));
+    expect(rotate).toHaveBeenCalled();
+    const text = logSpy.mock.calls.map((call) => call[0]).join('\n');
+    expect(text).toContain('12 secret value(s) re-encrypted under v1');
+    expect(text).toContain('retired key can be removed');
+  });
+
+  it('relays the backup warning instead of the all-clear', async () => {
+    // Backups carry their own key version and are NOT re-encrypted, so dropping
+    // the old key would make them permanently unrestorable.
+    const rotate = vi.fn().mockResolvedValue({
+      rotated: 12,
+      activeVersion: 1,
+      backupsNotRotated: 4,
+      warning: '4 stored backup(s) are still sealed under an older key version.',
+    });
+    h.prompt.mockResolvedValue('YES');
+    await systemRotateKeys(clientWith({ activeVersion: 1, knownVersions: [0, 1], rotatable: true }, rotate));
+    const text = logSpy.mock.calls.map((call) => call[0]).join('\n');
+    expect(text).toContain('4 stored backup(s)');
+    expect(text).not.toContain('retired key can be removed');
   });
 });

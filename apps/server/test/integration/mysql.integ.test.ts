@@ -57,9 +57,9 @@ describe.skipIf(!ENABLED)('database backup/restore (real MySQL container)', () =
 
     await backupDatabase(db as never, dumpFile, () => undefined);
     expect(existsSync(dumpFile)).toBe(true);
-    // Encrypted at rest — no plaintext dump leakage.
+    // Encrypted at rest under the streamed NDBK1 header — no plaintext leakage.
     const atRest = readFileSync(dumpFile, 'utf8');
-    expect(/^v\d+:/.test(atRest)).toBe(true);
+    expect(/^NDBK1:v\d+:/.test(atRest)).toBe(true);
     expect(atRest).not.toContain('roundtrip');
 
     await execSql('DROP DATABASE integ;');

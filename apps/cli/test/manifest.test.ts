@@ -240,7 +240,7 @@ describe('manifest show', () => {
   it('warns (plural) about multiple secret matches', () => {
     writeFileSync(
       path.join(workDir, '.ninedeploy'),
-      'version: "1"\nenv:\n  AWS_KEY: AKIAIOSFODNN7EXAMPLE\n  GH: ghp_' + 'a'.repeat(36) + '\n',
+      `version: "1"\nenv:\n  AWS_KEY: AKIAIOSFODNN7EXAMPLE\n  GH: ghp_${'a'.repeat(36)}\n`,
     );
     const prev = process.exitCode;
     manifestShow(workDir);

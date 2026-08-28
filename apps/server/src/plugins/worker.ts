@@ -30,7 +30,25 @@ export default fp(
   async (fastify) => {
     let running = true;
     const currents: Array<Promise<void>> = [];
-    const timers: NodeJS.Timeout[] = [];
+    /**
+     * Pending poll timers, one per concurrency slot.
+     *
+     * A Set that each timer removes itself from as it fires. It used to be an
+     * append-only array: every 2-second tick pushed another settled Timeout
+     * that was only ever released by `stop()`, so a panel left running
+     * accumulated ~43 000 dead handles per slot per day.
+     */
+    const timers = new Set<NodeJS.Timeout>();
+
+    /** Queue the next poll, self-removing so the set only holds live timers. */
+    const schedule = (delayMs: number): void => {
+      const t = setTimeout(() => {
+        timers.delete(t);
+        void tick();
+      }, delayMs);
+      t.unref?.();
+      timers.add(t);
+    };
 
     // Crash recovery: a deploy interrupted by a restart is left stranded in
     // `building`. Requeue rows that can no longer be genuinely running —
@@ -146,18 +164,15 @@ export default fp(
       } catch (err) {
         fastify.log.error({ err }, 'worker tick failed');
       } finally {
-        if (running) {
-          const t = setTimeout(() => void tick(), POLL_MS);
-          t.unref?.();
-          timers.push(t);
-        }
+        if (running) schedule(POLL_MS);
       }
     };
 
     fastify.decorate('worker', {
       stop: async () => {
         running = false;
-        for (const t of timers.splice(0)) clearTimeout(t);
+        for (const t of timers) clearTimeout(t);
+        timers.clear();
         // Wait for in-flight deploys, but only up to a bounded grace period.
         // The grace timer is unref'd so it can never keep the process alive.
         const grace = new Promise<void>((resolve) => {
@@ -176,9 +191,7 @@ export default fp(
 
     // One loop per concurrency slot; all loops share the same claim guard.
     for (let slot = 0; slot < config.deployConcurrency; slot++) {
-      const t = setTimeout(() => void tick(), POLL_MS + slot * 100);
-      t.unref?.();
-      timers.push(t);
+      schedule(POLL_MS + slot * 100);
     }
     fastify.log.info({ concurrency: config.deployConcurrency }, 'deploy worker started');
   },

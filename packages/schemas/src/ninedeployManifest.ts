@@ -235,7 +235,7 @@ export const volumeBackups = z
       .min(1)
       .max(100)
       .regex(
-        /^[\d*\/,\-A-Za-z\s]+$/,
+        /^[\d*/,\-A-Za-z\s]+$/,
         'must look like a cron expression (digits, *, /, comma, dash, letters, space)',
       ),
     retention: z.number().int().min(1).max(365).default(7),

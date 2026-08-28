@@ -105,10 +105,13 @@ const h = vi.hoisted(() => {
     tplDeploy: vi.fn(),
     deploysList: vi.fn(),
     deploysRollback: vi.fn(),
+    deploysCancel: vi.fn(),
+    deploysRemove: vi.fn(),
     tokenCreate: vi.fn(),
     tokenList: vi.fn(),
   systemInfo: vi.fn(),
   systemDashboard: vi.fn(),
+  systemRotateKeys: vi.fn(),
   systemUpdateCheck: vi.fn(),
   usersResetLink: vi.fn(),
   banner: vi.fn(),
@@ -199,7 +202,10 @@ vi.mock('../src/commands/misc.js', () => ({
   dbList: h.dbList,
   deploysList: h.deploysList,
   deploysRollback: h.deploysRollback,
+  deploysCancel: h.deploysCancel,
+  deploysRemove: h.deploysRemove,
   systemDashboard: h.systemDashboard,
+  systemRotateKeys: h.systemRotateKeys,
   systemInfo: h.systemInfo,
   systemUpdateCheck: h.systemUpdateCheck,
   tplDeploy: h.tplDeploy,
@@ -311,10 +317,10 @@ describe('program registration', () => {
     expect(findCommand('server').children).toHaveLength(4);
     expect(findCommand('services').children).toHaveLength(12);
     expect(findCommand('databases').children).toHaveLength(2);
-    expect(findCommand('templates').children).toHaveLength(2);
-    expect(findCommand('deploys').children).toHaveLength(3);
+    expect(findCommand('templates').children).toHaveLength(3);
+    expect(findCommand('deploys').children).toHaveLength(5);
     expect(findCommand('token').children).toHaveLength(2);
-    expect(findCommand('system').children).toHaveLength(6);
+    expect(findCommand('system').children).toHaveLength(7);
     expect(findCommand('workspaces').children).toHaveLength(4);
     expect(findCommand('env').children).toHaveLength(3);
     expect(findCommand('domains').children).toHaveLength(3);
@@ -326,7 +332,7 @@ describe('program registration', () => {
     expect(findCommand('demo').children).toHaveLength(1);
     expect(findCommand('firewall').children).toHaveLength(7);
     expect(findCommand('manifest').children).toHaveLength(4);
-    expect(h.FakeCommand.instances).toHaveLength(123);
+    expect(h.FakeCommand.instances).toHaveLength(127);
     // sanity: every new command we added has at least the subcommands it owns
     expect(findCommand('sources').children.length).toBeGreaterThanOrEqual(6);
     expect(findCommand('deploy').children.length).toBeGreaterThanOrEqual(1);
@@ -722,6 +728,15 @@ describe('delegating actions', () => {
     expect(h.deploysList).toHaveBeenCalledWith(client, '21');
     await deploys.children.find((c) => c.cmdName === 'rollback <serviceId> <deployId>')!.actionFn!('21', '99');
     expect(h.deploysRollback).toHaveBeenCalledWith(client, '21', '99');
+    // The route, the SDK method and the panel button all had cancel; the CLI
+    // was the one surface without it, so a deploy started from CI could only be
+    // stopped from a browser.
+    await deploys.children.find((c) => c.cmdName === 'cancel <serviceId> <deployId>')!.actionFn!('21', '99');
+    expect(h.deploysCancel).toHaveBeenCalledWith(client, '21', '99');
+    await deploys.children.find((c) => c.cmdName === 'rm <serviceId> <deployId>')!.actionFn!('21', '99', { yes: true });
+    expect(h.deploysRemove).toHaveBeenCalledWith(client, '21', '99', true);
+    await deploys.children.find((c) => c.cmdName === 'rm <serviceId> <deployId>')!.actionFn!('21', '99', {});
+    expect(h.deploysRemove).toHaveBeenCalledWith(client, '21', '99', false);
 
     const token = findCommand('token');
     await token.children.find((c) => c.cmdName === 'create')!.actionFn!();
@@ -734,6 +749,10 @@ describe('delegating actions', () => {
     expect(h.systemInfo).toHaveBeenCalledWith(client);
     await system.children.find((c) => c.cmdName === 'dashboard')!.actionFn!();
     expect(h.systemDashboard).toHaveBeenCalledWith(client);
+    // `.env.example` has always pointed operators at `ninedeploy rotate-keys`;
+    // until now no such command existed and `rotateSecrets` had no caller.
+    await system.children.find((c) => c.cmdName === 'rotate-keys')!.actionFn!();
+    expect(h.systemRotateKeys).toHaveBeenCalledWith(client);
 
     const plugins = findCommand('plugins');
     await plugins.children.find((c) => c.cmdName === 'list')!.actionFn!();

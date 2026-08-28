@@ -21,6 +21,7 @@
     "@fastify/websocket": "^11.3.0",
     "@ninedeploy/db": "workspace:*",
     "@ninedeploy/schemas": "workspace:*",
+    "@ninedeploy/sdk": "workspace:*",
     "@node-rs/argon2": "^2.1.0",
     "@simplewebauthn/server": "^13.3.2",
     "croner": "^10.0.1",

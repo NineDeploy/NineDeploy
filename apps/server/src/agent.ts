@@ -1,5 +1,6 @@
 import { buildAgentApp } from './agentApp.js';
 import { tokenMatches } from './lib/agentClient.js';
+import { open as openSealed, seal as sealResponse } from './lib/agentSeal.js';
 import { spawnValidated } from './lib/spawnValidated.js';
 import { pullDockerImage } from './lib/dockerPull.js';
 
@@ -306,11 +307,34 @@ export const agentRoutes = async (app: import('fastify').FastifyInstance, opts: 
   const tokenHash = opts.tokenHash ?? process.env['NINEDEPLOY_AGENT_TOKEN'] ?? '';
 
   app.post('/agent/exec', { config: { rateLimit: { max: 120, timeWindow: '1 minute' } } }, async (req, reply) => {
-    const token = req.headers['x-agent-token'];
-    if (typeof token !== 'string' || !tokenMatches(token, tokenHash)) {
-      return reply.code(401).send({ error: { code: 'unauthorized', message: 'Bad agent token' } });
+    const raw = (req.body ?? {}) as { sealed?: unknown; op?: unknown; params?: unknown };
+
+    // Sealed transport (preferred). The envelope is authenticated with a key
+    // derived from the shared secret, so opening it IS the authentication —
+    // the token never crosses the network, and neither do the service secrets
+    // that `file.writeEnv` carries. See lib/agentSeal.ts.
+    let input: { op?: unknown; params?: unknown };
+    let sealedRequest = false;
+    if (raw.sealed !== undefined) {
+      try {
+        input = openSealed<{ op?: unknown; params?: unknown }>(tokenHash, raw.sealed);
+        sealedRequest = true;
+      } catch {
+        // Same answer as a bad token: a caller who cannot produce a valid
+        // envelope has not authenticated, and saying more would turn this into
+        // a decryption oracle.
+        return reply.code(401).send({ error: { code: 'unauthorized', message: 'Bad agent token' } });
+      }
+    } else {
+      // Legacy plaintext path, kept so an upgraded agent still answers a core
+      // that has not been upgraded yet. Deprecated — see /agent/ping, which
+      // advertises `sealed: true` so a current core never takes this branch.
+      const token = req.headers['x-agent-token'];
+      if (typeof token !== 'string' || !tokenMatches(token, tokenHash)) {
+        return reply.code(401).send({ error: { code: 'unauthorized', message: 'Bad agent token' } });
+      }
+      input = raw;
     }
-    const input = (req.body ?? {}) as { op?: unknown; params?: unknown };
     const op = typeof input.op === 'string' ? input.op : '';
     const params: Params = typeof input.params === 'object' && input.params ? (input.params as Params) : {};
     if (!OPS[op] && op !== 'file.writeEnv' && op !== 'file.deleteEnv') {
@@ -326,10 +350,21 @@ export const agentRoutes = async (app: import('fastify').FastifyInstance, opts: 
     } catch (err) {
       return reply.code(400).send({ error: { code: 'bad_params', message: err instanceof Error ? err.message : 'Invalid params' } });
     }
-    return { lines, exitCode, envFile };
+    const result = { lines, exitCode, envFile };
+    // Seal the reply too: command output routinely echoes configuration, and a
+    // plaintext response would undo half the point.
+    return sealedRequest ? { sealed: sealResponse(tokenHash, result) } : result;
   });
 
-  app.get('/agent/ping', async () => ({ ok: true, agent: true, version: (await import('./version.js')).VERSION }));
+  // Unauthenticated capability probe. `sealed: true` is how a core learns it
+  // may use the sealed transport; without it the core falls back to the legacy
+  // path and logs a warning naming this agent.
+  app.get('/agent/ping', async () => ({
+    ok: true,
+    agent: true,
+    sealed: true,
+    version: (await import('./version.js')).VERSION,
+  }));
 };
 
 // Boot when the agent flag is set. Tests set NINEDEPLOY_AGENT=1 explicitly

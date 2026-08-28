@@ -1,4 +1,5 @@
 import type { DB } from '@ninedeploy/db';
+import type { DomainZone } from '../kernel/types.js';
 import { decrypt, encrypt } from './crypto.js';
 import { getSettingString, setSettingString } from './settings.js';
 
@@ -32,6 +33,14 @@ async function cf<T>(path: string, token: string, init?: RequestInit): Promise<T
   }
   return body.result;
 }
+
+/**
+ * Exposed for `IDomainProvider` drivers that already know which zone they are
+ * talking to. Same shape as the internal `cf` helper, so the `CloudflareZoneProvider`
+ * driver and the legacy `createDnsRecord` / `deleteDnsRecord` helpers share one
+ * place that builds the request, parses the envelope, and translates errors.
+ */
+export const cfRequest = cf;
 
 export interface DnsRecordsConfig {
   enabled: boolean;
@@ -68,6 +77,16 @@ export async function setDnsRecordsConfig(
 export async function testCloudflareToken(token: string): Promise<string> {
   const result = await cf<{ status: string }>('/user/tokens/verify', token);
   return result.status;
+}
+
+/**
+ * List every zone the token can see. Backed by the same `/zones?per_page=50`
+ * endpoint used by `findZoneId`, but exposed as a top-level helper so the
+ * `IDomainProvider` driver and any future UI selector can ask for the full
+ * set without re-implementing the request shape.
+ */
+export async function listCloudflareZones(token: string): Promise<DomainZone[]> {
+  return cf<DomainZone[]>('/zones?per_page=50', token);
 }
 
 /** Resolve a hostname's zone: prefer exact match, then the longest suffix match

@@ -30,6 +30,7 @@ import {
   Terminal as TerminalIcon,
   Waypoints,
 } from "lucide-react";
+import { certifiedCount, templateCount } from "../hub";
 
 const groups: {
   title: string;
@@ -46,7 +47,7 @@ const groups: {
       {
         icon: GitBranch,
         title: "Git, registry, or hub",
-        body: "Clone with PAT or SSH deploy keys (scrubbed after checkout), pull from private registries with per-source credentials, or start from one of 88 hub templates — 16 of them runtime-certified.",
+        body: `Clone with PAT or SSH deploy keys (scrubbed after checkout), pull from private registries with per-source credentials, or start from one of ${templateCount} hub templates — ${certifiedCount} of them runtime-certified.`,
       },
       {
         icon: FileCode,

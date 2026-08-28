@@ -1,6 +1,7 @@
 import { eq } from 'drizzle-orm';
 import {
   backupDestinations,
+  backups,
   databases,
   envVars,
   logDrains,
@@ -13,7 +14,7 @@ import {
   webhooks,
   type DB,
 } from '@ninedeploy/db';
-import { reencrypt } from './crypto.js';
+import { activeKeyVersion, reencrypt } from './crypto.js';
 
 /**
  * Single registry of every encrypted column in the schema. `rotateSecrets`
@@ -95,11 +96,51 @@ const ENCRYPTED_COLUMNS = [
  *   2. Restart the server (it now encrypts new secrets with the new key but can
  *      still decrypt old ones).
  *   3. Call rotateSecrets(db) to migrate every existing secret onto the new key.
- *   4. Remove the old key version from NINEDEPLOY_MASTER_KEYS and restart again.
+ *   4. Remove the old key version from NINEDEPLOY_MASTER_KEYS and restart again
+ *      — but see the warning below first.
  *
- * Returns the number of rows re-encrypted. Re-running is safe (idempotent —
- * `reencrypt` is a no-op for values already on the active version).
+ * **Step 4 is not safe while old backups matter.** This function rewrites the
+ * encrypted COLUMNS listed above and nothing else. Database and volume dumps on
+ * disk (and in S3) are sealed by `createBackupCipher` under a `NDBK1:v<version>`
+ * header, and `createBackupDecipher` throws when that version is not in the
+ * ring. Dropping the retired key therefore makes every backup taken under it
+ * permanently unrestorable. Keep the old version in `NINEDEPLOY_MASTER_KEYS`
+ * until those backups have aged out of retention; `rotateSecrets` reports the
+ * count so the caller can say so.
+ *
+ * Re-running is safe (idempotent — `reencrypt` is a no-op for values already on
+ * the active version).
  */
+export interface RotationResult {
+  /** Encrypted column values moved onto the active key. */
+  rotated: number;
+  /** The key version everything is now sealed under. */
+  activeVersion: number;
+  /**
+   * Backup rows that exist on disk. Their envelopes are NOT rewritten by this
+   * routine — the caller warns the operator not to retire the old key while
+   * any of them are still needed.
+   */
+  backupsNotRotated: number;
+}
+
+/**
+ * Rotate every encrypted column onto the active key and report what happened.
+ * Thin wrapper over `rotateSecrets` so the route/CLI have one honest answer to
+ * render rather than a bare number.
+ */
+export async function rotateSecretsWithReport(db: DB): Promise<RotationResult> {
+  const rotated = await rotateSecrets(db);
+  let backupsNotRotated = 0;
+  try {
+    backupsNotRotated = (await db.select({ id: backups.id }).from(backups)).length;
+  } catch {
+    // The table may not exist on a very old database; a missing count must not
+    // fail a rotation that already succeeded.
+  }
+  return { rotated, activeVersion: activeKeyVersion(), backupsNotRotated };
+}
+
 export async function rotateSecrets(db: DB): Promise<number> {
   let count = 0;
 

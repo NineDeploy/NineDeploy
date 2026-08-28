@@ -267,6 +267,13 @@
       "when": 1788000000000,
       "tag": "0038_instance_operator",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "6",
+      "when": 1788086400000,
+      "tag": "0039_log_drains",
+      "breakpoints": true
     }
   ]
 }

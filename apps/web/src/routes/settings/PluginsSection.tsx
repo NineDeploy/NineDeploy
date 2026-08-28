@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
+  ArrowRight,
   CheckCircle2,
   Download,
   Globe,
@@ -15,6 +16,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { useState } from 'react';
+import { Link } from 'react-router';
 import type { InstallPluginInput, MarketplacePluginItem } from '@ninedeploy/sdk';
 import { Button, Card, CardBody, Input, Modal, Skeleton } from '../../components/ui.js';
 import { api } from '../../lib/api.js';
@@ -397,13 +399,37 @@ export function PluginsSection() {
                           </div>
                         </div>
 
-                        <div className="mt-4 pt-2 border-t border-white/[0.04] flex justify-end">
-                          {item.isInstalled ? (
-                            <span className="inline-flex items-center gap-1 text-xs text-emerald-400 font-medium">
+                        <div className="mt-4 pt-2 border-t border-white/[0.04] flex items-center justify-between gap-3">
+                          {/* NineDeploy does not load third-party plugin code,
+                              so a catalog entry is a roadmap item until the
+                              behaviour is compiled in. Several entries shadow
+                              features that already ship — say which, instead of
+                              offering an Install button that would report
+                              "active" while doing nothing. */}
+                          {item.implemented === false ? (
+                            item.builtIn ? (
+                              <>
+                                <span className="text-xs text-slate-500">
+                                  Already available as{' '}
+                                  <span className="text-slate-300">{item.builtIn.label}</span>
+                                </span>
+                                <Link
+                                  to={item.builtIn.path}
+                                  className="inline-flex items-center gap-1 text-xs font-medium text-indigo-300 transition hover:brightness-125"
+                                >
+                                  Open <ArrowRight size={12} />
+                                </Link>
+                              </>
+                            ) : (
+                              <span className="text-xs text-slate-500">Planned — not available yet</span>
+                            )
+                          ) : item.isInstalled ? (
+                            <span className="ml-auto inline-flex items-center gap-1 text-xs text-emerald-400 font-medium">
                               <CheckCircle2 size={12} /> Installed
                             </span>
                           ) : (
                             <Button
+                              className="ml-auto"
                               variant="primary"
                               size="sm"
                               disabled={installMutation.isPending}

@@ -1,8 +1,23 @@
 ﻿import { createHmac } from 'node:crypto';
-import { describe, expect, it, } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { encrypt } from '../src/lib/crypto.js';
 import { hookReceiveRoutes, webhookMgmtRoutes } from '../src/modules/hooks.js';
 import { asUser, buildConfigRow, buildTestApp, createFakeDb, depRow, domainRow, svcRow, webhookRow } from './helpers.js';
+
+// Destroying a preview also removes its deploy log files and reaps its private
+// bridge network. Both touch the host, so they are stubbed and asserted on.
+const teardownMocks = vi.hoisted(() => ({
+  deleteLog: vi.fn(() => true),
+  // Invokes the sink the route passes in, the way the real helper does — that
+  // callback is the route's own logging line and would otherwise never run.
+  removeServiceBridgeIfEmpty: vi.fn(async (_slug: string, log: (line: string) => void) => {
+    log('removed');
+  }),
+}));
+vi.mock('../src/engine/logs.js', () => ({ deleteLog: teardownMocks.deleteLog }));
+vi.mock('../src/lib/serviceBridge.js', () => ({
+  removeServiceBridgeIfEmpty: teardownMocks.removeServiceBridgeIfEmpty,
+}));
 
 const SECRET = 'hook-secret';
 const hook = (over: Record<string, unknown> = {}) =>
@@ -19,6 +34,13 @@ function pushPayload(branch = 'main') {
 }
 
 describe('webhook receiver', () => {
+  // Teardown assertions are per-test; without this the previous case's calls
+  // leak into the next one.
+  beforeEach(() => {
+    teardownMocks.deleteLog.mockClear();
+    teardownMocks.removeServiceBridgeIfEmpty.mockClear();
+  });
+
   it('returns 404 for an unknown webhook', async () => {
     const app = await buildTestApp({ db: createFakeDb(), rawBody: true });
     await app.register(hookReceiveRoutes);
@@ -558,6 +580,8 @@ describe('webhook receiver', () => {
             return serviceCalls === 1 ? parentService : previewService;
           },
         },
+        // Two builds ran for this PR; their log files go with the row.
+        select: { deployments: [{ id: 71 }, { id: 72 }] },
       }),
       rawBody: true,
     });
@@ -588,6 +612,58 @@ describe('webhook receiver', () => {
       prNumber: 42,
       serviceId: 10,
     });
+    // Every deployed service gets a private bridge (`ensureServiceBridge`, from
+    // the docker builder). Only the panel's DELETE route used to reap it, so
+    // this path — one preview per pull request — leaked a Docker network per
+    // closed PR, and left its build logs on disk for the 30-day window.
+    expect(teardownMocks.removeServiceBridgeIfEmpty).toHaveBeenCalledWith(previewService.slug, expect.any(Function));
+    expect(teardownMocks.deleteLog).toHaveBeenCalledWith(71);
+    expect(teardownMocks.deleteLog).toHaveBeenCalledWith(72);
+  });
+
+  it('still reports the preview destroyed when the teardown extras fail', async () => {
+    // The row is already gone by the time these run. A failing log listing or a
+    // stuck bridge must be logged, not turned into a webhook 500 that the
+    // provider will retry against a service that no longer exists.
+    teardownMocks.removeServiceBridgeIfEmpty.mockRejectedValueOnce(new Error('network in use'));
+    const parentService = svcRow({ id: 1, previewDeploymentsEnabled: true, previewAutoDestroyOnClose: true });
+    const previewService = svcRow({
+      id: 10,
+      slug: 'my-app-pr-7',
+      prNumber: 7,
+      isEphemeralPreview: true,
+      previewParentServiceId: 1,
+      runtimeId: 'nd-svc-my-app-pr-7',
+      type: 'docker',
+    });
+    let calls = 0;
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: {
+          webhooks: hook({ serviceId: 1 }),
+          services: () => (++calls === 1 ? parentService : previewService),
+        },
+        selectError: { deployments: new Error('db locked') },
+      }),
+      rawBody: true,
+    });
+    await app.register(hookReceiveRoutes);
+
+    const body = JSON.stringify({
+      action: 'closed',
+      number: 7,
+      pull_request: { number: 7, title: 'x', head: { ref: 'pr-7', sha: 's' }, user: { login: 'a' }, merged: false },
+    });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/1',
+      headers: { 'content-type': 'application/json', 'x-github-event': 'pull_request', 'x-hub-signature-256': sig(body) },
+      payload: body,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ ok: true, action: 'preview_destroyed', serviceId: 10 });
+    expect(teardownMocks.deleteLog).not.toHaveBeenCalled();
   });
 
   it('handles gitlab merge request events and skips when previews are disabled or invalid', async () => {

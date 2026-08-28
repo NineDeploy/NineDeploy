@@ -112,6 +112,9 @@ export interface IServiceRegistry {
   getProxy(name: string): IProxyDriver | undefined;
   registerStorage(driver: IStorageDriver): void;
   getStorage(name: string): IStorageDriver | undefined;
+  registerDomainProvider(driver: IDomainProvider): void;
+  getDomainProvider(name: string): IDomainProvider | undefined;
+  listDomainProviders(): IDomainProvider[];
 }
 
 // ─── Configuration Center (Dual-Vault: Public & Secrets) ───────────────────
@@ -216,6 +219,51 @@ export interface IStorageDriver {
   upload(localPath: string, remoteKey: string): Promise<void>;
   download(remoteKey: string, localDestPath: string): Promise<void>;
   delete(remoteKey: string): Promise<void>;
+}
+
+// ─── Domain Provider (DNS automation) ─────────────────────────────────────
+// A `IDomainProvider` wraps a single DNS vendor (Cloudflare, Route53, DNSSimple,
+// Namecheap, …) behind one shape so plugins and modules can drive any of them
+// without hardcoding the vendor SDK. Mirrors the `IComputeDriver` /
+// `IProxyDriver` / `IStorageDriver` pattern — registered on the kernel's
+// `IServiceRegistry` and looked up by stable name.
+export interface DomainZone {
+  id: string;
+  name: string;
+}
+
+export type DomainRecordType = 'A' | 'CNAME' | 'TXT' | 'AAAA';
+
+export interface DomainRecordSpec {
+  hostname: string;
+  type: DomainRecordType;
+  content: string;
+  /** TTL in seconds. `1` means "automatic" on most providers. */
+  ttl?: number;
+  /** Cloudflare's `proxied` flag — has no meaning on providers that don't proxy. */
+  proxied?: boolean;
+}
+
+export interface DomainRecordResult {
+  recordId: string;
+  hostname: string;
+  type: DomainRecordType;
+}
+
+export interface IDomainProvider {
+  readonly name: string;
+  /** Every zone the configured credentials can see. Used by UIs to let the
+   *  user pick which zone a record should land in. */
+  listZones(): Promise<DomainZone[]>;
+  /** Resolve the most specific zone that owns `hostname` (longest suffix
+   *  match — `dev.example.com` must win over `example.com`). */
+  findZoneForHost(hostname: string): Promise<DomainZone | null>;
+  /** Create a record under `zoneId`. Returns the provider-side id so the
+   *  caller can later delete or update it. */
+  createRecord(zoneId: string, spec: DomainRecordSpec): Promise<DomainRecordResult>;
+  /** Delete a record by id. Providers may differ in idempotency: this method
+   *  is best-effort and must NOT throw on "not found". */
+  deleteRecord(zoneId: string, recordId: string): Promise<void>;
 }
 
 // ─── Kernel Plugin & Context ───────────────────────────────────────────────

@@ -2,7 +2,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { deployments, domains, services } from '@ninedeploy/db';
+import { auditLog, deployments, domains, services } from '@ninedeploy/db';
 import { logBus } from '../src/engine/logs.js';
 import { runDeployment } from '../src/engine/pipeline.js';
 
@@ -613,9 +613,11 @@ describe('runDeployment', () => {
 
     await runDeployment(db as never, 1);
 
-    expect(inserts).toHaveLength(1);
-    expect(inserts[0].table).toBe(domains);
-    expect(inserts[0].values).toEqual({
+    // Scoped to `domains`: the pipeline also writes the deploy OUTCOME to the
+    // audit log now, so a bare insert count would conflate the two.
+    const domainInserts = inserts.filter((i: { table: unknown }) => i.table === domains);
+    expect(domainInserts).toHaveLength(1);
+    expect(domainInserts[0].values).toEqual({
       serviceId: 5,
       hostname: 'web.example.com',
       path: '/',
@@ -635,7 +637,7 @@ describe('runDeployment', () => {
 
     await runDeployment(db as never, 1);
 
-    expect(inserts[0].values).toMatchObject({ hostname: 'web.example.com', ssl: true });
+    expect(inserts.filter((i: { table: unknown }) => i.table === domains)[0].values).toMatchObject({ hostname: 'web.example.com', ssl: true });
     expect(lines).toContain('🌐 Auto-assigned URL: https://web.example.com');
   });
 
@@ -648,7 +650,7 @@ describe('runDeployment', () => {
 
     await runDeployment(db as never, 1);
 
-    expect(inserts).toHaveLength(0);
+    expect(inserts.filter((i: { table: unknown }) => i.table === domains)).toHaveLength(0);
     expect(lines.some((line) => line.includes('Auto-assigned URL:'))).toBe(false);
   });
 
@@ -1367,5 +1369,92 @@ describe('runDeployment applies the .ninedeploy build sections', () => {
     expect(lines.some((l) => l.includes('required env "API_KEY"'))).toBe(true);
     // A warning must not stop the deploy.
     expect(lines).toContain('✓ Deployment successful');
+  });
+});
+
+/**
+ * Regression guard: a deploy's OUTCOME reaches the audit stream.
+ *
+ * `deploy.trigger` is written by the route when the deployment is queued, and
+ * for a long time it was the only deploy action anything emitted — the pipeline
+ * finished, succeeded or failed, in silence. Everything downstream of `audit()`
+ * was blind to the result: notification channels (so a failed production deploy
+ * paged nobody), the `/v1/events` activity feed, and `kernel/auditBridge`, whose
+ * `deployment.status_changed` could therefore only ever carry `trigger`.
+ */
+describe('runDeployment audits the outcome', () => {
+  const OWNER = 42;
+
+  /** Audit rows the pipeline wrote, in order. */
+  function auditRows(inserts: { table: unknown; values: Record<string, unknown> }[]) {
+    return inserts.filter((i) => i.table === auditLog).map((i) => i.values);
+  }
+
+  it('records deploy.success with the service name and deployment id', async () => {
+    const { db, inserts } = makeDb();
+    baseSetup(db, { ownerUserId: OWNER });
+    const lines = collectLogs(1);
+
+    await runDeployment(db as never, 1);
+
+    expect(lines).toContain('✓ Deployment successful');
+    // `name #id` is the entity shape kernel/auditBridge decomposes back into
+    // { serviceName, deploymentId }.
+    expect(auditRows(inserts)).toEqual([
+      { userId: OWNER, action: 'deploy.success', entity: 'Web #1', meta: undefined },
+    ]);
+  });
+
+  it('records deploy.failed with the reason when the build throws', async () => {
+    const { db, inserts } = makeDb();
+    baseSetup(db, { ownerUserId: OWNER });
+    h.builder.buildAndRun.mockRejectedValueOnce(new Error('image pull failed'));
+    collectLogs(1);
+
+    await runDeployment(db as never, 1);
+
+    expect(auditRows(inserts)).toEqual([
+      { userId: OWNER, action: 'deploy.failed', entity: 'Web #1', meta: { reason: 'image pull failed' } },
+    ]);
+  });
+
+  it('records deploy.cancelled without a reason', async () => {
+    const { db, inserts } = makeDb();
+    baseSetup(db, { ownerUserId: OWNER });
+    // The first cancel checkpoint reads the deployment row back.
+    db.query.deployments.findFirst
+      .mockResolvedValueOnce(dep)
+      .mockResolvedValue({ ...dep, status: 'cancelled' });
+    collectLogs(1);
+
+    await runDeployment(db as never, 1);
+
+    expect(auditRows(inserts)).toEqual([
+      { userId: OWNER, action: 'deploy.cancelled', entity: 'Web #1', meta: undefined },
+    ]);
+  });
+
+  it('falls back to a null actor when the service has no owner', async () => {
+    // `ownerUserId` is nullable (ON DELETE SET NULL). A null actor makes the
+    // event operator-only on the /v1/events socket, which is the safe default.
+    const { db, inserts } = makeDb();
+    baseSetup(db);
+    collectLogs(1);
+
+    await runDeployment(db as never, 1);
+
+    expect(auditRows(inserts)[0]).toMatchObject({ userId: null, action: 'deploy.success' });
+  });
+
+  it('records deploy.failed for an unknown service type', async () => {
+    const { db, inserts } = makeDb();
+    baseSetup(db, { ownerUserId: OWNER, type: 'nonsense' });
+    collectLogs(1);
+
+    await runDeployment(db as never, 1);
+
+    expect(auditRows(inserts)).toEqual([
+      { userId: OWNER, action: 'deploy.failed', entity: 'Web #1', meta: { reason: 'Unknown service type: nonsense' } },
+    ]);
   });
 });

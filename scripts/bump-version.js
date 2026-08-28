@@ -38,7 +38,7 @@ for (const rel of packageJsons) {
   const file = resolveInRoot(rel);
   const json = JSON.parse(readFileSync(file, 'utf8'));
   json.version = newVersion;
-  writeFileSync(file, JSON.stringify(json, null, 2) + '\n');
+  writeFileSync(file, `${JSON.stringify(json, null, 2)}\n`);
   console.log(`✓ Updated ${rel} → ${newVersion}`);
 }
 

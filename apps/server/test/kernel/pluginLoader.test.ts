@@ -95,14 +95,38 @@ describe('PluginLoader', () => {
   });
 
   describe('installPlugin & uninstallPlugin', () => {
-    it('installs marketplace plugin into db and registers in kernel', async () => {
+    // Every SHIPPED catalog entry is `implemented: false` — nothing loads
+    // third-party code, so installing one would create a row that reports
+    // itself active while doing nothing. The install path is therefore
+    // exercised through an injected catalog: it stays covered without
+    // pretending a real entry works.
+    const READY_CATALOG = [
+      {
+        id: 'slack-alerts',
+        name: 'Slack Notification Dispatcher',
+        version: '1.0.0',
+        description: 'test entry',
+        author: 'NineDeploy Official',
+        icon: 'MessageSquare',
+        category: 'notifications',
+        isOfficial: true,
+        implemented: true,
+        dependencies: [],
+        configSchema: [],
+        menuItems: [],
+      },
+    ];
+
+    it('installs an implemented marketplace plugin into db and registers it in the kernel', async () => {
       const kernel = new NineDeployKernel(mockDb as never, mockConfig);
       mockDb.query.installedPlugins.findFirst.mockResolvedValue(null);
 
-      const res = await installPlugin(mockDb as never, kernel, {
-        source: 'marketplace',
-        target: 'slack-alerts',
-      });
+      const res = await installPlugin(
+        mockDb as never,
+        kernel,
+        { source: 'marketplace', target: 'slack-alerts' },
+        READY_CATALOG as never,
+      );
 
       expect(res).toEqual({ ok: true, id: 'slack-alerts', status: 'active' });
       expect(kernel.getPlugin('slack-alerts')).toBeDefined();
@@ -126,7 +150,12 @@ describe('PluginLoader', () => {
       });
 
       await expect(
-        installPlugin(mockDb as never, kernel, { source: 'marketplace', target: 'slack-alerts' }),
+        installPlugin(
+          mockDb as never,
+          kernel,
+          { source: 'marketplace', target: 'slack-alerts' },
+          READY_CATALOG as never,
+        ),
       ).rejects.toThrow('Plugin "slack-alerts" is already installed and active');
     });
 
@@ -180,20 +209,31 @@ describe('PluginLoader', () => {
     it('installs when plugin is already present in kernel (re-enabling)', async () => {
       const kernel = new NineDeployKernel(mockDb as never, mockConfig);
       await kernel.registerPlugin({
-        id: 'existing-plugin',
+        id: 'slack-alerts',
         name: 'Existing',
         version: '1.0.0',
         init: vi.fn(),
       });
 
       // existing in DB but enabled=false
-      mockDb.query.installedPlugins.findFirst.mockResolvedValue({ id: 'existing-plugin', enabled: false });
+      mockDb.query.installedPlugins.findFirst.mockResolvedValue({ id: 'slack-alerts', enabled: false });
 
-      const res = await installPlugin(mockDb as never, kernel, {
-        source: 'local',
-        target: 'existing-plugin',
-      });
+      const res = await installPlugin(
+        mockDb as never,
+        kernel,
+        { source: 'marketplace', target: 'slack-alerts' },
+        READY_CATALOG as never,
+      );
       expect(res.ok).toBe(true);
+    });
+
+    it('refuses a source this build cannot load code from', async () => {
+      const kernel = new NineDeployKernel(mockDb as never, mockConfig);
+      for (const source of ['local', 'npm', 'git'] as const) {
+        await expect(
+          installPlugin(mockDb as never, kernel, { source, target: 'anything' }),
+        ).rejects.toThrow(/does not load third-party plugin code/);
+      }
     });
 
     it('uninstalls plugin when plugin is in kernel without destroy method or not in kernel', async () => {
@@ -277,11 +317,18 @@ describe('PluginLoader', () => {
         },
       ]);
 
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
       const count = await loadInstalledPlugins(mockDb as never, kernel);
-      expect(count).toBe(2); // s3-backups and custom-untyped freshly loaded
+      // Only s3-backups is restored. `custom-untyped` has no manifest, so it
+      // falls back to source 'local' — a source this build cannot load code
+      // from. It used to come back as a shell reporting itself active; it is
+      // now skipped with a one-line warning naming the row.
+      expect(count).toBe(1);
       expect(kernel.getPlugin('s3-backups')).toBeDefined();
-      expect(kernel.getPlugin('custom-untyped')).toBeDefined();
+      expect(kernel.getPlugin('custom-untyped')).toBeUndefined();
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('custom-untyped'));
       expect(errSpy).toHaveBeenCalled();
+      warnSpy.mockRestore();
       errSpy.mockRestore();
     });
   });

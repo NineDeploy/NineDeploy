@@ -222,9 +222,14 @@ describe('ServiceDetail', () => {
     await waitFor(() => expect(api.services.clone).toHaveBeenCalledWith(1));
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Service cloned: api-clone', 'success'));
 
-    // Failure path toasts.
+    // Failure path toasts. The button is disabled while the mutation is
+    // pending and React Query clears that a tick after the success toast, so
+    // wait for it to come back before clicking — otherwise the second click
+    // lands on a disabled button under load and the test flakes.
+    const cloneButton = () => screen.getByTitle('Clone service configuration and environment variables');
+    await waitFor(() => expect(cloneButton()).not.toBeDisabled());
     mockOf(api.services.clone).mockRejectedValueOnce(new Error('x') as never);
-    fireEvent.click(screen.getByTitle('Clone service configuration and environment variables'));
+    fireEvent.click(cloneButton());
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Clone failed', 'error'));
   });
 
@@ -569,6 +574,72 @@ describe('ServiceDetail', () => {
     await screen.findAllByText('main');
     fireEvent.click(screen.getByRole('button', { name: /New/ }));
     await waitFor(() => expect(api.webhooks.create).toHaveBeenCalledWith(1, undefined));
+  });
+
+  /**
+   * Removing a deployment from history. There was no delete path anywhere
+   * before: the log FILE aged out at 30 days while the row never did, so the
+   * older half of this list showed builds whose logs had already been swept.
+   */
+  it('removes a finished deployment from history', async () => {
+    mockOf(api.deploys.remove).mockResolvedValue({ ok: true, id: 4 } as never);
+    renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+    await openTab('Deploys');
+    fireEvent.click(await screen.findByTitle('Remove deployment #4 from history'));
+    await waitFor(() => expect(api.deploys.remove).toHaveBeenCalledWith(1, 4));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Deployment removed', 'info'));
+  });
+
+  it('clears the log panel when the removed deployment is the selected one', async () => {
+    // Otherwise the output panel stays pointed at a deployment that no longer
+    // exists, and its log socket reconnects to a 404.
+    mockOf(api.deploys.remove).mockResolvedValue({ ok: true, id: 4 } as never);
+    renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+    await openTab('Deploys');
+    // Select #4 first, then remove it.
+    fireEvent.click(await screen.findByText('#4'));
+    await screen.findByText(/Deployment #4/);
+    fireEvent.click(await screen.findByTitle('Remove deployment #4 from history'));
+    await waitFor(() => expect(api.deploys.remove).toHaveBeenCalledWith(1, 4));
+    // The panel stops describing #4. (The page then falls back to the newest
+    // deployment; what matters is that it does not stay on the removed one.)
+    await waitFor(() => expect(screen.queryByText(/Deployment #4 ·/)).not.toBeInTheDocument());
+  });
+
+  it('offers no remove button for the deployment serving traffic or an in-flight one', async () => {
+    // #5 is `running` — the row that records what is live, carries the digest a
+    // rollback re-deploys, and is refused by the server.
+    mockOf(api.deploys.list).mockResolvedValue([
+      { ...deploys[0], status: 'running' },
+      { ...deploys[1], status: 'building' },
+    ] as never);
+    renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+    await openTab('Deploys');
+    await screen.findByTitle('Cancel deployment #4');
+    expect(screen.queryByTitle(/Remove deployment/)).not.toBeInTheDocument();
+  });
+
+  it('surfaces the server reason when a remove is refused', async () => {
+    mockOf(api.deploys.remove).mockRejectedValue(
+      new Error('This deployment is the version currently serving traffic and cannot be removed') as never,
+    );
+    renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+    await openTab('Deploys');
+    fireEvent.click(await screen.findByTitle('Remove deployment #4 from history'));
+    await waitFor(() =>
+      expect(toastSpy.toast).toHaveBeenCalledWith(
+        'This deployment is the version currently serving traffic and cannot be removed',
+        'error',
+      ),
+    );
+  });
+
+  it('falls back to a generic message when the remove rejection is not an Error', async () => {
+    mockOf(api.deploys.remove).mockRejectedValue('boom' as never);
+    renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+    await openTab('Deploys');
+    fireEvent.click(await screen.findByTitle('Remove deployment #4 from history'));
+    await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Remove failed', 'error'));
   });
 
   it('reports cancel failures via toast', async () => {
@@ -1550,7 +1621,10 @@ describe('ServiceDetail', () => {
 
   it('shows the clone pending label while cloning', async () => {
     const hold = { resolve: (_v: unknown) => {} } as { resolve: (v: unknown) => void };
-    mockOf(api.services.clone).mockImplementation(
+    // `Once`, not a sticky implementation: `vi.clearAllMocks()` in beforeEach
+    // clears calls but keeps implementations, so a permanent never-resolving
+    // clone would leak into every later test in this file.
+    mockOf(api.services.clone).mockImplementationOnce(
       () => new Promise((res) => { hold.resolve = res; }) as never,
     );
     renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });

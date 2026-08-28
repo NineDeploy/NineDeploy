@@ -140,7 +140,11 @@ describe('real e2e: applyManifestToService against in-memory DB with real schema
     const result = await applyManifestToService(db, serviceId, loaded!.manifest, 9);
     expect(result.routesUpserted).toBe(1);
     expect(result.databaseAttached).toBe(true);
-    expect(result.alertsUpserted).toBe(2);
+    // Only `highMemory` becomes a rule. `deployFailed` is event-shaped and the
+    // alert engine evaluates metric samples, so it is reported as skipped
+    // rather than written out as a `cert-expiry < 0` rule that can never fire.
+    expect(result.alertsUpserted).toBe(1);
+    expect(result.warnings.some((w) => w.includes('when="deployFailed"'))).toBe(true);
 
     const routeRows = await db.select().from(domains).where(eq(domains.serviceId, serviceId));
     expect(routeRows).toHaveLength(1);
@@ -157,7 +161,9 @@ describe('real e2e: applyManifestToService against in-memory DB with real schema
 
   it('applyManifestToService persists alerts to alert_rules table', async () => {
     const alertRows = await db.select().from(alertRules).where(eq(alertRules.serviceId, serviceId));
-    expect(alertRows).toHaveLength(2);
+    expect(alertRows).toHaveLength(1);
+    // Nothing was written for the event-shaped `deployFailed` alert.
+    expect(alertRows.some((a) => a.metric === 'cert-expiry')).toBe(false);
     const mem = alertRows.find((a) => a.metric === 'memory');
     expect(mem).toBeDefined();
     expect(mem!.threshold).toBe(85);

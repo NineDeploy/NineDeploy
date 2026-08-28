@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import type { Label, ProjectEntry, Workspace } from '@ninedeploy/sdk';
+import { api } from './api.js';
 
 /**
  * Global tag-scope context (replaces the old single-project switcher).
@@ -96,15 +97,15 @@ export function TagScopeProvider({ children }: { children: ReactNode }) {
   // has at least one selection.
   const { data: workspaces = [] } = useQuery({
     queryKey: ['workspaces'],
-    queryFn: async () => (await (await import('./api.js')).api.workspaces.list()) ?? [],
+    queryFn: async () => (await api.workspaces.list()) ?? [],
   });
   const { data: projects = [] } = useQuery({
     queryKey: ['projects'],
-    queryFn: async () => (await (await import('./api.js')).api.projects.list()) ?? [],
+    queryFn: async () => (await api.projects.list()) ?? [],
   });
   const { data: labels = [] } = useQuery({
     queryKey: ['labels'],
-    queryFn: async () => (await (await import('./api.js')).api.labels.list()) ?? [],
+    queryFn: async () => (await api.labels.list()) ?? [],
   });
 
   useEffect(() => {
@@ -204,7 +205,7 @@ export function ProjectScopeProvider({ children }: { children: ReactNode }) {
   const [selectedId, setSelectedId] = useState<number | null>(readLegacyId);
   const { data } = useQuery({
     queryKey: ['projects'],
-    queryFn: async () => (await (await import('./api.js')).api.projects.list()) ?? [],
+    queryFn: async () => (await api.projects.list()) ?? [],
   });
   const projects = data ?? [];
   useEffect(() => {

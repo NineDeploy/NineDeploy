@@ -190,7 +190,7 @@ describe('loadNinedeployManifest', () => {
   it('throws ManifestTooLargeError when the file exceeds 16 KB', () => {
     // Create a 17 KB manifest. The size check runs before the secret scan and
     // before Zod, so an oversized junk file is refused first.
-    const big = 'version: "1"\n# ' + 'a'.repeat(17 * 1024) + '\n';
+    const big = `version: "1"\n# ${'a'.repeat(17 * 1024)}\n`;
     writeManifest('.ninedeploy', big);
     expect(() => loadNinedeployManifest(workDir)).toThrow(ManifestTooLargeError);
   });
@@ -201,7 +201,7 @@ describe('loadNinedeployManifest', () => {
     // off the filler to leave room for the trailing newline.
     const header = 'version: "1"\n# ';
     const filler = 'a'.repeat(16 * 1024 - header.length - 1);
-    writeManifest('.ninedeploy', header + filler + '\n');
+    writeManifest('.ninedeploy', `${header + filler}\n`);
     const loaded = loadNinedeployManifest(workDir);
     expect(loaded).not.toBeNull();
   });

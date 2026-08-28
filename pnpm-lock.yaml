@@ -95,6 +95,9 @@ importers:
       '@ninedeploy/schemas':
         specifier: workspace:*
         version: link:../../packages/schemas
+      '@ninedeploy/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
       '@node-rs/argon2':
         specifier: ^2.1.0
         version: 2.1.0

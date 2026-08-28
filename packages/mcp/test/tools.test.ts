@@ -13,7 +13,12 @@ function fakeClient(): NineDeployClient {
       restart: vi.fn(async () => 'RESTART'),
       update: vi.fn(async () => 'UPDATE'),
     },
-    deploys: { list: vi.fn(async () => 'DEPLOYS'), trigger: vi.fn(async () => 'TRIGGER'), rollback: vi.fn(async () => 'ROLLBACK') },
+    deploys: {
+      list: vi.fn(async () => 'DEPLOYS'),
+      trigger: vi.fn(async () => 'TRIGGER'),
+      rollback: vi.fn(async () => 'ROLLBACK'),
+      cancel: vi.fn(async () => 'CANCEL'),
+    },
     domains: { all: vi.fn(async () => 'DOMAINS') },
     databases: { list: vi.fn(async () => 'DBS') },
     projects: { list: vi.fn(async () => 'PROJECTS') },
@@ -66,8 +71,8 @@ const byName = (name: string) => {
 
 describe('MCP tools', () => {
   it('exposes 35 unique tools with descriptions', () => {
-    expect(TOOLS).toHaveLength(35);
-    expect(new Set(TOOLS.map((t) => t.name)).size).toBe(35);
+    expect(TOOLS).toHaveLength(36);
+    expect(new Set(TOOLS.map((t) => t.name)).size).toBe(36);
     for (const t of TOOLS) expect(t.description.length).toBeGreaterThan(10);
   });
 
@@ -94,6 +99,15 @@ describe('MCP tools', () => {
     const c = fakeClient();
     await byName('rollback_deploy').handler(c, { serviceId: 4, deploymentId: 9 });
     expect(c.deploys.rollback).toHaveBeenCalledWith(4, 9);
+  });
+
+  it('cancel passes both ids', async () => {
+    // Paired with deploy_service on purpose: an agent that can start a build
+    // must be able to stop one, or a runaway deploy it triggered can only be
+    // halted from a browser.
+    const c = fakeClient();
+    await byName('cancel_deploy').handler(c, { serviceId: 4, deploymentId: 9 });
+    expect(c.deploys.cancel).toHaveBeenCalledWith(4, 9);
   });
 
   it('activity_log forwards the optional entity filter', async () => {
@@ -192,6 +206,8 @@ describe('MCP tools', () => {
     expect(byName('get_service').input.safeParse({}).success).toBe(false);
     expect(byName('get_service').input.safeParse({ serviceId: 5 }).success).toBe(true);
     expect(byName('rollback_deploy').input.safeParse({ serviceId: 5 }).success).toBe(false);
+    expect(byName('cancel_deploy').input.safeParse({ serviceId: 5 }).success).toBe(false);
+    expect(byName('cancel_deploy').input.safeParse({ serviceId: 5, deploymentId: 9 }).success).toBe(true);
     expect(byName('list_services').input.safeParse({ projectId: 'x' }).success).toBe(false);
     expect(byName('install_plugin').input.safeParse({ target: 'pkg' }).success).toBe(true);
     expect(byName('set_config').input.safeParse({ key: 'k1', value: 123 }).success).toBe(true);

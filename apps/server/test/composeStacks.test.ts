@@ -6,7 +6,6 @@ import {
   preflightCompose,
   resolveStackEnvironment,
   scanMagicTokens,
-  scanRequiredPlaceholders,
 } from '../src/engine/magicVars.js';
 
 describe('compose stack preflight', () => {
@@ -82,6 +81,7 @@ describe('stack environment resolution', () => {
     '    environment:',
     '      - POSTGRES_USER=$SERVICE_USER_POSTGRES',
     '      - POSTGRES_PASSWORD=$SERVICE_PASSWORD_POSTGRES',
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: shell parameter expansion literal under test
     '      - POSTGRES_DB=${POSTGRES_DB:-umami}',
 ].join('\n');
 

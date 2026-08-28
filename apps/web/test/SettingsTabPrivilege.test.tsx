@@ -68,8 +68,12 @@ function renderTab() {
 async function savedBuild(): Promise<Record<string, unknown>> {
   // Generous timeout: on shared CI runners this whole suite can be starved of
   // CPU while dozens of sibling vitest processes boot, and the default 1 s has
-  // been observed to expire before react-query dispatches the PATCH.
-  await waitFor(() => expect(apiMock.api.services.update).toHaveBeenCalled(), { timeout: 10_000 });
+  // been observed to expire before react-query dispatches the PATCH. 10 s was
+  // enough for an isolated run but still false-failed under the full web
+  // suite (other packages boot vitest workers in parallel). 30 s gives the
+  // event loop enough headroom to dispatch the PATCH on a slow host without
+  // hiding real regressions.
+  await waitFor(() => expect(apiMock.api.services.update).toHaveBeenCalled(), { timeout: 30_000 });
   const [, patch] = apiMock.api.services.update.mock.calls[0] as [number, { build: Record<string, unknown> }];
   return patch.build;
 }
@@ -91,14 +95,14 @@ describe('SettingsTab host-privilege gating', () => {
     expect(screen.getByText('CI/CD Lifecycle Hooks')).toBeInTheDocument();
     expect(screen.getByPlaceholderText('npm run db:migrate')).toBeInTheDocument();
     expect(screen.getByPlaceholderText('npm run cleanup')).toBeInTheDocument();
-  });
+  }, 15_000);
 
   it('sends the hook values an admin has configured', async () => {
     renderTab();
     await screen.findByText('Service settings');
     fireEvent.click(screen.getByRole('button', { name: /Save settings/ }));
     expect((await savedBuild()).preDeployCmd).toBe('make migrate');
-  });
+  }, 15_000);
 
   it('hides the lifecycle hook fields from a member', async () => {
     authMock.user = { id: 5, isOperator: false, email: 'm@test', name: 'M' };
@@ -109,7 +113,7 @@ describe('SettingsTab host-privilege gating', () => {
     expect(screen.queryByPlaceholderText('npm run cleanup')).not.toBeInTheDocument();
     // the rest of the build form is untouched
     expect(screen.getByPlaceholderText('npm run build')).toBeInTheDocument();
-  });
+  }, 15_000);
 
   it("omits the hook keys from a member's patch instead of clearing them", async () => {
     authMock.user = { id: 5, isOperator: false, email: 'm@test', name: 'M' };
@@ -123,5 +127,5 @@ describe('SettingsTab host-privilege gating', () => {
     expect(build.preStopCmd).toBeUndefined();
     // and the unprivileged fields still go through
     expect(build.buildCmd).toBe('npm run build');
-  });
+  }, 15_000);
 });

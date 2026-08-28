@@ -2,7 +2,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { logBus, pruneOldLogs } from '../src/engine/logs.js';
+import { deleteLog, logBus, pruneOldLogs } from '../src/engine/logs.js';
 
 const h = vi.hoisted(() => {
   const config: { paths: { logsDir: string } } = { paths: { logsDir: '' } };
@@ -98,5 +98,47 @@ describe('pruneOldLogs', () => {
   it('returns 0 when the logs directory is missing', () => {
     h.config.paths.logsDir = path.join(dir, 'does-not-exist');
     expect(pruneOldLogs(60_000)).toBe(0);
+  });
+});
+
+/**
+ * Removing a deployment row has to take its log file with it: the row is the
+ * only thing that explains the file, and build logs routinely echo
+ * configuration. `pruneOldLogs` judges files by mtime alone, so it cannot be
+ * the mechanism for a targeted delete.
+ */
+describe('deleteLog', () => {
+  const dir = path.join(base, 'delete-log');
+
+  beforeEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+    mkdirSync(dir, { recursive: true });
+    h.config.paths.logsDir = dir;
+  });
+
+  it('removes the file for one deployment and reports it', () => {
+    const file = path.join(dir, '77.log');
+    writeFileSync(file, 'build output');
+    // A neighbour must survive — the delete is keyed on the id, not a sweep.
+    writeFileSync(path.join(dir, '78.log'), 'other');
+
+    expect(deleteLog(77)).toBe(true);
+    expect(existsSync(file)).toBe(false);
+    expect(existsSync(path.join(dir, '78.log'))).toBe(true);
+  });
+
+  it('reports false for a deployment that never wrote a log', () => {
+    // The normal case for a deploy that failed before producing output — not
+    // an error, and it must not abort the row deletion it accompanies.
+    expect(deleteLog(999)).toBe(false);
+  });
+
+  it('swallows a filesystem failure rather than aborting the caller', () => {
+    // A directory where the log file should be: `existsSync` says yes and the
+    // non-recursive `rmSync` throws EISDIR. Stands in for any unlink failure —
+    // the row deletion this accompanies must still go through.
+    mkdirSync(path.join(dir, '5.log'), { recursive: true });
+
+    expect(deleteLog(5)).toBe(false);
   });
 });

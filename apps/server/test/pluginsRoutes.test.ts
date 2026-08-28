@@ -195,15 +195,28 @@ describe('Plugins HTTP API', () => {
     expect(catalogJson.catalog).toBeDefined();
     expect(Array.isArray(catalogJson.catalog)).toBe(true);
 
-    // 6. Install plugin from marketplace (valid)
+    // 6. Installing a catalog entry that has no behaviour behind it is refused
+    //    and points at the feature that actually ships. It used to answer 200
+    //    and mark the plugin "active", so an operator could enter a bucket and
+    //    secret key and believe their backups were syncing off-site.
     const installRes = await app.inject({
       method: 'POST',
       url: '/install',
       headers: asUser({ isOperator: true }),
       payload: { source: 'marketplace', target: 's3-backups' },
     });
-    expect(installRes.statusCode).toBe(200);
-    expect(installRes.json()).toEqual({ ok: true, id: 's3-backups', status: 'active' });
+    expect(installRes.statusCode).toBe(400);
+    expect(installRes.json().error).toMatch(/Backups → Storage destinations/);
+
+    // Installing from a source this build cannot load code from is refused too.
+    const installNpmRes = await app.inject({
+      method: 'POST',
+      url: '/install',
+      headers: asUser({ isOperator: true }),
+      payload: { source: 'npm', target: 'some-plugin' },
+    });
+    expect(installNpmRes.statusCode).toBe(400);
+    expect(installNpmRes.json().error).toMatch(/does not load third-party plugin code/);
 
     // Install invalid payload (400 validation)
     const installInvalidRes = await app.inject({
@@ -317,14 +330,17 @@ describe('Plugins HTTP API', () => {
     });
     expect(reloadNotFoundRes.statusCode).toBe(404);
 
-    // 9. Uninstall plugin (valid)
+    // 9. Uninstall plugin (valid). Uses a row seeded directly rather than one
+    //    created by the install call above — installing a catalog entry with no
+    //    behaviour behind it is refused now, and uninstall is what is under
+    //    test here anyway.
     const uninstallRes = await app.inject({
       method: 'POST',
-      url: '/s3-backups/uninstall',
+      url: '/offline-plugin/uninstall',
       headers: asUser({ isOperator: true }),
     });
     expect(uninstallRes.statusCode).toBe(200);
-    expect(uninstallRes.json()).toEqual({ ok: true, id: 's3-backups' });
+    expect(uninstallRes.json()).toEqual({ ok: true, id: 'offline-plugin' });
 
     // Uninstall not found (400)
     const uninstallNotFoundRes = await app.inject({

@@ -324,6 +324,9 @@ describe('createClient', () => {
       await client.deploys.cancel(1, 2);
       expect(last(calls).url).toBe('/v1/services/1/deploys/2/cancel');
       expect(last(calls).init.method).toBe('POST');
+
+      await client.deploys.remove(1, 2);
+      expect(last(calls)).toMatchObject({ url: '/v1/services/1/deploys/2', init: { method: 'DELETE' } });
     });
   });
 
@@ -641,6 +644,15 @@ describe('createClient', () => {
       expect(last(calls)).toMatchObject({ url: '/v1/settings/dns-records', init: { method: 'PUT' } });
       await client.settings.dnsRecords.test();
       expect(last(calls)).toMatchObject({ url: '/v1/settings/dns-records/test', init: { method: 'POST' } });
+    });
+
+    it('exercises master-key read + rotate', async () => {
+      const { fetchMock, calls } = makeFetch(() => ok({ ok: true }));
+      const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
+      await client.settings.masterKey.get();
+      expect(last(calls)).toMatchObject({ url: '/v1/settings/master-key', init: { method: 'GET' } });
+      await client.settings.masterKey.rotate();
+      expect(last(calls)).toMatchObject({ url: '/v1/settings/master-key/rotate', init: { method: 'POST' } });
     });
   });
 
@@ -1470,10 +1482,10 @@ describe('createClient', () => {
       expect(last(calls)).toMatchObject({ url: '/v1/workspaces/1/invitations/99', init: { method: 'DELETE' } });
 
       await client.workspaces.previewInvitation('a'.repeat(64));
-      expect(last(calls)).toMatchObject({ url: '/v1/invitations/' + 'a'.repeat(64), init: { method: 'GET' } });
+      expect(last(calls)).toMatchObject({ url: `/v1/invitations/${'a'.repeat(64)}`, init: { method: 'GET' } });
 
       await client.workspaces.acceptInvitation('a'.repeat(64));
-      expect(last(calls)).toMatchObject({ url: '/v1/invitations/' + 'a'.repeat(64) + '/accept', init: { method: 'POST' } });
+      expect(last(calls)).toMatchObject({ url: `/v1/invitations/${'a'.repeat(64)}/accept`, init: { method: 'POST' } });
     });
   });
 

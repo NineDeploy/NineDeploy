@@ -73,6 +73,46 @@ export async function deploysRollback(client: NineDeployClient, svcIdStr: string
   } catch (err) { error(err instanceof Error ? err.message : String(err)); }
 }
 
+/**
+ * `ninedeploy deploys cancel <serviceId> <deployId>`
+ *
+ * The route, the SDK method and the panel button all existed; the CLI was the
+ * one surface without it, so a deploy started from CI could only be stopped
+ * from a browser.
+ */
+export async function deploysCancel(client: NineDeployClient, svcIdStr: string, depIdStr: string): Promise<void> {
+  const svcId = Number(svcIdStr);
+  const depId = Number(depIdStr);
+  if (!svcId || !depId) return error('Usage: ninedeploy deploys cancel <serviceId> <deployId>');
+  try {
+    await spinner('Cancelling', () => client.deploys.cancel(svcId, depId));
+    // A queued deploy stops here; an in-flight one stops at the pipeline's next
+    // step boundary, with the previous version still serving.
+    success(`Deployment #${depId} cancelled.`);
+  } catch (err) { error(err instanceof Error ? err.message : String(err)); }
+}
+
+/**
+ * `ninedeploy deploys rm <serviceId> <deployId>`
+ *
+ * Removes a finished deployment from history, with its build log. Refused for
+ * an in-flight deployment (cancel it first) and for the one currently serving
+ * traffic — that row carries the digest a rollback re-deploys.
+ */
+export async function deploysRemove(client: NineDeployClient, svcIdStr: string, depIdStr: string, yes = false): Promise<void> {
+  const svcId = Number(svcIdStr);
+  const depId = Number(depIdStr);
+  if (!svcId || !depId) return error('Usage: ninedeploy deploys rm <serviceId> <deployId>');
+  if (!yes) {
+    const confirm = await prompt(`Permanently remove deployment #${depId} and its build log? (yes/no)`, 'no');
+    if (confirm.toLowerCase() !== 'yes') return info('Aborted.');
+  }
+  try {
+    await spinner('Removing', () => client.deploys.remove(svcId, depId));
+    success(`Deployment #${depId} removed.`);
+  } catch (err) { error(err instanceof Error ? err.message : String(err)); }
+}
+
 /** `ninedeploy token create` */
 export async function tokenCreate(client: NineDeployClient): Promise<void> {
   const name = await prompt('Token name', 'ci');
@@ -159,4 +199,35 @@ export async function systemDashboard(client: NineDeployClient): Promise<void> {
     if (dash.recentDeploys.length === 0) { info('No deployments.'); return; }
     table(dash.recentDeploys.map((d) => ({ id: d.id, service: d.serviceName, status: d.status, time: fmtTime(d.createdAt) })), ['id', 'service', 'status', 'time']);
   });
+}
+
+/**
+ * `ninedeploy system rotate-keys`
+ *
+ * The command `.env.example` has told operators to run since the key-ring
+ * landed. It did not exist: `lib/keyRotation.rotateSecrets` was implemented and
+ * tested but had no caller anywhere in the product, so anyone who followed the
+ * documented rotation procedure and then dropped the retired key version was
+ * left holding ciphertext they could no longer decrypt.
+ */
+export async function systemRotateKeys(client: NineDeployClient): Promise<void> {
+  header('Rotate master key');
+  const status = await spinner('Reading key ring', () => client.settings.masterKey.get());
+  kv('Active version', c.bold(`v${status.activeVersion}`));
+  kv('Ring', status.knownVersions.map((v) => `v${v}`).join(', '));
+  if (!status.rotatable) {
+    return error(
+      'Only one key version is loaded — there is nothing to rotate onto. Add a new 32-byte key under a higher version in NINEDEPLOY_MASTER_KEYS, restart, then run this again.',
+    );
+  }
+  const confirm = await prompt(`Re-encrypt every stored secret onto v${status.activeVersion}? (yes/no)`, 'no');
+  if (confirm.toLowerCase() !== 'yes') return info('Aborted.');
+
+  const res = await spinner('Re-encrypting', () => client.settings.masterKey.rotate());
+  success(`${res.rotated} secret value(s) re-encrypted under v${res.activeVersion}.`);
+  if (res.warning) {
+    info(res.warning);
+  } else {
+    info('No stored backups reference an older key version — the retired key can be removed from NINEDEPLOY_MASTER_KEYS.');
+  }
 }

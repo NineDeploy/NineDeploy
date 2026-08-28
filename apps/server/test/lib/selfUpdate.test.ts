@@ -160,6 +160,25 @@ describe('startSelfUpdate', () => {
     expect(script).toContain('install.sh');
   });
 
+  it('keeps the updater state directory and its log owner-only', async () => {
+    // The wrapper script was already 0700; the log beside it was created at the
+    // default 0644 while capturing the installer's entire output stream, and
+    // `errorTail` surfaces the tail of that through the API. `install.sh` is
+    // careful to chmod 600 the .env it writes — this is the same care applied
+    // to where its output lands.
+    configMock.isProd = true;
+    const lib = await loadLib();
+    await lib.startSelfUpdate('v99.0.0', { installDir: newInstallDir() });
+
+    const mode = (p: string) => fs.statSync(p).mode & 0o777;
+    // Windows does not model POSIX permission bits; assert only where they mean
+    // something.
+    if (process.platform === 'win32') return;
+    expect(mode(stateDir())).toBe(0o700);
+    expect(mode(path.join(stateDir(), 'update.log'))).toBe(0o600);
+    expect(mode(path.join(stateDir(), 'run-update.sh'))).toBe(0o700);
+  });
+
   it('rejects a target that is not newer than the running version', async () => {
     configMock.isProd = true;
     const lib = await loadLib();

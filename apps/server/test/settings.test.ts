@@ -21,6 +21,18 @@ const dnsMock = vi.hoisted(() => ({
 }));
 vi.mock('../src/engine/proxy.js', () => dnsMock);
 
+const keyMock = vi.hoisted(() => ({
+  activeKeyVersion: vi.fn(() => 1),
+  knownKeyVersions: vi.fn(() => [0, 1]),
+  rotateSecretsWithReport: vi.fn(async () => ({ rotated: 7, activeVersion: 1, backupsNotRotated: 0 })),
+}));
+vi.mock('../src/lib/crypto.js', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  activeKeyVersion: keyMock.activeKeyVersion,
+  knownKeyVersions: keyMock.knownKeyVersions,
+}));
+vi.mock('../src/lib/keyRotation.js', () => ({ rotateSecretsWithReport: keyMock.rotateSecretsWithReport }));
+
 describe('settings routes (admin-only)', () => {
   it('returns the current flags', async () => {
     const app = await buildTestApp({ db: createFakeDb() });
@@ -276,6 +288,70 @@ describe('settings routes (admin-only)', () => {
     });
     expect(res.statusCode).toBe(400);
     await app.close();
+  });
+
+  /**
+   * `lib/keyRotation.rotateSecrets` was implemented, tested, and called by
+   * nothing. `.env.example` told operators to run `ninedeploy rotate-keys`, a
+   * command that did not exist — so anyone who followed the documented rotation
+   * procedure and then dropped the retired key version from
+   * NINEDEPLOY_MASTER_KEYS was left holding ciphertext nothing could decrypt.
+   */
+  describe('master-key rotation', () => {
+    it('reports the key ring', async () => {
+      const app = await buildTestApp({ db: createFakeDb() });
+      await app.register(settingsRoutes);
+      const res = await app.inject({ method: 'GET', url: '/master-key', headers: asUser() });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ activeVersion: 1, knownVersions: [0, 1], rotatable: true });
+      await app.close();
+    });
+
+    it('refuses to rotate when the ring holds a single version', async () => {
+      keyMock.knownKeyVersions.mockReturnValueOnce([0]).mockReturnValueOnce([0]);
+      const app = await buildTestApp({ db: createFakeDb() });
+      await app.register(settingsRoutes);
+      const status = await app.inject({ method: 'GET', url: '/master-key', headers: asUser() });
+      expect(status.json().rotatable).toBe(false);
+      const res = await app.inject({ method: 'POST', url: '/master-key/rotate', headers: asUser() });
+      expect(res.statusCode).toBe(422);
+      expect(keyMock.rotateSecretsWithReport).not.toHaveBeenCalled();
+      await app.close();
+    });
+
+    it('rotates and reports the count', async () => {
+      const app = await buildTestApp({ db: createFakeDb() });
+      await app.register(settingsRoutes);
+      const res = await app.inject({ method: 'POST', url: '/master-key/rotate', headers: asUser() });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ rotated: 7, activeVersion: 1, backupsNotRotated: 0, warning: null });
+      await app.close();
+    });
+
+    it('warns that stored backups are NOT re-encrypted', async () => {
+      // Backup envelopes carry their own `NDBK1:v<version>` header and are not
+      // touched by the sweep. Retiring the old key would make every backup taken
+      // under it permanently unrestorable — the one thing an operator has to
+      // know before completing step 4 of the documented procedure.
+      keyMock.rotateSecretsWithReport.mockResolvedValueOnce({ rotated: 7, activeVersion: 1, backupsNotRotated: 3 });
+      const app = await buildTestApp({ db: createFakeDb() });
+      await app.register(settingsRoutes);
+      const res = await app.inject({ method: 'POST', url: '/master-key/rotate', headers: asUser() });
+      expect(res.json().warning).toMatch(/3 stored backup/);
+      await app.close();
+    });
+
+    it('rejects a member with 403', async () => {
+      const app = await buildTestApp({ db: createFakeDb() });
+      await app.register(settingsRoutes);
+      const res = await app.inject({
+        method: 'POST',
+        url: '/master-key/rotate',
+        headers: { ...asUser(), 'x-test-role': 'member' },
+      });
+      expect(res.statusCode).toBe(403);
+      await app.close();
+    });
   });
 
   it('rejects a member with 403', async () => {

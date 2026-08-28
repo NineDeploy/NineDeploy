@@ -2,9 +2,14 @@ import { z } from 'zod';
 import type { NineDeployClient } from '@ninedeploy/sdk';
 
 /**
- * The MCP tool surface: read-only inspection plus three guarded actions
- * (deploy, restart, rollback). Every tool maps 1:1 onto the typed SDK, so
- * the MCP wire can never express anything the HTTP API could not.
+ * The MCP tool surface: read-only inspection plus a handful of guarded actions
+ * (deploy, cancel, restart, rollback). Every tool maps 1:1 onto the typed SDK,
+ * so the MCP wire can never express anything the HTTP API could not, and API
+ * token scopes still gate every write (`plugins/auth.ts`).
+ *
+ * `cancel_deploy` is deliberately paired with `deploy_service`: an agent that
+ * can start a build must be able to stop one, or a runaway deploy it triggered
+ * can only be halted from a browser.
  */
 
 export interface ToolDef {
@@ -105,6 +110,16 @@ export const TOOLS: ToolDef[] = [
     description: 'Restart a running service runtime.',
     input: serviceId,
     handler: (c, input) => c.services.restart((input as { serviceId: number }).serviceId),
+  },
+  {
+    name: 'cancel_deploy',
+    description:
+      'Cancel a queued or in-flight deployment. A queued deployment stops immediately; an in-flight one stops at the next pipeline step boundary, leaving the previous version serving.',
+    input: z.object({ serviceId: z.number().int().positive(), deploymentId: z.number().int().positive() }),
+    handler: (c, input) => {
+      const { serviceId, deploymentId } = input as { serviceId: number; deploymentId: number };
+      return c.deploys.cancel(serviceId, deploymentId);
+    },
   },
   {
     name: 'rollback_deploy',

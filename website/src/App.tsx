@@ -7,11 +7,13 @@ import { Features } from "./pages/Features";
 import { DocsLayout, docPages, DocPage } from "./pages/Docs";
 import { Changelog } from "./pages/Changelog";
 import { Faq } from "./pages/Faq";
+import { Templates } from "./pages/Templates";
 import { NotFound } from "./pages/NotFound";
 
 const titles: Record<string, string> = {
   "/": "NineDeploy — ship like you mean it",
   "/features": "Features — NineDeploy",
+  "/templates": "Templates — NineDeploy",
   "/changelog": "Changelog — NineDeploy",
   "/faq": "FAQ — NineDeploy",
 };
@@ -58,6 +60,7 @@ export default function App() {
         <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/features" element={<Features />} />
+        <Route path="/templates" element={<Templates />} />
         <Route path="/changelog" element={<Changelog />} />
         <Route path="/faq" element={<Faq />} />
         <Route path="/docs" element={<DocsLayout />}>

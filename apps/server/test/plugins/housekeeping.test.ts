@@ -1,8 +1,8 @@
 ﻿import Fastify from 'fastify';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { auditLog, notificationLog } from '@ninedeploy/db';
+import { auditLog, deployments, jobRuns, notificationLog } from '@ninedeploy/db';
 
-const logsMock = vi.hoisted(() => ({ pruneOldLogs: vi.fn(() => 0) }));
+const logsMock = vi.hoisted(() => ({ pruneOldLogs: vi.fn(() => 0), deleteLog: vi.fn(() => true) }));
 const execMock = vi.hoisted(() => ({
   run: vi.fn(async (_c: string, _a: unknown[], _o: unknown, sink?: (l: string) => void) => {
     sink?.('');
@@ -17,7 +17,11 @@ const autoPruneMock = vi.hoisted(() => ({
   executeAutoPrune: vi.fn(async () => ({ ok: true, freedBytes: 100 })),
 }));
 
-vi.mock('../../src/engine/logs.js', () => ({ logBus: new (class extends EventTarget {})(), pruneOldLogs: logsMock.pruneOldLogs }));
+vi.mock('../../src/engine/logs.js', () => ({
+  logBus: new (class extends EventTarget {})(),
+  pruneOldLogs: logsMock.pruneOldLogs,
+  deleteLog: logsMock.deleteLog,
+}));
 vi.mock('../../src/lib/exec.js', () => ({ run: execMock.run }));
 vi.mock('../../src/engine/autoPrune.js', () => ({
   getAutoPruneStatus: autoPruneMock.getAutoPruneStatus,
@@ -26,13 +30,21 @@ vi.mock('../../src/engine/autoPrune.js', () => ({
 
 const housekeepingPlugin = (await import('../../src/plugins/housekeeping.js')).default;
 
-function makeDb() {
+/**
+ * `expiredDeployments` are the rows the deployment sweep is meant to find; the
+ * plugin reads their ids first so it can delete each one's log file alongside
+ * the row.
+ */
+function makeDb(expiredDeployments: Array<{ id: number }> = []) {
   const deleted: Array<{ table: unknown }> = [];
   const del = vi.fn((table: unknown) => {
     deleted.push({ table });
     return { where: vi.fn(async () => undefined) };
   });
-  return { db: { delete: del } as never, deleted };
+  const select = vi.fn(() => ({
+    from: vi.fn(() => ({ where: vi.fn(async () => expiredDeployments) })),
+  }));
+  return { db: { delete: del, select } as never, deleted };
 }
 
 async function buildApp(db: ReturnType<typeof makeDb>['db']) {
@@ -46,6 +58,7 @@ describe('housekeeping plugin', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     logsMock.pruneOldLogs.mockClear();
+    logsMock.deleteLog.mockClear();
     autoPruneMock.executeAutoPrune.mockClear();
     autoPruneMock.getAutoPruneStatus.mockResolvedValue({
       enabled: true,
@@ -68,10 +81,44 @@ describe('housekeeping plugin', () => {
     const tables = deleted.map((d) => d.table);
     expect(tables).toContain(auditLog);
     expect(tables).toContain(notificationLog);
+    // `job_runs` had no retention at all, and each row carries up to 60 KB of
+    // captured command output inside the SQLite file that gets backed up whole.
+    expect(tables).toContain(jobRuns);
     // Dangling Docker images are pruned each tick too.
     expect(execMock.run).toHaveBeenCalledWith('docker', ['image', 'prune', '-f'], {}, expect.any(Function));
     // Auto-prune was triggered because 90% >= 85%
     expect(autoPruneMock.executeAutoPrune).toHaveBeenCalledTimes(1);
+    await app.close();
+  });
+
+  /**
+   * Deployment ROWS were never swept. Only the log FILE aged out (30 days), so
+   * the older half of every service's Deploys tab listed builds whose logs had
+   * already been deleted — history you can click and learn nothing from — while
+   * the table itself grew for the life of the instance.
+   */
+  it('sweeps finished deployment rows and their log files', async () => {
+    const { db, deleted } = makeDb([{ id: 11 }, { id: 12 }]);
+    const app = await buildApp(db);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(deleted.map((d) => d.table)).toContain(deployments);
+    // The row and its log go together — the file sweep judges mtime only, so a
+    // deploy that produced no output recently would otherwise leave one behind.
+    expect(logsMock.deleteLog).toHaveBeenCalledWith(11);
+    expect(logsMock.deleteLog).toHaveBeenCalledWith(12);
+    await app.close();
+  });
+
+  it('issues no deployment delete when nothing has aged out', async () => {
+    const { db, deleted } = makeDb([]);
+    const app = await buildApp(db);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(deleted.map((d) => d.table)).not.toContain(deployments);
+    expect(logsMock.deleteLog).not.toHaveBeenCalled();
     await app.close();
   });
 
@@ -91,7 +138,7 @@ describe('housekeeping plugin', () => {
 
   it('logs and continues when a retention delete fails', async () => {
     const del = vi.fn(() => ({ where: vi.fn(async () => Promise.reject(new Error('db locked'))) }));
-    const app = await buildApp({ delete: del } as never);
+    const app = await buildApp({ delete: del, select: vi.fn(() => ({ from: vi.fn(() => ({ where: vi.fn(async () => []) })) })) } as never);
     const errorSpy = vi.spyOn(app.log, 'error');
 
     await vi.advanceTimersByTimeAsync(60_000);
@@ -118,7 +165,7 @@ describe('housekeeping plugin', () => {
     let release: () => void = () => {};
     const gate = new Promise<void>((r) => { release = r; });
     const del = vi.fn(() => ({ where: vi.fn(() => gate) }));
-    const app = await buildApp({ delete: del } as never);
+    const app = await buildApp({ delete: del, select: vi.fn(() => ({ from: vi.fn(() => ({ where: vi.fn(async () => []) })) })) } as never);
 
     // Start the first tick; it hangs on the db delete.
     await vi.advanceTimersByTimeAsync(60_000);

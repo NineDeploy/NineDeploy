@@ -5,6 +5,7 @@ import {
   detectPublicIp,
   findZoneId,
   getDnsRecordsConfig,
+  listCloudflareZones,
   setDnsRecordsConfig,
   testCloudflareToken,
 } from '../../src/lib/cloudflare.js';
@@ -152,5 +153,31 @@ describe('lib/cloudflare', () => {
     await expect(detectPublicIp()).resolves.toBe('198.51.100.7');
     fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({}) });
     await expect(detectPublicIp()).rejects.toThrow(/Could not detect/);
+  });
+
+  it('lists every zone the token can see', async () => {
+    fetchMock.mockResolvedValueOnce(
+      cfOk([
+        { id: 'z1', name: 'example.com' },
+        { id: 'z2', name: 'example.net' },
+      ]),
+    );
+    await expect(listCloudflareZones('t')).resolves.toEqual([
+      { id: 'z1', name: 'example.com' },
+      { id: 'z2', name: 'example.net' },
+    ]);
+    // The first call (and only call) must target /zones with the bearer.
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toContain('/zones?per_page=50');
+    expect((init as RequestInit).headers).toMatchObject({ Authorization: 'Bearer t' });
+  });
+
+  it('surfaces API errors from listCloudflareZones', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      json: async () => ({ success: false, errors: [{ message: 'bad token' }] }),
+    });
+    await expect(listCloudflareZones('t')).rejects.toThrow(/bad token/);
   });
 });

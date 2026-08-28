@@ -65,10 +65,25 @@ ninedeploy services create
 ninedeploy services deploy <service-id>
 ninedeploy services logs <service-id>
 
+# Deployment history
+ninedeploy deploys list <service-id>
+ninedeploy deploys watch <service-id> <deploy-id>     # stream the build log
+ninedeploy deploys cancel <service-id> <deploy-id>    # queued or in-flight
+ninedeploy deploys rollback <service-id> <deploy-id>  # re-deploy that exact commit/digest
+ninedeploy deploys rm <service-id> <deploy-id>        # drop it from history, with its log
+
 # Databases and Templates
 ninedeploy databases list
 ninedeploy templates list
+
+# Secrets
+ninedeploy system rotate-keys      # re-encrypt onto the newest master-key version
 ```
+
+`deploys rm` refuses an in-flight deployment (cancel it first) and the one
+currently serving traffic — that row carries the image digest a rollback
+re-deploys. Finished deployments age out on their own after 30 days, together
+with their build logs.
 
 ---
 

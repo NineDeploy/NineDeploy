@@ -279,6 +279,85 @@ describe('deploys routes', () => {
     expect(res.statusCode).toBe(400);
   });
 
+  /**
+   * Removing a deployment from history. There was no delete path at all before:
+   * the log FILE aged out at 30 days and the row never did, so the older half
+   * of the Deploys tab listed builds whose logs had already been swept.
+   */
+  describe('removing a deployment', () => {
+    it('deletes a finished deployment and its log file', async () => {
+      const app = await buildTestApp({
+        db: createFakeDb({
+          findFirst: { services: svcRow({ id: 1 }), deployments: depRow({ id: 20, serviceId: 1, status: 'failed' }) },
+          delete: { deployments: [{ id: 20 }] },
+        }),
+      });
+      await app.register(deploysRoutes, { prefix: '/services' });
+      const res = await app.inject({ method: 'DELETE', url: '/services/1/deploys/20', headers: asUser() });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ ok: true, id: 20 });
+    });
+
+    it('refuses to delete an in-flight deployment', async () => {
+      // The worker and the pipeline still write to the row; deleting it would
+      // leave them updating something that no longer exists.
+      const app = await buildTestApp({
+        db: createFakeDb({
+          findFirst: { services: svcRow({ id: 1 }), deployments: depRow({ id: 21, serviceId: 1, status: 'building' }) },
+        }),
+      });
+      await app.register(deploysRoutes, { prefix: '/services' });
+      const res = await app.inject({ method: 'DELETE', url: '/services/1/deploys/21', headers: asUser() });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error.message).toMatch(/Cancel the deployment/);
+    });
+
+    it('refuses to delete the deployment that is serving traffic', async () => {
+      // That row carries the image digest a rollback re-deploys and the config
+      // snapshot the next deploy diffs against.
+      const app = await buildTestApp({
+        db: createFakeDb({
+          findFirst: { services: svcRow({ id: 1 }), deployments: depRow({ id: 22, serviceId: 1, status: 'running' }) },
+        }),
+      });
+      await app.register(deploysRoutes, { prefix: '/services' });
+      const res = await app.inject({ method: 'DELETE', url: '/services/1/deploys/22', headers: asUser() });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error.message).toMatch(/currently serving traffic/);
+    });
+
+    it('reports a race when the row changes state between read and delete', async () => {
+      const app = await buildTestApp({
+        db: createFakeDb({
+          findFirst: { services: svcRow({ id: 1 }), deployments: depRow({ id: 23, serviceId: 1, status: 'failed' }) },
+          delete: { deployments: [] },
+        }),
+      });
+      await app.register(deploysRoutes, { prefix: '/services' });
+      const res = await app.inject({ method: 'DELETE', url: '/services/1/deploys/23', headers: asUser() });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error.message).toMatch(/changed state/);
+    });
+
+    it('404s for a deployment belonging to another service', async () => {
+      const app = await buildTestApp({
+        db: createFakeDb({
+          findFirst: { services: svcRow({ id: 1 }), deployments: depRow({ id: 24, serviceId: 2, status: 'failed' }) },
+        }),
+      });
+      await app.register(deploysRoutes, { prefix: '/services' });
+      const res = await app.inject({ method: 'DELETE', url: '/services/1/deploys/24', headers: asUser() });
+      expect(res.statusCode).toBe(404);
+    });
+
+    it('404s for an unknown deployment', async () => {
+      const app = await buildTestApp({ db: createFakeDb({ findFirst: { services: svcRow({ id: 1 }) } }) });
+      await app.register(deploysRoutes, { prefix: '/services' });
+      const res = await app.inject({ method: 'DELETE', url: '/services/1/deploys/99', headers: asUser() });
+      expect(res.statusCode).toBe(404);
+    });
+  });
+
   it('returns 404 when rolling back across services', async () => {
     const app = await buildTestApp({
       db: createFakeDb({ findFirst: { deployments: depRow({ id: 9, serviceId: 1 }) } }),

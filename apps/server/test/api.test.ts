@@ -71,6 +71,56 @@ describe('api routes (mounted under /v1)', () => {
     expect(services.statusCode).toBe(200);
   });
 
+  /**
+   * Every module this file stubs must actually be mounted.
+   *
+   * Spot-checking two of them let a real one slip: `metricRoutes` is a second
+   * export from `stats.ts`, its own comment says "Mounted under /services", and
+   * `api.ts` never registered it. `GET /v1/services/:id/metrics` therefore
+   * 404'd — so the CPU/memory charts on Monitoring and the service Overview tab
+   * had nothing to read while the collector wrote a row every 30 seconds. The
+   * stub for it existed in this file the whole time and nothing asked it a
+   * question.
+   */
+  it.each([
+    ['/about', 'about'],
+    ['/activity', 'activity'],
+    ['/auth', 'auth'],
+    ['/backups', 'backups'],
+    ['/dashboard', 'dashboard'],
+    ['/databases', 'databases'],
+    ['/databases', 'database-backups'],
+    ['/demo', 'demo'],
+    ['/domains', 'domain-index'],
+    ['/env', 'env-search'],
+    ['/hooks', 'hook-receive'],
+    ['/networks', 'networks'],
+    ['/notifications', 'notifications'],
+    ['/projects', 'project-env'],
+    ['/services', 'services'],
+    ['/services', 'attachments'],
+    ['/services', 'deploys'],
+    ['/services', 'domains'],
+    ['/services', 'env'],
+    ['/services', 'metrics'],
+    ['/services', 'migration'],
+    ['/services', 'webhooks'],
+    ['/sources', 'sources'],
+    ['/stats', 'stats'],
+    ['/system', 'system'],
+    ['/templates', 'templates'],
+    ['/topology', 'topology'],
+    ['/tunnels', 'tunnels'],
+    ['/users', 'users'],
+    ['/volumes', 'volumes'],
+  ])('mounts %s → %s', async (prefix, module) => {
+    const app = await buildTestApp({ db: createFakeDb() });
+    await app.register(apiRoutes, { prefix: '/v1' });
+    const res = await app.inject({ method: 'GET', url: `/v1${prefix}/${module}-ping` });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: true, module });
+  });
+
   it('bootstraps the first admin via /v1/setup', async () => {
     const app = await buildTestApp({ db: createFakeDb() });
     await app.register(apiRoutes, { prefix: '/v1' });

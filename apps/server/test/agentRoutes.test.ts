@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { agentRoutes, runOp } from '../src/agent.js';
+import { MAX_SKEW_MS, open as openSealed, seal } from '../src/lib/agentSeal.js';
 import { buildTestApp } from './helpers.js';
 
 const spawnMock = vi.hoisted(() => vi.fn(async () => 0));
@@ -190,11 +191,129 @@ describe('agent /agent/exec route', () => {
     expect(res.json().error.code).toBe('unknown_op');
   });
 
-  it('answers the ping probe', async () => {
+  it('answers the ping probe, advertising the sealed transport', async () => {
+    // This flag is how an upgraded core learns it may stop sending the token
+    // in a header. Without it the core falls back to cleartext, so the field
+    // is load-bearing, not decorative.
     const app = await appWith();
     const res = await app.inject({ method: 'GET', url: '/agent/ping' });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toMatchObject({ ok: true, agent: true });
+    expect(res.json()).toMatchObject({ ok: true, agent: true, sealed: true });
+  });
+});
+
+/**
+ * The sealed path. Opening the envelope IS the authentication: a caller who
+ * cannot produce one signed by sha256(token) never reaches `runOp`, and the
+ * token itself never crosses the wire.
+ */
+describe('agent /agent/exec sealed transport', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    spawnMock.mockReset();
+    spawnMock.mockResolvedValue(0);
+  });
+
+  it('executes a sealed request with no token header at all', async () => {
+    spawnMock.mockImplementation(async (_exe, _argv, onLine) => {
+      onLine?.('stopping web-3');
+      return 0;
+    });
+    const app = await appWith();
+    const res = await app.inject({
+      method: 'POST', url: '/agent/exec',
+      payload: { sealed: seal(TOKEN_HASH, { op: 'docker.stop', params: { name: 'web-3' } }) },
+    });
+    expect(res.statusCode).toBe(200);
+    // The reply is sealed too — command output routinely echoes configuration.
+    const body = res.json();
+    expect(body.lines).toBeUndefined();
+    expect(openSealed(TOKEN_HASH, body.sealed)).toEqual({
+      lines: ['stopping web-3'],
+      exitCode: 0,
+      envFile: null,
+    });
+    expect(spawnMock).toHaveBeenCalled();
+  });
+
+  it('rejects an envelope sealed with the wrong secret, without spawning', async () => {
+    const app = await appWith();
+    const res = await app.inject({
+      method: 'POST', url: '/agent/exec',
+      payload: { sealed: seal('deadbeef'.repeat(8), { op: 'docker.stop', params: { name: 'web' } }) },
+    });
+    expect(res.statusCode).toBe(401);
+    expect(spawnMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects a tampered envelope', async () => {
+    const env = seal(TOKEN_HASH, { op: 'docker.stop', params: { name: 'web' } });
+    const ct = Buffer.from(env.c, 'base64');
+    ct[0] = (ct[0] as number) ^ 0x01;
+    const app = await appWith();
+    const res = await app.inject({
+      method: 'POST', url: '/agent/exec',
+      payload: { sealed: { ...env, c: ct.toString('base64') } },
+    });
+    expect(res.statusCode).toBe(401);
+    expect(spawnMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects a replayed envelope once it is outside the skew window', async () => {
+    const app = await appWith();
+    const stale = seal(TOKEN_HASH, { op: 'docker.stop', params: { name: 'web' } }, Date.now() - MAX_SKEW_MS - 1000);
+    const res = await app.inject({ method: 'POST', url: '/agent/exec', payload: { sealed: stale } });
+    expect(res.statusCode).toBe(401);
+    expect(spawnMock).not.toHaveBeenCalled();
+  });
+
+  it('answers a bad envelope exactly like a bad token, so it is no oracle', async () => {
+    const app = await appWith();
+    const sealedRes = await app.inject({
+      method: 'POST', url: '/agent/exec',
+      payload: { sealed: { v: 1, s: 'AAAA', i: 'AAAA', c: 'AAAA', t: 'AAAA', ts: Date.now() } },
+    });
+    const tokenRes = await app.inject({
+      method: 'POST', url: '/agent/exec',
+      headers: { 'x-agent-token': 'wrong' },
+      payload: { op: 'docker.pull', params: { image: 'nginx' } },
+    });
+    expect(sealedRes.statusCode).toBe(tokenRes.statusCode);
+    expect(sealedRes.json()).toEqual(tokenRes.json());
+  });
+
+  it('still rejects an unknown op inside a valid envelope', async () => {
+    // Sealing authenticates the caller; it does not widen the operation table.
+    const app = await appWith();
+    const res = await app.inject({
+      method: 'POST', url: '/agent/exec',
+      payload: { sealed: seal(TOKEN_HASH, { op: 'bash.exec', params: {} }) },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('unknown_op');
+  });
+
+  it('still rejects hostile operands inside a valid envelope', async () => {
+    const app = await appWith();
+    const res = await app.inject({
+      method: 'POST', url: '/agent/exec',
+      payload: { sealed: seal(TOKEN_HASH, { op: 'docker.pull', params: { image: 'nginx; touch /pwn' } }) },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('bad_params');
+    expect(spawnMock).not.toHaveBeenCalled();
+  });
+
+  it('leaves the legacy plaintext reply unsealed for an un-upgraded core', async () => {
+    const app = await appWith();
+    const res = await app.inject({
+      method: 'POST', url: '/agent/exec',
+      headers: { 'x-agent-token': TOKEN },
+      payload: { op: 'docker.stop', params: { name: 'web-3' } },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ exitCode: 0 });
+    expect(res.json().sealed).toBeUndefined();
   });
 });
 

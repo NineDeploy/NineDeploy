@@ -4,9 +4,18 @@ import { eq } from 'drizzle-orm';
 import type { InstallPluginInput, MarketplacePluginItem } from '@ninedeploy/schemas';
 import type { KernelContext, KernelPlugin } from './types.js';
 
+/**
+ * The roadmap index the Plugins page renders. `builtIn.path` is a PANEL route,
+ * rendered as a link — Settings selects its page with `?section=`, not `?tab=`
+ * (see `apps/web/src/routes/settings/index.tsx`), and a wrong one silently
+ * lands the operator on the default page. `test/kernelHonesty.test.ts` checks
+ * every entry's shape.
+ */
 export const MARKETPLACE_CATALOG: Omit<MarketplacePluginItem, 'isInstalled'>[] = [
   {
     id: 's3-backups',
+    implemented: false,
+    builtIn: { label: 'Backups → Storage destinations', path: '/backups' },
     name: 'Amazon S3 & Cloudflare R2 Sync',
     version: '1.1.0',
     description: 'Automated off-site backup synchronization to Amazon S3, Cloudflare R2, Wasabi, or MinIO',
@@ -45,6 +54,8 @@ export const MARKETPLACE_CATALOG: Omit<MarketplacePluginItem, 'isInstalled'>[] =
   },
   {
     id: 'slack-alerts',
+    implemented: false,
+    builtIn: { label: 'Settings → Notifications', path: '/settings?section=notifications' },
     name: 'Slack Notification Dispatcher',
     version: '1.0.0',
     description: 'Post deployment summaries, container crash alerts, and health warnings directly into Slack channels',
@@ -75,6 +86,8 @@ export const MARKETPLACE_CATALOG: Omit<MarketplacePluginItem, 'isInstalled'>[] =
   },
   {
     id: 'discord-alerts',
+    implemented: false,
+    builtIn: { label: 'Settings → Notifications', path: '/settings?section=notifications' },
     name: 'Discord Webhook Notifier',
     version: '1.0.0',
     description: 'Send color-coded rich embeds and server statistics to your Discord guild channels',
@@ -97,6 +110,7 @@ export const MARKETPLACE_CATALOG: Omit<MarketplacePluginItem, 'isInstalled'>[] =
   },
   {
     id: 'datadog-apm',
+    implemented: false,
     name: 'Datadog APM & DogStatsD',
     version: '1.0.0',
     description: 'Stream container resource metrics and trace logs to your Datadog monitoring dashboard',
@@ -127,6 +141,7 @@ export const MARKETPLACE_CATALOG: Omit<MarketplacePluginItem, 'isInstalled'>[] =
   },
   {
     id: 'redis-sentinel',
+    implemented: false,
     name: 'Redis Sentinel High Availability',
     version: '1.0.0',
     description: 'Automatic master failover and client routing for high-availability Redis topologies',
@@ -149,6 +164,7 @@ export const MARKETPLACE_CATALOG: Omit<MarketplacePluginItem, 'isInstalled'>[] =
   },
   {
     id: 'postgres-wal-g',
+    implemented: false,
     name: 'PostgreSQL WAL-G Continuous Archiving',
     version: '1.0.0',
     description: 'Continuous WAL streaming and Point-in-Time-Recovery (PITR) for mission-critical PostgreSQL databases',
@@ -162,6 +178,8 @@ export const MARKETPLACE_CATALOG: Omit<MarketplacePluginItem, 'isInstalled'>[] =
   },
   {
     id: 'github-app',
+    implemented: false,
+    builtIn: { label: 'Sources + per-service auto-deploy webhooks', path: '/sources' },
     name: 'GitHub App & CI/CD Webhooks',
     version: '1.0.0',
     description: 'Bi-directional GitHub App integration for commit statuses, PR preview environments, and instant webhook deployment triggers',
@@ -200,6 +218,8 @@ export const MARKETPLACE_CATALOG: Omit<MarketplacePluginItem, 'isInstalled'>[] =
   },
   {
     id: 'prometheus-exporter',
+    implemented: false,
+    builtIn: { label: 'Monitoring', path: '/monitoring' },
     name: 'Prometheus & OpenTelemetry Exporter',
     version: '1.0.0',
     description: 'Exposes scrapeable /metrics endpoint with container CPU/Memory, network I/O, Traefik request counts, and system telemetry',
@@ -230,6 +250,8 @@ export const MARKETPLACE_CATALOG: Omit<MarketplacePluginItem, 'isInstalled'>[] =
   },
   {
     id: 'cloudflare-dns',
+    implemented: false,
+    builtIn: { label: 'Settings → Integrations → DNS records', path: '/settings?section=integrations' },
     name: 'Cloudflare DNS & Zero-Trust Automation',
     version: '1.0.0',
     description: 'Automated Cloudflare DNS record creation, proxy mode management, and Cloudflare Access service tokens',
@@ -260,6 +282,7 @@ export const MARKETPLACE_CATALOG: Omit<MarketplacePluginItem, 'isInstalled'>[] =
   },
   {
     id: 'sentry-tracking',
+    implemented: false,
     name: 'Sentry Error & Performance Tracking',
     version: '1.0.0',
     description: 'Real-time error capturing, stack trace analysis, and deployment performance release tracking via Sentry',
@@ -290,6 +313,7 @@ export const MARKETPLACE_CATALOG: Omit<MarketplacePluginItem, 'isInstalled'>[] =
   },
   {
     id: 'tailscale-vpn',
+    implemented: false,
     name: 'Tailscale Mesh VPN Integration',
     version: '1.0.0',
     description: 'Connect your NineDeploy instance and private deployment nodes to your Tailscale mesh network for secure, overlay networking',
@@ -312,6 +336,8 @@ export const MARKETPLACE_CATALOG: Omit<MarketplacePluginItem, 'isInstalled'>[] =
   },
   {
     id: 'telegram-bot',
+    implemented: false,
+    builtIn: { label: 'Settings → Notifications', path: '/settings?section=notifications' },
     name: 'Telegram Bot Incident Responder',
     version: '1.0.0',
     description: 'Interactive Telegram Bot for instant deployment alerts, container restart commands, and database backup reports',
@@ -342,6 +368,7 @@ export const MARKETPLACE_CATALOG: Omit<MarketplacePluginItem, 'isInstalled'>[] =
   },
   {
     id: 'crowdsec-security',
+    implemented: false,
     name: 'CrowdSec Security & Intrusion Prevention',
     version: '1.0.0',
     description: 'Collaborative intrusion prevention system blocking brute-force attacks, port scans, and malicious bots on Traefik ingress',
@@ -372,6 +399,8 @@ export const MARKETPLACE_CATALOG: Omit<MarketplacePluginItem, 'isInstalled'>[] =
   },
   {
     id: 'minio-s3-gateway',
+    implemented: false,
+    builtIn: { label: 'Backups → Storage destinations', path: '/backups' },
     name: 'MinIO S3 Self-Hosted Storage Gateway',
     version: '1.0.0',
     description: 'High-performance, S3-compatible private object storage cluster provisioning and volume mirroring engine',
@@ -410,6 +439,8 @@ export const MARKETPLACE_CATALOG: Omit<MarketplacePluginItem, 'isInstalled'>[] =
   },
   {
     id: 'health-pinger',
+    implemented: false,
+    builtIn: { label: 'Monitoring → Alert rules', path: '/monitoring' },
     name: 'Uptime Sentinel & Health Pinger',
     version: '1.0.0',
     description: 'Multi-target active HTTP/TCP heartbeat pinger with latency histograms, auto-restart triggers, and SLA reports',
@@ -440,6 +471,8 @@ export const MARKETPLACE_CATALOG: Omit<MarketplacePluginItem, 'isInstalled'>[] =
   },
   {
     id: 'vault-secrets',
+    implemented: false,
+    builtIn: { label: 'Settings → Integrations → Vault provider', path: '/settings?section=integrations' },
     name: 'HashiCorp Vault Secret Synchronization',
     version: '1.0.0',
     description: 'Dynamic secret leasing, token renewal, and automatic environment variable injection directly from HashiCorp Vault KV v2 engines',
@@ -522,7 +555,25 @@ export class UnsupportedPluginSourceError extends Error {
   }
 }
 
-export function createDynamicPlugin(input: InstallPluginInput): KernelPlugin {
+/**
+ * Thrown when a catalog entry is listed but not yet backed by real behaviour.
+ * The message names the shipped feature to use instead, when there is one.
+ */
+export class UnimplementedPluginError extends Error {
+  readonly statusCode = 400;
+  constructor(entry: { name: string; builtIn?: { label: string; path: string } }) {
+    const pointer = entry.builtIn
+      ? ` This capability already ships in NineDeploy — use ${entry.builtIn.label} (${entry.builtIn.path}).`
+      : ' It is listed as a roadmap item and installing it would do nothing.';
+    super(`"${entry.name}" is not available yet.${pointer}`);
+    this.name = 'UnimplementedPluginError';
+  }
+}
+
+/** A catalog the loader can resolve entries against. Injectable for tests. */
+export type Catalog = ReadonlyArray<Omit<MarketplacePluginItem, 'isInstalled'>>;
+
+export function createDynamicPlugin(input: InstallPluginInput, catalog: Catalog = MARKETPLACE_CATALOG): KernelPlugin {
   let id = input.target;
   let name = input.name || input.target;
   let version = input.version || '1.0.0';
@@ -535,7 +586,7 @@ export function createDynamicPlugin(input: InstallPluginInput): KernelPlugin {
   let dependencies: string[] | undefined = input.dependencies;
 
   if (input.source === 'marketplace') {
-    const found = MARKETPLACE_CATALOG.find((m) => m.id === input.target);
+    const found = catalog.find((m) => m.id === input.target);
     if (!found) {
       throw new Error(`Marketplace plugin "${input.target}" not found in catalog`);
     }
@@ -579,12 +630,22 @@ export async function installPlugin(
   db: DB,
   kernel: KernelContext,
   input: InstallPluginInput,
+  catalog: Catalog = MARKETPLACE_CATALOG,
 ): Promise<{ ok: boolean; id: string; status: string }> {
   // Refuse here rather than inside `createDynamicPlugin`: that function is also
   // used to RESTORE rows at boot, and throwing there would make every existing
   // install log a failure on every start.
   if (!isLoadableSource(input.source)) throw new UnsupportedPluginSourceError(input.source);
-  const dynamicPlugin = createDynamicPlugin(input);
+  // A catalog entry with no behaviour behind it must not be installable. It
+  // would report itself as "active" and accept configuration (bucket names,
+  // secret keys, webhook URLs) while doing nothing — and several entries shadow
+  // features that DO exist under another name, so the false confidence is the
+  // dangerous kind. Point at the real feature instead.
+  const catalogEntry = catalog.find((m) => m.id === input.target);
+  if (input.source === 'marketplace' && catalogEntry && catalogEntry.implemented !== true) {
+    throw new UnimplementedPluginError(catalogEntry);
+  }
+  const dynamicPlugin = createDynamicPlugin(input, catalog);
 
   // Check if already registered
   const existing = await db.query.installedPlugins.findFirst({

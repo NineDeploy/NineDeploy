@@ -12,7 +12,7 @@ import {
   type Database,
   type Project,
   type Service,
-  workspaceRole,
+  type workspaceRole,
 } from '@ninedeploy/db';
 
 /**
@@ -73,9 +73,15 @@ export interface AuthedUser {
    * True when `users.is_instance_operator` is set — the instance-wide
    * operator flag. The legacy `role: 'admin' | 'member'` field is gone, and
    * this flag is NOT inferred from workspace membership (that inference was
-   * self-granting; see `isOperator`). Routes that previously branched on
-   * `role === 'admin'` use this, or `assertOperator(db, user)` for
-   * guard-style checks.
+   * self-granting; see `isOperator`).
+   *
+   * On a REQUEST, this field is authoritative and routes must gate on it (via
+   * `app.requireOperator`), never by re-reading the column. `plugins/auth.ts`
+   * has already narrowed it for a scope-restricted API token — a `write` token
+   * owned by an operator runs as a non-operator — and a fresh DB read would
+   * hand that authority straight back. `isOperator(db, user)` exists for the
+   * paths with no request behind them (the deploy pipeline, webhook receivers),
+   * where there are no scopes to preserve.
    */
   isOperator: boolean;
 }
@@ -183,13 +189,6 @@ export function maxRole(memberships: WorkspaceMembership[]): WorkspaceRole | nul
 export async function isOperator(db: DbLike, user: { id: number }): Promise<boolean> {
   const row = await db.query.users.findFirst({ where: eq(users.id, user.id) });
   return row?.isInstanceOperator === true;
-}
-
-/** Throws 403 unless the user carries the instance-operator flag. */
-export async function assertOperator(db: DbLike, user: { id: number }): Promise<void> {
-  if (!(await isOperator(db, user))) {
-    throw forbidden('Operator access required');
-  }
 }
 
 // ── services ───────────────────────────────────────────────────────────────
@@ -497,17 +496,6 @@ export function requireAccess(kind: ResourceKind, param = 'id') {
     if (raw === undefined) throw notFound('Resource not found');
     const db = (req.server as unknown as { db: DB }).db;
     await requireResourceAccess(db, kind, parseId(raw), req.user!);
-  };
-}
-
-/**
- * Prehandler that requires the caller to be an operator (owner/admin in at
- * least one workspace). Pairs with the `authenticate` hook.
- */
-export function requireOperator() {
-  return async function operatorPreHandler(req: FastifyRequest, _reply: FastifyReply): Promise<void> {
-    const db = (req.server as unknown as { db: DB }).db;
-    await assertOperator(db, req.user!);
   };
 }
 

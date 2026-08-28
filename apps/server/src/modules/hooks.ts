@@ -13,6 +13,8 @@ import { isOperator } from '../lib/resourceAccess.js';
 import { dockerBuilder } from '../engine/builders/docker.js';
 import { pm2Builder } from '../engine/builders/pm2.js';
 import { composeBuilder } from '../engine/builders/compose.js';
+import { deleteLog } from '../engine/logs.js';
+import { removeServiceBridgeIfEmpty } from '../lib/serviceBridge.js';
 import { writeDynamicConfig, getAcmeEmail } from '../engine/proxy.js';
 import { getSettingString } from '../lib/settings.js';
 import { getServiceTags, replaceServiceTags } from './serviceTags.js';
@@ -97,11 +99,34 @@ export const hookReceiveRoutes: FastifyPluginAsync = async (app) => {
           return { ok: 'skipped', reason: existingPreview ? 'auto_destroy_disabled' : 'no_preview_found' };
         }
         await stopRuntimeFor(existingPreview);
+        // The FK cascade takes the deployment ROWS; the log files on disk are
+        // ours to remove. Read them before the row goes.
+        let previewLogs: Array<{ id: number }> = [];
+        try {
+          previewLogs = await app.db
+            .select({ id: deployments.id })
+            .from(deployments)
+            .where(eq(deployments.serviceId, existingPreview.id));
+        } catch (err) {
+          req.log.warn({ err, serviceId: existingPreview.id }, 'could not list preview deploy logs to clean up');
+        }
         await app.db.delete(services).where(eq(services.id, existingPreview.id));
+        for (const row of previewLogs) deleteLog(row.id);
         try {
           await writeDynamicConfig(app.db);
         } catch {
           /* best effort */
+        }
+        // Every deployed service gets a private bridge network
+        // (`ensureServiceBridge`, called by the docker builder). Only the panel's
+        // DELETE route reaped it, so this path — the one designed for high churn,
+        // one preview per pull request — leaked a Docker network per closed PR.
+        try {
+          await removeServiceBridgeIfEmpty(existingPreview.slug, (line) =>
+            req.log.info({ bridge: existingPreview.slug }, line),
+          );
+        } catch (err) {
+          req.log.warn({ err, slug: existingPreview.slug }, 'failed to reap preview bridge');
         }
         return { ok: true, action: 'preview_destroyed', prNumber: pr.prNumber, serviceId: existingPreview.id };
       }

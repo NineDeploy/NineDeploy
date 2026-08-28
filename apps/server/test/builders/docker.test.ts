@@ -162,7 +162,7 @@ describe('dockerBuilder.buildAndRun', () => {
     h.run.mockRejectedValueOnce('network down').mockResolvedValueOnce(undefined);
     const ctx = makeCtx({ service: { slug: 'web', image: 'nginx:1.25', port: 3000, cpuShares: 0, memLimitMb: 0, volumeMount: null, healthPath: '/health' } });
 
-    const runtime = await dockerBuilder.buildAndRun(ctx as never);
+    const _runtime = await dockerBuilder.buildAndRun(ctx as never);
 
     expect(ctx.log).toHaveBeenCalledWith(expect.stringContaining('pull failed, using local image nginx:1.25 (network down)'));
   });

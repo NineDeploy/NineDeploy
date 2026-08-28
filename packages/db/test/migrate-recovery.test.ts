@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sql } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
@@ -13,6 +15,30 @@ const migrationsFolder = fileURLToPath(new URL('../src/migrations', import.meta.
  * column is present while its migration is still unjournalled. Drizzle's batch
  * migrator aborts that whole upgrade with `duplicate column name`.
  */
+/**
+ * The migration to forget: the newest one whose replay actually CONFLICTS.
+ *
+ * This used to be "the newest migration, whatever it is", which was only ever
+ * true by accident — it worked while the last file happened to be an
+ * `ALTER TABLE … ADD COLUMN`. Adding `0039_log_drains` (a
+ * `CREATE TABLE IF NOT EXISTS`, which replays cleanly) silently turned this
+ * suite green without it ever reaching the recovery path it exists to test.
+ * Pick the migration by what it does instead.
+ */
+function newestConflictingMigration(): { millis: number; tag: string } {
+  const journal = JSON.parse(
+    readFileSync(join(migrationsFolder, 'meta', '_journal.json'), 'utf8'),
+  ) as { entries: Array<{ when: number; tag: string }> };
+  for (const entry of [...journal.entries].reverse()) {
+    const body = readFileSync(join(migrationsFolder, `${entry.tag}.sql`), 'utf8');
+    // An ADD COLUMN has no IF NOT EXISTS in SQLite, so replaying it throws
+    // `duplicate column name` — which is precisely the upgrade state the
+    // recovery path exists to survive.
+    if (/ALTER TABLE/i.test(body) && / ADD /i.test(body)) return { millis: entry.when, tag: entry.tag };
+  }
+  throw new Error('no ALTER TABLE … ADD migration found to exercise the recovery path');
+}
+
 async function migratedDbWithLastMigrationUnjournalled() {
   const { db } = createDb({ url: ':memory:' });
   await runMigrations(db, migrationsFolder);
@@ -20,13 +46,14 @@ async function migratedDbWithLastMigrationUnjournalled() {
   const before = await db.all<{ hash: string; created_at: number }>(
     sql.raw('SELECT hash, created_at FROM `__drizzle_migrations` ORDER BY created_at DESC'),
   );
-  // Forget the newest migration while keeping the objects it created.
-  await db.run(
-    sql.raw(
-      'DELETE FROM `__drizzle_migrations` WHERE created_at = (SELECT MAX(created_at) FROM `__drizzle_migrations`)',
-    ),
-  );
-  return { db, before };
+  // Forget that migration and everything after it, while keeping the objects
+  // they created. Drizzle's own migrator resumes from MAX(created_at), so a
+  // hole with newer rows still above it reads as "up to date" and the recovery
+  // path is never entered — the state to reproduce is the real one: the
+  // unjournalled migrations are the newest.
+  const target = newestConflictingMigration();
+  await db.run(sql.raw(`DELETE FROM \`__drizzle_migrations\` WHERE created_at >= ${target.millis}`));
+  return { db, before, target };
 }
 
 describe('runMigrations recovery', () => {
@@ -41,8 +68,8 @@ describe('runMigrations recovery', () => {
     );
     // The journal is whole again: the migration is recorded exactly once.
     expect(after).toHaveLength(before.length);
-    expect(after[0]?.hash).toBe(before[0]?.hash);
-    expect(after[0]?.created_at).toBe(before[0]?.created_at);
+    expect(after.map((r) => r.created_at)).toEqual(before.map((r) => r.created_at));
+    expect(after.map((r) => r.hash)).toEqual(before.map((r) => r.hash));
   });
 
   it('leaves an already-current database untouched', async () => {

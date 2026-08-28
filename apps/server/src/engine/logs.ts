@@ -38,6 +38,26 @@ class LogBus extends EventEmitter {
 export const logBus = new LogBus();
 
 /**
+ * Delete one deployment's log file. Used when a deployment row is removed from
+ * history — leaving the file behind would keep the largest artefact of the
+ * deploy on disk while the record that explains it is gone.
+ *
+ * Returns true when a file was actually removed. Never throws: a missing file
+ * is the normal case for a deployment that never produced output, and a delete
+ * that fails must not abort the row deletion it accompanies.
+ */
+export function deleteLog(deploymentId: number): boolean {
+  const file = path.join(config.paths.logsDir, `${deploymentId}.log`);
+  try {
+    if (!existsSync(file)) return false;
+    rmSync(file, { force: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Remove deploy-log files older than `maxAgeMs` (judged by mtime). Deploy logs
  * accumulate one file per deployment and are never otherwise cleaned up, so
  * without this the logs directory grows without bound. Returns the count removed.

@@ -10,15 +10,25 @@ The kernel exposes two integration surfaces: a typed **event bus** (`ctx.events.
 
 ### Events (`events.on(event, handler)`)
 
-| Event | Payload |
+The bus is fed from the application's audit stream — every `audit()` call, which
+is the one choke point each meaningful state change already passes through (see
+`kernel/auditBridge.ts`). These events **fire today**:
+
+| Event | Source |
 | :--- | :--- |
-| `service.created` / `service.deployed` / `service.deleted` | Service + deploy ids |
-| `service.health_changed` | Health status transitions |
-| `deployment.status_changed` | Deploy lifecycle changes |
-| `database.created` / `database.backup_completed` / `database.backup_failed` | Database lifecycle & snapshots |
-| `server.announced` / `server.connected` / `server.disconnected` | Remote agent fleet events |
-| `alert.triggered`, `notification.queued`, `notification.sent` | Alerting pipeline |
-| `config.changed`, `plugin.registered`, `plugin.reloaded` | Config center & kernel state |
+| `audit.recorded` | Every audit entry, raw: `{ action, entity, actorUserId, ts }`. Subscribe here for anything the table below does not cover. |
+| `deployment.status_changed` | Bridged from `deploy.*` (start / success / failed / rollback / cancel) |
+| `service.health_changed` | Bridged from `service.start` / `stop` / `restart` |
+| `backup.completed` | Bridged from `backup.create` |
+| `alert.triggered` | Bridged from `alert.fired` / `alert.recovered` |
+| `plugin.registered`, `plugin.reloaded`, `plugin.status_changed` | Kernel lifecycle |
+| `notification.queued` | Emitted by the built-in notifications plugin as an **extension point**. It is not the delivery path: `lib/notifier` owns channels, retries and the delivery log, so consuming this and sending would double every alert. |
+| `telemetry.recorded`, `tunnel.route_evaluated` | Built-in telemetry / Cloudflare-tunnel plugins |
+
+`DomainEvents` in `kernel/types.ts` declares more names than this
+(`service.created`, `database.created`, `server.announced`, `config.changed`, …).
+They are typed for forward compatibility but **nothing emits them yet** — use
+`audit.recorded` and match on `action` if you need one of those today.
 
 ### Sequential hooks (`tapHook(name, fn)`)
 
@@ -41,8 +51,11 @@ export default definePlugin({
   name: 'Custom Hook Plugin',
   version: '1.0.0',
   init(ctx) {
-    ctx.on('service.deployed', (payload) => {
-      console.log(`Service ${payload.serviceId} deployed!`);
+    // Pick an event from the "fires today" table above. `service.deployed` is
+    // declared but not emitted yet — `deployment.status_changed` is its live
+    // equivalent.
+    ctx.on('deployment.status_changed', (payload) => {
+      console.log(`Deployment ${payload.deploymentId} -> ${payload.status}`);
     });
     const untap = ctx.tapHook('deploy:before', () => {
       // return a rejection context for hooks that support it
@@ -52,7 +65,26 @@ export default definePlugin({
 });
 ```
 
-The official plugins shipped in-tree are the reference implementations — the notifications dispatcher subscribes to events and fans alerts out to Telegram/Discord/Slack/webhooks, and the Cloudflare Tunnels plugin drives routes from the proxy hooks.
+The official plugins shipped in-tree are the reference implementations for the
+event and hook APIs. Read them for shape, not for behaviour: the notifications
+dispatcher re-emits `notification.queued` as an extension point rather than
+delivering anything (`lib/notifier` owns delivery), and the Cloudflare Tunnels
+plugin observes proxy hooks.
+
+### Installing plugins
+
+**NineDeploy does not load third-party plugin code.** There is no `import()` of
+an external package anywhere in the loader, so `npm`, `git` and `local` installs
+are refused rather than creating a row that reports itself active while doing
+nothing. The marketplace catalog in Settings → Plugins is a roadmap index:
+every entry carries `implemented` (all of them are `false` today) and, where the
+capability already ships under another name, a pointer to it — S3 replication is
+Backups → Storage destinations, Slack/Discord/Telegram are Settings →
+Notifications, Cloudflare DNS is Settings → System, and so on.
+
+Real plugin loading needs fetching, integrity verification, sandboxing and an
+upgrade story. Until that exists, the honest answer is a refusal with a pointer,
+not a green "Installed" badge.
 ## 🗂️ 2. Dynamic UI Menus & Driver Registries
 
 - **MenuRegistry**: Inject custom navigation tabs, submenus, and action buttons into the Web Dashboard.

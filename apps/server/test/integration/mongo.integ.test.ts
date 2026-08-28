@@ -60,9 +60,10 @@ describe.skipIf(!ENABLED)('database backup/restore (real MongoDB container)', ()
 
     await backupDatabase(db as never, dumpFile, () => undefined);
     expect(existsSync(dumpFile)).toBe(true);
-    // Encrypted at rest — the document value must not appear in the file.
+    // Encrypted at rest under the streamed NDBK1 header — the document value
+    // must not appear in the file.
     const atRest = readFileSync(dumpFile, 'utf8');
-    expect(/^v\d+:/.test(atRest)).toBe(true);
+    expect(/^NDBK1:v\d+:/.test(atRest)).toBe(true);
     expect(atRest).not.toContain('roundtrip');
 
     // Wipe the collection, then restore the archive with --drop.

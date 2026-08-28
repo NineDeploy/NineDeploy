@@ -12,6 +12,9 @@ import {
   getDnsConfig,
   writeDynamicConfig,
 } from '../engine/proxy.js';
+import { activeKeyVersion, knownKeyVersions } from '../lib/crypto.js';
+import { rotateSecretsWithReport } from '../lib/keyRotation.js';
+import { unprocessable } from '../lib/errors.js';
 import { getVaultConfig, setVaultConfig, testVault } from '../lib/vault.js';
 import { clearEnrolmentToken, getEnrolmentToken, rotateEnrolmentToken } from '../lib/enrolment.js';
 import { getDnsRecordsConfig, setDnsRecordsConfig, testCloudflareToken } from '../lib/cloudflare.js';
@@ -219,5 +222,50 @@ export const settingsRoutes: FastifyPluginAsync = async (app) => {
     await clearEnrolmentToken(app.db);
     void audit(app.db, req.user!.id, 'settings.enrolment_disabled');
     return { ok: true, enabled: false };
+  });
+
+  // ── Master-key rotation ─────────────────────────────────────────────────
+  // `lib/keyRotation.ts` has always implemented the re-encryption sweep, and
+  // `.env.example` has always told operators to "run `ninedeploy rotate-keys`"
+  // — a command that did not exist. Nothing in the product called
+  // `rotateSecrets`, so an operator who followed the documented procedure and
+  // then dropped the retired key from NINEDEPLOY_MASTER_KEYS was left with a
+  // database full of secrets sealed under a key the process no longer holds.
+  // This is that missing call site.
+  app.get('/master-key', async () => {
+    const versions = knownKeyVersions();
+    return {
+      activeVersion: activeKeyVersion(),
+      knownVersions: versions,
+      // With one version in the ring there is nothing to rotate ONTO — the
+      // operator has to add a higher-numbered key first.
+      rotatable: versions.length > 1,
+    };
+  });
+
+  app.post('/master-key/rotate', async (req) => {
+    const versions = knownKeyVersions();
+    if (versions.length < 2) {
+      throw unprocessable(
+        'Nothing to rotate onto: NINEDEPLOY_MASTER_KEYS holds a single key version. Add a new 32-byte key under a higher version and restart first.',
+      );
+    }
+    const result = await rotateSecretsWithReport(app.db);
+    void audit(
+      app.db,
+      req.user!.id,
+      'settings.master_key_rotated',
+      `v${result.activeVersion} (${result.rotated} values)`,
+    );
+    return {
+      ...result,
+      // The one thing an operator must know before completing the documented
+      // procedure. Backup envelopes carry their own key version and are NOT
+      // rewritten here.
+      warning:
+        result.backupsNotRotated > 0
+          ? `${result.backupsNotRotated} stored backup(s) are still sealed under an older key version. Keep every old version in NINEDEPLOY_MASTER_KEYS until those backups have aged out — removing a key makes the backups taken under it permanently unrestorable.`
+          : null,
+    };
   });
 };

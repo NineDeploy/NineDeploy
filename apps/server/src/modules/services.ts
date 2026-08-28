@@ -26,6 +26,7 @@ import { slugify } from '../lib/slug.js';
 import { composeBuilder } from '../engine/builders/compose.js';
 import { dockerBuilder } from '../engine/builders/docker.js';
 import { pm2Builder, pm2Logs, pm2Restart, pm2Start, pm2Stop } from '../engine/builders/pm2.js';
+import { deleteLog } from '../engine/logs.js';
 import { writeDynamicConfig } from '../engine/proxy.js';
 import { removeServiceBridgeIfEmpty } from '../lib/serviceBridge.js';
 import { applyDefaultTags, replaceServiceTags } from './serviceTags.js';
@@ -411,10 +412,24 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
     if (activeDeploy) {
       throw conflict('A deployment is queued or building — cancel it or wait for it to finish before deleting');
     }
+    // The deployment ids are read BEFORE the row goes: the FK cascade removes
+    // the rows but knows nothing about the log files on disk, which would
+    // otherwise sit in the logs directory for up to the 30-day retention window
+    // after the service they describe is gone — and build logs routinely echo
+    // configuration.
+    // Best-effort: a failure reading them must not block the destructive
+    // operation the caller actually asked for. The 30-day sweep is the backstop.
+    let orphanLogs: Array<{ id: number }> = [];
+    try {
+      orphanLogs = await app.db.select({ id: deployments.id }).from(deployments).where(eq(deployments.serviceId, id));
+    } catch (err) {
+      req.log.warn({ err, serviceId: id }, 'could not list deploy logs to clean up');
+    }
     // Row first (a single DELETE is atomic; FK cascade removes the build
     // config, env vars, domains and deployments) — a failed delete must never
     // leave a live row whose runtime has already been destroyed.
     await app.db.delete(services).where(eq(services.id, id));
+    for (const row of orphanLogs) deleteLog(row.id);
     // Rewrite Traefik routing — the service's domains cascade-deleted with the
     // row, so its routers/services drop out of the dynamic config. Routing must
     // never block delete, so failures are logged, not thrown.

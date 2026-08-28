@@ -93,6 +93,16 @@ function getKeyRing(): KeyRing {
   return keyRing;
 }
 
+/** The key version new ciphertext is sealed under right now. */
+export function activeKeyVersion(): number {
+  return getKeyRing().activeVersion;
+}
+
+/** Every key version this process can still DECRYPT with, ascending. */
+export function knownKeyVersions(): number[] {
+  return [...getKeyRing().keys.keys()].sort((a, b) => a - b);
+}
+
 /** Match a leading `v<digits>:` version prefix on an envelope. */
 const VERSION_RE = /^v(\d+):/;
 const BACKUP_HEADER_RE = /^NDBK1:v(\d+):([A-Za-z0-9+/=]+)\n$/;

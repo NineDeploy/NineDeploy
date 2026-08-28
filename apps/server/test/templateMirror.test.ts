@@ -19,8 +19,8 @@ services:
     image: ghcr.io/umami-software/umami:3.0.3
     environment:
       - SERVICE_URL_UMAMI_3000
-      - DATABASE_URL=postgres://\$SERVICE_USER_POSTGRES:\$SERVICE_PASSWORD_POSTGRES@postgresql:5432/\$POSTGRES_DB
-      - APP_SECRET=\$SERVICE_PASSWORD_64_UMAMI
+      - DATABASE_URL=postgres://$SERVICE_USER_POSTGRES:$SERVICE_PASSWORD_POSTGRES@postgresql:5432/$POSTGRES_DB
+      - APP_SECRET=$SERVICE_PASSWORD_64_UMAMI
     depends_on:
       postgresql:
         condition: service_healthy
@@ -51,6 +51,7 @@ describe('main-service selection', () => {
 });
 
 describe('configurable env extraction', () => {
+  // biome-ignore lint/suspicious/noTemplateCurlyInString: shell parameter expansion is the literal under test
   it('surfaces ${VAR:-default} pairs and skips magic tokens', () => {
     const env = extractConfigurableEnv(UMAMI_LIKE)!;
     expect(env).toEqual([{ key: 'POSTGRES_DB', value: 'umami', secret: false }]);

@@ -1,17 +1,28 @@
 import { spawn } from 'node:child_process';
-import { and, desc, eq, inArray, isNotNull, lt } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, lt, notInArray } from 'drizzle-orm';
 import { deployments, services } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { diffLines, renderDiff } from '../lib/diff.js';
 import { buildEnv, capture } from '../lib/exec.js';
 import { audit } from '../lib/audit.js';
-import { logBus } from '../engine/logs.js';
+import { deleteLog, logBus } from '../engine/logs.js';
 import { resolveUser } from '../lib/auth.js';
 import { loadServiceForUser } from '../lib/serviceAccess.js';
 import { assertMayDeployStoredService } from '../lib/hostPrivilege.js';
 import { assertServiceRole } from '../lib/resourceAccess.js';
 import { badRequest, notFound, parseId as num } from '../lib/errors.js';
 import { websocketBearerToken } from '../lib/websocketAuth.js';
+
+/**
+ * Statuses that mean the worker or the pipeline may still write to the row.
+ * Shared by cancel (which is the only legal transition out of them) and delete
+ * (which refuses them outright).
+ */
+const IN_FLIGHT_STATUSES = ['queued', 'building', 'deploying'] as const;
+
+/** True while the worker or the pipeline may still write to this row. */
+const isInFlight = (status: string): boolean =>
+  (IN_FLIGHT_STATUSES as readonly string[]).includes(status);
 
 export const deploysRoutes: FastifyPluginAsync = async (app) => {
   // Trigger a new deployment (enqueues a `queued` row the worker picks up).
@@ -102,13 +113,13 @@ export const deploysRoutes: FastifyPluginAsync = async (app) => {
     await assertServiceRole(app.db, cancelTarget, req.user!, 'member');
     const dep = await app.db.query.deployments.findFirst({ where: eq(deployments.id, depId) });
     if (!dep || dep.serviceId !== id) throw notFound('Deployment not found');
-    if (!['queued', 'building', 'deploying'].includes(dep.status)) {
+    if (!isInFlight(dep.status)) {
       throw badRequest('Deployment is not in progress');
     }
     const flipped = await app.db
       .update(deployments)
       .set({ status: 'cancelled', finishedAt: new Date() })
-      .where(and(eq(deployments.id, depId), inArray(deployments.status, ['queued', 'building', 'deploying'])))
+      .where(and(eq(deployments.id, depId), inArray(deployments.status, [...IN_FLIGHT_STATUSES])))
       .returning({ id: deployments.id });
     if (flipped.length === 0) throw badRequest('Deployment is not in progress');
     if (dep.status === 'queued') {
@@ -120,6 +131,54 @@ export const deploysRoutes: FastifyPluginAsync = async (app) => {
     }
     void audit(app.db, req.user!.id, 'deploy.cancel', `#${depId}`);
     return { ok: true, status: 'cancelled' };
+  });
+
+  /**
+   * Remove one deployment from a service's history.
+   *
+   * Deployment rows had no delete path at all: the only thing that ever aged
+   * out was the deploy-log FILE (30 days, `plugins/housekeeping.ts`), so a
+   * long-lived instance kept every row forever — and the older half of the
+   * Deploys tab listed builds whose logs had already been swept, with nothing
+   * to say why they were empty. This is the manual half of the fix; the sweep
+   * in `housekeeping.ts` is the automatic one.
+   *
+   * Two states are refused rather than deleted:
+   *
+   *   • in-flight (`queued` / `building` / `deploying`) — cancel it first, so
+   *     the worker and the pipeline are never left updating a row that no
+   *     longer exists;
+   *   • `running` — that row IS the record of what is serving traffic right
+   *     now. It carries the image digest rollback re-deploys and the config
+   *     snapshot the next deploy diffs against, and the Deploys tab would
+   *     start claiming nothing is live.
+   */
+  app.delete('/:id/deploys/:depId', { onRequest: [app.authenticate] }, async (req) => {
+    const id = num((req.params as { id: string }).id);
+    const depId = num((req.params as { depId: string }).depId);
+    const svc = await loadServiceForUser(app.db, id, req.user!);
+    // Destroying history matches the other destructive verbs: `admin`, not
+    // `member` (see the role table in ARCHITECTURE §8.1).
+    await assertServiceRole(app.db, svc, req.user!, 'admin');
+    const dep = await app.db.query.deployments.findFirst({ where: eq(deployments.id, depId) });
+    if (!dep || dep.serviceId !== id) throw notFound('Deployment not found');
+    if (isInFlight(dep.status)) {
+      throw badRequest('Cancel the deployment before removing it');
+    }
+    if (dep.status === 'running') {
+      throw badRequest('This deployment is the version currently serving traffic and cannot be removed');
+    }
+    // Guarded by the same status set the check above used, so a deploy that
+    // was re-queued between the read and here is not deleted out from under
+    // the worker.
+    const removed = await app.db
+      .delete(deployments)
+      .where(and(eq(deployments.id, depId), notInArray(deployments.status, [...IN_FLIGHT_STATUSES, 'running'])))
+      .returning({ id: deployments.id });
+    if (removed.length === 0) throw badRequest('Deployment changed state — reload and try again');
+    deleteLog(depId);
+    void audit(app.db, req.user!.id, 'deploy.delete', `${svc.name} #${depId}`);
+    return { ok: true, id: depId };
   });
 
   // Config diff: what changed between this deployment and the previous one

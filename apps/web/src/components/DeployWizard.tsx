@@ -348,10 +348,13 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
       ? !!name.trim() && (mode === 'image' ? !!image.trim() : !!repoUrl.trim())
       : true;
 
-  // H-3: a template that mounts the Docker socket is admin-only server-side.
-  // Say so on the first screen rather than letting a member fill in five steps
-  // and collect a 403 at the end.
-  const adminOnlyTemplate = !isAdmin && template?.dockerSocket === true;
+  // H-3: a template that mounts the Docker socket is admin-only server-side —
+  // and so is a compose stack, because a compose file can bind-mount host paths
+  // or request a privileged container (lib/hostPrivilege.ts). Say so on the
+  // first screen rather than letting a member fill in five steps and collect a
+  // 403 at the end.
+  const hostPrivilegedTemplate = template?.dockerSocket === true || !!template?.composeContent;
+  const adminOnlyTemplate = !isAdmin && hostPrivilegedTemplate;
 
   const next = () => setStep((s) => Math.min(s + 1, STEPS.length - 1));
   const back = () => setStep((s) => Math.max(s - 1, 0));
@@ -419,7 +422,9 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
           )}
           {adminOnlyTemplate && (
             <div className="mb-4 rounded-xl border border-rose-500/25 bg-rose-500/[0.08] p-3 text-xs leading-relaxed text-rose-200">
-              This template mounts the Docker socket, which grants control of every container on the host. Only an administrator can deploy it.
+              {template?.dockerSocket === true
+                ? 'This template mounts the Docker socket, which grants control of every container on the host. Only an administrator can deploy it.'
+                : 'This template installs a Compose stack, which can mount host paths or request privileged containers. Only an administrator can deploy it.'}
             </div>
           )}
           {template && !template.runtimeVerified && (

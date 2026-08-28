@@ -21,7 +21,7 @@ import { ensureDefaultWorkspace, ensureDefaultWorkspaceWithRole } from './worksp
 import { acceptInvitationsForUser } from './invitations.js';
 import { iso } from '../lib/serialize.js';
 import { isOperator } from '../lib/resourceAccess.js';
-import { workspaceRole } from '@ninedeploy/db';
+import type { workspaceRole } from '@ninedeploy/db';
 
 type WorkspaceRole = (typeof workspaceRole)[number];
 

@@ -46,6 +46,11 @@ const runtimeRunCalls = () =>
   execMocks.run.mock.calls.filter((c) => (c[1] as string[])[0] !== 'network');
 vi.mock('../src/engine/proxy.js', () => proxyMocks);
 
+// Deleting a service also takes its deploy log files; the real helper touches
+// the filesystem, so it is stubbed and asserted on.
+const logsMocks = vi.hoisted(() => ({ deleteLog: vi.fn(() => true) }));
+vi.mock('../src/engine/logs.js', () => ({ deleteLog: logsMocks.deleteLog }));
+
 const configMock = vi.hoisted(() => ({
   wildcardDomain: '',
   isProd: false,
@@ -484,6 +489,41 @@ describe('services routes', () => {
     const res = await app.inject({ method: 'PATCH', url: '/1', headers: asUser() });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ id: 1 });
+  });
+
+  /**
+   * The FK cascade removes the deployment ROWS but knows nothing about the log
+   * FILES on disk, which would otherwise outlive the service they describe by
+   * up to the 30-day retention window — and build logs routinely echo
+   * configuration.
+   */
+  it('takes the deploy log files with the service', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { services: svcRow({ id: 1, name: 'web' }) },
+        select: { deployments: [{ id: 41 }, { id: 42 }] },
+      }),
+    });
+    await app.register(servicesRoutes);
+    const res = await app.inject({ method: 'DELETE', url: '/1', headers: asUser() });
+    expect(res.statusCode).toBe(204);
+    expect(logsMocks.deleteLog).toHaveBeenCalledWith(41);
+    expect(logsMocks.deleteLog).toHaveBeenCalledWith(42);
+  });
+
+  it('still deletes the service when the log listing fails', async () => {
+    // Cleanup is best-effort: a read failure must not block the destructive
+    // operation the caller actually asked for. The 30-day sweep is the backstop.
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { services: svcRow({ id: 1, name: 'web' }) },
+        selectError: { deployments: new Error('db locked') },
+      }),
+    });
+    await app.register(servicesRoutes);
+    const res = await app.inject({ method: 'DELETE', url: '/1', headers: asUser() });
+    expect(res.statusCode).toBe(204);
+    expect(logsMocks.deleteLog).not.toHaveBeenCalled();
   });
 
   it('deletes a service', async () => {

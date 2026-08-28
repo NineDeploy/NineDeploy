@@ -1,5 +1,6 @@
 import * as Accordion from "@radix-ui/react-accordion";
 import { ChevronDown } from "lucide-react";
+import { certifiedCount, templateCount } from "../hub";
 
 const faqs = [
   {
@@ -12,7 +13,7 @@ const faqs = [
   },
   {
     q: "Can I run it in Docker?",
-    a: "Yes — the published Docker image mounts the host Docker socket with a persistent /data volume. PM2-managed bare-metal services require the systemd install because they run natively on the host; Docker containers, Docker Compose stacks, and the 88 hub templates (16 runtime-certified) work in both modes.",
+    a: `Yes — the published Docker image mounts the host Docker socket with a persistent /data volume. PM2-managed bare-metal services require the systemd install because they run natively on the host; Docker containers, Docker Compose stacks, and the ${templateCount} hub templates (${certifiedCount} runtime-certified) work in both modes.`,
   },
   {
     q: "How does zero-downtime blue-green deployment work?",

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, Filter, Plus, Tag, X } from 'lucide-react';
+import { api } from '../lib/api.js';
 import { useTagScope } from '../lib/projects.js';
 import { useAuth } from '../lib/auth.js';
 import { useWorkspace } from '../lib/workspace.js';
@@ -39,14 +40,12 @@ export function TopBarFilters() {
   const { data: labels = [], refetch: refetchLabels } = useQuery({
     queryKey: ['labels', currentWorkspace?.id ?? null],
     queryFn: async () => {
-      const api = (await import('../lib/api.js')).api;
       return (await api.labels.list(currentWorkspace ? `?workspaceId=${currentWorkspace.id}` : '')) ?? [];
     },
   });
   const { data: projects = [] } = useQuery({
     queryKey: ['projects', currentWorkspace?.id ?? null],
     queryFn: async () => {
-      const api = (await import('../lib/api.js')).api;
       return (await api.projects.list(currentWorkspace ? `?workspaceId=${currentWorkspace.id}` : '')) ?? [];
     },
   });
@@ -76,7 +75,6 @@ export function TopBarFilters() {
     }
     setBusy(true);
     try {
-      const api = (await import('../lib/api.js')).api;
       const created = await api.labels.create({
         name: newLabel.trim(),
         color: newLabelColor,

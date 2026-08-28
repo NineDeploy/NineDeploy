@@ -118,8 +118,9 @@ export {
   ManifestValidationError,
   parseManifestYaml,
   starterManifest,
+  buildManifestFromTemplate,
 } from './manifest.js';
-export type { ProjectKind } from './manifest.js';
+export type { ProjectKind, TemplateRegistryEntry } from './manifest.js';
 
 /**
  * Minimal structural fetch type so the SDK is isomorphic (browser + Node)
@@ -283,6 +284,12 @@ export interface NineDeployClient {
     rollback: (serviceId: number, deploymentId: number) => Promise<{ deploymentId: number }>;
     /** Cancel a queued/in-flight deployment (checkpoints abort at step boundaries). */
     cancel: (serviceId: number, deploymentId: number) => Promise<{ ok: boolean; status: string }>;
+    /**
+     * Remove a finished deployment from history, with its build log.
+     * Refused for an in-flight deployment (cancel it first) and for the one
+     * currently serving traffic. Requires the `admin` role on the service.
+     */
+    remove: (serviceId: number, deploymentId: number) => Promise<{ ok: boolean; id: number }>;
     /** Build-config + env-key diff against the previous deployment. */
     configDiff: (serviceId: number, deploymentId: number) => Promise<{ deploymentId: number; previousDeploymentId: number | null; changed: boolean; diff: string }>;
   };
@@ -389,6 +396,15 @@ export interface NineDeployClient {
       get: () => Promise<{ enabled: boolean; hasToken: boolean; content: string | null }>;
       set: (input: { enabled: boolean; token?: string; content?: string }) => Promise<{ ok: boolean; enabled: boolean }>;
       test: () => Promise<{ ok: boolean; status?: string; error?: string }>;
+    };
+    /**
+     * Master-key rotation. `rotate` re-encrypts every stored secret onto the
+     * highest key version in `NINEDEPLOY_MASTER_KEYS`; it does NOT rewrite
+     * backup envelopes, which is what `warning` reports.
+     */
+    masterKey: {
+      get: () => Promise<{ activeVersion: number; knownVersions: number[]; rotatable: boolean }>;
+      rotate: () => Promise<{ rotated: number; activeVersion: number; backupsNotRotated: number; warning: string | null }>;
     };
   };
   firewall: {
@@ -864,6 +880,8 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
         send<{ deploymentId: number }>('POST', `/v1/services/${serviceId}/deploys/${deploymentId}/rollback`),
       cancel: (serviceId, deploymentId) =>
         send<{ ok: boolean; status: string }>('POST', `/v1/services/${serviceId}/deploys/${deploymentId}/cancel`),
+      remove: (serviceId, deploymentId) =>
+        send<{ ok: boolean; id: number }>('DELETE', `/v1/services/${serviceId}/deploys/${deploymentId}`),
       configDiff: (serviceId, deploymentId) =>
         get<{ deploymentId: number; previousDeploymentId: number | null; changed: boolean; diff: string }>(
           `/v1/services/${serviceId}/deploys/${deploymentId}/diff`,
@@ -981,6 +999,14 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
         get: () => get<{ enabled: boolean; hasToken: boolean; content: string | null }>('/v1/settings/dns-records'),
         set: (input) => send<{ ok: boolean; enabled: boolean }>('PUT', '/v1/settings/dns-records', input),
         test: () => send<{ ok: boolean; status?: string; error?: string }>('POST', '/v1/settings/dns-records/test'),
+      },
+      masterKey: {
+        get: () => get<{ activeVersion: number; knownVersions: number[]; rotatable: boolean }>('/v1/settings/master-key'),
+        rotate: () =>
+          send<{ rotated: number; activeVersion: number; backupsNotRotated: number; warning: string | null }>(
+            'POST',
+            '/v1/settings/master-key/rotate',
+          ),
       },
     },
     firewall: {

@@ -20,7 +20,7 @@ import { serverRoutes } from './servers.js';
 import { projectRoutes } from './projects.js';
 import { notificationRoutes } from './notifications.js';
 import { networkRoutes } from './networks.js';
-import { statsRoutes } from './stats.js';
+import { metricRoutes, statsRoutes } from './stats.js';
 import { servicesRoutes } from './services.js';
 import { serviceMigrationRoutes } from './serviceMigration.js';
 import { serviceVolumesRoutes } from './serviceVolumes.js';
@@ -107,6 +107,11 @@ export const apiRoutes: FastifyPluginAsync = async (app) => {
   await app.register(attachmentRoutes, { prefix: '/services' });
   await app.register(envRoutes, { prefix: '/services' });
   await app.register(serviceInsightsRoutes, { prefix: '/services' });
+  // Historical CPU/memory series for one service. `metricRoutes` is a separate
+  // export from stats.ts and was never registered: `GET /v1/services/:id/metrics`
+  // 404'd, so the charts on Monitoring and the service Overview tab had nothing
+  // to read while the collector kept writing a row every 30 seconds.
+  await app.register(metricRoutes, { prefix: '/services' });
   await app.register(envSearchRoutes, { prefix: '/env' });
   await app.register(jobRoutes, { prefix: '/services' });
   await app.register(serverRoutes, { prefix: '/servers' });

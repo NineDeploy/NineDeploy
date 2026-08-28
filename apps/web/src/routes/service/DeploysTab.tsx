@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Activity, GitCompare, RotateCcw, X } from 'lucide-react';
+import { Activity, GitCompare, RotateCcw, Trash2, X } from 'lucide-react';
 import { useState } from 'react';
 import type { Deployment } from '@ninedeploy/sdk';
 import { api } from '../../lib/api.js';
@@ -8,6 +8,13 @@ import { Card, CardBody, Skeleton, Spinner, StatusBadge, cn } from '../../compon
 import { LogPanel } from './LogPanel.js';
 
 export const IN_FLIGHT = ['queued', 'building', 'deploying'];
+
+/**
+ * A deployment can be removed from history once it is finished AND is not the
+ * one serving traffic. The server enforces both (and the `admin` role); this
+ * only decides whether to offer the button.
+ */
+export const isRemovable = (status: string): boolean => !IN_FLIGHT.includes(status) && status !== 'running';
 
 /** Deployment history + the live build log for the selected deployment. */
 export function DeploysTab({
@@ -48,6 +55,21 @@ export function DeploysTab({
     onError: () => toast('Cancel failed', 'error'),
   });
 
+  const removeDeploy = useMutation({
+    mutationFn: (depId: number) => api.deploys.remove(serviceId, depId),
+    onSuccess: (_res, depId) => {
+      // The removed row may be the one whose log is on screen; drop the
+      // selection rather than leave the panel pointed at a deployment that no
+      // longer exists.
+      if (depId === activeId) onSelect(null);
+      qc.invalidateQueries({ queryKey: ['deploys', serviceId] });
+      toast('Deployment removed', 'info');
+    },
+    // The server refuses an in-flight deploy and the live one with a specific
+    // reason; showing it beats a generic failure toast.
+    onError: (err: unknown) => toast(err instanceof Error ? err.message : 'Remove failed', 'error'),
+  });
+
   return (
     <div className="mt-5 space-y-5">
       <DeploymentsCard
@@ -59,6 +81,7 @@ export function DeploysTab({
           onSelect(null);
         }}
         onCancel={(depId) => cancelDeploy.mutate(depId)}
+        onRemove={(depId) => removeDeploy.mutate(depId)}
         loading={loading}
       />
 
@@ -160,6 +183,7 @@ function DeploymentsCard({
   onSelect,
   onRollback,
   onCancel,
+  onRemove,
   loading,
 }: {
   deploys: Deployment[];
@@ -167,6 +191,7 @@ function DeploymentsCard({
   onSelect: (id: number) => void;
   onRollback?: (deploymentId: number) => void;
   onCancel?: (deploymentId: number) => void;
+  onRemove?: (deploymentId: number) => void;
   loading: boolean;
 }) {
   return (
@@ -232,6 +257,16 @@ function DeploymentsCard({
                       title={`Rollback to #${d.id}`}
                     >
                       <RotateCcw size={12} />
+                    </button>
+                  )}
+                  {onRemove && isRemovable(d.status) && (
+                    <button type="button"
+                      onClick={() => onRemove(d.id)}
+                      className="shrink-0 rounded p-1.5 text-slate-600 opacity-0 transition hover:bg-white/5 hover:text-rose-300 group-hover:opacity-100"
+                      title={`Remove deployment #${d.id} from history`}
+                      aria-label={`Remove deployment #${d.id}`}
+                    >
+                      <Trash2 size={12} />
                     </button>
                   )}
                 </li>

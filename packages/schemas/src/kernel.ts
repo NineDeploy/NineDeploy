@@ -79,6 +79,25 @@ export const marketplacePluginItemSchema = z.object({
   category: z.string(),
   isOfficial: z.boolean(),
   isInstalled: z.boolean().default(false),
+  /**
+   * Whether installing this entry actually does anything.
+   *
+   * NineDeploy does not load third-party plugin code, so every catalog entry is
+   * a roadmap item until the behaviour is compiled into the server. Marking it
+   * matters because several entries shadow features that already exist by
+   * another name — an operator who "installed" the S3 sync plugin, filled in a
+   * bucket and secret key, and saw it reported as active would reasonably
+   * believe their backups were being copied off-site. They were not.
+   */
+  implemented: z.boolean().default(false),
+  /** Where the real feature lives, for entries that shadow a shipped one. */
+  builtIn: z
+    .object({
+      label: z.string(),
+      /** Panel route, e.g. `/settings?tab=storage`. */
+      path: z.string(),
+    })
+    .optional(),
   dependencies: z.array(z.string()).optional(),
   configSchema: z.array(z.record(z.string(), z.unknown())).optional(),
   menuItems: z.array(z.record(z.string(), z.unknown())).optional(),

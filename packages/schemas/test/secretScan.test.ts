@@ -38,21 +38,21 @@ describe('scanForSecrets', () => {
   });
 
   it('detects a GitHub classic PAT', () => {
-    const token = 'ghp_' + 'a'.repeat(36);
+    const token = `ghp_${'a'.repeat(36)}`;
     const hits = scanForSecrets(`token = "${token}"`);
     expect(hits).toHaveLength(1);
     expect(hits[0]?.patternId).toBe('github-pat-classic');
   });
 
   it('detects a GitHub fine-grained PAT', () => {
-    const token = 'github_pat_' + 'a'.repeat(82);
+    const token = `github_pat_${'a'.repeat(82)}`;
     const hits = scanForSecrets(`token = "${token}"`);
     expect(hits).toHaveLength(1);
     expect(hits[0]?.patternId).toBe('github-pat-fine-grained');
   });
 
   it('detects a GitLab PAT', () => {
-    const token = 'glpat-' + 'a'.repeat(24);
+    const token = `glpat-${'a'.repeat(24)}`;
     const hits = scanForSecrets(`x: ${token}`);
     expect(hits).toHaveLength(1);
     expect(hits[0]?.patternId).toBe('gitlab-pat');
@@ -65,28 +65,28 @@ describe('scanForSecrets', () => {
   });
 
   it('detects a Stripe live secret key', () => {
-    const key = 'sk_live_' + 'a'.repeat(24);
+    const key = `sk_live_${'a'.repeat(24)}`;
     const hits = scanForSecrets(`stripe: ${key}`);
     expect(hits).toHaveLength(1);
     expect(hits[0]?.patternId).toBe('stripe-live-secret');
   });
 
   it('detects a Stripe live restricted key', () => {
-    const key = 'rk_live_' + 'a'.repeat(24);
+    const key = `rk_live_${'a'.repeat(24)}`;
     const hits = scanForSecrets(`stripe: ${key}`);
     expect(hits).toHaveLength(1);
     expect(hits[0]?.patternId).toBe('stripe-live-restricted');
   });
 
   it('detects an OpenAI secret key', () => {
-    const key = 'sk-' + 'a'.repeat(48);
+    const key = `sk-${'a'.repeat(48)}`;
     const hits = scanForSecrets(`openai: ${key}`);
     expect(hits).toHaveLength(1);
     expect(hits[0]?.patternId).toBe('openai-secret');
   });
 
   it('detects an Anthropic API key', () => {
-    const key = 'sk-ant-' + 'a'.repeat(40);
+    const key = `sk-ant-${'a'.repeat(40)}`;
     const hits = scanForSecrets(`anthropic: ${key}`);
     expect(hits).toHaveLength(1);
     expect(hits[0]?.patternId).toBe('anthropic-key');

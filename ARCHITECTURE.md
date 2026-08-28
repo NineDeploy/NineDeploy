@@ -5,9 +5,9 @@
 > carried over from a previous revision. Where the implementation does not yet
 > match the intent, that is stated in the text rather than smoothed over — see
 > [§16 Known gaps](#16-known-gaps-implementation-vs-intent), which is part of the
-> architecture, not an appendix to it. Five of those gaps were closed in 0.3.5
-> (§16.1, §16.2, §16.4, §16.5, §16.7); the rest are still open and marked as
-> such.
+> architecture, not an appendix to it. Most of them were closed in 0.3.5
+> (§16.1, §16.2, §16.3 in part, §16.4, §16.5, §16.7); what remains is marked as
+> such, with the product decision each one needs.
 
 A self-hosted deployment platform with optional multi-server support. The core
 server runs bare-metal (systemd) for direct PM2 + Docker daemon access; a
@@ -21,7 +21,7 @@ host port publishing (`services.published_port`).
 
 - **Runtime**: Node ≥ 22.13, pnpm 11 workspace, Turborepo (`turbo run build/dev/lint/typecheck/test/clean/db:*`)
 - **Language**: TypeScript 7 strict (`noUncheckedIndexedAccess`, `verbatimModuleSyntax`, `isolatedModules`), Biome for lint/format
-- **Testing**: Vitest 4 + `@vitest/coverage-v8`, Testing Library. Server: 183 files / 2 472 tests, green. Monorepo: 3 355 tests across 308 files, all green. Coverage gates are **tiered**, not uniformly 100 — see [§13](#13-testing)
+- **Testing**: Vitest 4 + `@vitest/coverage-v8`, Testing Library. Server: 186 files / 2 589 tests, green. Monorepo: 4 879 tests across 309 files, all green. Coverage gates are **tiered**, not uniformly 100 — see [§13](#13-testing)
 
 ## 1. System diagram
 
@@ -50,7 +50,7 @@ host port publishing (`services.published_port`).
                         │  │ WS push to UI │  │  + Studio containers    │   │
                         │  ├───────────────┤  ├────────────────────────┤   │
                         │  │ Microkernel   │  │ Fastify plugins          │   │
-                        │  │ (inert — §16) │  │  worker · traefik ·     │   │
+                        │  │ audit-bridged │  │  worker · traefik ·     │   │
                         │  │ registry/hooks│  │  collector · schedulers │   │
                         │  │ configCenter  │  │  housekeeping · runtime │   │
                         │  │ menuRegistry  │  │  State · rateLimit ·    │   │
@@ -95,15 +95,15 @@ ninedeploy/                       pnpm 11 workspace + Turborepo
 │   │   │   │               agentClient, spawnValidated, exec, git, vault,
 │   │   │   │               s3, backupRemote, cloudflare, firewall, frameworks,
 │   │   │   │               ninedeployManifest/-Apply/-ToNixpacks, selfUpdate
-│   │   │   ├── kernel/     (~2.0k LOC) microkernel: EventBus, HookPipeline,
+│   │   │   ├── kernel/     (~2.1k LOC) microkernel: EventBus, HookPipeline,
 │   │   │   │               ServiceRegistry, ConfigCenter, MenuRegistry,
-│   │   │   │               pluginLoader + 3 built-in plugins  ⚠ see §16.3
+│   │   │   │               auditBridge, pluginLoader + 3 built-in plugins
 │   │   │   ├── plugins/    (~1.2k LOC) fastify plugins — see §6
 │   │   │   ├── templates/  89-entry registry bundle + Coolify compose mirror
 │   │   │   ├── agent.ts    remote-host agent mode
 │   │   │   └── version.ts  VERSION + changelog
 │   │   ├── scripts/        buildTemplateMirror.ts (compose→template converter)
-│   │   ├── test/           183 unit/route files, 2 472 cases
+│   │   ├── test/           186 unit/route files, 2 589 cases
 │   │   └── test/integration/  testcontainers (real PG/MySQL/Redis/Mongo/
 │   │                          Valkey/ClickHouse + deploy e2e), RUN_INTEGRATION=1
 │   │
@@ -185,7 +185,7 @@ typed SDK and Zod schemas:
   (`createClient({ baseUrl, token, fetch? })`) exposes typed namespaces with a
   `NineDeployError` type and injectable fetch
 
-## 4. Database schema (40 tables, migrations 0000–0038)
+## 4. Database schema (40 tables, migrations 0000–0039)
 
 Storage: **SQLite** via `@libsql/client` (dialect `turso`, local file
 `.data/ninedeploy.db`). PRAGMAs at boot: `foreign_keys=ON`,
@@ -302,9 +302,14 @@ servers                id, name, host, port, status(offline|online|error|pending
 ### 4.5 Migration history
 
 `packages/db/src/migrations/`, drizzle-kit generated, forward-only and additive.
-38 journalled migrations, `0000` → `0038`. **`0020` does not exist** — the tag
+39 journalled migrations, `0000` → `0039`. **`0020` does not exist** — the tag
 was skipped; the journal (`meta/_journal.json`) is authoritative and does not
 reference it, so this is cosmetic.
+
+The journal is not, on its own, proof that the schema is reachable: `0039` had
+to be written by hand because drizzle-kit's snapshot already claimed
+`log_drains` existed (§16.17). `packages/db/test/schema-drift.test.ts` is the
+check that would have caught it, and now does.
 
 Notable later migrations: `0024` domain middlewares · `0025` extended databases ·
 `0026` lifecycle hooks + preview deployments · `0027` workspaces + OIDC ·
@@ -314,7 +319,8 @@ replay + enrolment · `0031` repo insights · `0032` workspace invitations ·
 `services.project_id` and the global `users.role`; introduces the three N-N join
 tables) · `0035` volume backups · `0036` `databases.owner_user_id` ·
 `0037` volume backup labels · **`0038` `users.is_instance_operator`** (separates
-instance-operator rights from workspace roles — see §8.1).
+instance-operator rights from workspace roles — see §8.1) · `0039` `log_drains`
+(the table the schema always declared and no migration created — §16.17).
 
 The runtime migrator (`packages/db/src/migrate.ts`) additionally tolerates
 "object already exists" failures by re-applying statement-by-statement — this
@@ -349,7 +355,8 @@ envelopes; 5xx messages are suppressed in production.
 | labels | /labels | label CRUD (workspace-scoped or global) |
 | serviceTags | /services/:id/tags | GET/PUT the service's project/workspace/label tag sets |
 | services | /services | CRUD, update (incl. build config PATCH), stop/start/restart, limits, logs, export/import |
-| deploys | /services/:id/deploys | trigger, list, rollback, cancel, config diff vs previous, WS logs, WS exec (operator-only, audited) |
+| metrics | /services/:id/metrics | historical CPU/memory series (24 h retention) |
+| deploys | /services/:id/deploys | trigger, list, rollback, cancel, remove (admin; refuses in-flight and the live one), config diff vs previous, WS logs, WS exec (operator-only, audited) |
 | serviceVolumes | /services/:id/volumes | named-volume attachments CRUD + config-repair |
 | serviceMigration | /services/:id/export+import | per-service bundle, server-to-server moves |
 | insights | /insights, /services/:id/insights | repo framework analysis + on-demand refresh |
@@ -398,7 +405,7 @@ envelopes; 5xx messages are suppressed in production.
 | rateLimit | Global + per-route IP rate limiting (auth/setup/webhook tighter) |
 | rawBody | Captures raw body for HMAC + binary uploads |
 | db | Decorates `fastify.db`; enables PRAGMAs; **applies pending migrations via the runtime migrator** |
-| kernel | Instantiates the microkernel, registers drivers + 3 built-in plugins, loads DB-installed plugins on `onReady` ⚠ §16.3 |
+| kernel | Instantiates the microkernel, registers drivers + 3 built-in plugins, loads DB-installed plugins on `onReady`, and bridges the audit stream into the kernel event bus (§16.3) |
 | auth | `authenticate` (JWT access or API token; `isOperator` recomputed per request) + `requireOperator` / `requireAdmin` (alias) |
 | worker | Polls queued deployments (2 s) and runs the pipeline. Claims are atomic (`queued→building` verified via rowsAffected) and skip services already `building`. Concurrency is **partitioned per target server**, each partition getting `NINEDEPLOY_DEPLOY_CONCURRENCY` slots (default 1, max 8). Sweeps `building` rows older than 45 min back to `queued` on boot; 60 s stop grace |
 | traefik | Ensures `ninedeploy` network + Traefik v3.3 container (config **directory** bind mount) + writes dynamic config atomically; DNS-01 when a provider+token are configured, else HTTP-01 |
@@ -595,9 +602,22 @@ minimal HTTP agent instead of the full API (`src/agent.ts`, `src/agentApp.ts`):
   program name or raw argv
 - Every operand (names, paths, URLs, refs, SHAs) is validated by strict regexes
   on both ends; all spawning funnels through `lib/spawnValidated.ts`
-- ⚠ **Transport is plain `http://`** with no TLS option. The agent token and —
-  via `file.writeEnv` — the service's decrypted secrets cross the network in
-  cleartext. Agents must therefore be treated as same-LAN/VPN-only today (§16.6)
+- **Transport is plain `http://` but the payload is sealed** (`lib/agentSeal.ts`,
+  0.3.5). Both ends derive a per-message key with HKDF-SHA256 from the shared
+  secret — `sha256(agentToken)`, the only value both sides hold — and the body
+  travels as AES-256-GCM with the timestamp bound in as AAD. So the token stops
+  crossing the network entirely (opening the envelope *is* the authentication),
+  and so do the decrypted service secrets `file.writeEnv` carries. Envelopes
+  older than ±5 min are refused, so a captured one stops being useful
+- The core learns whether it may seal from `GET /agent/ping` (`sealed: true`).
+  An agent that has not been upgraded still gets the legacy plaintext request,
+  with a warning naming the host in the deploy log. Set
+  `NINEDEPLOY_AGENT_REQUIRE_SEALED=1` on the core once the fleet is upgraded and
+  that fallback — the one downgrade an on-path attacker could force — is refused
+- ⚠ Still **no TLS**: this hides the payload, not the metadata (which host, when,
+  how often, roughly how large), and it gives no forward secrecy and no defence
+  against an attacker who already owns the agent host. Agents belong on a private
+  network. Real mTLS remains the long-term answer (§16.6)
 
 ## 10. Scoping: workspaces, projects, labels
 
@@ -670,13 +690,13 @@ ok → breaching (first breach, breach_since = now)
 
 | Package | Files | Statements / Branches / Functions / Lines |
 |---|---|---|
-| apps/server | 183 (2 472 tests) | **95 / 90 / 95 / 95** |
-| apps/web | 80 (1 358 tests) | **99 / 95 / 99 / 99** |
-| apps/cli | 23 (446 tests) | 100 / 100 / 100 / 100 |
-| packages/db | 7 (24 tests) | 100 |
+| apps/server | 186 (2 589 tests) | **95 / 90 / 95 / 95** |
+| apps/web | 82 (1 389 tests) | **99 / 95 / 99 / 99** |
+| apps/cli | 23 (460 tests) | 100 / 100 / 100 / 100 |
+| packages/db | 8 (27 tests) | 100 |
 | packages/schemas | 4 (257 tests) | 100 |
-| packages/sdk | 3 (121 tests) | 100 |
-| packages/mcp | 2 (27 tests) | 100 |
+| packages/sdk | 3 (122 tests) | 100 |
+| packages/mcp | 2 (28 tests) | 100 |
 | packages/plugin-sdk | 1 (7 tests) | 100 |
 
 The server and web floors were deliberately lowered from 100 with the reasoning
@@ -724,8 +744,10 @@ database. Restoring the gate means regenerating the missing snapshots.
 - **Traefik**: the intended sole public listener; dynamic config written
   atomically with a directory bind mount; Host/Path operands sanitized
 - **Secrets**: AES-256-GCM in versioned envelopes (`v<ver>:iv:tag:ct`). Master
-  key rotatable via the `NINEDEPLOY_MASTER_KEYS` ring + `rotateSecrets`
-  re-encryption job; legacy envelopes stay readable (key version 0)
+  key rotatable via the `NINEDEPLOY_MASTER_KEYS` ring +
+  `POST /v1/settings/master-key/rotate` (or `ninedeploy system rotate-keys`);
+  legacy envelopes stay readable (key version 0). Backup envelopes carry their
+  own key version and are *not* rewritten by a rotation — see §16.9
 - **Backups encrypted at rest** — dumps are sealed with the master key on write;
   restore and download decrypt transparently, legacy plaintext restores as-is
 - **Webhooks**: HMAC-SHA256 (GitHub/Gitea) or token (GitLab) + branch match +
@@ -804,30 +826,52 @@ for ordinary Docker services. Hooks stay a panel-only setting.
 Still unwired (each emits a deploy-log warning): `volume.backups`,
 `notifications`, `previews`, `static`, `watch`, `network`.
 
-### 16.3 The microkernel and plugin marketplace are inert
+### 16.3 The microkernel was inert; the marketplace lied — partly FIXED in 0.3.5
 
-`src/kernel/` (~2 000 LOC), 4 route modules, a Settings page, 6 MCP tools and
-`packages/plugin-sdk` implement a plugin system that currently loads no code:
+Two separate defects lived under one heading.
 
-- `createDynamicPlugin()` never `import()`s anything. `source: 'npm' | 'git'`
-  only derive an id string; installing a marketplace plugin writes a DB row and
-  registers an object whose `init` emits one event
-- The three built-in plugins subscribe to `deployment.status_changed`,
-  `service.health_changed` and `backup.completed` — **no code emits any of
-  them**. The notifications plugin emits `notification.queued`, which **nothing
-  consumes**. The telemetry plugin's `export_endpoint` config key is never read
-- There are two unrelated event buses: `lib/events.ts` (real — `audit()` →
-  `/v1/events` WebSocket) and `kernel/eventBus.ts` (ornamental)
+**The event bus was dead.** NineDeploy carries two unrelated buses:
+`lib/events.ts` (real — `audit()` publishes to it, `/v1/events` serves it) and
+`kernel/eventBus.ts` (typed, what plugins subscribe to). Nothing ever emitted
+into the second. The three built-in plugins that ship *enabled* listened for
+`deployment.status_changed`, `service.health_changed` and `backup.completed` —
+names no code emitted — so they ran on every install and did nothing.
 
-What *is* real: `ConfigCenter` (`config_entries` persistence + secret reveal)
-and `MenuRegistry` (`Layout.tsx` does render `/v1/menus` items).
+Fixed by `kernel/auditBridge.ts`: one subscription to the audit stream that
+already sees every state change, republished as the raw `audit.recorded`
+firehose plus a typed domain event where the action maps unambiguously.
+Bridging at `audit()` rather than sprinkling `kernel.events.emit(...)` through
+51 route modules means a new route is covered the day it is added.
 
-*Fix direction*: pick one. Either make it real (bridge `lib/events` → kernel
-bus, have `notification.queued` reach `lib/notifier`, and load plugins through a
-vetted dynamic import with a signature/allowlist), or demote it to what it is —
-ConfigCenter + MenuRegistry — and delete the marketplace UI, catalog and MCP
-tools. Shipping an installable-looking marketplace that installs nothing is the
-worse of the two.
+**The marketplace pretended to install things.** Nothing in `pluginLoader.ts`
+ever `import()`s code: an npm/git/local "install" became a DB row plus a shell
+whose `init` emits one event, and the panel then reported it *active*. Worse,
+several of the 16 catalog entries shadow features that already ship under
+another name — an operator who installed "Amazon S3 & Cloudflare R2 Sync",
+entered a bucket and secret key and saw it active would reasonably believe their
+backups were being copied off-site. They were not, and they would find out at
+restore time.
+
+Now:
+
+- `npm` / `git` / `local` installs are **refused** with an explanation instead
+  of creating an inert row.
+- Every catalog entry carries `implemented` (all 16 are `false` today) and,
+  where it shadows a shipped feature, a `builtIn` pointer. Installing an
+  unimplemented entry is refused with a message naming the real feature; the
+  panel renders the pointer as a link instead of an Install button.
+- Rows installed by an older build from an unsupported source are skipped at
+  boot with a one-line warning naming the row, rather than restored as shells
+  reporting themselves active.
+
+**Still open — the product decision.** The catalog is now an honest roadmap
+index, not an installable marketplace. Either implement real plugin loading
+(fetch, integrity verification, sandboxing, an upgrade story) or drop the
+marketplace UI and keep `ConfigCenter` + `MenuRegistry`, which are the parts
+that were always real. The `notification.queued` event the built-in
+notifications plugin emits stays an extension point on purpose: `lib/notifier`
+owns channel delivery, and wiring the plugin into it would send every alert
+twice.
 
 ### 16.4 ~~The role hierarchy is documented but not enforced~~ — FIXED in 0.3.5
 
@@ -873,11 +917,31 @@ tokens already deployed in someone's CI; the CLI now prompts for a scope and
 re-issuing those is an operator task, not something an upgrade should do
 silently.
 
-### 16.6 Agent transport is unencrypted
+### 16.6 ~~Agent transport is unencrypted~~ — FIXED in 0.3.5 (partly)
 
-See §9. `http://` only, carrying the agent token and decrypted service secrets.
-*Fix direction*: mTLS or at minimum HTTPS with a pinned cert, plus a documented
-"agents must be on a private network" constraint until then.
+Was: `http://` only, carrying the agent token (unrestricted remote execution on
+the agent host) and, via `file.writeEnv`, the service's decrypted secrets — all
+readable by anyone on the path.
+
+Fixed by `lib/agentSeal.ts`: an authenticated envelope over the transport that
+already exists. HKDF-SHA256 derives a fresh key per message from
+`sha256(agentToken)`; the body is AES-256-GCM with `version.timestamp` as AAD, so
+the timestamp cannot be edited to widen the ±5-minute replay window. Every
+failure — wrong secret, tampered ciphertext, stale timestamp, unknown version,
+malformed field — raises the *same* error, and `/agent/exec` answers a bad
+envelope byte-for-byte like a bad token, so the endpoint is not a decryption
+oracle. Capability is negotiated through `GET /agent/ping`; the legacy plaintext
+path stays for un-upgraded agents and is refused outright under
+`NINEDEPLOY_AGENT_REQUIRE_SEALED=1`.
+
+TLS was the obvious answer and is still the right long-term one, but it needs an
+X.509 certificate on every agent — Node can parse certificates without being able
+to generate them, so that means a new dependency or hand-rolled DER, plus a
+distribution and rotation story, for a feature that is optional to begin with.
+
+*Still open*: metadata is unprotected (which agent, when, how often, message
+size), there is no forward secrecy, and an attacker who owns the agent host holds
+the key anyway. Agents still belong on a private network. mTLS remains the fix.
 
 ### 16.7 ~~Three different list-scoping implementations~~ — FIXED in 0.3.5
 
@@ -895,14 +959,265 @@ memory rather than pushing the owner match into SQL. That matches what the tag
 filter already did, and matters only at a scale a self-hosted panel does not
 reach — but see §16.8.
 
-### 16.8 Smaller items
+### 16.8 ~~A deploy's outcome was never recorded~~ — FIXED
+
+`deploy.trigger` was written by the route when a deployment was queued, and it
+was the **only** deploy action anything emitted. `engine/pipeline.ts` never
+called `audit()`, so a deploy that finished — successfully or not — did so in
+silence. Three consumers hang off `audit()` and all three were blind to the
+result an operator actually cares about:
+
+- `lib/notifier.notifyEvent`, i.e. **every** Slack / Telegram / Discord /
+  webhook / email channel. A failed production deploy notified nobody, and the
+  Settings → Notifications event filter had no `deploy.failed` to match.
+- the `/v1/events` socket behind the panel's live activity feed, which showed
+  deploys starting and never finishing.
+- `kernel/auditBridge`, whose `deployment.status_changed` could therefore only
+  ever carry `trigger` / `rollback` / `cancel`. §16.3 rebuilt the bridge so the
+  built-in plugins would finally see real events; the one event they exist to
+  react to was still missing.
+
+The pipeline now records `deploy.success`, `deploy.failed` (with the reason in
+`meta`) and `deploy.cancelled` as `"<service name> #<deployment id>"` — the
+entity shape the bridge already decomposes. The actor is the service **owner**
+rather than `null`, because `canReceiveEvent` treats a null actor as a system
+event and shows it to operators only, which would hide a member's own deploy
+result from them.
+
+### 16.9 ~~Master-key rotation had no caller~~ — FIXED
+
+`lib/keyRotation.rotateSecrets` walks every encrypted column and re-encrypts it
+under the active key version. It was implemented, covered by tests, and
+**imported by nothing**. Meanwhile `.env.example` instructed operators to
+"run `ninedeploy rotate-keys`" — a command that did not exist, and
+`ARCHITECTURE.md` itself described a "`rotateSecrets` re-encryption job".
+
+An operator who followed the documented procedure would add a new key version,
+restart, find no way to run step 3, and then perform step 4 — remove the old
+version — leaving every stored secret sealed under a key the process no longer
+holds.
+
+Now `GET /v1/settings/master-key` + `POST /v1/settings/master-key/rotate`
+(operator-only, like the rest of that plugin), the SDK's
+`settings.masterKey.{get,rotate}`, and `ninedeploy system rotate-keys`. Rotating
+with a single key version in the ring is refused with an explanation instead of
+being a no-op that looks like success.
+
+The rotation response also carries the warning the procedure was missing:
+**backups are not re-encrypted.** Dumps are sealed by `createBackupCipher` under
+an `NDBK1:v<version>` header and `createBackupDecipher` throws for a version
+outside the ring, so retiring a key makes every backup taken under it
+permanently unrestorable. The old version has to stay in
+`NINEDEPLOY_MASTER_KEYS` until those backups age out of retention.
+
+### 16.10 ~~A compose template skipped the host-privilege gate~~ — FIXED
+
+`POST /v1/templates/:id/deploy` called
+`assertMayUseHostPrivilege(user, { type: 'docker', … })` with the type
+hard-coded. A template carrying `composeContent` becomes a `type: 'compose'`
+service (`modules/composeStacks.ts`), and `lib/hostPrivilege.ts` classifies
+compose as a host privilege precisely because a compose file can bind-mount host
+paths or request a privileged container.
+
+So a `member` could stand up a compose stack and queue its deploy through this
+route — while `assertMayDeployStoredService` correctly refused them the *next*
+deploy of that very same service. The gate now keys off the type that will
+actually be created; the Deploy wizard shows the same reason up front rather
+than letting a member fill in five steps and collect a 403.
+
+### 16.11 ~~The sealed agent transport could be downgraded by one lost packet~~ — FIXED
+
+`agentClient.supportsSealed` cached its answer per server, which is right — but
+it cached a `false` produced by a *failed* probe just as readily as one the
+agent actually gave. An agent restarting, a dropped packet, or an on-path
+attacker killing exactly one `GET /agent/ping` therefore pinned that server to
+the legacy cleartext transport for the rest of the process's life. Only a
+definitive answer is cached now; an unreachable probe re-probes next call.
+`NINEDEPLOY_AGENT_REQUIRE_SEALED=1` remains the way to close the fallback
+outright.
+
+### 16.12 Smaller things found in the same sweep — FIXED
+
+- **`alerts: [{ when: deployFailed }]` wrote a rule that could never fire.**
+  `applyManifestToService` mapped the two event-shaped triggers
+  (`deployFailed`, `restartLoop`) onto `metric: 'cert-expiry', threshold: 0` —
+  the module's own comment said it skipped the insert; it did not. The rule
+  rendered in Monitoring like a configured alert. Both are now reported as
+  skipped in the deploy log instead.
+- **`static`, `watch` and `network` were dropped in complete silence.** They are
+  accepted by the strict manifest schema and consumed by nothing. Every other
+  unwired section already warned; §16.2 claimed these did too. They do now.
+- **The deploy worker leaked one Timeout per poll.** `plugins/worker.ts` pushed
+  every 2-second poll timer into an append-only array that only `stop()` ever
+  drained — roughly 43 000 dead handles per slot per day of uptime. It is a Set
+  each timer removes itself from.
+- **`lib/auth.ts` no longer reads the legacy `users.role` column.** Migration
+  `0034` rebuilds `users` without it, so the `role === 'admin'` → operator
+  branch was unreachable in production and survived only to satisfy its own test
+  fixtures — a second, dead grant path inside the auth core, and one that would
+  have quietly widened exactly the narrow backfill `0038` was written to impose.
+- **`lib/agentSeal.secretsMatch` is gone.** Exported, tested, called by nothing;
+  `agentClient.tokenMatches` already does that comparison.
+- **The marketplace's "use this instead" links pointed at the wrong page.**
+  §16.3 replaced the install button with a pointer at the feature that already
+  ships — and five of those pointers used `/settings?tab=…` while Settings
+  selects its page with `?section=` (`routes/settings/index.tsx` reads
+  `searchParams.get('section')`), so they landed on the default page. The
+  Cloudflare entry also named "Settings → System" for DNS records, which live
+  under Integrations. `test/kernelHonesty.test.ts` now checks every pointer
+  against the real route table and the real section ids.
+- **Two dead operator guards are gone.** `resourceAccess.assertOperator` and a
+  second `resourceAccess.requireOperator()` prehandler had no call sites — and
+  both re-read `users.is_instance_operator` from the database, which is exactly
+  what `plugins/auth.ts` warns against: it has already narrowed the flag for a
+  scope-restricted API token (a `write` token owned by an operator runs as a
+  non-operator), and a fresh read hands that authority back. `requireOperator()`
+  also still documented the pre-0.3.5 self-granting definition ("owner/admin in
+  at least one workspace"). A future route following either would have silently
+  reopened §16.1 and §16.5. The escalation assertion they carried now runs
+  against `app.requireOperator`, the gate the routes actually use.
+- **The self-update state directory is owner-only.** `run-update.sh` was
+  deliberately written `0700`, but the log beside it was created at the default
+  `0644` while capturing the installer's entire output stream — and
+  `errorTail` surfaces the tail of that through the API. `install.sh` chmods the
+  `.env` it writes to `600`; the directory its output lands in now gets the same
+  treatment (`0700` dir, `0600` log).
+- **One QR implementation instead of two.** `components/QrCode.tsx` was written,
+  tested and imported by nobody, while Settings → Account carried its own copy of
+  the same `QRCode.toDataURL` effect (the `QrCode` symbol it imports is the
+  lucide *icon*). The card now uses the shared component — which also renders at
+  2× the CSS size, so the code is sharper on a HiDPI screen.
+
+### 16.13 ~~Deployments could be started but never removed~~ — FIXED
+
+A deployment had no delete path anywhere in the product. The only thing that
+ever aged out was the deploy-log FILE (30 days, `plugins/housekeeping.ts`); the
+`deployments` table itself was swept by nothing, so it grew for the life of the
+instance and the older half of every service's Deploys tab listed builds whose
+logs had already been deleted — history you can click and learn nothing from.
+
+Three changes:
+
+- `DELETE /v1/services/:id/deploys/:depId` (role `admin`, like the other
+  destructive verbs) removes one row and its log. In-flight deployments are
+  refused with "cancel it first" — the worker and the pipeline still write to
+  them — and so is the `running` one, which records what is serving traffic,
+  carries the digest a rollback re-deploys, and is the baseline the next
+  deploy's config diff is taken against.
+- The housekeeping sweep now ages finished deployment rows out on the **same**
+  30-day window as their logs, skipping the in-flight and `running` statuses, so
+  a row and its log disappear together instead of one outliving the other.
+- Deleting a service, and auto-destroying a PR preview, now delete the deploy
+  log files the FK cascade leaves behind. Build logs routinely echo
+  configuration; they should not outlive the service they describe.
+
+`cancel` was already implemented in the route, the SDK and the panel — the CLI
+was the one surface without it, so a deploy started from CI could only be
+stopped from a browser. `ninedeploy deploys cancel` and `ninedeploy deploys rm`
+close that.
+
+### 16.14 ~~`job_runs` grew forever, output and all~~ — FIXED
+
+`job_runs` had no retention of any kind, and every row stores up to 60 KB of the
+command's captured output (`lib/jobRunner.ts`) *inside the SQLite file that gets
+backed up whole*. A per-minute cron job writes roughly 525 000 rows a year while
+the panel only ever renders the newest 20 per job — everything older was
+unreadable weight in the backup path. Swept on the same 30-day window as the
+other logs.
+
+### 16.15 ~~PR previews leaked a Docker network each~~ — FIXED
+
+Every deployed service gets a private bridge network (`ensureServiceBridge`,
+called by the Docker builder). Only the panel's `DELETE /v1/services/:id` ever
+reaped it. The preview auto-destroy path in `modules/hooks.ts` deleted the
+service row and stopped the container but left the network behind — in the one
+feature designed for high churn, one preview environment per pull request. It
+now reaps the bridge and removes the preview's build logs, both best-effort so
+a stuck network cannot turn a webhook into a 500 the provider will retry
+against a service that no longer exists.
+
+### 16.16 ~~Historical metrics were unreachable~~ — FIXED
+
+`GET /v1/services/:id/metrics` returned **404**. `metricRoutes` is a second
+export from `modules/stats.ts`, its own comment says *"Mounted under /services"*,
+and `modules/api.ts` never registered it. So the CPU and memory charts on the
+Monitoring page and on every service's Overview tab had nothing to read, while
+the collector wrote two rows per service every 30 seconds and swept them at 24 h.
+`test/api.test.ts` even carried a stub for the module — nothing ever asked it a
+question.
+
+The route is registered. The regression guard is the interesting part:
+`api.test.ts` used to spot-check two modules, so it now asserts that **every**
+module it stubs answers on its prefix. Reverting the registration turns that
+case red with a 404.
+
+### 16.17 ~~`log_drains` existed in the schema and in no migration~~ — FIXED
+
+The `log_drains` table is declared in `schema.ts` and recorded in drizzle-kit's
+`0031_snapshot.json`, but **no migration ever created it**. Every database built
+by replaying the migrations — i.e. every fresh install — simply had no such
+table, and Settings → Log Drains (Syslog / Datadog / Vector shipping) failed at
+runtime with `no such table: log_drains`.
+
+The snapshot is what makes this nasty: because drizzle-kit already believed the
+table existed, `drizzle-kit generate` would never emit the missing file. The
+drift was invisible to the tool whose job is to catch it, and invisible to the
+tests, which type-check every query against `schema.ts` and mock the database.
+
+Added as migration `0039_log_drains` (`IF NOT EXISTS` throughout, so an instance
+whose schema came from `drizzle-kit push` still upgrades cleanly).
+
+The guard is `packages/db/test/schema-drift.test.ts`: it applies the whole
+migration chain to a fresh database and compares every declared table and column
+against `PRAGMA table_info`, **in both directions** — a column the migrations
+still create but the schema has dropped is a NOT NULL insert failure waiting to
+happen. `schema.test.ts` migrates and then round-trips four tables out of forty;
+that is what let this through.
+
+While fixing it: adding `0039` silently disarmed
+`test/migrate-recovery.test.ts`, which forgot "the newest migration" to
+reproduce an unjournalled upgrade. That only exercised the recovery path while
+the newest file happened to be an `ALTER TABLE … ADD COLUMN`; a
+`CREATE TABLE IF NOT EXISTS` replays cleanly, so the suite stayed green without
+reaching the code it exists to test. It now selects the newest migration whose
+replay actually conflicts.
+
+### 16.18 ~~Six environment variables were documented nowhere~~ — FIXED
+
+`.env.example` is the only configuration reference this project has, and half
+the knobs it describes are set on a host the panel never sees (the agent). It
+had drifted, and nothing checked it:
+
+- `NINEDEPLOY_ALLOW_PRIVATE_EGRESS` — the SSRF escape hatch. Named in the error
+  message an operator actually hits ("Set NINEDEPLOY_ALLOW_PRIVATE_EGRESS=1 if
+  this instance really must reach internal addresses") and in no config file, so
+  the fix for a legitimate LAN webhook was undiscoverable.
+- `NINEDEPLOY_UPDATE_CHECK_URL` — the panel's only unprompted outbound call, and
+  `=disabled` is the only way to switch it off.
+- `NINEDEPLOY_BACKUP_VOLUME_RETAIN_COUNT`, `NINEDEPLOY_DOMAIN`,
+  `NINEDEPLOY_WEB_DIST`, `NINEDEPLOY_AGENT_RAW_TOKEN`.
+
+The guard is `apps/server/test/envExample.test.ts`: it collects every
+`process.env[...]` read in the server plus every key of the zod schema in
+`env.ts`, and fails when one is missing from `.env.example` (commented-out
+entries count as documented — that is how the agent block is written). It is
+scoped to the server on purpose: the CLI's and MCP server's own
+`NINEDEPLOY_URL` / `NINEDEPLOY_TOKEN` / `NINEDEPLOY_MCP_READONLY` are client
+credentials and live in `docs/AI_MCP_CLI.md`.
+
+Nothing was documented-but-unread, which is the failure mode that would have
+been worse.
+
+### 16.19 Smaller items
 
 - `GET /v1/services` loads every visible row and filters tags **in memory**;
   same for `visibleDatabaseIds`, which reads the whole `databases` table. Fine
   at self-hosted scale, but it is an O(n) full scan per request
 - Migration tag `0020` is skipped (journal-authoritative, cosmetic)
-- `lib/auth.ts` still reads a legacy `users.role` column that migration `0034`
-  removed; it survives only as a test-fixture back-compat marker
+- `DELETE /v1/projects/:id` is scoped to projects the caller can see, but is not
+  role-gated the way services and databases are (§16.4) — any seat in the
+  workspace can delete a project. Services survive (the join rows cascade, the
+  services do not), so the blast radius is the grouping, not the workloads
 - WAL is off by design (§4) — this serializes writers behind readers under the
   worker + collector + two schedulers. It is the right trade for single-file
   backups, but it caps concurrency and should be revisited together with the
@@ -935,9 +1250,11 @@ reach — but see §16.8.
   not left `running` forever
 - **Fire-and-forget notifications** — `audit()` → DB write + EventBus +
   notifier, never blocks the request
-- **Bounded retention** — metrics 24 h, deploy logs 30 d, audit 90 d,
-  notification log 30 d, dangling images hourly; scheduled backups keep 7
-  (manual untouched), volume backups keep `NINEDEPLOY_BACKUP_VOLUME_RETAIN_COUNT`
+- **Bounded retention** — metrics 24 h, deploy logs *and their deployment rows*
+  30 d (the live and in-flight rows are never swept), scheduled-job runs 30 d,
+  audit 90 d, notification log 30 d, dangling images hourly; scheduled backups
+  keep 7 (manual untouched), volume backups keep
+  `NINEDEPLOY_BACKUP_VOLUME_RETAIN_COUNT`
 - **Forward-only, additive migrations** — no down-SQL; a bad migration leaves an
   unused object rather than losing data
 - **Tiered coverage gates** — 100 % where it is achievable (db, schemas, sdk,

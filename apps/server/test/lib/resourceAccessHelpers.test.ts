@@ -3,7 +3,6 @@ import {
   assertWorkspaceRole,
   maxRole,
   requireAccess,
-  requireOperator,
   requireResourceAccess,
   roleAtLeast,
   userWorkspaceIds,
@@ -140,30 +139,6 @@ describe('requireAccess prehandler', () => {
   it('404s when the resource is not visible', async () => {
     const empty = createFakeDb({ findFirst: { services: undefined } } as never);
     await expect(requireAccess('service')(reqFor(empty, { id: '9' }), {} as never)).rejects.toThrow();
-  });
-});
-
-describe('requireOperator prehandler', () => {
-  it('resolves for a user carrying the instance-operator flag', async () => {
-    const db = createFakeDb({
-      findFirst: { users: { id: 1, isInstanceOperator: true } },
-    } as never);
-    await expect(requireOperator()(reqFor(db, {}), {} as never)).resolves.toBeUndefined();
-  });
-
-  it('rejects a plain member', async () => {
-    const db = createFakeDb({ findFirst: { users: { id: 2, isInstanceOperator: false } } } as never);
-    await expect(requireOperator()(reqFor(db, {}, member), {} as never)).rejects.toThrow(/Operator access required/);
-  });
-
-  // The escalation this guard exists to stop: holding `owner` in a workspace
-  // the caller created themselves must NOT confer instance-operator rights.
-  it('rejects a user who owns a workspace but lacks the flag', async () => {
-    const db = createFakeDb({
-      findMany: { workspaceMembers: [{ workspaceId: 1, userId: 1, role: 'owner' }] },
-      findFirst: { users: { id: 1, isInstanceOperator: false } },
-    } as never);
-    await expect(requireOperator()(reqFor(db, {}), {} as never)).rejects.toThrow(/Operator access required/);
   });
 });
 

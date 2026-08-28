@@ -177,4 +177,25 @@ describe('auth plugin', () => {
     expect(res.statusCode).toBe(403);
     await app.close();
   });
+
+  /**
+   * The escalation §16.1 closed: `owner` in a workspace the caller created
+   * themselves must not confer instance-operator rights. This assertion used to
+   * live on a second, unused `requireOperator()` prehandler in
+   * `lib/resourceAccess.ts`; that helper is gone, so the guarantee is asserted
+   * here, on the gate the routes actually use.
+   */
+  it('rejects a workspace owner who does not carry the instance-operator flag', async () => {
+    const db = makeDb([], { id: 3, isOperator: false });
+    // The user holds an `owner` seat…
+    db.query.workspaceMembers.findMany = vi.fn(async () => [
+      { workspaceId: 1, userId: 3, role: 'owner', createdAt: new Date(), updatedAt: new Date() },
+    ]);
+    const app = await buildApp(db);
+    const token = await signAccessToken(3, 0);
+    // …and is still not an operator: the flag is a column, never an inference.
+    const res = await app.inject({ method: 'DELETE', url: '/admin', headers: { authorization: `Bearer ${token}` } });
+    expect(res.statusCode).toBe(403);
+    await app.close();
+  });
 });

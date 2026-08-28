@@ -567,6 +567,50 @@ describe('template routes', () => {
     expect(String(inserted[0]!['slug'])).not.toBe('grafana');
   });
 
+  /**
+   * A compose template becomes a `type: 'compose'` service, and
+   * `lib/hostPrivilege.ts` treats compose as a HOST privilege: the compose file
+   * can bind-mount host paths or ask for a privileged container. This route
+   * used to hard-code `type: 'docker'` in its privilege check, so a member
+   * could stand up and queue a compose stack here — while
+   * `assertMayDeployStoredService` correctly refused them the next deploy of
+   * that very same service.
+   */
+  it('refuses a compose-stack template to a non-operator', async () => {
+    const app = await buildTestApp({ db: createFakeDb() });
+    await app.register(templateRoutes);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/umami-stack/deploy',
+      headers: asUser({ id: 5, isOperator: false }),
+      payload: { name: 'Umami' },
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error.message).toMatch(/Compose deploys run/);
+  });
+
+  it('still lets a plain image template through for a non-operator', async () => {
+    // The gate must key off what will actually be created, not refuse
+    // everything: an ordinary `type: 'docker'` template stays open.
+    const app = await buildTestApp({
+      db: createFakeDb({
+        insert: { services: (v: Record<string, unknown>) => [svcRow({ id: 78, ownerUserId: 5, slug: String(v['slug']) })] },
+      }),
+    });
+    await app.register(templateRoutes);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/grafana/deploy',
+      headers: asUser({ id: 5, isOperator: false }),
+      payload: { name: 'Grafana' },
+    });
+
+    expect(res.statusCode).toBe(200);
+  });
+
   it('returns 404 when deploying an unknown template', async () => {
     const app = await buildTestApp({ db: createFakeDb() });
     await app.register(templateRoutes);

@@ -259,7 +259,7 @@ describe('applyManifestToService — database', () => {
 });
 
 describe('applyManifestToService — alerts', () => {
-  it('inserts an alert rule per declared alert', async () => {
+  it('inserts a rule for each metric alert and skips the event-shaped ones', async () => {
     const result = await applyManifestToService(
       db,
       serviceId,
@@ -270,12 +270,29 @@ describe('applyManifestToService — alerts', () => {
         ],
       }),
     );
-    expect(result.alertsUpserted).toBe(2);
+    // `deployFailed` has no metric the alert engine can evaluate. It used to be
+    // written out as `cert-expiry < 0` — a rule that renders in Monitoring like
+    // a configured alert and can never fire. It is now skipped, with a warning.
+    expect(result.alertsUpserted).toBe(1);
+    expect(result.warnings.some((w) => w.includes('when="deployFailed"'))).toBe(true);
     const rules = await db
       .select()
       .from(alertRules)
       .where(eq(alertRules.serviceId, serviceId));
-    expect(rules).toHaveLength(2);
+    expect(rules).toHaveLength(1);
+    expect(rules[0]!.metric).toBe('memory');
+  });
+
+  it('skips restartLoop the same way, without writing a placeholder rule', async () => {
+    const result = await applyManifestToService(
+      db,
+      serviceId,
+      m({ alerts: [{ when: 'restartLoop', channel: 'oncall' }] }),
+    );
+    expect(result.alertsUpserted).toBe(0);
+    expect(result.warnings.some((w) => w.includes('when="restartLoop"'))).toBe(true);
+    const rules = await db.select().from(alertRules).where(eq(alertRules.serviceId, serviceId));
+    expect(rules).toHaveLength(0);
   });
 
   it('maps highMemory to a memory-metric rule with the manifest threshold', async () => {
@@ -363,6 +380,25 @@ describe('applyManifestToService — deferred sections emit warnings', () => {
       m({ previews: { enabled: true, pattern: 'pr-{n}.example.com' } }),
     );
     expect(result.warnings.join('\n')).toMatch(/previews/);
+  });
+
+  // `static`, `watch` and `network` are accepted by the (strict) schema and
+  // consumed by nothing. They used to be the only unwired sections that were
+  // dropped in complete silence, so a repo declaring them got no hint at all
+  // that the setting had no effect.
+  it('emits a warning when static is declared', async () => {
+    const result = await applyManifestToService(db, serviceId, m({ static: { spa: true } }));
+    expect(result.warnings.some((w) => w.startsWith('static: '))).toBe(true);
+  });
+
+  it('emits a warning when watch is declared', async () => {
+    const result = await applyManifestToService(db, serviceId, m({ watch: { paths: ['apps/web/**'] } }));
+    expect(result.warnings.some((w) => w.startsWith('watch: '))).toBe(true);
+  });
+
+  it('emits a warning when network is declared', async () => {
+    const result = await applyManifestToService(db, serviceId, m({ network: { publishPort: 8080, aliases: ['edge'] } }));
+    expect(result.warnings.some((w) => w.startsWith('network: '))).toBe(true);
   });
 
   it('produces no warnings for a minimal manifest', async () => {

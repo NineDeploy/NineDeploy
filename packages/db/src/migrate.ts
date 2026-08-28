@@ -76,6 +76,12 @@ async function applyToleratingExistingObjects(db: DB, folder: string): Promise<v
   const rows = await db.all<{ created_at: number | null }>(
     sql.raw(`SELECT created_at FROM \`${MIGRATIONS_TABLE}\` ORDER BY created_at DESC LIMIT 1`),
   );
+  // Resume from the high-water mark. This is correct because of WHERE we are
+  // called from: Drizzle's own migrator resumes the same way, so by the time it
+  // has thrown an "already exists" error the migrations it could not journal
+  // are, by construction, the newest ones. (A journal missing an INTERIOR entry
+  // reads as up-to-date to Drizzle, which then never throws and never reaches
+  // this function at all — so a hash-set resume here would change nothing.)
   const lastApplied = Number(rows[0]?.created_at ?? 0);
 
   for (const migration of migrations) {

@@ -51,7 +51,7 @@ function LocationProbe() {
   return <div data-testid="location">{location.pathname}{location.search}</div>;
 }
 
-function renderWizard(props: { template?: typeof TEMPLATE & { dockerSocket?: boolean }; onClose?: () => void } = {}) {
+function renderWizard(props: { template?: typeof TEMPLATE & { dockerSocket?: boolean; composeContent?: string }; onClose?: () => void } = {}) {
   const onClose = props.onClose ?? vi.fn();
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const utils = renderTree(
@@ -131,6 +131,17 @@ describe('DeployWizard', () => {
     authMock.user = { id: 5, isOperator: false, email: 'm@test', name: 'M' };
     renderWizard({ template: { ...TEMPLATE, dockerSocket: true } });
     expect(screen.getByText(/mounts the Docker socket/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Continue/ })).toBeDisabled();
+  });
+
+  it('blocks a member from deploying a Compose-stack template, with its own reason', () => {
+    // A compose file can bind-mount host paths or request a privileged
+    // container, so the server refuses it to a non-operator exactly like a
+    // Docker-socket template — say so up front rather than after five steps.
+    authMock.user = { id: 5, isOperator: false, email: 'm@test', name: 'M' };
+    renderWizard({ template: { ...TEMPLATE, composeContent: 'services: { app: { image: x } }' } });
+    expect(screen.getByText(/installs a Compose stack/)).toBeInTheDocument();
+    expect(screen.queryByText(/mounts the Docker socket/)).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Continue/ })).toBeDisabled();
   });
 

@@ -30,8 +30,10 @@ describe('buildServer', () => {
   it('lists all tools with schemas', async () => {
     const mcp = await connected(fake());
     const tools = await mcp.listTools();
-    expect(tools.tools).toHaveLength(35);
+    expect(tools.tools).toHaveLength(36);
     expect(tools.tools.map((t) => t.name)).toContain('deploy_service');
+    // An agent that can start a build must be able to stop one.
+    expect(tools.tools.map((t) => t.name)).toContain('cancel_deploy');
     expect(tools.tools.map((t) => t.name)).toContain('list_services');
     expect(tools.tools.map((t) => t.name)).toContain('list_workspaces');
     expect(tools.tools.map((t) => t.name)).toContain('list_container_files');

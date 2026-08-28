@@ -22,12 +22,14 @@ import { isOperator, visibleDatabaseIds } from './resourceAccess.js';
  * unique (serviceId, databaseId) index. No new rows are created on a
  * no-op run.
  *
- * Three sections are fully wired (routes, database, alerts). Three are
- * *recognised but not yet wired* (volume.backups, notifications, previews)
- * because the underlying platform features (volume-backup cron jobs,
- * per-service event channel mapping, preview config storage) are not yet
- * in place. Those sections are validated by the schema and emitted to
- * the build log as `TODO` lines so the operator knows they were seen.
+ * Three sections are fully wired here (routes, database, alerts); the
+ * build-shaping ones are applied by `engine/pipeline.ts` instead. Six are
+ * *recognised but not wired* — `volume.backups`, `notifications`, `previews`,
+ * `static`, `watch` and `network` — because the underlying platform feature is
+ * either a panel/operator setting or does not exist yet. Every one of them
+ * pushes a warning so the operator sees in the deploy log that the section was
+ * read and had no effect; a section that is accepted by the schema and then
+ * silently dropped is the failure mode this list exists to prevent.
  */
 
 export interface ApplyManifestResult {
@@ -84,6 +86,26 @@ export async function applyManifestToService(
   if (manifest.previews?.enabled) {
     result.warnings.push(
       `previews: pattern="${manifest.previews.pattern ?? ''}" declared but preview config wiring is not yet implemented.`,
+    );
+  }
+  // `static`, `watch` and `network` are accepted by the schema (a `.strict()`
+  // object would otherwise reject a manifest that uses them) and consumed by
+  // nothing. They were the only unwired sections that stayed completely silent,
+  // so a repo declaring `static.spa: true` or a `watch` path filter got no hint
+  // that the setting had no effect at all.
+  if (manifest.static) {
+    result.warnings.push(
+      'static: declared but static-site serving is configured in the panel (Service → Settings), not from the manifest; section ignored.',
+    );
+  }
+  if (manifest.watch) {
+    result.warnings.push(
+      'watch: declared but build-path filtering is driven by the webhook\'s watch paths (Service → Webhooks); section ignored.',
+    );
+  }
+  if (manifest.network) {
+    result.warnings.push(
+      'network: declared but container network attachment is a panel/operator setting (Networks); section ignored.',
     );
   }
 
@@ -243,7 +265,18 @@ async function syncAlertRules(
     // The schema has a separate "channel" string from the alert rule's own
     // "name" — we encode the channel into the rule name so multiple alerts
     // with the same `when` but different channels coexist.
-    const { metric, operator, threshold, durationWindows } = alertToRule(alert);
+    const rule = alertToRule(alert);
+    if (!rule) {
+      // Event-shaped alert with no metric behind it. Writing SOMETHING here
+      // used to produce a `cert-expiry < 0` rule — a rule that can never fire
+      // and that shows up in Monitoring looking like a configured alert. Say
+      // it was skipped instead.
+      result.warnings.push(
+        `alerts: when="${alert.when}" is an event, not a metric threshold, and per-service event alerts are not yet implemented; rule skipped.`,
+      );
+      continue;
+    }
+    const { metric, operator, threshold, durationWindows } = rule;
     const name = `svc-${serviceId}-${alert.when}-${alert.channel}`;
 
     const existing = await db
@@ -271,12 +304,18 @@ async function syncAlertRules(
   }
 }
 
+/**
+ * Translate one manifest alert into an `alert_rules` row, or `null` when the
+ * trigger is event-shaped (`deployFailed`, `restartLoop`) and the metric-based
+ * alert engine has nothing to evaluate. The caller turns `null` into a warning
+ * rather than inventing a rule.
+ */
 function alertToRule(alert: NonNullable<NinedeployManifest['alerts']>[number]): {
   metric: 'cpu' | 'memory' | 'cert-expiry';
   operator: '>' | '<';
   threshold: number;
   durationWindows: number;
-} {
+} | null {
   switch (alert.when) {
     case 'highMemory':
       return {
@@ -296,11 +335,10 @@ function alertToRule(alert: NonNullable<NinedeployManifest['alerts']>[number]): 
       return { metric: 'cert-expiry', operator: '<', threshold: 14, durationWindows: 1 };
     case 'deployFailed':
     case 'restartLoop':
-      // No metric-shaped alert — surface as a synthetic "cert-expiry" rule
-      // would be wrong. The `notifications` section (wired in a later PR)
-      // will be the home for these event-shaped alerts. For now we mark
-      // them with the cert-expiry metric at 0 and skip the rule insert:
-      // the orchestrator caller is expected to look at the warnings.
-      return { metric: 'cert-expiry', operator: '<', threshold: 0, durationWindows: 1 };
+      // Event-shaped: the alert engine evaluates metric samples, and there is
+      // no metric that means "the last deploy failed". `deploy.failed` reaches
+      // notification channels directly from the deploy pipeline; a per-service
+      // routing of it belongs with the `notifications` section.
+      return null;
   }
 }

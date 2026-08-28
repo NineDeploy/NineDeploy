@@ -52,7 +52,6 @@ import {
   register,
   service,
   serviceType,
-  serviceVolumeAttachment,
   serviceVolumeAttachment as serviceVolumeAttachmentSchema,
   session,
   setLimits,

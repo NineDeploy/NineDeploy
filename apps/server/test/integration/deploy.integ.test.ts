@@ -23,6 +23,13 @@ const migrationsFolder = fileURLToPath(new URL('../../../../packages/db/src/migr
 // itself there instead of failing on an environmental limit.
 let HOST_CAN_REACH_CONTAINERS = false;
 if (ENABLED) {
+  // The in-network probes `docker run` busybox:1.36. Pull it up front with
+  // retries — an auto-pull inside a test assertion turns a rate-limited
+  // registry into a red suite (seen on CI).
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (await capture('docker', ['pull', 'busybox:1.36']).then(() => true).catch(() => false)) break;
+    await new Promise((resolve) => setTimeout(resolve, 2000 * (attempt + 1)));
+  }
   try {
     const probe = await new GenericContainer('nginx:1.27-alpine').withExposedPorts(80).start();
     const ip = (await capture('docker', ['inspect', probe.getName().replace(/^\//, ''), '--format', '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'])).trim();

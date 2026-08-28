@@ -27,7 +27,7 @@ if (ENABLED) {
   try {
     await capture('docker', ['compose', 'version']);
     COMPOSE_OK = true;
-  } catch (err) {
+  } catch (_err) {
     COMPOSE_OK = false;
   }
 }

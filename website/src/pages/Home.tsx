@@ -22,6 +22,7 @@ import { Terminal, type TermLine } from "../components/Terminal";
 import { Marquee } from "../components/Marquee";
 import { CountUp } from "../components/CountUp";
 import { Reveal } from "../components/Reveal";
+import { certifiedCount, templateCount, templateNames } from "../hub";
 
 const heroLines: TermLine[] = [
   { text: "$ git push origin main", tone: "dim", ts: "12:01:02" },
@@ -36,11 +37,7 @@ const heroLines: TermLine[] = [
   { text: "✓ live at https://api.acme.dev — 0s downtime", tone: "ok", ts: "12:02:53" },
 ];
 
-const templates = [
-  "n8n", "Grafana", "Jellyfin", "Plex", "Nextcloud", "WordPress", "Ghost",
-  "Umami", "Gitea", "Pi-hole", "MinIO", "code-server", "Prometheus", "Loki",
-  "Home Assistant", "Uptime Kuma", "Meilisearch", "Postiz",
-];
+const templates = templateNames.slice(0, 18);
 
 const bento = [
   {
@@ -106,7 +103,7 @@ const steps = [
     icon: GitBranch,
     n: "02",
     title: "Connect a repo or image",
-    body: "Git (PAT or SSH deploy key), a container image, a Compose stack, or one of 88 hub templates (16 runtime-certified). Watch-path globs keep monorepos quiet.",
+    body: `Git (PAT or SSH deploy key), a container image, a Compose stack, or one of ${templateCount} hub templates (${certifiedCount} runtime-certified). Watch-path globs keep monorepos quiet.`,
   },
   {
     icon: Rocket,
@@ -128,7 +125,7 @@ export function Home() {
                 self-hosted PaaS
               </span>
               <span className="tag font-bold">v0.3.4</span>
-              <span className="tag">4,592 tests in CI</span>
+              <span className="tag">4,879 tests in CI</span>
             </div>
             <h1 className="text-5xl md:text-7xl font-bold leading-[0.95] tracking-tight">
               Ship like you
@@ -287,9 +284,9 @@ export function Home() {
       {/* ---------------- stats ---------------- */}
       <section className="mx-auto max-w-7xl px-4 py-16 grid grid-cols-2 md:grid-cols-4 gap-5">
         {[
-          { icon: LayoutGrid, k: 16, suffix: "", v: "runtime-certified templates" },
+          { icon: LayoutGrid, k: certifiedCount, suffix: "", v: "runtime-certified templates" },
           { icon: Boxes, k: 41, suffix: "", v: "tables, one SQLite file" },
-          { icon: RotateCcw, k: 4592, suffix: "", v: "tests in CI" },
+          { icon: RotateCcw, k: 4879, suffix: "", v: "tests in CI" },
           { icon: KeyRound, k: 95, suffix: "%+", v: "enforced coverage floor" },
         ].map((s, i) => (
           <Reveal key={s.v} delay={i * 60}>

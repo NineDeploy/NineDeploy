@@ -53,9 +53,10 @@ describe.skipIf(!ENABLED)('database backup/restore (real PostgreSQL container)',
 
     await backupDatabase(db as never, dumpFile, () => undefined);
     expect(existsSync(dumpFile)).toBe(true);
-    // The dump is ENCRYPTED at rest: a versioned envelope, not plaintext.
+    // The dump is ENCRYPTED at rest: the streamed `NDBK1:v<version>:<iv>`
+    // header followed by AES-GCM body, not plaintext.
     const atRest = readFileSync(dumpFile, 'utf8');
-    expect(/^v\d+:/.test(atRest)).toBe(true);
+    expect(/^NDBK1:v\d+:/.test(atRest)).toBe(true);
     expect(atRest).not.toContain('roundtrip');
 
     // Wipe the source data, then restore from the dump.
