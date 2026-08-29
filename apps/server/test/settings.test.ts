@@ -43,6 +43,20 @@ vi.mock('../src/lib/crypto.js', async (importOriginal) => ({
 }));
 vi.mock('../src/lib/keyRotation.js', () => ({ rotateSecretsWithReport: keyMock.rotateSecretsWithReport }));
 
+const vaultMock = vi.hoisted(() => ({
+  getVaultConfig: vi.fn(async () => ({ provider: null, token: null, projectId: null, environment: null })),
+  setVaultConfig: vi.fn(async () => undefined),
+  testVault: vi.fn(async () => 0),
+}));
+vi.mock('../src/lib/vault.js', () => vaultMock);
+
+const cloudflareDnsMock = vi.hoisted(() => ({
+  getDnsRecordsConfig: vi.fn(async () => ({ enabled: false, token: null, content: null })),
+  setDnsRecordsConfig: vi.fn(async () => undefined),
+  testCloudflareToken: vi.fn(async () => 'ok'),
+}));
+vi.mock('../src/lib/cloudflare.js', () => cloudflareDnsMock);
+
 describe('settings routes (admin-only)', () => {
   it('returns the current flags', async () => {
     const app = await buildTestApp({ db: createFakeDb() });
@@ -515,6 +529,144 @@ describe('Cloudflare DNS records', () => {
     const body = res.json() as { ok: boolean; error?: string };
     expect(body.ok).toBe(false);
     expect(body.error).toMatch(/No Cloudflare token/);
+    await app.close();
+  });
+});
+
+// ── Vault provider (deploy-time secret resolution) ───────────────────────
+describe('Vault provider (Infisical / Doppler)', () => {
+  it('GET /vault returns the current provider / project / environment triple', async () => {
+    vaultMock.getVaultConfig.mockResolvedValueOnce({
+      provider: 'infisical',
+      token: 'opaque',
+      projectId: 'workspace-1',
+      environment: 'production',
+    });
+    const app = await buildTestApp({ db: createFakeDb() });
+    await app.register(settingsRoutes);
+    const res = await app.inject({ method: 'GET', url: '/vault', headers: asUser() });
+    expect(res.json()).toEqual({
+      provider: 'infisical',
+      hasToken: true,
+      projectId: 'workspace-1',
+      environment: 'production',
+    });
+    await app.close();
+  });
+
+  it('GET /vault reports hasToken=false when no token is configured', async () => {
+    vaultMock.getVaultConfig.mockResolvedValueOnce({
+      provider: 'doppler',
+      token: null,
+      projectId: 'proj-x',
+      environment: 'dev',
+    });
+    const app = await buildTestApp({ db: createFakeDb() });
+    await app.register(settingsRoutes);
+    const res = await app.inject({ method: 'GET', url: '/vault', headers: asUser() });
+    expect(res.json()).toEqual({
+      provider: 'doppler',
+      hasToken: false,
+      projectId: 'proj-x',
+      environment: 'dev',
+    });
+    await app.close();
+  });
+
+  it('PUT /vault keeps the stored token when the payload omits it', async () => {
+    vaultMock.getVaultConfig.mockResolvedValueOnce({
+      provider: 'infisical',
+      token: 'old-stored-token',
+      projectId: 'old-ws',
+      environment: 'old-env',
+    });
+    const app = await buildTestApp({ db: createFakeDb() });
+    await app.register(settingsRoutes);
+    const res = await app.inject({
+      method: 'PUT',
+      url: '/vault',
+      headers: asUser(),
+      payload: { provider: 'infisical', projectId: 'new-ws', environment: 'production' },
+    });
+    expect(res.json()).toEqual({ ok: true, provider: 'infisical' });
+    // The route should have passed the stored token through,
+    // not nulled it — operators can rotate projectId /
+    // environment without re-entering the token.
+    const setCall = vaultMock.setVaultConfig.mock.calls.at(-1)?.[1] as { token: string | null };
+    expect(setCall.token).toBe('old-stored-token');
+    await app.close();
+  });
+
+  it('PUT /vault clears the token when the provider switches', async () => {
+    vaultMock.getVaultConfig.mockResolvedValueOnce({
+      provider: 'infisical',
+      token: 'opaque',
+      projectId: 'ws',
+      environment: 'prod',
+    });
+    const app = await buildTestApp({ db: createFakeDb() });
+    await app.register(settingsRoutes);
+    const res = await app.inject({
+      method: 'PUT',
+      url: '/vault',
+      headers: asUser(),
+      payload: { provider: 'doppler', token: 'doppler-token', projectId: 'proj', environment: 'dev' },
+    });
+    expect(res.json()).toEqual({ ok: true, provider: 'doppler' });
+    const setCall = vaultMock.setVaultConfig.mock.calls.at(-1)?.[1] as { token: string };
+    expect(setCall.token).toBe('doppler-token');
+    await app.close();
+  });
+
+  it('PUT /vault with an empty provider disables the integration', async () => {
+    vaultMock.getVaultConfig.mockResolvedValueOnce({
+      provider: 'infisical',
+      token: 'opaque',
+      projectId: 'ws',
+      environment: 'prod',
+    });
+    const app = await buildTestApp({ db: createFakeDb() });
+    await app.register(settingsRoutes);
+    const res = await app.inject({
+      method: 'PUT',
+      url: '/vault',
+      headers: asUser(),
+      payload: { provider: '' },
+    });
+    expect(res.json()).toEqual({ ok: true, provider: null });
+    // Empty provider → null token, null projectId / environment.
+    const setCall = vaultMock.setVaultConfig.mock.calls.at(-1)?.[1] as {
+      provider: string | null;
+      token: string | null;
+      projectId: string | null;
+      environment: string | null;
+    };
+    expect(setCall.provider).toBeNull();
+    expect(setCall.token).toBeNull();
+    expect(setCall.projectId).toBeNull();
+    expect(setCall.environment).toBeNull();
+    await app.close();
+  });
+
+  it('PUT /vault rejects an unknown provider with 400', async () => {
+    const app = await buildTestApp({ db: createFakeDb() });
+    await app.register(settingsRoutes);
+    const res = await app.inject({
+      method: 'PUT',
+      url: '/vault',
+      headers: asUser(),
+      payload: { provider: 'hashicorp-vault' },
+    });
+    expect(res.statusCode).toBe(400);
+    await app.close();
+  });
+
+  it('POST /vault/test returns the number of secrets the integration resolved', async () => {
+    vaultMock.testVault.mockResolvedValueOnce(7);
+    const app = await buildTestApp({ db: createFakeDb() });
+    await app.register(settingsRoutes);
+    const res = await app.inject({ method: 'POST', url: '/vault/test', headers: asUser() });
+    expect(res.json()).toEqual({ ok: true, secrets: 7 });
     await app.close();
   });
 });
