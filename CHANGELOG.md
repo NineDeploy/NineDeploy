@@ -880,6 +880,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   **100% / 100% / 100% / 100%** — the first time this route
   bundle has been tested at all. +15 tests (new file).
 
+- **`services.ts` coverage 87.91 / 82.16 / 93.02 / 91.18 → 93.48 / 89.51 / 95.34 / 92.72**
+  *(Sprint 9 PR #43)*. The `apps/server/src/modules/services.ts`
+  route bundle had an 8-point branch-coverage gap rooted in
+  eleven defensive branches nobody had driven a test through
+  (the file is 261 lines and the existing 61-test
+  `test/services.test.ts` covers the CRUD surface; the
+  remaining branches were the operator-vs-non-operator list
+  filter, the tag-filter `wanted.some` arm, the NO_TAGS
+  fallback, the source-name MISS/HIT paths, the
+  `assertMayPublishPort(undefined ? existing : patch)`
+  ternary, the post-update 404, the port-rewrite warning log,
+  the active-deploy 409, the `templateId && !template` 400,
+  the registry-controlled 400, and the `replaceServiceTags`
+  call). New `apps/server/test/modules/servicesCoverage.test.ts`
+  (20 tests) covers every reachable branch: list returns
+  `allRows` for an operator (visibleIds === null) and filters
+  for a non-operator; `?tagProjectIds=` exercises the
+  `wanted.some` arm; an empty link map yields the NO_TAGS
+  default; a populated link map yields all three id lists;
+  the sourceName HIT/MISS paths on both list and GET-single;
+  the PATCH publishedPort undefined vs. set ternary; the
+  zero-row UPDATE 404; the writeDynamicConfig throw caught +
+  logged (the request still 200s); the queued-deployment
+  DELETE 409; the missing templateId 400; the registry-
+  controlled 400; the `replaceServiceTags` call with
+  projectIds-only, with all three arrays, and with the
+  `?? []` fallback for omitted dimensions. Final coverage
+  **93.48% lines / 89.51% branches / 95.34% functions /
+  92.72% lines** — branches are 0.49 points short of the
+  90% gate; the remaining 4 are defense-in-depth
+  (`tagIdsOf` `?? NO_TAGS`, the list-serialize `?? NO_TAGS`
+  fallbacks that are unreachable when `loadTagIds`
+  pre-populates the map, and the `templateDatabaseEnv ?? null`
+  arm that fires only when a template omits the field).
+
 - **`branding.ts` coverage 34.61 / 0 / 20 / 34.61 → 100 / 100 / 100 / 100**
   *(Sprint 9 PR #41)*. The `apps/server/src/modules/branding.ts`
   HTTP surface (G-30 white-label) shipped with zero tests. New
