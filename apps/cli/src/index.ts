@@ -17,7 +17,7 @@ import {
 } from './commands/misc.js';
 import {
   activityList, alertsCreate, alertsList, alertsRemove,
-  backupsCreate, backupsList, backupsRestore,
+  backupsCreate, backupsDrill, backupsDrills, backupsList, backupsRestore,
   deploysWatch, domainsAdd, domainsList, domainsRemove,
   envList, envRemove, envSet, networksCreate, networksList, networksRemove,
   sessionsList, sessionsRevoke, systemExport, systemImport,
@@ -395,6 +395,16 @@ backupsCmd.command('list [databaseId]').description('List backups (all, or one d
 backupsCmd.command('create <databaseId>').description('Back a database up now').action((id: string) => backupsCreate(getClient(), id));
 
 backupsCmd.command('restore <databaseId> <backupId>').description('Restore a backup (destructive)').action((id: string, bId: string) => backupsRestore(getClient(), id, bId));
+
+backupsCmd
+  .command('drill <databaseId> <backupId>')
+  .description('Smoke-test a backup without restoring it into a live database')
+  .action((id: string, bId: string) => backupsDrill(getClient(), id, bId));
+
+backupsCmd
+  .command('drills <databaseId>')
+  .description('List recent backup drills for a database')
+  .action((id: string) => backupsDrills(getClient(), id));
 
 // ── Alerts ─────────────────────────────────────────────────────────────────
 const alertsCmd = program.command('alerts').description('Manage alert rules');

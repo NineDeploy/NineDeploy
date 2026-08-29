@@ -601,6 +601,42 @@ export const backups = sqliteTable(
   }),
 );
 
+// ─── backup drills (G-17) ──────────────────────────────────────────────────
+// One row per drill attempt. The drill reads a backup file and runs an
+// engine-specific smoke check (pg_restore --list, redis-check-rdb, ...)
+// to confirm the dump is at least parseable, without spinning up a real
+// database container. `details_json` carries the engine-specific result
+// (object counts, file size) so a future operator can see *what* the
+// drill actually verified, not just that it passed.
+export const backupDrillStatus = ['pending', 'running', 'passed', 'failed'] as const;
+
+export const backupDrills = sqliteTable(
+  'backup_drills',
+  {
+    id: id(),
+    databaseId: integer('database_id')
+      .notNull()
+      .references(() => databases.id, { onDelete: 'cascade' }),
+    backupId: integer('backup_id')
+      .notNull()
+      .references(() => backups.id, { onDelete: 'cascade' }),
+    status: text('status', { enum: backupDrillStatus }).notNull().default('pending'),
+    engine: text('engine').notNull(),
+    durationMs: integer('duration_ms').notNull().default(0),
+    error: text('error'),
+    // Engine-specific details: pg_restore object counts, redis-check-rdb
+    // stdout tail, mysql/mariadb header summary, etc. Nullable on early
+    // rows that aborted before any output.
+    detailsJson: text('details_json'),
+    startedAt: ts('started_at'),
+    completedAt: integer('completed_at'),
+  },
+  (t) => ({
+    // Per-database drill history list (GET /v1/databases/:id/drills).
+    dbStartedIdx: index('backup_drills_db_started_idx').on(t.databaseId, t.startedAt),
+  }),
+);
+
 // ─── S3-compatible backup destinations ────────────────────────────────────
 export const backupDestinations = sqliteTable('backup_destinations', {
   id: id(),

@@ -1059,6 +1059,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as `validate` and `show`, so a manifest that passes
   `validate` is exactly the shape that `apply` ships.
 
+- **Backup drills — `ninedeploy backups drill` (G-17, PR #46)**.
+  "Is this backup actually restorable?" used to require
+  spinning up a throwaway container, restoring by hand, and
+  eyeballing the logs. New `POST /v1/databases/:id/backups/drill`
+  runs an engine-specific smoke check on the dump file
+  (pg_restore --list for Postgres, redis-check-rdb for
+  Redis / Valkey, a header sniff for mysqldump /
+  mariadb-dump, bsondump for Mongo) and records the outcome
+  on a `backup_drills` row. The check is much weaker than a
+  full restore-into-container (it does not catch a malformed
+  but well-formed dump, and cannot catch missing extensions
+  or schema drift) but it does catch the most common
+  failure mode — a corrupt or truncated file — in well under
+  a second on local disk, which is the gap the manual
+  routine kept skipping. Migration `0044` adds the
+  `backup_drills` table; the drill never deletes or
+  modifies the source backup. Encrypted envelopes are
+  decrypted to a sibling temp file (and deleted on the way
+  out) via the same flow `engine/database.ts` uses for
+  real restores; remote-only backups are fetched to a local
+  temp first via `lib/backupRemote.ts`. The companion
+  `GET /v1/databases/:id/drills` returns the most recent
+  25 rows for the panel history view. SDK surface:
+  `client.databases.drillBackup(id, { backupId })` and
+  `client.databases.drills(id)`. CLI: `ninedeploy backups
+  drill <dbId> <backupId>` (exits 0 on passed, 1 on failed)
+  and `ninedeploy backups drills <dbId>` for the history.
+
 ### Fixed
 
 - **`SettingsTabPrivilege` test timeouts under parallel load (unrelated

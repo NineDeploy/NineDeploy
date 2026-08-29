@@ -7,6 +7,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { config } from '../config.js';
 import { backupDatabase, createBackupReadStream, databaseSize, restoreDatabase } from '../engine/database.js';
 import { deleteRemoteBackup, fetchRemoteBackup, uploadBackup } from '../lib/backupRemote.js';
+import { listBackupDrills, runBackupDrill } from '../lib/backupDrill.js';
 import { assertDatabaseRole, type AuthedUser, loadDatabaseForUser, visibleDatabaseIds } from '../lib/resourceAccess.js';
 import { badRequest, forbidden, notFound, parseId as num } from '../lib/errors.js';
 
@@ -145,6 +146,58 @@ export const databaseBackupRoutes: FastifyPluginAsync = async (app) => {
     }
     void audit(app.db, req.user!.id, 'backup.restore', path.basename(restorePath));
     return { ok: true };
+  });
+
+  // ── backup drill (G-17) ──────────────────────────────────────────────
+  // Runs an engine-specific smoke check on a backup file
+  // (pg_restore --list, redis-check-rdb, mysqldump header
+  // parse, ...). The result lands on a `backup_drills` row
+  // so the panel can show a history without re-running. The
+  // route is intentionally NOT background: the validators
+  // cap at a few seconds and the panel polls the result
+  // row when the operator opens the detail view.
+  app.post<{ Params: { id: string }; Body: { backupId?: number } }>(
+    '/:id/backups/drill',
+    async (req) => {
+      const id = num((req.params as { id: string }).id);
+      const d = await getDb(app, id, req.user!);
+      // Member can read but the drill mutates state (creates
+      // a backup_drills row) — gate at member so a viewer
+      // cannot fill the table with no-ops.
+      await assertDatabaseRole(app.db, d, req.user!, 'member');
+      const body = (req.body ?? {}) as { backupId?: number };
+      if (!body.backupId || typeof body.backupId !== 'number') {
+        throw badRequest('backupId is required');
+      }
+      let result: Awaited<ReturnType<typeof runBackupDrill>>;
+      try {
+        result = await runBackupDrill(app.db, d.id, body.backupId);
+      } catch (err) {
+        throw badRequest(`Drill failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      void audit(
+        app.db,
+        req.user!.id,
+        'backup.drill',
+        `${d.name}: backup=${body.backupId} status=${result.status}`,
+      );
+      return {
+        ok: true,
+        drillId: result.drillId,
+        status: result.status,
+        durationMs: result.durationMs,
+        details: result.details,
+        error: result.error,
+      };
+    },
+  );
+
+  // History list. The panel renders the most recent run
+  // first; a hard cap of 25 keeps the response small.
+  app.get<{ Params: { id: string } }>('/:id/drills', async (req) => {
+    const id = num((req.params as { id: string }).id);
+    const d = await getDb(app, id, req.user!);
+    return listBackupDrills(app.db, d.id, 25);
   });
 };
 

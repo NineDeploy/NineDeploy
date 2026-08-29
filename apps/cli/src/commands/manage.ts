@@ -222,6 +222,59 @@ export async function backupsRestore(client: NineDeployClient, idStr: string, ba
   } catch (err) { fail(err); }
 }
 
+/**
+ * `ninedeploy backups drill <databaseId> <backupId>` — prove a
+ * backup is at least restorable without overwriting the live
+ * database. The drill is an engine-specific smoke check
+ * (pg_restore --list, redis-check-rdb, mysqldump header parse,
+ * ...) and is safe to run on production backups because it
+ * never touches the live container.
+ */
+export async function backupsDrill(client: NineDeployClient, idStr: string, backupIdStr: string): Promise<void> {
+  const id = num(idStr, 'Usage: ninedeploy backups drill <databaseId> <backupId>');
+  const backupId = num(backupIdStr, 'Usage: ninedeploy backups drill <databaseId> <backupId>');
+  let result: Awaited<ReturnType<NineDeployClient['databases']['drillBackup']>>;
+  try {
+    result = await spinner('Drilling', () => client.databases.drillBackup(id, { backupId }));
+  } catch (err) { fail(err); return; }
+  if (result.status === 'passed') {
+    success(`Backup #${backupId} passed the drill in ${result.durationMs} ms.`);
+  } else {
+    error(`Backup #${backupId} FAILED the drill: ${result.error ?? 'unknown reason'}`);
+  }
+  if (result.details) {
+    for (const [k, v] of Object.entries(result.details)) {
+      console.log(`  ${c.dim(`${k}:`)} ${typeof v === 'string' ? v : JSON.stringify(v)}`);
+    }
+  }
+  process.exitCode = result.status === 'passed' ? 0 : 1;
+}
+
+/**
+ * `ninedeploy backups drills <databaseId>` — list the most
+ * recent drill results for a database, newest first.
+ */
+export async function backupsDrills(client: NineDeployClient, idStr: string): Promise<void> {
+  const id = num(idStr, 'Usage: ninedeploy backups drills <databaseId>');
+  const rows = await client.databases.drills(id);
+  if (rows.length === 0) {
+    info('No drills yet.');
+    return;
+  }
+  table(
+    rows.map((r) => ({
+      id: r.id,
+      backup: r.backupId,
+      engine: r.engine,
+      status: r.status,
+      durationMs: r.durationMs,
+      started: fmtTime(new Date(r.startedAt * 1000).toISOString()),
+      error: r.error ?? '',
+    })),
+    ['id', 'backup', 'engine', 'status', 'durationMs', 'started', 'error'],
+  );
+}
+
 // ── alerts ─────────────────────────────────────────────────────────────────
 
 /** `ninedeploy alerts list` */

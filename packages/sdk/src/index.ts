@@ -204,6 +204,37 @@ export interface ApplyManifestInput {
   strategy?: 'merge' | 'replace';
 }
 
+/**
+ * Single row from `GET /v1/databases/:id/drills`. The drill
+ * is an engine-specific smoke check (pg_restore --list,
+ * redis-check-rdb, mysqldump header parse, ...) that proves
+ * a backup is at least parseable without spinning up a real
+ * database container. `details` is the engine-specific
+ * output (object counts, banner, ...).
+ */
+export interface BackupDrillResult {
+  drillId: number;
+  ok: true;
+  status: 'passed' | 'failed';
+  durationMs: number;
+  details: Record<string, unknown> | null;
+  error: string | null;
+}
+
+/** History row from `GET /v1/databases/:id/drills`. */
+export interface BackupDrillEntry {
+  id: number;
+  databaseId: number;
+  backupId: number;
+  status: 'pending' | 'running' | 'passed' | 'failed';
+  engine: string;
+  durationMs: number;
+  error: string | null;
+  details: Record<string, unknown> | null;
+  startedAt: number;
+  completedAt: number | null;
+}
+
 export interface NineDeployClientOptions {
   /** Base URL of the NineDeploy API, e.g. http://localhost:3000. */
   baseUrl: string;
@@ -720,6 +751,17 @@ export interface NineDeployClient {
     setLimits: (id: number, input: SetLimitsInput) => Promise<{ cpuShares: number | null; memLimitMb: number | null }>;
     startStudio: (id: number, port?: number) => Promise<{ ok: boolean; port: number; url: string }>;
     stopStudio: (id: number) => Promise<{ ok: boolean }>;
+    /**
+     * Run an engine-specific smoke check against a backup
+     * file (pg_restore --list, redis-check-rdb, mysqldump
+     * header parse, ...). Returns the drill row with `status`
+     * of `passed` or `failed`; a failed drill is a real
+     * signal that the backup cannot be restored cleanly, not
+     * a warning. Requires the `member` role on the database.
+     */
+    drillBackup: (id: number, input: { backupId: number }) => Promise<BackupDrillResult>;
+    /** List the most recent drills for a database, newest first. */
+    drills: (id: number) => Promise<BackupDrillEntry[]>;
   };
   attachments: {
     list: (serviceId: number) => Promise<Attachment[]>;
@@ -1420,6 +1462,9 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
         await request(`/v1/databases/${id}/studio`, { method: 'DELETE' });
         return { ok: true };
       },
+      drillBackup: (id, input) =>
+        send<BackupDrillResult>('POST', `/v1/databases/${id}/backups/drill`, input),
+      drills: (id) => get<BackupDrillEntry[]>(`/v1/databases/${id}/drills`),
     },
     attachments: {
       list: (serviceId) => get<Attachment[]>(`/v1/services/${serviceId}/attachments`),
