@@ -880,6 +880,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   **100% / 100% / 100% / 100%** — the first time this route
   bundle has been tested at all. +15 tests (new file).
 
+- **`branding.ts` coverage 34.61 / 0 / 20 / 34.61 → 100 / 100 / 100 / 100**
+  *(Sprint 9 PR #41)*. The `apps/server/src/modules/branding.ts`
+  HTTP surface (G-30 white-label) shipped with zero tests. New
+  file `apps/server/test/modules/branding.test.ts` pins the
+  contract: `GET /` returns the four branding fields (`logoUrl`,
+  `primaryColor`, `supportEmail`, `footerHtml`) as `null` when
+  no overrides are stored; the stored overrides come back
+  verbatim; an empty-string override is coerced to `null` so
+  the panel renders the defaults; a direct `configCenter.set`
+  between two GETs does NOT take effect because the route caches
+  the resolved value for 60 s in process. `PATCH /` persists
+  each provided field via `configCenter.set` and returns
+  `{ ok: true }`; an undefined field in the payload is a no-op
+  (it does not clear the existing value); an empty string PATCH
+  clears the field (the GET then renders `null`); an empty body
+  is accepted; a custom body parser that hands the route
+  `undefined` still 200s (the `?? {}` fallback); and the
+  `configCenter.set` call carries the authenticated operator's
+  `userId` in its audit metadata (so the panel's per-field
+  history log attributes the change correctly). +11 tests
+  (new file). Final coverage **100% / 100% / 100% / 100%**.
+
 - **`serviceVolumes.ts` branch coverage 75 → 99** *(Sprint 9 PR #38)*.
   The `apps/server/src/modules/serviceVolumes.ts` route bundle had
   a 25-point branch-coverage gap rooted in four defensive branches
