@@ -423,3 +423,98 @@ describe('settings routes (admin-only)', () => {
     await app.close();
   });
 });
+
+// ── Node enrolment (M-6) ──────────────────────────────────────────────────
+describe('enrolment token', () => {
+  it('GET /enrolment reports enabled=false when no token is configured', async () => {
+    const app = await buildTestApp({ db: createFakeDb() });
+    await app.register(settingsRoutes);
+    const res = await app.inject({ method: 'GET', url: '/enrolment', headers: asUser() });
+    expect(res.json()).toEqual({ enabled: false, token: null });
+    await app.close();
+  });
+
+  it('POST /enrolment/rotate returns the freshly minted token', async () => {
+    const app = await buildTestApp({ db: createFakeDb() });
+    await app.register(settingsRoutes);
+    const res = await app.inject({ method: 'POST', url: '/enrolment/rotate', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { ok: boolean; enabled: boolean; token: string | null };
+    expect(body.ok).toBe(true);
+    expect(body.enabled).toBe(true);
+    expect(body.token).toBeTruthy();
+    await app.close();
+  });
+
+  it('DELETE /enrolment clears the token and reports enabled=false', async () => {
+    const app = await buildTestApp({ db: createFakeDb() });
+    await app.register(settingsRoutes);
+    const res = await app.inject({ method: 'DELETE', url: '/enrolment', headers: asUser() });
+    expect(res.json()).toEqual({ ok: true, enabled: false });
+    await app.close();
+  });
+});
+
+// ── Cloudflare DNS records (G-07 PR-C) ───────────────────────────────────
+describe('Cloudflare DNS records', () => {
+  it('GET /dns-records returns enabled=false when the provider is not cloudflare', async () => {
+    Object.assign(settingsMock.__values, { dns_records_provider: 'namecheap' });
+    const app = await buildTestApp({ db: createFakeDb() });
+    await app.register(settingsRoutes);
+    const res = await app.inject({ method: 'GET', url: '/dns-records', headers: asUser() });
+    expect(res.json()).toMatchObject({ enabled: false });
+    for (const k of Object.keys(settingsMock.__values)) delete settingsMock.__values[k];
+    await app.close();
+  });
+
+  it('GET /dns-records returns enabled=false when no settings are stored', async () => {
+    for (const k of Object.keys(settingsMock.__values)) delete settingsMock.__values[k];
+    const app = await buildTestApp({ db: createFakeDb() });
+    await app.register(settingsRoutes);
+    const res = await app.inject({ method: 'GET', url: '/dns-records', headers: asUser() });
+    expect(res.json()).toEqual({ enabled: false, hasToken: false, content: null });
+    await app.close();
+  });
+
+  it('PUT /dns-records saves the new enabled/token/content triple', async () => {
+    for (const k of Object.keys(settingsMock.__values)) delete settingsMock.__values[k];
+    const app = await buildTestApp({ db: createFakeDb() });
+    await app.register(settingsRoutes);
+    const res = await app.inject({
+      method: 'PUT',
+      url: '/dns-records',
+      headers: asUser(),
+      payload: { enabled: true, token: 'cf-token-1234567890', content: '1.2.3.4' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: true, enabled: true });
+    for (const k of Object.keys(settingsMock.__values)) delete settingsMock.__values[k];
+    await app.close();
+  });
+
+  it('PUT /dns-records with enabled=false clears the provider', async () => {
+    Object.assign(settingsMock.__values, { dns_records_provider: 'cloudflare' });
+    const app = await buildTestApp({ db: createFakeDb() });
+    await app.register(settingsRoutes);
+    const res = await app.inject({
+      method: 'PUT',
+      url: '/dns-records',
+      headers: asUser(),
+      payload: { enabled: false, content: '' },
+    });
+    expect(res.json()).toEqual({ ok: true, enabled: false });
+    for (const k of Object.keys(settingsMock.__values)) delete settingsMock.__values[k];
+    await app.close();
+  });
+
+  it('POST /dns-records/test returns ok:false when no token is configured', async () => {
+    for (const k of Object.keys(settingsMock.__values)) delete settingsMock.__values[k];
+    const app = await buildTestApp({ db: createFakeDb() });
+    await app.register(settingsRoutes);
+    const res = await app.inject({ method: 'POST', url: '/dns-records/test', headers: asUser() });
+    const body = res.json() as { ok: boolean; error?: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toMatch(/No Cloudflare token/);
+    await app.close();
+  });
+});
