@@ -1025,6 +1025,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   zod schema's `^nd-(svc|db)-[a-z0-9_.-]+$` regex rejects the
   same inputs first. +14 tests (28 → 42).
 
+- **`ninedeploy manifest apply` server endpoint (PR #45)**.
+  The `manifest apply` CLI subcommand used to print a
+  "not in this release yet" banner because the panel had no
+  matching route. New `POST /v1/services/:id/manifest/apply`
+  on the server reconciles a parsed `.ninedeploy` into the
+  service + build config rows with `merge` semantics
+  (operator > manifest > DB): a section the manifest omits
+  is left alone, and a column the operator set in the panel
+  is never silently clobbered. Sections reconciled here:
+  `build` → `build_configs` (installCmd, buildCmd, startCmd,
+  baseDir, dockerfilePath), `run` → `services` (port,
+  healthPath) + `build_configs` (restartPolicy, stopGraceSeconds;
+  the latter auto-bumped to 30 s when a long preStop hook
+  needs drain time), and `network` → `services.publishedPort`.
+  Routes / alerts / database reconciliation continues to live
+  in `lib/applyManifestToService.ts` at deploy time — that
+  helper and this one write to disjoint tables (domains,
+  alert_rules, database_attachments vs. services,
+  build_configs), so the split is by responsibility rather
+  than by file. Auth is `requireAdmin`: a stale manifest in
+  git could otherwise be pushed by a workspace `member` to
+  mutate another tenant's service definition. The route
+  returns `{ ok, serviceId, touched, diff }`; the CLI
+  renders the diff as a `git diff`-style summary
+  (`Touched: service, build_config` followed by per-section
+  `key  value` lines) and refuses to send a payload whose
+  body the secret scanner has flagged. SDK surface:
+  `client.services.manifest.apply(serviceId, { manifest,
+  strategy? })`; both the SDK and the CLI's
+  `apps/cli/src/commands/manifest.ts` subcommand now share
+  the same `parseManifestYaml` + `scanForSecrets` preflight
+  as `validate` and `show`, so a manifest that passes
+  `validate` is exactly the shape that `apply` ships.
+
 ### Fixed
 
 - **`SettingsTabPrivilege` test timeouts under parallel load (unrelated

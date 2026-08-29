@@ -100,6 +100,7 @@ import type {
   WorkspaceMemberAddInput,
   WorkspaceMemberRoleUpdateInput,
   OidcPublicProvider,
+  NinedeployManifest,
   WorkspaceInvitationEntry,
   WorkspaceInvitationPublic,
   WorkspaceRole,
@@ -162,6 +163,45 @@ export interface TemplatePrepareResult {
   deploymentId: number;
   generatedSecrets: Array<{ key: string; value: string }>;
   stages: TemplateDeployResult['stages'];
+}
+
+/**
+ * Response from `services.manifest.apply`. The server returns the
+ * subset of fields the manifest actually changed under each
+ * section; untouched fields stay in the panel-managed column
+ * and do not appear in `diff`.
+ */
+export interface ApplyManifestResult {
+  ok: boolean;
+  serviceId: number;
+  /** Sections the server actually wrote: `service`, `build_config`. */
+  touched: string[];
+  diff: {
+    service: {
+      port?: number;
+      healthPath?: string;
+      publishedPort?: number | null;
+    };
+    build: {
+      installCmd?: string;
+      buildCmd?: string;
+      startCmd?: string;
+      baseDir?: string;
+      dockerfilePath?: string | null;
+      restartPolicy?: string;
+      stopGraceSeconds?: number;
+    };
+  };
+}
+
+/** Body for `services.manifest.apply`. The manifest shape itself
+ *  comes from `@ninedeploy/schemas`'s `ninedeployManifest` parser. */
+export interface ApplyManifestInput {
+  manifest: NinedeployManifest;
+  /** `merge` (default) preserves fields the manifest omits;
+   *  `replace` is per-field (not per-row) and still leaves
+   *  unmentioned sections alone. */
+  strategy?: 'merge' | 'replace';
 }
 
 export interface NineDeployClientOptions {
@@ -264,6 +304,23 @@ export interface NineDeployClient {
     clone: (id: number, input?: { name?: string; slug?: string }) => Promise<Service>;
     exportUrl: (id: number) => string;
     importBundle: (bundle: unknown) => Promise<{ ok: boolean; serviceId: number; slug: string; message: string }>;
+    /**
+     * `.ninedeploy` manifest endpoints. The server applies
+     * build / run / network sections to the service + build
+     * config rows (operator > manifest > DB merge semantics);
+     * routes / alerts / database reconcile happens at deploy
+     * time via the deploy pipeline and is intentionally
+     * outside this endpoint's scope.
+     */
+    manifest: {
+      /**
+       * Push a parsed manifest to the panel and reconcile it
+       * into the service. Requires the `admin` role on the
+       * service. The response echoes the diff so the CLI can
+       * render a one-shot summary without a follow-up GET.
+       */
+      apply: (serviceId: number, input: ApplyManifestInput) => Promise<ApplyManifestResult>;
+    };
   };
   labels: {
     /** `query` is appended verbatim, e.g. `?workspaceId=1`. */
@@ -1007,6 +1064,10 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
       clone: (id, input) => send<Service>('POST', `/v1/services/${id}/clone`, input ?? {}),
       exportUrl: (id) => `/v1/services/${id}/export`,
       importBundle: (bundle) => send<{ ok: boolean; serviceId: number; slug: string; message: string }>('POST', '/v1/services/import', bundle),
+      manifest: {
+        apply: (serviceId, input) =>
+          send<ApplyManifestResult>('POST', `/v1/services/${serviceId}/manifest/apply`, input),
+      },
     },
     labels: {
       list: (query) => get<Label[]>(`/v1/labels${query ?? ''}`),

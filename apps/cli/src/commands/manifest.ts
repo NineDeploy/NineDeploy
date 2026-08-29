@@ -210,16 +210,22 @@ export function manifestShow(cwd: string): void {
 // ── `ninedeploy manifest apply` ───────────────────────────────────────────
 
 /**
- * Reserved for the next minor: the server endpoint that accepts a parsed
- * manifest and applies its operational sections (routes, alerts,
- * attachments) to a service is not in this PR. We keep the action wired
- * so the CLI surface is complete; the call returns a clear "not yet"
- * message so the operator is not silently misled.
+ * Push a parsed `.ninedeploy` manifest to the panel and reconcile its
+ * build / run / network sections into the service + build config rows.
+ * Routes, alerts, and database attachments still reconcile at deploy
+ * time via the pipeline (see docs/NINEDEPLOY_MANIFEST.md §6).
+ *
+ * The CLI runs the same secret scan as `validate` before sending the
+ * body — a manifest with a literal token in it is dangerous to push
+ * to the server (it lands in the audit log + DB rows), and the panel's
+ * own scan only fires on the file path, not on the JSON body. Refuse
+ * early with a clear error instead of round-tripping a payload we know
+ * we'll reject server-side.
  */
 export async function manifestApply(
-  _client: NineDeployClient,
+  client: NineDeployClient,
   cwd: string,
-  _serviceId: number,
+  serviceId: number,
 ): Promise<void> {
   header('Manifest apply');
   const file = findManifest(cwd);
@@ -228,10 +234,75 @@ export async function manifestApply(
     process.exitCode = 1;
     return;
   }
-  info('The server-side `apply` endpoint is not in this release yet.');
-  info('Until it ships, manifests are applied automatically on each deploy:');
-  info('  • build/runtime sections → read by the docker builder');
-  info('  • routes/alerts/database  → upserted by the deploy pipeline');
-  info('Track progress in docs/NINEDEPLOY_MANIFEST.md.');
-  info(`(Found manifest at ${file}; will be applied once the endpoint ships.)`);
+  const text = readFileSync(file, 'utf8');
+  const hits = scanForSecrets(text);
+  if (hits.length > 0) {
+    error(`Secret-pattern matches in ${file}:`);
+    for (const h of hits) {
+      console.log(`  ${c.yellow('•')} ${h.patternId}: ${h.description} → ${h.redacted}`);
+    }
+    console.log(c.dim('Move these values to the panel env vault; the manifest is committed to the repo.'));
+    process.exitCode = 1;
+    return;
+  }
+  let manifest: NinedeployManifest;
+  try {
+    manifest = parseManifestYaml(text);
+  } catch (err) {
+    if (err instanceof ManifestParseError) {
+      error(`YAML parse error in ${file}:`);
+      console.log(c.dim((err as ManifestParseError).message));
+    } else if (err instanceof ManifestValidationError) {
+      const v = err as ManifestValidationError;
+      error(`Schema validation failed for ${file}:`);
+      for (const issue of v.issues) {
+        console.log(`  ${c.yellow('•')} ${issue.path || '<root>'}: ${issue.message}`);
+      }
+    } else {
+      throw err;
+    }
+    process.exitCode = 1;
+    return;
+  }
+
+  let result: Awaited<ReturnType<NineDeployClient['services']['manifest']['apply']>>;
+  try {
+    result = await client.services.manifest.apply(serviceId, { manifest });
+  } catch (err) {
+    error(`Apply failed: ${err instanceof Error ? err.message : String(err)}`);
+    process.exitCode = 1;
+    return;
+  }
+
+  success(`Applied ${file} → service ${result.serviceId}`);
+  if (result.touched.length === 0) {
+    info('No sections changed (the manifest matched the current service + build config).');
+    return;
+  }
+  info(`Touched: ${result.touched.join(', ')}`);
+  const serviceKeys = Object.keys(result.diff.service);
+  if (serviceKeys.length > 0) {
+    console.log();
+    console.log(c.bold('  service'));
+    for (const k of serviceKeys) {
+      const v = (result.diff.service as Record<string, unknown>)[k];
+      console.log(`    ${k.padEnd(14)} ${formatValue(v)}`);
+    }
+  }
+  const buildKeys = Object.keys(result.diff.build);
+  if (buildKeys.length > 0) {
+    console.log();
+    console.log(c.bold('  build_config'));
+    for (const k of buildKeys) {
+      const v = (result.diff.build as Record<string, unknown>)[k];
+      console.log(`    ${k.padEnd(16)} ${formatValue(v)}`);
+    }
+  }
+}
+
+function formatValue(v: unknown): string {
+  if (v === null) return c.dim('null');
+  if (v === undefined) return c.dim('(unset)');
+  if (typeof v === 'string') return v;
+  return JSON.stringify(v);
 }

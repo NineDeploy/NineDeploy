@@ -575,7 +575,7 @@ manifest
   .action(() => manifestShow(process.cwd()));
 manifest
   .command('apply <serviceId>')
-  .description('Apply the manifest to a service (placeholder — wired in the next release)')
+  .description('Apply the .ninedeploy manifest to a service (requires admin role)')
   .action((serviceId: string) => manifestApply(getClient(), process.cwd(), Number(serviceId)));
 
 // ── Templates (one-click starter manifests from the panel registry) ───────

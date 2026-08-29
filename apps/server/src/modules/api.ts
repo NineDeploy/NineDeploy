@@ -30,6 +30,7 @@ import { ssoRoutes } from './sso.js';
 import { metricRoutes, statsRoutes } from './stats.js';
 import { metricHistoryRoutes } from './metricHistory.js';
 import { servicesRoutes } from './services.js';
+import { manifestRoutes } from './manifest.js';
 import { serviceMigrationRoutes } from './serviceMigration.js';
 import { serviceVolumesRoutes } from './serviceVolumes.js';
 import { settingsRoutes } from './settings.js';
@@ -115,6 +116,7 @@ export const apiRoutes: FastifyPluginAsync = async (app) => {
   await app.register(tunnelRoutes, { prefix: '/tunnels' });
   await app.register(templateRoutes, { prefix: '/templates' });
   await app.register(servicesRoutes, { prefix: '/services' });
+  await app.register(manifestRoutes, { prefix: '/services' });
   await app.register(serviceVolumesRoutes, { prefix: '/services' });
   await app.register(deploysRoutes, { prefix: '/services' });
   await app.register(domainsRoutes, { prefix: '/services' });
