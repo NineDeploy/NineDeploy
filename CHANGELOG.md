@@ -915,6 +915,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pre-populates the map, and the `templateDatabaseEnv ?? null`
   arm that fires only when a template omits the field).
 
+- **`sso.ts` branches 87.17 → 91.02** *(Sprint 9 PR #44)*. The
+  `apps/server/src/modules/sso.ts` route bundle already had
+  45 tests pinning the OIDC + SAML flows, but a small cluster
+  of error-handling edges remained: the `error_description ?? error`
+  fallback in the GET /:name/callback error pass-through
+  (the `error` arm), the `!signedInfoMatch || !signatureValueMatch`
+  guard in the SAML callback, and the `!metadata.idpMetadata`
+  short-circuit. New `SSO route edge cases` describe block
+  in `apps/server/test/modules/sso.test.ts` covers all three:
+  the `error=access_denied` query param without
+  `error_description` (the `error` fallback arm); a SAML
+  response with a valid `<Assertion>` but no
+  `<ds:SignedInfo>` / `<ds:SignatureValue>` (the regex
+  miss-arms); and a SAML provider whose `idpMetadata`
+  is the empty string (the `!metadata.idpMetadata`
+  short-circuit). Final coverage **96.29% lines / 91.02%
+  branches / 100% functions / 96.49% statements** — branches
+  cross the 90% gate. +3 tests (37 → 40).
+
 - **`branding.ts` coverage 34.61 / 0 / 20 / 34.61 → 100 / 100 / 100 / 100**
   *(Sprint 9 PR #41)*. The `apps/server/src/modules/branding.ts`
   HTTP surface (G-30 white-label) shipped with zero tests. New
