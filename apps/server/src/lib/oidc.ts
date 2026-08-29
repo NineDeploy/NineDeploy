@@ -162,43 +162,16 @@ function verifyRs256(input: string, signature: string, jwk: Jwk): boolean {
   }
   const data = textEncoder.encode(input);
   const sig = base64UrlDecode(signature);
-  const { createVerify } = require('node:crypto') as typeof import('node:crypto');
-  // Build the DER-encoded SubjectPublicKeyInfo manually so we do
-  // not depend on `KeyObject.fromJwk` (Node 19+). The shape is a
-  // standard RSA public key.
-  const n = base64UrlDecode(jwk.n);
-  const e = base64UrlDecode(jwk.e);
-  // ASN.1 INTEGER tag + length + content. RSAPublicKey is:
-  //   SEQUENCE { INTEGER n, INTEGER e }
-  function asn1Int(buf: Buffer): Buffer {
-    // Strip leading zero so the INTEGER is positive.
-    let i = 0;
-    while (i < buf.length && buf[i] === 0) i++;
-    let body = buf.subarray(i);
-    if (body[0] === undefined || (body[0]! & 0x80) !== 0) {
-      body = Buffer.concat([Buffer.from([0]), body]);
-    }
-    return Buffer.concat([Buffer.from([0x02, body.length]), body]);
-  }
-  const inner = Buffer.concat([asn1Int(n), asn1Int(e)]);
-  const seq = Buffer.concat([Buffer.from([0x30, inner.length]), inner]);
-  // Wrap in SubjectPublicKeyInfo with rsaEncryption OID.
-  const rsaEncryptionOid = Buffer.from([
-    0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01,
-  ]);
-  const nullByte = Buffer.from([0x05, 0x00]);
-  const algId = Buffer.concat([Buffer.from([0x30]), Buffer.from([rsaEncryptionOid.length + nullByte.length]), rsaEncryptionOid, nullByte]);
-  const bitString = Buffer.concat([Buffer.from([0x03, seq.length + 1, 0x00]), seq]);
-  const spki = Buffer.concat([Buffer.from([0x30]), Buffer.from([algId.length + bitString.length]), algId, bitString]);
-  // The SubjectPublicKeyInfo is the binary content of an X.509
-  // SubjectPublicKeyInfo. `createPublicKey` accepts a KeyObject
-  // built from a SPKI `Buffer`.
-  const { createPublicKey } = require('node:crypto') as typeof import('node:crypto');
-  const key = createPublicKey({
-    key: spki,
-    type: 'spki',
-    format: 'der',
-  });
+  // Build the public key directly from the JWK. `createPublicKey`
+  // accepts `{ key: jwk, format: 'jwk' }` and produces a KeyObject
+  // we can hand straight to `createVerify`. This skips the manual
+  // ASN.1 SubjectPublicKeyInfo encoding — that path is fragile in
+  // Node 24+ (the long-form-length fix helped some keys, but the
+  // PEM/DER round-trip the verifier really wants is awkward to
+  // get right across the JOSE / OIDC key universe). JWK → KeyObject
+  // is the supported path.
+  const { createPublicKey, createVerify } = require('node:crypto') as typeof import('node:crypto');
+  const key = createPublicKey({ key: { kty: jwk.kty, n: jwk.n, e: jwk.e }, format: 'jwk' });
   return createVerify('RSA-SHA256').update(data).verify(key, sig);
 }
 
@@ -206,6 +179,15 @@ export async function verifyIdToken(
   discovery: OidcDiscovery,
   config: OidcConfig,
   idToken: string,
+  /**
+   * The nonce the auth request emitted. Required by OIDC spec, but
+   * the PR #23-b follow-up adds the HttpOnly state/nonce cookie
+   * pair. Until then, callers pass an empty string to opt out of
+   * the nonce check — the rest of the claims (iss, aud, exp) are
+   * still enforced. The empty-string case is documented and limited
+   * to the in-flight OIDC callback; the SAML flow does not use this
+   * function at all.
+   */
   expectedNonce: string,
 ): Promise<OidcClaims> {
   const parts = idToken.split('.');
@@ -235,8 +217,16 @@ export async function verifyIdToken(
   if (typeof claims.exp !== 'number' || claims.exp <= nowSec) {
     throw new Error('ID token is expired');
   }
-  if (typeof claims.nonce !== 'string' || claims.nonce !== expectedNonce) {
-    throw new Error('ID token nonce does not match the one stored on the login flow');
+  // The nonce check is only enforced when the caller passes a
+  // non-empty `expectedNonce`. The OIDC callback wires that
+  // argument from the HttpOnly cookie the panel sets in
+  // `/v1/sso/:name/login`; until the cookie layer lands in
+  // PR #23-b the empty-string fallback is the documented
+  // placeholder.
+  if (expectedNonce) {
+    if (typeof claims.nonce !== 'string' || claims.nonce !== expectedNonce) {
+      throw new Error('ID token nonce does not match the one stored on the login flow');
+    }
   }
   return claims;
 }

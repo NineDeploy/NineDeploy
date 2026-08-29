@@ -175,10 +175,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   search, audit reconciliation) can share. The endpoint refuses
   unknown emails with a "no local user matches …" envelope —
   SAML is for existing operators, not a public sign-up path;
-  invitations remain the operator-issuance flow. The OIDC
-  callback's "[redacted — session mints in PR #23-b]" placeholder
-  stays in place; the OIDC session-mint glue lands in the next PR
-  alongside the `state` / `nonce` HttpOnly cookie work.
+  invitations remain the operator-issuance flow.
+
+- **OIDC session-mint glue (G-22 PR-C).** The OIDC callback
+  (`GET /v1/sso/:name/callback`) now runs the full code-exchange
+  + `id_token` verification + local user lookup + session-mint
+  flow instead of returning a "[redacted]" placeholder. The route
+  surfaces the IdP's `?error=…&error_description=…` redirect
+  parameters verbatim so the panel can render a useful toast;
+  exchanges the authorization `code` at the IdP's
+  `token_endpoint` (form-encoded POST); verifies the returned
+  `id_token` (JWKS-backed RS256, iss / aud / exp / nonce checks);
+  requires an `email` claim; looks up the matching local user via
+  the new `findUserByEmail` helper; and mints the same access +
+  refresh token pair the email/password flow produces. The
+  OIDC-specific nonce check (the one that ties the auth request
+  to the callback) is documented as the PR #23-b follow-up: the
+  `expectedNonce` argument to `verifyIdToken` is empty for now,
+  opting the route out of that one check. A pre-existing bug in
+  the JWK → SPKI DER encoder (the long-form ASN.1 length was
+  missing for >127 byte modulus blocks) is fixed by going
+  through `createPublicKey({ key: jwk, format: 'jwk' })` directly,
+  which Node 24 supports and which the OIDC spec already
+  endorses. Tests use unique `idp<salt>.example.com` issuers per
+  case so the JWKS cache doesn't leak keys across runs.
 
 - **Namecheap DNS records (G-07 PR-A).** The third `IDomainProvider`
   driver joins Cloudflare and DNSimple on the kernel's

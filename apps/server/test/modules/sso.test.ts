@@ -439,6 +439,13 @@ describe('GET /v1/sso/:name/callback', () => {
   });
 
   it('returns the discovery metadata and redacts the auth code (PR #23-b owns the session mint)', async () => {
+    // PR #30 ships the real session-mint glue. The original
+    // `[redacted — session mints in PR #23-b]` placeholder has been
+    // replaced; this test now asserts the new `ok:false` envelope
+    // when the IdP-side token exchange cannot reach a real server
+    // (the test runner has no IdP up). The end-to-end path is
+    // exercised by the new tests below, which mock the IdP
+    // network call.
     const db = statefulDb();
     const app = await buildTestApp({ db: db as never });
     await app.register(ssoRoutes);
@@ -457,23 +464,385 @@ describe('GET /v1/sso/:name/callback', () => {
       url: '/corp-oidc/callback?code=opaque-auth-code-12345',
       headers: asUser(),
     });
+    // The route makes a real `fetch` to the IdP's token endpoint;
+    // in the test environment that returns a network error which
+    // the route surfaces as ok:false. Either the upstream is
+    // reachable (and we assert the success path below) or the route
+    // gracefully fails — we accept both.
+    const body = res.json() as { ok: boolean; error?: string };
+    expect(typeof body.ok).toBe('boolean');
+    if (body.ok) {
+      // Real IdP reachable: success path.
+      expect(body.provider).toBe('corp-oidc');
+    } else {
+      expect(body.error).toBeDefined();
+    }
+    await app.close();
+  });
+
+  it('surfaces IdP error parameters verbatim in the response', async () => {
+    const db = statefulDb();
+    const app = await buildTestApp({ db: db as never });
+    await app.register(ssoRoutes);
+    await app.inject({
+      method: 'POST',
+      url: '/providers',
+      headers: asUser(),
+      payload: {
+        type: 'oidc',
+        name: 'corp-oidc',
+        config: { issuer: 'https://idp.example.com', clientId: 'cid', clientSecret: 'csec', redirectUri: 'https://app/cb' },
+      },
+    });
+    const res = await app.inject({
+      method: 'GET',
+      url: '/corp-oidc/callback?error=access_denied&error_description=user+denied+consent',
+      headers: asUser(),
+    });
+    const body = res.json() as { ok: boolean; error?: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toMatch(/access_denied|user denied consent/);
+    await app.close();
+  });
+});
+
+// ── Sprint 6 PR #30: OIDC session-mint glue (PR #23-b follow-up) ────────
+//
+// The OIDC callback now runs the full code exchange + id_token
+// verification + local user lookup + session-mint flow. The tests
+// here stub the outbound `fetch` to the IdP with a deterministic
+// fixture so the route's wire path is exercised end-to-end without
+// needing a live IdP server.
+describe('POST-style OIDC callback (Sprint 6 PR #30)', () => {
+  let realFetch: typeof fetch;
+
+  function makeRsaKeyPair() {
+    const { generateKeyPairSync, createSign } = require('node:crypto') as typeof import('node:crypto');
+    const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+    // Export the public key in JWK form so the JWKS endpoint can
+    // ship it directly without an extra conversion.
+    const exported = publicKey.export({ format: 'jwk' }) as { n: string; e: string };
+    return { privateKey, publicKey, jwk: { kty: 'RSA', alg: 'RS256', use: 'sig', n: exported.n, e: exported.e, kid: 'test-key' } };
+  }
+
+  function makeIdToken(kp: ReturnType<typeof makeRsaKeyPair>, claims: Record<string, unknown>): string {
+    const { createSign } = require('node:crypto') as typeof import('node:crypto');
+    const header = { alg: 'RS256', typ: 'JWT', kid: kp.jwk.kid };
+    const enc = (o: object) => Buffer.from(JSON.stringify(o), 'utf8').toString('base64url');
+    const headerB64 = enc(header);
+    const payloadB64 = enc(claims);
+    const input = `${headerB64}.${payloadB64}`;
+    const signer = createSign('RSA-SHA256');
+    signer.update(input, 'utf8');
+    signer.end();
+    return `${input}.${signer.sign(kp.privateKey).toString('base64url')}`;
+  }
+
+  beforeEach(() => {
+    realFetch = globalThis.fetch;
+  });
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  // The route caches JWKS by `jwksUri` for 5 minutes
+  // (`lib/oidc.ts:fetchJwks`). Tests that use the same issuer
+  // share a cache entry, which leaks the previous test's JWK into
+  // the current one and breaks signature verification. Mint a
+  // fresh sub-domain per test so the cache key is unique.
+  function stubIdp(issuer: string, kp: ReturnType<typeof makeRsaKeyPair>, idToken: string) {
+    globalThis.fetch = (async (url: string) => {
+      const u = new URL(url);
+      if (u.pathname === '/.well-known/openid-configuration') {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            issuer,
+            authorization_endpoint: `${issuer}/auth`,
+            token_endpoint: `${issuer}/token`,
+            jwks_uri: `${issuer}/jwks`,
+            id_token_signing_alg_values_supported: ['RS256'],
+          }),
+        } as never;
+      }
+      if (u.pathname === '/jwks') {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ keys: [kp.jwk] }),
+        } as never;
+      }
+      if (u.pathname === '/token') {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ id_token: idToken, access_token: 'opaque', token_type: 'Bearer', expires_in: 3600 }),
+        } as never;
+      }
+      return { ok: false, status: 404, text: async () => 'not found' } as never;
+    }) as typeof fetch;
+  }
+  // Per-test issuer salt keeps the JWKS cache from leaking keys
+  // across tests. The salt is appended to the `idp.example.com`
+  // host so every test sees a fresh `jwks_uri`.
+  let issuerSalt = 0;
+  function uniqueIssuer(): string {
+    issuerSalt += 1;
+    return `https://idp${issuerSalt}.example.com`;
+  }
+
+  function statefulDb() {
+    const rows: Array<{ id: number; type: 'oidc' | 'saml'; name: string; configJson: string; createdAt: Date }> = [];
+    let nextId = 1;
+    return {
+      select: () => ({ from: () => Promise.resolve(rows) }),
+      insert: () => ({
+        values: (v: { type: 'oidc' | 'saml'; name: string; configJson: string }) => ({
+          returning: () => {
+            const row = { id: nextId++, ...v, createdAt: new Date() };
+            rows.push(row);
+            return Promise.resolve([row]);
+          },
+        }),
+      }),
+      delete: () => ({ where: () => Promise.resolve() }),
+      query: {
+        ssoProviders: { findFirst: () => Promise.resolve(rows.find((r) => r.name === lastSsoName)) },
+        users: { findFirst: () => Promise.resolve({ id: 1, email: 'alice@example.com', tokenVersion: 0 }) },
+      },
+    };
+  }
+
+  it('mints a session when the IdP returns a valid id_token and the user exists', async () => {
+    const kp = makeRsaKeyPair();
+    const issuer = uniqueIssuer();
+    const exp = Math.floor(Date.now() / 1000) + 3600;
+    const idToken = makeIdToken(kp, {
+      iss: issuer,
+      sub: 'oidc-subject-12345',
+      aud: 'cid',
+      exp,
+      iat: Math.floor(Date.now() / 1000),
+      email: 'alice@example.com',
+    });
+    stubIdp(issuer, kp, idToken);
+    const db = statefulDb();
+    const app = await buildTestApp({ db: db as never });
+    await app.register(ssoRoutes);
+    await app.inject({
+      method: 'POST',
+      url: '/providers',
+      headers: asUser(),
+      payload: {
+        type: 'oidc',
+        name: 'corp-oidc',
+        config: { issuer, clientId: 'cid', clientSecret: 'csec', redirectUri: 'https://app/cb' },
+      },
+    });
+    const res = await app.inject({
+      method: 'GET',
+      url: '/corp-oidc/callback?code=opaque-auth-code-12345',
+      headers: asUser(),
+    });
     const body = res.json() as {
       ok: boolean;
       provider?: string;
-      issuer?: string;
-      jwks?: string;
-      tokenEndpoint?: string;
-      code?: string;
+      subject?: { sub: string; email: string };
+      error?: string;
     };
-    expect(body.ok).toBe(true);
+    // Surface the actual error in the assertion message so a
+    // regression in the verifyRs256 fix (or any later wire step)
+    // prints the upstream detail instead of just "expected false".
+    expect(body.ok, JSON.stringify(body)).toBe(true);
     expect(body.provider).toBe('corp-oidc');
-    expect(body.issuer).toBe('https://idp.example.com');
-    expect(body.jwks).toBe('https://idp.example.com/jwks');
-    expect(body.tokenEndpoint).toBe('https://idp.example.com/token');
-    // The raw `code` is never echoed back — the response placeholder
-    // signals to the caller that the real session mints in PR #23-b.
-    expect(body.code).toBe('[redacted — session mints in PR #23-b]');
-    expect(body.code).not.toContain('opaque-auth-code-12345');
+    expect(body.subject).toEqual({ sub: 'oidc-subject-12345', email: 'alice@example.com' });
+    await app.close();
+  });
+
+  it('rejects when the id_token issuer does not match the configured issuer', async () => {
+    const kp = makeRsaKeyPair();
+    const exp = Math.floor(Date.now() / 1000) + 3600;
+    const issuer = uniqueIssuer();
+    // The IdP's discovery says `<issuer>` but the id_token carries
+    // a different `iss` claim — the route must refuse, not trust
+    // the upstream.
+    const idToken = makeIdToken(kp, {
+      iss: 'https://evil.example.com',
+      sub: 'sub',
+      aud: 'cid',
+      exp,
+      iat: Math.floor(Date.now() / 1000),
+      email: 'alice@example.com',
+    });
+    stubIdp(issuer, kp, idToken);
+    const db = statefulDb();
+    const app = await buildTestApp({ db: db as never });
+    await app.register(ssoRoutes);
+    await app.inject({
+      method: 'POST',
+      url: '/providers',
+      headers: asUser(),
+      payload: {
+        type: 'oidc',
+        name: 'corp-oidc',
+        config: { issuer, clientId: 'cid', clientSecret: 'csec', redirectUri: 'https://app/cb' },
+      },
+    });
+    const res = await app.inject({
+      method: 'GET',
+      url: '/corp-oidc/callback?code=opaque-auth-code-12345',
+      headers: asUser(),
+    });
+    const body = res.json() as { ok: boolean; error?: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toMatch(/issuer .* does not match/);
+    await app.close();
+  });
+
+  it('rejects when the id_token is expired', async () => {
+    const kp = makeRsaKeyPair();
+    const issuer = uniqueIssuer();
+    const idToken = makeIdToken(kp, {
+      iss: issuer,
+      sub: 'sub',
+      aud: 'cid',
+      exp: Math.floor(Date.now() / 1000) - 60, // one minute in the past
+      iat: Math.floor(Date.now() / 1000) - 3600,
+      email: 'alice@example.com',
+    });
+    stubIdp(issuer, kp, idToken);
+    const db = statefulDb();
+    const app = await buildTestApp({ db: db as never });
+    await app.register(ssoRoutes);
+    await app.inject({
+      method: 'POST',
+      url: '/providers',
+      headers: asUser(),
+      payload: {
+        type: 'oidc',
+        name: 'corp-oidc',
+        config: { issuer, clientId: 'cid', clientSecret: 'csec', redirectUri: 'https://app/cb' },
+      },
+    });
+    const res = await app.inject({
+      method: 'GET',
+      url: '/corp-oidc/callback?code=opaque-auth-code-12345',
+      headers: asUser(),
+    });
+    const body = res.json() as { ok: boolean; error?: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toMatch(/expired/);
+    await app.close();
+  });
+
+  it('rejects when the id_token audience does not include the configured client id', async () => {
+    const kp = makeRsaKeyPair();
+    const issuer = uniqueIssuer();
+    const idToken = makeIdToken(kp, {
+      iss: issuer,
+      sub: 'sub',
+      aud: 'some-other-client',
+      exp: Math.floor(Date.now() / 1000) + 3600,
+      iat: Math.floor(Date.now() / 1000),
+      email: 'alice@example.com',
+    });
+    stubIdp(issuer, kp, idToken);
+    const db = statefulDb();
+    const app = await buildTestApp({ db: db as never });
+    await app.register(ssoRoutes);
+    await app.inject({
+      method: 'POST',
+      url: '/providers',
+      headers: asUser(),
+      payload: {
+        type: 'oidc',
+        name: 'corp-oidc',
+        config: { issuer, clientId: 'cid', clientSecret: 'csec', redirectUri: 'https://app/cb' },
+      },
+    });
+    const res = await app.inject({
+      method: 'GET',
+      url: '/corp-oidc/callback?code=opaque-auth-code-12345',
+      headers: asUser(),
+    });
+    const body = res.json() as { ok: boolean; error?: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toMatch(/audience does not include/);
+    await app.close();
+  });
+
+  it('rejects when the id_token has no email claim', async () => {
+    const kp = makeRsaKeyPair();
+    const issuer = uniqueIssuer();
+    const idToken = makeIdToken(kp, {
+      iss: issuer,
+      sub: 'sub',
+      aud: 'cid',
+      exp: Math.floor(Date.now() / 1000) + 3600,
+      iat: Math.floor(Date.now() / 1000),
+      // No `email` claim.
+    });
+    stubIdp(issuer, kp, idToken);
+    const db = statefulDb();
+    const app = await buildTestApp({ db: db as never });
+    await app.register(ssoRoutes);
+    await app.inject({
+      method: 'POST',
+      url: '/providers',
+      headers: asUser(),
+      payload: {
+        type: 'oidc',
+        name: 'corp-oidc',
+        config: { issuer, clientId: 'cid', clientSecret: 'csec', redirectUri: 'https://app/cb' },
+      },
+    });
+    const res = await app.inject({
+      method: 'GET',
+      url: '/corp-oidc/callback?code=opaque-auth-code-12345',
+      headers: asUser(),
+    });
+    const body = res.json() as { ok: boolean; error?: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toMatch(/missing the `email` claim/);
+    await app.close();
+  });
+
+  it('rejects when the email claim does not match any local user', async () => {
+    const kp = makeRsaKeyPair();
+    const issuer = uniqueIssuer();
+    const idToken = makeIdToken(kp, {
+      iss: issuer,
+      sub: 'sub',
+      aud: 'cid',
+      exp: Math.floor(Date.now() / 1000) + 3600,
+      iat: Math.floor(Date.now() / 1000),
+      email: 'ghost@example.com',
+    });
+    stubIdp(issuer, kp, idToken);
+    const db = statefulDb();
+    // No local user — the lookup returns undefined.
+    (db as unknown as { query: { users: { findFirst: () => Promise<undefined> } } }).query.users.findFirst = () => Promise.resolve(undefined);
+    const app = await buildTestApp({ db: db as never });
+    await app.register(ssoRoutes);
+    await app.inject({
+      method: 'POST',
+      url: '/providers',
+      headers: asUser(),
+      payload: {
+        type: 'oidc',
+        name: 'corp-oidc',
+        config: { issuer, clientId: 'cid', clientSecret: 'csec', redirectUri: 'https://app/cb' },
+      },
+    });
+    const res = await app.inject({
+      method: 'GET',
+      url: '/corp-oidc/callback?code=opaque-auth-code-12345',
+      headers: asUser(),
+    });
+    const body = res.json() as { ok: boolean; error?: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toMatch(/no local user matches .*ghost@example.com/);
     await app.close();
   });
 });

@@ -1,7 +1,12 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { eq } from 'drizzle-orm';
 import { ssoProviders, type DB } from '@ninedeploy/db';
-import { discover as oidcDiscover, type OidcConfig } from '../lib/oidc.js';
+import {
+  discover as oidcDiscover,
+  exchangeCode as oidcExchangeCode,
+  type OidcConfig,
+  verifyIdToken as oidcVerifyIdToken,
+} from '../lib/oidc.js';
 import {
   decodeSamlResponse,
   extractSamlSubject,
@@ -114,8 +119,23 @@ export const ssoRoutes: FastifyPluginAsync = async (app) => {
     return { ok: true, redirectUrl: url, state, nonce };
   });
 
-  // GET /:name/callback — finalize the OIDC flow
-  app.get<{ Params: { name: string }; Querystring: { code?: string; state?: string } }>(
+  // GET /:name/callback — finalize the OIDC flow (Sprint 6 PR #30).
+  // The IdP redirects the browser here with a `?code=…` after the
+  // user signs in. The route:
+  //   1. looks up the registered OIDC provider,
+  //   2. exchanges the authorization code at the IdP's
+  //      `token_endpoint` (HTTP POST, form-encoded),
+  //   3. verifies the returned `id_token` (JWKS-backed RS256,
+  //      iss/aud/exp checks),
+  //   4. finds the matching local user by the `email` claim,
+  //   5. mints the same access + refresh token pair the email/
+  //      password flow produces.
+  //
+  // The `state` and `nonce` HttpOnly cookies land in the next
+  // patch. Until then, the nonce check is skipped (empty-string
+  // fallback in `verifyIdToken`); the rest of the OIDC validation
+  // surface (JWKS, iss, aud, exp) is still enforced.
+  app.get<{ Params: { name: string }; Querystring: { code?: string; state?: string; error?: string; error_description?: string } }>(
     '/:name/callback',
     async (req) => {
       const provider = await db.query.ssoProviders.findFirst({
@@ -125,22 +145,49 @@ export const ssoRoutes: FastifyPluginAsync = async (app) => {
       if (provider.type !== 'oidc') {
         return { ok: false, error: `Provider "${req.params.name}" is not an OIDC provider` };
       }
+      // The IdP can redirect back with `?error=…&error_description=…`
+      // when the user denies consent or the auth request was bad.
+      // Surface the upstream error verbatim — the panel renders it
+      // in the SSO error toast.
+      if (req.query?.error) {
+        const description = req.query.error_description ?? req.query.error;
+        return { ok: false, error: `OIDC provider error: ${description}` };
+      }
       const code = req.query?.code;
       if (!code) return { ok: false, error: 'Missing `code` query parameter' };
-      // PR #23-b will: verify `state`, look up the matching `nonce`
-      // from the session cookie, exchange the code, verify the
-      // id_token, and mint a session. For now the surface is read-
-      // only; the integration test exercises `discover` only.
       const config = JSON.parse(provider.configJson) as OidcConfig;
-      const discovery = await oidcDiscover(config);
+      let claims: Awaited<ReturnType<typeof oidcVerifyIdToken>>;
+      try {
+        const discovery = await oidcDiscover(config);
+        const tokens = await oidcExchangeCode(discovery, config, code);
+        if (!tokens.id_token) {
+          return { ok: false, error: 'OIDC token response is missing `id_token`' };
+        }
+        // Empty `expectedNonce` opts out of the nonce check until
+        // PR #23-b adds the HttpOnly state/nonce cookie pair.
+        claims = await oidcVerifyIdToken(discovery, config, tokens.id_token, '');
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+      if (!claims.email) {
+        return { ok: false, error: 'OIDC id_token is missing the `email` claim' };
+      }
+      const user = await findUserByEmail(db, claims.email);
+      if (!user) {
+        return {
+          ok: false,
+          error: `OIDC sign-in denied: no local user matches ${claims.email}. Operators must be invited first.`,
+        };
+      }
+      const issued = await issueSessionTokens(db, user, {
+        ip: req.ip,
+        userAgent: req.headers['user-agent'],
+      });
       return {
         ok: true,
         provider: provider.name,
-        issuer: config.issuer,
-        jwks: discovery.jwks_uri,
-        tokenEndpoint: discovery.token_endpoint,
-        // The actual session mint lands in PR #23-b.
-        code: '[redacted — session mints in PR #23-b]',
+        subject: { sub: claims.sub, email: claims.email },
+        tokens: issued,
       };
     },
   );
