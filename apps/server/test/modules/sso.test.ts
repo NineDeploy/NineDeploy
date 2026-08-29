@@ -347,7 +347,7 @@ describe('GET /v1/sso/:name/login', () => {
       },
     });
     const res = await app.inject({ method: 'GET', url: '/corp-oidc/login', headers: asUser() });
-    const body = res.json() as { ok: boolean; redirectUrl?: string; state?: string; nonce?: string };
+    const body = res.json() as { ok: boolean; redirectUrl?: string };
     expect(body.ok).toBe(true);
     expect(body.redirectUrl).toBeDefined();
     // The redirect URL must point at the IdP's authorization_endpoint
@@ -357,11 +357,14 @@ describe('GET /v1/sso/:name/login', () => {
     expect(body.redirectUrl!).toContain('client_id=cid');
     expect(body.redirectUrl!).toContain('redirect_uri=https%3A%2F%2Fapp.example.com%2Fcb');
     expect(body.redirectUrl!).toContain('scope=openid%20email%20profile');
-    expect(body.state).toMatch(/^state-/);
-    expect(body.nonce).toMatch(/^nonce-/);
-    // Every call generates a fresh state + nonce — critical for CSRF /
-    // replay protection in the eventual session-mint path.
-    expect(body.state).not.toEqual(body.nonce);
+    // The `state` and `nonce` are now stored in HttpOnly cookies
+    // (PR #31) instead of being echoed in the response body. The
+    // test asserts the cookies were actually set.
+    const setCookies = res.headers['set-cookie'];
+    expect(setCookies).toBeDefined();
+    const cookies = (Array.isArray(setCookies) ? setCookies : [setCookies]).join(';');
+    expect(cookies).toMatch(/ninedeploy_sso_corp-oidc_state=[^;]+/);
+    expect(cookies).toMatch(/ninedeploy_sso_corp-oidc_nonce=[^;]+/);
     await app.close();
   });
 });
@@ -516,6 +519,40 @@ describe('GET /v1/sso/:name/callback', () => {
 describe('POST-style OIDC callback (Sprint 6 PR #30)', () => {
   let realFetch: typeof fetch;
 
+  // Helper: run the full OIDC sign-in flow with a custom
+  // id_token. Mints fresh state/nonce cookies via /login, builds
+  // the id_token with the captured nonce (so the verifyIdToken
+  // nonce check passes), stubs the IdP, and issues the /callback
+  // call with the right cookies. Returns the response so the
+  // test can assert the result.
+  async function runOidcFlow(
+    app: Awaited<ReturnType<typeof buildTestApp>>,
+    kp: ReturnType<typeof makeRsaKeyPair>,
+    issuer: string,
+    idTokenClaims: Record<string, unknown>,
+    opts: { stateOverride?: string } = {},
+  ): Promise<ReturnType<typeof app.inject>> {
+    // Step 1: /login → Set-Cookie + redirectUrl with state/nonce
+    const login = await app.inject({ method: 'GET', url: '/corp-oidc/login', headers: asUser() });
+    const setCookies = login.headers['set-cookie'];
+    const cookies = (Array.isArray(setCookies) ? setCookies : [setCookies]).join(';');
+    const url = new URL((login.json() as { redirectUrl: string }).redirectUrl);
+    const state = opts.stateOverride ?? url.searchParams.get('state')!;
+    const nonce = url.searchParams.get('nonce')!;
+    // Step 2: build the id_token with the captured nonce so the
+    // route's verifyIdToken nonce check passes; the test's own
+    // claim overrides (wrong issuer, expired, etc.) drive the
+    // failure mode.
+    const idToken = makeIdToken(kp, { ...idTokenClaims, nonce });
+    stubIdp(issuer, kp, idToken);
+    // Step 3: /callback with the cookies the login set.
+    return app.inject({
+      method: 'GET',
+      url: `/corp-oidc/callback?code=opaque-auth-code&state=${encodeURIComponent(state)}`,
+      headers: { ...asUser(), cookie: cookies },
+    });
+  }
+
   function makeRsaKeyPair() {
     const { generateKeyPairSync, createSign } = require('node:crypto') as typeof import('node:crypto');
     const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
@@ -618,7 +655,20 @@ describe('POST-style OIDC callback (Sprint 6 PR #30)', () => {
     const kp = makeRsaKeyPair();
     const issuer = uniqueIssuer();
     const exp = Math.floor(Date.now() / 1000) + 3600;
-    const idToken = makeIdToken(kp, {
+    const db = statefulDb();
+    const app = await buildTestApp({ db: db as never });
+    await app.register(ssoRoutes);
+    await app.inject({
+      method: 'POST',
+      url: '/providers',
+      headers: asUser(),
+      payload: {
+        type: 'oidc',
+        name: 'corp-oidc',
+        config: { issuer, clientId: 'cid', clientSecret: 'csec', redirectUri: 'https://app/cb' },
+      },
+    });
+    const res = await runOidcFlow(app, kp, issuer, {
       iss: issuer,
       sub: 'oidc-subject-12345',
       aud: 'cid',
@@ -626,56 +676,22 @@ describe('POST-style OIDC callback (Sprint 6 PR #30)', () => {
       iat: Math.floor(Date.now() / 1000),
       email: 'alice@example.com',
     });
-    stubIdp(issuer, kp, idToken);
-    const db = statefulDb();
-    const app = await buildTestApp({ db: db as never });
-    await app.register(ssoRoutes);
-    await app.inject({
-      method: 'POST',
-      url: '/providers',
-      headers: asUser(),
-      payload: {
-        type: 'oidc',
-        name: 'corp-oidc',
-        config: { issuer, clientId: 'cid', clientSecret: 'csec', redirectUri: 'https://app/cb' },
-      },
-    });
-    const res = await app.inject({
-      method: 'GET',
-      url: '/corp-oidc/callback?code=opaque-auth-code-12345',
-      headers: asUser(),
-    });
     const body = res.json() as {
       ok: boolean;
       provider?: string;
       subject?: { sub: string; email: string };
       error?: string;
     };
-    // Surface the actual error in the assertion message so a
-    // regression in the verifyRs256 fix (or any later wire step)
-    // prints the upstream detail instead of just "expected false".
     expect(body.ok, JSON.stringify(body)).toBe(true);
     expect(body.provider).toBe('corp-oidc');
     expect(body.subject).toEqual({ sub: 'oidc-subject-12345', email: 'alice@example.com' });
     await app.close();
   });
 
-  it('rejects when the id_token issuer does not match the configured issuer', async () => {
+  it('rejects when the state query does not match the cookie (CSRF defense)', async () => {
     const kp = makeRsaKeyPair();
-    const exp = Math.floor(Date.now() / 1000) + 3600;
     const issuer = uniqueIssuer();
-    // The IdP's discovery says `<issuer>` but the id_token carries
-    // a different `iss` claim — the route must refuse, not trust
-    // the upstream.
-    const idToken = makeIdToken(kp, {
-      iss: 'https://evil.example.com',
-      sub: 'sub',
-      aud: 'cid',
-      exp,
-      iat: Math.floor(Date.now() / 1000),
-      email: 'alice@example.com',
-    });
-    stubIdp(issuer, kp, idToken);
+    const exp = Math.floor(Date.now() / 1000) + 3600;
     const db = statefulDb();
     const app = await buildTestApp({ db: db as never });
     await app.register(ssoRoutes);
@@ -689,10 +705,72 @@ describe('POST-style OIDC callback (Sprint 6 PR #30)', () => {
         config: { issuer, clientId: 'cid', clientSecret: 'csec', redirectUri: 'https://app/cb' },
       },
     });
+    const res = await runOidcFlow(
+      app,
+      kp,
+      issuer,
+      { iss: issuer, sub: 'sub', aud: 'cid', exp, iat: Math.floor(Date.now() / 1000), email: 'alice@example.com' },
+      { stateOverride: 'attacker-supplied-state' },
+    );
+    const body = res.json() as { ok: boolean; error?: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toMatch(/CSRF check failed/);
+    await app.close();
+  });
+
+  it('rejects when the state cookie is missing entirely', async () => {
+    const db = statefulDb();
+    const app = await buildTestApp({ db: db as never });
+    await app.register(ssoRoutes);
+    await app.inject({
+      method: 'POST',
+      url: '/providers',
+      headers: asUser(),
+      payload: {
+        type: 'oidc',
+        name: 'corp-oidc',
+        config: { issuer: 'https://idp.example.com', clientId: 'cid', clientSecret: 'csec', redirectUri: 'https://app/cb' },
+      },
+    });
+    // No /login call — the cookie is never set.
     const res = await app.inject({
       method: 'GET',
-      url: '/corp-oidc/callback?code=opaque-auth-code-12345',
+      url: '/corp-oidc/callback?code=opaque-auth-code&state=anything',
       headers: asUser(),
+    });
+    const body = res.json() as { ok: boolean; error?: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toMatch(/state cookie is missing/);
+    await app.close();
+  });
+
+  it('rejects when the id_token issuer does not match the configured issuer', async () => {
+    const kp = makeRsaKeyPair();
+    const issuer = uniqueIssuer();
+    const exp = Math.floor(Date.now() / 1000) + 3600;
+    const db = statefulDb();
+    const app = await buildTestApp({ db: db as never });
+    await app.register(ssoRoutes);
+    await app.inject({
+      method: 'POST',
+      url: '/providers',
+      headers: asUser(),
+      payload: {
+        type: 'oidc',
+        name: 'corp-oidc',
+        config: { issuer, clientId: 'cid', clientSecret: 'csec', redirectUri: 'https://app/cb' },
+      },
+    });
+    // The IdP's discovery says `<issuer>` but the id_token carries
+    // a different `iss` claim — the route must refuse, not trust
+    // the upstream.
+    const res = await runOidcFlow(app, kp, issuer, {
+      iss: 'https://evil.example.com',
+      sub: 'sub',
+      aud: 'cid',
+      exp,
+      iat: Math.floor(Date.now() / 1000),
+      email: 'alice@example.com',
     });
     const body = res.json() as { ok: boolean; error?: string };
     expect(body.ok).toBe(false);
@@ -703,15 +781,6 @@ describe('POST-style OIDC callback (Sprint 6 PR #30)', () => {
   it('rejects when the id_token is expired', async () => {
     const kp = makeRsaKeyPair();
     const issuer = uniqueIssuer();
-    const idToken = makeIdToken(kp, {
-      iss: issuer,
-      sub: 'sub',
-      aud: 'cid',
-      exp: Math.floor(Date.now() / 1000) - 60, // one minute in the past
-      iat: Math.floor(Date.now() / 1000) - 3600,
-      email: 'alice@example.com',
-    });
-    stubIdp(issuer, kp, idToken);
     const db = statefulDb();
     const app = await buildTestApp({ db: db as never });
     await app.register(ssoRoutes);
@@ -725,10 +794,13 @@ describe('POST-style OIDC callback (Sprint 6 PR #30)', () => {
         config: { issuer, clientId: 'cid', clientSecret: 'csec', redirectUri: 'https://app/cb' },
       },
     });
-    const res = await app.inject({
-      method: 'GET',
-      url: '/corp-oidc/callback?code=opaque-auth-code-12345',
-      headers: asUser(),
+    const res = await runOidcFlow(app, kp, issuer, {
+      iss: issuer,
+      sub: 'sub',
+      aud: 'cid',
+      exp: Math.floor(Date.now() / 1000) - 60, // one minute in the past
+      iat: Math.floor(Date.now() / 1000) - 3600,
+      email: 'alice@example.com',
     });
     const body = res.json() as { ok: boolean; error?: string };
     expect(body.ok).toBe(false);
@@ -739,15 +811,6 @@ describe('POST-style OIDC callback (Sprint 6 PR #30)', () => {
   it('rejects when the id_token audience does not include the configured client id', async () => {
     const kp = makeRsaKeyPair();
     const issuer = uniqueIssuer();
-    const idToken = makeIdToken(kp, {
-      iss: issuer,
-      sub: 'sub',
-      aud: 'some-other-client',
-      exp: Math.floor(Date.now() / 1000) + 3600,
-      iat: Math.floor(Date.now() / 1000),
-      email: 'alice@example.com',
-    });
-    stubIdp(issuer, kp, idToken);
     const db = statefulDb();
     const app = await buildTestApp({ db: db as never });
     await app.register(ssoRoutes);
@@ -761,10 +824,13 @@ describe('POST-style OIDC callback (Sprint 6 PR #30)', () => {
         config: { issuer, clientId: 'cid', clientSecret: 'csec', redirectUri: 'https://app/cb' },
       },
     });
-    const res = await app.inject({
-      method: 'GET',
-      url: '/corp-oidc/callback?code=opaque-auth-code-12345',
-      headers: asUser(),
+    const res = await runOidcFlow(app, kp, issuer, {
+      iss: issuer,
+      sub: 'sub',
+      aud: 'some-other-client',
+      exp: Math.floor(Date.now() / 1000) + 3600,
+      iat: Math.floor(Date.now() / 1000),
+      email: 'alice@example.com',
     });
     const body = res.json() as { ok: boolean; error?: string };
     expect(body.ok).toBe(false);
@@ -775,15 +841,6 @@ describe('POST-style OIDC callback (Sprint 6 PR #30)', () => {
   it('rejects when the id_token has no email claim', async () => {
     const kp = makeRsaKeyPair();
     const issuer = uniqueIssuer();
-    const idToken = makeIdToken(kp, {
-      iss: issuer,
-      sub: 'sub',
-      aud: 'cid',
-      exp: Math.floor(Date.now() / 1000) + 3600,
-      iat: Math.floor(Date.now() / 1000),
-      // No `email` claim.
-    });
-    stubIdp(issuer, kp, idToken);
     const db = statefulDb();
     const app = await buildTestApp({ db: db as never });
     await app.register(ssoRoutes);
@@ -797,10 +854,13 @@ describe('POST-style OIDC callback (Sprint 6 PR #30)', () => {
         config: { issuer, clientId: 'cid', clientSecret: 'csec', redirectUri: 'https://app/cb' },
       },
     });
-    const res = await app.inject({
-      method: 'GET',
-      url: '/corp-oidc/callback?code=opaque-auth-code-12345',
-      headers: asUser(),
+    const res = await runOidcFlow(app, kp, issuer, {
+      iss: issuer,
+      sub: 'sub',
+      aud: 'cid',
+      exp: Math.floor(Date.now() / 1000) + 3600,
+      iat: Math.floor(Date.now() / 1000),
+      // No `email` claim.
     });
     const body = res.json() as { ok: boolean; error?: string };
     expect(body.ok).toBe(false);
@@ -811,15 +871,6 @@ describe('POST-style OIDC callback (Sprint 6 PR #30)', () => {
   it('rejects when the email claim does not match any local user', async () => {
     const kp = makeRsaKeyPair();
     const issuer = uniqueIssuer();
-    const idToken = makeIdToken(kp, {
-      iss: issuer,
-      sub: 'sub',
-      aud: 'cid',
-      exp: Math.floor(Date.now() / 1000) + 3600,
-      iat: Math.floor(Date.now() / 1000),
-      email: 'ghost@example.com',
-    });
-    stubIdp(issuer, kp, idToken);
     const db = statefulDb();
     // No local user — the lookup returns undefined.
     (db as unknown as { query: { users: { findFirst: () => Promise<undefined> } } }).query.users.findFirst = () => Promise.resolve(undefined);
@@ -835,10 +886,13 @@ describe('POST-style OIDC callback (Sprint 6 PR #30)', () => {
         config: { issuer, clientId: 'cid', clientSecret: 'csec', redirectUri: 'https://app/cb' },
       },
     });
-    const res = await app.inject({
-      method: 'GET',
-      url: '/corp-oidc/callback?code=opaque-auth-code-12345',
-      headers: asUser(),
+    const res = await runOidcFlow(app, kp, issuer, {
+      iss: issuer,
+      sub: 'sub',
+      aud: 'cid',
+      exp: Math.floor(Date.now() / 1000) + 3600,
+      iat: Math.floor(Date.now() / 1000),
+      email: 'ghost@example.com',
     });
     const body = res.json() as { ok: boolean; error?: string };
     expect(body.ok).toBe(false);

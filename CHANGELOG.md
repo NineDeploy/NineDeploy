@@ -200,6 +200,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   endorses. Tests use unique `idp<salt>.example.com` issuers per
   case so the JWKS cache doesn't leak keys across runs.
 
+- **HttpOnly state / nonce cookies for OIDC (G-22 PR-D).** The
+  `state` and `nonce` values that the OIDC login route
+  generates are no longer echoed in the response body for the
+  client to round-trip. Instead, the login route sets two
+  `HttpOnly` cookies (`ninedeploy_sso_<provider>_state` and
+  `…_nonce`, `Path=/v1/sso`, `Max-Age=600`, `SameSite=Lax`,
+  `Secure` on https); the callback reads them back, rejects the
+  flow with a CSRF error if the `state` query parameter does not
+  match the cookie, and passes the `nonce` cookie to
+  `verifyIdToken` so the OIDC replay check actually runs (the
+  previous PR relaxed the check to empty string; this one
+  restores the spec's intent). The cookie helpers live in
+  `lib/ssoCookie.ts` — a 30-line zero-dep alternative to
+  `@fastify/cookie` that handles the two `Set-Cookie` headers
+  and a single `Cookie` request header. Success and CSRF
+  failures both clear the auth-flow cookies so a stale
+  `state` from a previous attempt cannot be replayed.
+
 - **Namecheap DNS records (G-07 PR-A).** The third `IDomainProvider`
   driver joins Cloudflare and DNSimple on the kernel's
   `IDomainProvider` registry, behind the same `IDomainProvider`

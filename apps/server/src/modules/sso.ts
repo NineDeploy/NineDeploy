@@ -15,6 +15,12 @@ import {
 } from '../lib/saml.js';
 import { issueSessionTokens } from '../lib/sessions.js';
 import { findUserByEmail } from '../lib/authHelpers.js';
+import {
+  clearSsoCookies,
+  readSsoCookies,
+  safeStateEqual,
+  setSsoCookies,
+} from '../lib/ssoCookie.js';
 
 /**
  * SSO HTTP surface — Sprint 5, Gap G-22 (PR #23).
@@ -99,7 +105,7 @@ export const ssoRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // GET /:name/login — start the OIDC login
-  app.get<{ Params: { name: string } }>('/:name/login', async (req) => {
+  app.get<{ Params: { name: string } }>('/:name/login', async (req, reply) => {
     const provider = await db.query.ssoProviders.findFirst({
       where: eq(ssoProviders.name, req.params.name),
     });
@@ -109,35 +115,41 @@ export const ssoRoutes: FastifyPluginAsync = async (app) => {
     }
     const config = JSON.parse(provider.configJson) as OidcConfig;
     const discovery = await oidcDiscover(config);
-    // The `state` + `nonce` cookies are set by the panel's
-    // auth-handler middleware; for now we surface them as URL
-    // parameters and let the browser carry them through. PR #23-b
-    // moves the cookies to HttpOnly.
+    // PR #31: the `state` + `nonce` are now stored in HttpOnly
+    // cookies instead of being echoed to the client. The IdP only
+    // sees `state` (it has no use for `nonce`); the callback
+    // reads both cookies back and verifies the round-trip.
     const state = `state-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const nonce = `nonce-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    setSsoCookies({
+      reply,
+      provider: provider.name,
+      state,
+      nonce,
+      isHttps: (req.protocol ?? 'http') === 'https',
+    });
     const url = `${discovery.authorization_endpoint}?response_type=code&client_id=${encodeURIComponent(config.clientId)}&redirect_uri=${encodeURIComponent(config.redirectUri)}&scope=${encodeURIComponent((config.scopes ?? ['openid', 'email', 'profile']).join(' '))}&state=${encodeURIComponent(state)}&nonce=${encodeURIComponent(nonce)}`;
-    return { ok: true, redirectUrl: url, state, nonce };
+    return { ok: true, redirectUrl: url };
   });
 
-  // GET /:name/callback — finalize the OIDC flow (Sprint 6 PR #30).
-  // The IdP redirects the browser here with a `?code=…` after the
-  // user signs in. The route:
+  // GET /:name/callback — finalize the OIDC flow (Sprint 6 PR #30,
+  // PR #31 cookie work). The IdP redirects the browser here with
+  // `?code=…&state=…` after the user signs in. The route:
   //   1. looks up the registered OIDC provider,
-  //   2. exchanges the authorization code at the IdP's
-  //      `token_endpoint` (HTTP POST, form-encoded),
-  //   3. verifies the returned `id_token` (JWKS-backed RS256,
-  //      iss/aud/exp checks),
-  //   4. finds the matching local user by the `email` claim,
-  //   5. mints the same access + refresh token pair the email/
+  //   2. reads the `state` + `nonce` cookies the login route set
+  //      and verifies the `state` query parameter matches the
+  //      cookie (CSRF defense — without this an attacker can
+  //      complete a sign-in the attacker started),
+  //   3. exchanges the authorization code at the IdP's
+  //      `token_endpoint`,
+  //   4. verifies the returned `id_token` (JWKS RS256, iss/aud/exp
+  //      + the nonce the cookie carried),
+  //   5. finds the matching local user by the `email` claim,
+  //   6. mints the same access + refresh token pair the email/
   //      password flow produces.
-  //
-  // The `state` and `nonce` HttpOnly cookies land in the next
-  // patch. Until then, the nonce check is skipped (empty-string
-  // fallback in `verifyIdToken`); the rest of the OIDC validation
-  // surface (JWKS, iss, aud, exp) is still enforced.
   app.get<{ Params: { name: string }; Querystring: { code?: string; state?: string; error?: string; error_description?: string } }>(
     '/:name/callback',
-    async (req) => {
+    async (req, reply) => {
       const provider = await db.query.ssoProviders.findFirst({
         where: eq(ssoProviders.name, req.params.name),
       });
@@ -148,27 +160,52 @@ export const ssoRoutes: FastifyPluginAsync = async (app) => {
       // The IdP can redirect back with `?error=…&error_description=…`
       // when the user denies consent or the auth request was bad.
       // Surface the upstream error verbatim — the panel renders it
-      // in the SSO error toast.
+      // in the SSO error toast. Clear the state cookies either way
+      // so a retry does not inherit a stale `state`.
       if (req.query?.error) {
+        clearSsoCookies({ reply, provider: provider.name });
         const description = req.query.error_description ?? req.query.error;
         return { ok: false, error: `OIDC provider error: ${description}` };
       }
       const code = req.query?.code;
       if (!code) return { ok: false, error: 'Missing `code` query parameter' };
+      const cookies = readSsoCookies({
+        cookieHeader: req.headers.cookie,
+        provider: provider.name,
+      });
+      if (!cookies) {
+        return {
+          ok: false,
+          error: 'OIDC state cookie is missing or expired. Restart the sign-in flow.',
+        };
+      }
+      const queryState = req.query?.state;
+      if (!queryState || !safeStateEqual(queryState, cookies.state)) {
+        clearSsoCookies({ reply, provider: provider.name });
+        return { ok: false, error: 'OIDC `state` does not match the cookie (CSRF check failed)' };
+      }
       const config = JSON.parse(provider.configJson) as OidcConfig;
       let claims: Awaited<ReturnType<typeof oidcVerifyIdToken>>;
       try {
         const discovery = await oidcDiscover(config);
         const tokens = await oidcExchangeCode(discovery, config, code);
         if (!tokens.id_token) {
+          clearSsoCookies({ reply, provider: provider.name });
           return { ok: false, error: 'OIDC token response is missing `id_token`' };
         }
-        // Empty `expectedNonce` opts out of the nonce check until
-        // PR #23-b adds the HttpOnly state/nonce cookie pair.
-        claims = await oidcVerifyIdToken(discovery, config, tokens.id_token, '');
+        // The cookie carries the `nonce` the auth request emitted.
+        // The id_token's `nonce` claim must match — that's the OIDC
+        // spec's replay defense. Empty cookies.nonce would mean
+        // someone tampered with the cookie value, which the safe
+        // equality check above already rejected.
+        claims = await oidcVerifyIdToken(discovery, config, tokens.id_token, cookies.nonce);
       } catch (err) {
+        clearSsoCookies({ reply, provider: provider.name });
         return { ok: false, error: err instanceof Error ? err.message : String(err) };
       }
+      // Sign-in succeeded: clear the auth-flow cookies so a stale
+      // state from a previous attempt cannot be replayed.
+      clearSsoCookies({ reply, provider: provider.name });
       if (!claims.email) {
         return { ok: false, error: 'OIDC id_token is missing the `email` claim' };
       }
