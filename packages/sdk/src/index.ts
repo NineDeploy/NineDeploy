@@ -235,6 +235,43 @@ export interface BackupDrillEntry {
   completedAt: number | null;
 }
 
+/**
+ * Single image row from `GET /v1/housekeeping/images`. Both
+ * the human-readable `size` ("1.2GB") and a parsed byte
+ * count are returned so the panel can sort without
+ * re-parsing. `inUse` is true when at least one container
+ * is currently using the image id.
+ */
+export interface ImageInfo {
+  repository: string;
+  tag: string;
+  id: string;
+  size: string;
+  sizeBytes: number;
+  createdAt: string;
+  ageHours: number;
+  dangling: boolean;
+  inUse: boolean;
+}
+
+/** Body for `POST /v1/housekeeping/images/prune`. The server
+ *  refuses the empty-options combination (it would delete
+ *  every image not currently in use). */
+export interface PruneImagesInput {
+  keepLast?: number;
+  olderThanHours?: number;
+  danglingOnly?: boolean;
+  dryRun?: boolean;
+}
+
+export interface PruneImagesResult {
+  freedBytes: number;
+  removed: string[];
+  removedLabels: string[];
+  dryRun: boolean;
+  output: string;
+}
+
 export interface NineDeployClientOptions {
   /** Base URL of the NineDeploy API, e.g. http://localhost:3000. */
   baseUrl: string;
@@ -914,6 +951,20 @@ export interface NineDeployClient {
     getAutoPrune: () => Promise<AutoPruneStatus>;
     updateAutoPrune: (input: AutoPruneConfigUpdateInput) => Promise<AutoPruneStatus>;
     runPrune: () => Promise<AutoPruneRunResult>;
+    /**
+     * List every image on the host with repo / tag / size /
+     * created / dangling / inUse metadata. The companion to
+     * the auto-prune cron: this is what the operator
+     * inspects before `pruneImages({ keepLast: 5 })`.
+     */
+    listImages: () => Promise<{ images: ImageInfo[]; totalCount: number; totalBytes: number }>;
+    /**
+     * Prune images with operator-supplied filters. `dryRun`
+     * returns the candidate set without deleting. Refused
+     * when no filter is supplied (a naked prune would
+     * delete every unused image).
+     */
+    pruneImages: (input: PruneImagesInput) => Promise<PruneImagesResult>;
   };
   health: () => Promise<HealthStatus>;
 }
@@ -1634,6 +1685,10 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
       getAutoPrune: () => get<AutoPruneStatus>('/v1/housekeeping/prune/config'),
       updateAutoPrune: (input) => send<AutoPruneStatus>('PATCH', '/v1/housekeeping/prune/config', input),
       runPrune: () => send<AutoPruneRunResult>('POST', '/v1/housekeeping/prune'),
+      listImages: () =>
+        get<{ images: ImageInfo[]; totalCount: number; totalBytes: number }>('/v1/housekeeping/images'),
+      pruneImages: (input) =>
+        send<PruneImagesResult>('POST', '/v1/housekeeping/images/prune', input),
     },
     health: () => get<HealthStatus>('/health'),
   };

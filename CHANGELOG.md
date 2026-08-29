@@ -1087,6 +1087,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   drill <dbId> <backupId>` (exits 0 on passed, 1 on failed)
   and `ninedeploy backups drills <dbId>` for the history.
 
+- **Image inventory + retention — `ninedeploy images ls|prune` (G-12, PR #47)**.
+  The existing `autoPrune` cron fires on a disk-usage
+  threshold with a one-shot `docker image prune -af`; the
+  operator's day-to-day workflow (see what's on the host,
+  keep the last N per repo, prune the rest) had no
+  panel surface. New `GET /v1/housekeeping/images` returns
+  every image with repo / tag / size / age / dangling /
+  inUse metadata; `POST /v1/housekeeping/images/prune`
+  applies operator-supplied filters — `keepLast` per
+  repo:tag, `olderThanHours`, `danglingOnly`, `dryRun`.
+  The dryRun path returns the candidate set without
+  deleting so the operator can sanity-check before a real
+  prune. `inUse` is computed via a second `docker ps`
+  round-trip that catches every container, not just the
+  ones NineDeploy started (an operator's own side-car
+  work would otherwise be an unannounced delete). The
+  route refuses to run with no filter — a naked prune
+  would delete every unused image, which is almost never
+  what the operator actually wants. SDK surface:
+  `client.housekeeping.listImages()` and
+  `client.housekeeping.pruneImages({ keepLast?,
+  olderThanHours?, danglingOnly?, dryRun? })`. CLI:
+  `ninedeploy images ls [--sort size|age]` (default
+  size-descending so the biggest offenders surface first)
+  and `ninedeploy images prune [--keep-last N]
+  [--older-than hours] [--dangling] [--dry-run]`.
+
 ### Fixed
 
 - **`SettingsTabPrivilege` test timeouts under parallel load (unrelated

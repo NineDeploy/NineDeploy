@@ -50,6 +50,7 @@ import { volumeBackupRoutes } from './volumeBackups.js';
 import { containerRoutes } from './containers.js';
 import { logDrainRoutes } from './logDrains.js';
 import { housekeepingRoutes } from './housekeeping.js';
+import { housekeepingImageRoutes } from './images.js';
 import { workspaceRoutes } from './workspaces.js';
 import { firewallRoutes } from './firewall.js';
 import { acceptInvitationRoutes, invitationRoutes, publicInvitationRoutes } from './invitations.js';
@@ -135,6 +136,12 @@ export const apiRoutes: FastifyPluginAsync = async (app) => {
   await app.register(serverRoutes, { prefix: '/servers' });
   await app.register(logDrainRoutes, { prefix: '/log-drains' });
   await app.register(housekeepingRoutes, { prefix: '/housekeeping' });
+  // Image inventory + retention — sibling routes to auto-prune
+  // (both live under /housekeeping). Mounted after
+  // housekeepingRoutes so the existing `/prune` literal path
+  // resolves first and is not shadowed by the new `/images`
+  // namespace.
+  await app.register(housekeepingImageRoutes, { prefix: '/housekeeping' });
   await app.register(serviceMigrationRoutes, { prefix: '/services' });
   // /services/:id/tags is mounted before /services to keep the literal path
   // ahead of any wildcard :id handler. The serviceTags module also registers

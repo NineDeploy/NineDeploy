@@ -35,7 +35,7 @@ import { demoSeed } from './commands/demo.js';
 import {
   workspacesList, workspacesGet, workspacesCreate, workspacesDelete,
 } from './commands/workspaces.js';
-import { housekeepingPrune } from './commands/housekeeping.js';
+import { housekeepingPrune, imagesList, imagesPrune } from './commands/housekeeping.js';
 import {
   serverStartAction, serverStopAction, serverStatusAction, serverLogsAction,
 } from './commands/server.js';
@@ -468,6 +468,30 @@ workspaces.command('delete <id>').description('Delete a workspace').action((id: 
 
 // ── Housekeeping ────────────────────────────────────────────────────────────
 system.command('prune').description('Run system housekeeping prune (images, containers, build artifacts)').action(() => housekeepingPrune(getClient()));
+
+// ── Images (G-12) ───────────────────────────────────────────────────────────
+const images = program.command('images').description('Inspect and prune Docker images on the host');
+images
+  .command('ls')
+  .description('List every image on the host with size / age / in-use metadata')
+  .option('--sort <field>', 'Sort by `size` (default) or `age`', 'size')
+  .action((opts: { sort?: 'size' | 'age' }) => imagesList(getClient(), { sort: opts.sort }));
+images
+  .command('prune')
+  .description('Prune images. Refuses to run with no filter; pass --dry-run first.')
+  .option('--keep-last <n>', 'Keep the newest N images per repo:tag (rest are candidates)', (v: string) => Number(v))
+  .option('--older-than <hours>', 'Only prune images older than N hours', (v: string) => Number(v))
+  .option('--dangling', 'Only prune dangling images (repo/tag both <none>)')
+  .option('--dry-run', 'Report what would be deleted without actually deleting')
+  .action(
+    (opts: { keepLast?: number; olderThan?: number; dangling?: boolean; dryRun?: boolean }) =>
+      imagesPrune(getClient(), {
+        keepLast: opts.keepLast,
+        olderThan: opts.olderThan,
+        dangling: opts.dangling,
+        dryRun: opts.dryRun,
+      }),
+  );
 
 // ── Demo Mode ──────────────────────────────────────────────────────────────
 const demo = program.command('demo').description('Demo mode operations');
