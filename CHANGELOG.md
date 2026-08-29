@@ -935,6 +935,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   zod schema's `^nd-(svc|db)-[a-z0-9_.-]+$` regex rejects the
   same inputs first. +14 tests (28 → 42).
 
+- **`composeStacks.ts` coverage 2.5 / 0 / 0 / 2.7 → 97.29 / 100 / 95 / 90.24**
+  *(Sprint 9 PR #42)*. The `apps/server/src/modules/composeStacks.ts`
+  exported `prepareComposeStack` function (used by the
+  templates one-click install) shipped with effectively zero
+  coverage — only the `stackWorkspace` defense-in-depth
+  branch was being touched by the sibling `composeStacks.test.ts`
+  file that tests `magicVars` / template-schema helpers, NOT
+  this file. New `apps/server/test/modules/composeStacks.test.ts`
+  (10 tests) mocks the file-system (`node:fs.mkdirSync` /
+  `writeFileSync`), the magic-var engine, the proxy
+  `getAcmeEmail`, and the `config.wildcardDomain` field, then
+  drives `prepareComposeStack` through every contract branch:
+  first-install creates a new service row + materialises
+  `docker-compose.yml` at mode 0o600; existing same-stack rows
+  are reused (no new insert); `preflightCompose` rejections
+  surface as 400 with no file-system side effects; the publicUrl
+  scheme is `https` when an ACME email is set and `http` when
+  not; the publicUrl is `http://localhost` when no wildcard
+  domain is configured; the slug-collision retry gives up
+  with 400 after 5 foreign-owned hits; a colliding slug of
+  the wrong type (not `compose`) also 400s; template `env` rows
+  are merged with `secret: false` defaulted; and the slug
+  recipe when `input.name` is omitted is
+  `${slugify(template.name)}-${ts36-suffix}`. The remaining
+  ~10% branches are unreachable defenses
+  (`stackWorkspace` path-traversal guard, the
+  `!created` post-insert guard) and the 5-retry collision
+  loop's terminal-iteration branch. +10 tests (new file).
+  config-repair `req.body ?? {}` fallback. Final coverage
+  **99.24% statements / 98.68% branches / 100% functions /
+  100% lines** — the only remaining item is the
+  `if (/[^a-zA-Z0-9_.-]/.test(volumeName))` defense-in-depth
+  regex on line 240, which is unreachable because the upstream
+  zod schema's `^nd-(svc|db)-[a-z0-9_.-]+$` regex rejects the
+  same inputs first. +14 tests (28 → 42).
+
 ### Fixed
 
 - **`SettingsTabPrivilege` test timeouts under parallel load (unrelated
