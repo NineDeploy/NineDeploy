@@ -181,6 +181,27 @@ function renderDnsEnvFile(dns: DnsConfig): string | null {
 }
 
 /**
+ * True when the operator enabled sticky-session routing for `serviceId`.
+ *
+ * Sticky-session is per-service, not per-domain: a single toggle affects
+ * every domain the service has. The flag lives in the settings table
+ * under `sticky_session:<serviceId>:enabled` (string `"true"` / `"1"`,
+ * anything else is treated as off) so the toggle does not require a
+ * database migration.
+ *
+ * Mirrors `getDnsConfig`/`getAcmeEmail` — never throws, a missing row is
+ * a feature off.
+ */
+export async function getStickyEnabledForService(db: DB, serviceId: number): Promise<boolean> {
+  try {
+    const raw = await getSettingString(db, `sticky_session:${serviceId}:enabled`, null);
+    return raw === 'true' || raw === '1';
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Resolve the ACME account email: the DB setting (Settings → Security) wins,
  * with the `NINEDEPLOY_ACME_EMAIL` env var as the backward-compatible default.
  * Never throws — a missing settings table must not break config generation.
@@ -493,6 +514,21 @@ export async function writeDynamicConfig(db: DB): Promise<void> {
       const avg = d.rateLimitAverage;
       const burst = d.rateLimitBurst && d.rateLimitBurst > 0 ? d.rateLimitBurst : avg;
       middlewares.push(`    ${mw}:\n      rateLimit:\n        average: ${avg}\n        burst: ${burst}\n`);
+    }
+    // G-28 sticky session — one middleware per service so every domain the
+    // service owns shares the same cookie. The middleware block is only
+    // emitted once (the `seen` set on a sticky-keyed key would be cheaper
+    // but the per-domain block is harmless and keeps the diff obvious).
+    if (await getStickyEnabledForService(db, svc.id)) {
+      const stickyKey = `mw_sticky_${svc.id}`;
+      mwList.push(stickyKey);
+      middlewares.push(
+        `    ${stickyKey}:\n` +
+          '      sticky:\n' +
+          '        cookie:\n' +
+          '          name: "ninedeploy_sticky"\n' +
+          '          maxAge: 86400\n',
+      );
     }
 
     const fullRule =

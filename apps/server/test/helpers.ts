@@ -666,6 +666,9 @@ export const channelRow = (over: Record<string, unknown> = {}) => ({
   targetEncrypted: '',
   eventFilter: '',
   active: true,
+  // G-18 PR-A: null on channels created before Discord gained the embed
+  // knobs. Tests that exercise the new field override this directly.
+  configJson: null,
   createdAt: NOW,
   updatedAt: NOW,
   ...over,

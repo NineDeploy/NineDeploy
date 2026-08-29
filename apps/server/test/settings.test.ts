@@ -2,12 +2,22 @@
 import { settingsRoutes } from '../src/modules/settings.js';
 import { asUser, buildTestApp, createFakeDb } from './helpers.js';
 
-const settingsMock = vi.hoisted(() => ({
-  getSetting: vi.fn(async () => false),
-  setSetting: vi.fn(async () => undefined),
-  getSettingString: vi.fn(async (_db: unknown, key: string) => (key === 'dns_token_encrypted' ? 'enc' : null)),
-  setSettingString: vi.fn(async () => undefined),
-}));
+const settingsMock = vi.hoisted(() => {
+  // A per-key map the tests can populate. The mock `getSettingString`
+  // returns the matching value (or `null` by default), and `setSettingString`
+  // records the (key, value) pair so the Namecheap PUT test can assert
+  // it without poking at the db mock.
+  const values: Record<string, string> = {};
+  return {
+    getSetting: vi.fn(async () => false),
+    setSetting: vi.fn(async () => undefined),
+    getSettingString: vi.fn(async (_db: unknown, key: string) => (key in values ? values[key]! : (key === 'dns_token_encrypted' ? 'enc' : null))),
+    setSettingString: vi.fn(async (_db: unknown, key: string, value: string) => {
+      values[key] = value;
+    }),
+    __values: values,
+  };
+});
 vi.mock('../src/lib/settings.js', () => settingsMock);
 
 const dnsMock = vi.hoisted(() => ({
@@ -288,6 +298,52 @@ describe('settings routes (admin-only)', () => {
     });
     expect(res.statusCode).toBe(400);
     await app.close();
+  });
+
+  // ── Namecheap DNS records (G-07 PR-A) ─────────────────────────────────
+  // Round-trip coverage of the credential store lives in
+  // `test/lib/namecheap.test.ts` (the real crypto.encrypt/decrypt
+  // round-trip the route depends on). Here we only check the input
+  // validation surface, which the route alone is responsible for.
+  describe('Namecheap DNS records input validation', () => {
+    it('PUT /dns-records/namecheap rejects a non-IPv4 clientIp with 400', async () => {
+      const app = await buildTestApp({ db: createFakeDb() });
+      await app.register(settingsRoutes);
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/dns-records/namecheap',
+        headers: asUser(),
+        payload: { apiUser: 'u', apiKey: 'k-1234567890', clientIp: 'not-an-ip' },
+      });
+      expect(res.statusCode).toBe(400);
+      await app.close();
+    });
+
+    it('PUT /dns-records/namecheap rejects a missing apiKey with 400', async () => {
+      const app = await buildTestApp({ db: createFakeDb() });
+      await app.register(settingsRoutes);
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/dns-records/namecheap',
+        headers: asUser(),
+        payload: { apiUser: 'u', clientIp: '1.2.3.4' },
+      });
+      expect(res.statusCode).toBe(400);
+      await app.close();
+    });
+
+    it('PUT /dns-records/namecheap rejects an empty apiUser with 400', async () => {
+      const app = await buildTestApp({ db: createFakeDb() });
+      await app.register(settingsRoutes);
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/dns-records/namecheap',
+        headers: asUser(),
+        payload: { apiUser: '', apiKey: 'k-1234567890', clientIp: '1.2.3.4' },
+      });
+      expect(res.statusCode).toBe(400);
+      await app.close();
+    });
   });
 
   /**

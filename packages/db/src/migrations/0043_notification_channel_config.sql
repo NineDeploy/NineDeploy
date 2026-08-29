@@ -1,0 +1,11 @@
+-- Sprint 5 G-18 PR-A: per-channel config_json for Discord (and future webhook) opts.
+--
+-- The Discord channel was previously a plain `content` webhook. With PR #24
+-- the operator can opt in to a coloured embed (title/description/color) and
+-- override the webhook's identity (username, avatar_url). Those knobs are
+-- channel-specific and user-supplied, so we store them in a JSON blob rather
+-- than promoting each to a column.
+--
+-- Nullable: existing channels pre-upgrade have nothing to put here, and the
+-- old plain-content path still works without options.
+ALTER TABLE `notification_channels` ADD COLUMN `config_json` text;

@@ -14,6 +14,10 @@ function serialize(ch: typeof notificationChannels.$inferSelect) {
     hasTarget: !!ch.targetEncrypted,
     eventFilter: ch.eventFilter,
     active: ch.active,
+    // config_json is opaque to the API; we surface it as-is so the
+    // operator's UI can edit it. It's null on channels created
+    // before G-18 PR #24.
+    configJson: ch.configJson,
     createdAt: ch.createdAt.toISOString(),
   };
 }
@@ -41,6 +45,7 @@ export const notificationRoutes: FastifyPluginAsync = async (app) => {
         targetEncrypted: encrypt(input.target),
         eventFilter: input.eventFilter ?? '',
         active: true,
+        configJson: input.configJson ?? null,
       })
       .returning();
     return serialize(ch!);
@@ -57,6 +62,9 @@ export const notificationRoutes: FastifyPluginAsync = async (app) => {
     if (input.target !== undefined) patch.targetEncrypted = encrypt(input.target);
     if (input.eventFilter !== undefined) patch.eventFilter = input.eventFilter;
     if (input.active !== undefined) patch.active = input.active;
+    // Empty string clears the channel's provider-specific config;
+    // undefined leaves it untouched.
+    if (input.configJson !== undefined) patch.configJson = input.configJson === '' ? null : input.configJson;
     const [ch] = await app.db.update(notificationChannels).set(patch).where(eq(notificationChannels.id, id)).returning();
     if (!ch) throw notFound('Channel not found');
     return serialize(ch);
@@ -77,7 +85,13 @@ export const notificationRoutes: FastifyPluginAsync = async (app) => {
     const message = '🧪 NineDeploy test notification — your channel is working!';
 
     try {
-      await dispatchChannel(ch.type, target, { id: 0, action: 'notification.test', entity: ch.name, ts: new Date().toISOString(), actorUserId: req.user!.id }, message);
+      await dispatchChannel(
+        ch.type,
+        target,
+        { id: 0, action: 'notification.test', entity: ch.name, ts: new Date().toISOString(), actorUserId: req.user!.id },
+        message,
+        { configJson: ch.configJson },
+      );
       return { ok: true };
     } catch (err) {
       throw badRequest(`Test failed: ${err instanceof Error ? err.message : err}`);

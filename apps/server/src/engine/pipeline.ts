@@ -318,7 +318,7 @@ async function snapshotConfig(
 }
 
 /** Run the full deploy pipeline for one deployment row. */
-export async function runDeployment(db: DB, deploymentId: number): Promise<void> {
+export async function runDeployment(db: DB, deploymentId: number, kernelCtx?: { useBuildKit: boolean; buildCache?: import('../kernel/types.js').IBuildCache }): Promise<void> {
   const dep = await db.query.deployments.findFirst({ where: eq(deployments.id, deploymentId) });
   if (!dep) return;
   const service = await db.query.services.findFirst({ where: eq(services.id, dep.serviceId) });
@@ -550,6 +550,12 @@ export async function runDeployment(db: DB, deploymentId: number): Promise<void>
         .from(serviceVolumeAttachments)
         .where(eq(serviceVolumeAttachments.serviceId, service.id)),
       log,
+      // Sprint 4 G-01 PR-B: the worker pipeline supplies these when the
+      // operator has flipped the `engine.use_buildkit` flag and the
+      // kernel has at least one `IBuildCache` registered. Absent =
+      // legacy `docker build` path.
+      useBuildKit: kernelCtx?.useBuildKit,
+      buildCache: kernelCtx?.buildCache,
     };
 
     if (buildConfig?.preDeployCmd) {

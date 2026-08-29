@@ -10,6 +10,8 @@ import {
   servicesLifecycle,
   servicesList,
   servicesLogs,
+  servicesSticky,
+  servicesStickyAction,
 } from '../src/commands/services.js';
 
 const h = vi.hoisted(() => {
@@ -629,5 +631,60 @@ describe('servicesInspect', () => {
     await servicesInspect(client, '5');
 
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('inspect failed'));
+  });
+});
+
+describe('servicesSticky', () => {
+  it('requires a numeric service id', async () => {
+    await expect(servicesSticky(makeClient(), 'abc', { enable: true })).rejects.toThrow(/Usage:/);
+  });
+
+  it('requires one of --enable or --disable', async () => {
+    await expect(servicesSticky(makeClient(), '5', {})).rejects.toThrow(/Specify either/);
+  });
+
+  it('refuses both --enable and --disable together', async () => {
+    await expect(servicesSticky(makeClient(), '5', { enable: true, disable: true })).rejects.toThrow(/only one/);
+  });
+
+  it('forwards the toggle to client.domains.setStickySession', async () => {
+    const setStickySession = vi.fn().mockResolvedValue({ id: 5, enabled: true, active: true });
+    const client = makeClient({ domains: { setStickySession } });
+    await servicesSticky(client, '5', { enable: true });
+    expect(setStickySession).toHaveBeenCalledWith(5, true);
+  });
+});
+
+describe('servicesStickyAction', () => {
+  it('prints success and exitCode=0 on enable', async () => {
+    const setStickySession = vi.fn().mockResolvedValue({ id: 5, enabled: true, active: true });
+    const client = makeClient({ domains: { setStickySession } });
+    await servicesStickyAction(client, '5', { enable: true });
+    expect(logSpy).toHaveBeenCalledWith(expect.stringMatching(/Sticky session enabled/));
+    expect(process.exitCode).toBe(0);
+  });
+
+  it('prints success on disable', async () => {
+    const setStickySession = vi.fn().mockResolvedValue({ id: 5, enabled: false, active: false });
+    const client = makeClient({ domains: { setStickySession } });
+    await servicesStickyAction(client, '5', { disable: true });
+    expect(logSpy).toHaveBeenCalledWith(expect.stringMatching(/Sticky session disabled/));
+    expect(process.exitCode).toBe(0);
+  });
+
+  it('surfaces a thrown error and sets exitCode=1', async () => {
+    const setStickySession = vi.fn().mockRejectedValue(new Error('network error'));
+    const client = makeClient({ domains: { setStickySession } });
+    await servicesStickyAction(client, '5', { enable: true });
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('network error'));
+    expect(process.exitCode).toBe(1);
+  });
+
+  it('falls back to String() when a non-Error is rejected', async () => {
+    const setStickySession = vi.fn().mockRejectedValue('plain failure');
+    const client = makeClient({ domains: { setStickySession } });
+    await servicesStickyAction(client, '5', { enable: true });
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('plain failure'));
+    expect(process.exitCode).toBe(1);
   });
 });

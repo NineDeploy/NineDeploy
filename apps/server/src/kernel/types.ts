@@ -115,6 +115,18 @@ export interface IServiceRegistry {
   registerDomainProvider(driver: IDomainProvider): void;
   getDomainProvider(name: string): IDomainProvider | undefined;
   listDomainProviders(): IDomainProvider[];
+
+  registerBuildCache(driver: IBuildCache): void;
+  getBuildCache(name: string): IBuildCache | undefined;
+  listBuildCaches(): IBuildCache[];
+
+  registerOrchestrator(driver: IOrchestrator): void;
+  getOrchestrator(name: string): IOrchestrator | undefined;
+  listOrchestrators(): IOrchestrator[];
+
+  registerEgressIpDriver(driver: IEgressIpDriver): void;
+  getEgressIpDriver(name: string): IEgressIpDriver | undefined;
+  listEgressIpDrivers(): IEgressIpDriver[];
 }
 
 // ─── Configuration Center (Dual-Vault: Public & Secrets) ───────────────────
@@ -219,6 +231,189 @@ export interface IStorageDriver {
   upload(localPath: string, remoteKey: string): Promise<void>;
   download(remoteKey: string, localDestPath: string): Promise<void>;
   delete(remoteKey: string): Promise<void>;
+}
+
+// ─── Build Cache (Docker BuildKit-style layer cache) ──────────────────────
+// A `IBuildCache` wraps a single layer-blob store (in-memory LRU today,
+// registry pull/push tomorrow, S3 the day after). Mirrors the
+// `IComputeDriver` / `IStorageDriver` pattern — registered on the
+// kernel's `IServiceRegistry` and looked up by stable name. PR #15
+// (G-01 PR-A) ships the contract + the in-memory reference driver;
+// Sprint 4 (PR #16–#18) wires BuildKit, registry and S3 backends.
+export interface BlobRef {
+  /** Stable digest (sha256:hex) of the cached blob. Acts as the cache key
+   *  suffix when the cache splits blobs across multiple storage backends. */
+  digest: string;
+  /** Total size of the blob in bytes. Backends use this to enforce the
+   *  configured budget; plugins surface it in stats. */
+  sizeBytes: number;
+  /** When the blob was first stored. Used by the LRU eviction policy. */
+  storedAt: string;
+}
+
+export interface IBuildCache {
+  readonly name: string;
+  /**
+   * Look up a blob by its cache key. Returns the existing `BlobRef` if
+   * the backend already holds the bytes, or `null` on a miss. MUST NOT
+   * throw on a missing key — a miss is the common case, not an error.
+   */
+  lookup(key: string): Promise<BlobRef | null>;
+  /**
+   * Store a blob. Returns the `BlobRef` the backend will hand out for
+   * subsequent lookups. Backends are free to deduplicate (same digest
+   * twice = single copy) and to evict when the budget is exceeded; the
+   * contract guarantees only that the returned ref is valid for
+   * `lookup()` on the same key.
+   */
+  store(key: string, blob: Buffer | Uint8Array): Promise<BlobRef>;
+  /**
+   * Aggregate stats for the `/v1/build-cache/stats` HTTP surface and
+   * the `ninedeploy build-cache stats` CLI command. Backends report
+   * their own counters; the plugin merges them across all registered
+   * caches when it emits `build.cache.stats`.
+   */
+  stats(): Promise<{
+    entries: number;
+    totalBytes: number;
+    hits: number;
+    misses: number;
+    stores: number;
+    evictions: number;
+  }>;
+}
+
+// ─── Orchestrator (multi-node service graph) ─────────────────────────────
+// An `IOrchestrator` wraps a single multi-node deploy target (local
+// Docker today, Docker Swarm in PR #21, Kubernetes in a future
+// sprint). Mirrors the `IComputeDriver` / `IStorageDriver` /
+// `IDomainProvider` pattern — registered on the kernel's
+// `IServiceRegistry` and looked up by stable name. The contract is
+// a single object — `StackSpec` — so a local driver, a Swarm
+// driver, and a future k8s driver can all consume the same
+// pipeline output.
+export interface StackSpec {
+  /** Stable stack name. Used as the prefix for all service / network /
+   *  secret / config identifiers so two stacks on the same orchestrator
+   *  never collide. */
+  name: string;
+  /** Each service the stack should run. */
+  services: StackServiceSpec[];
+  /** Networks the stack creates + the services that attach to each. */
+  networks: StackNetworkSpec[];
+  /** Secrets mounted as files into one or more services. */
+  secrets: StackSecretSpec[];
+  /** Configs (non-sensitive) mounted as files into one or more services. */
+  configs: StackConfigSpec[];
+  /** Optional volumes shared across services in the stack. */
+  volumes: StackVolumeSpec[];
+}
+
+export interface StackServiceSpec {
+  /** Stable service name within the stack (e.g. "web", "api"). */
+  name: string;
+  /** Image reference (tag, repo@sha256, or digest). */
+  image: string;
+  /** Number of replicas (>= 1). The local driver collapses to 1. */
+  replicas: number;
+  /** Container port the service exposes. */
+  port: number | null;
+  /** Environment variables — secret values are referenced by `secretRef`. */
+  env: Record<string, string>;
+  /** Names of networks (from `StackSpec.networks`) this service attaches to. */
+  networks: string[];
+  /** Names of secrets (from `StackSpec.secrets`) this service mounts. */
+  secrets: string[];
+  /** Names of configs (from `StackSpec.configs`) this service mounts. */
+  configs: string[];
+  /** Optional per-service healthcheck path (HTTP GET). */
+  healthPath?: string;
+  /** Optional Docker labels — used by the local driver for Traefik routing. */
+  labels: Record<string, string>;
+}
+
+export interface StackNetworkSpec {
+  name: string;
+  driver: 'bridge' | 'overlay';
+  attachable: boolean;
+}
+
+export interface StackSecretSpec {
+  name: string;
+  data: string; // plain text; encrypted at rest by the orchestrator driver
+}
+
+export interface StackConfigSpec {
+  name: string;
+  data: string;
+}
+
+export interface StackVolumeSpec {
+  name: string;
+}
+
+export interface StackStatus {
+  name: string;
+  /** Per-service snapshot. The local driver reports a single "running" /
+   *  "stopped" line; Swarm reports the per-replica count. */
+  services: Array<{ name: string; state: 'running' | 'stopped' | 'partial' | 'unknown'; replicas: number }>;
+  /** When the stack was last applied. ISO 8601. */
+  appliedAt: string;
+}
+
+// ─── Egress IP Driver (G-15) ────────────────────────────────────────────
+// A `IEgressIpDriver` attaches a stable outbound IP to one or more
+// containers in a project so the project's outbound traffic is
+// distinguishable in upstream logs and reputation systems. Mirrors
+// the other typed-driver contracts — registered on the kernel's
+// `IServiceRegistry` and looked up by stable name. PR #22 ships the
+// interface + the iptables reference driver; Sprint 6 will add
+// cloud-specific drivers (AWS NAT gateway allocation, GCP static IP
+// reservation, …).
+export interface EgressIpSelector {
+  /** Stable project id the rule applies to. */
+  projectId: number;
+  /**
+   * Source CIDR the rule rewrites. Defaults to the project's
+   * `ninedeploy_<project>` Docker network when omitted, which is
+   * what the iptables driver computes from `docker network inspect`.
+   */
+  sourceCidr?: string;
+}
+
+export interface EgressIpRule {
+  selector: EgressIpSelector;
+  /** Outbound IP the rule SNATs to. */
+  ip: string;
+  /** When the rule was created. ISO 8601. */
+  createdAt: string;
+}
+
+export interface IEgressIpDriver {
+  readonly name: string;
+  /** Apply the SNAT rule. Idempotent on duplicate (project, ip) — the
+   *  driver should treat a re-apply as a no-op. Never throws on a
+   *  missing iptables / kernel module; surfaces a `metric.egress.unavailable`
+   *  event instead. */
+  attach(selector: EgressIpSelector, ip: string): Promise<EgressIpRule>;
+  /** Remove the rule. Idempotent on missing. */
+  detach(selector: EgressIpSelector): Promise<void>;
+  /** Every rule the driver currently manages, in any order. */
+  list(): Promise<EgressIpRule[]>;
+}
+
+export interface IOrchestrator {
+  readonly name: string;
+  /** Translate a `StackSpec` into a deployable form, apply it, and
+   *  return the resulting status. The local driver renders the spec
+   *  into a single docker compose file + a set of `docker run` invocations. */
+  deployStack(stack: StackSpec): Promise<StackStatus>;
+  /** Remove every resource the stack created. Idempotent on missing. */
+  removeStack(name: string): Promise<void>;
+  /** Stable snapshot of every stack this orchestrator knows about. */
+  listStacks(): Promise<Array<{ name: string; serviceCount: number }>>;
+  /** Status for one stack, or `null` if the orchestrator has no record of it. */
+  getStackStatus(name: string): Promise<StackStatus | null>;
 }
 
 // ─── Domain Provider (DNS automation) ─────────────────────────────────────

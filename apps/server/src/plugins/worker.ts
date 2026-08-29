@@ -148,7 +148,21 @@ export default fp(
 
           if (claimed?.rowsAffected === 1) {
             fastify.log.info({ deploymentId: queued.id }, 'processing deployment');
-            const run = runDeployment(fastify.db, queued.id);
+            // Sprint 4 G-01 PR-B: surface the engine.use_buildkit flag
+            // and the first registered build cache to the pipeline so
+            // the Docker builder can route through `docker buildx`.
+            // The lookup is best-effort: a missing kernel / no cache =
+            // legacy `docker build` path.
+            const useBuildKit = fastify.kernel?.configCenter
+              ? await fastify.kernel.configCenter
+                  .get<boolean>('engine:use_buildkit', false)
+                  .catch(() => false)
+              : false;
+            const buildCache = fastify.kernel?.registry?.listBuildCaches?.()[0];
+            const run = runDeployment(fastify.db, queued.id, {
+              useBuildKit,
+              buildCache,
+            });
             currents.push(run);
             try {
               await run;

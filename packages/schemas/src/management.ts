@@ -72,6 +72,10 @@ export const notificationChannelCreate = z.object({
   type: notificationType,
   target: z.string().min(1).max(2048),
   eventFilter: z.string().max(1000).optional(),
+  // Per-provider configuration blob. Discord reads username / avatarUrl /
+  // title / color for the embed; other channel types ignore it. Capped
+  // at 4KB so a misbehaving client can't bloat the row.
+  configJson: z.string().max(4096).optional(),
 });
 export type NotificationChannelCreate = z.infer<typeof notificationChannelCreate>;
 
@@ -80,6 +84,8 @@ export const notificationChannelPatch = z.object({
   target: z.string().min(1).max(2048).optional(),
   eventFilter: z.string().max(1000).optional(),
   active: z.boolean().optional(),
+  // Empty string clears the channel's provider-specific config.
+  configJson: z.string().max(4096).optional(),
 });
 export type NotificationChannelPatch = z.infer<typeof notificationChannelPatch>;
 

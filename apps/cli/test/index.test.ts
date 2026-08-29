@@ -147,6 +147,17 @@ const h = vi.hoisted(() => {
   manifestValidate: vi.fn(),
   manifestShow: vi.fn(),
   manifestApply: vi.fn(),
+  metricsShow: vi.fn(),
+  metricsFlush: vi.fn(),
+  buildCacheStats: vi.fn(),
+  brandingGet: vi.fn(),
+  brandingSet: vi.fn(),
+  egressList: vi.fn(),
+  egressSet: vi.fn(),
+  egressClear: vi.fn(),
+  ssoList: vi.fn(),
+  ssoAdd: vi.fn(),
+  ssoRemove: vi.fn(),
   };
 });
 
@@ -168,6 +179,27 @@ vi.mock('../src/commands/manifest.js', () => ({
   manifestValidate: h.manifestValidate,
   manifestShow: h.manifestShow,
   manifestApply: h.manifestApply,
+}));
+vi.mock('../src/commands/metrics.js', () => ({
+  metricsShow: h.metricsShow,
+  metricsFlush: h.metricsFlush,
+}));
+vi.mock('../src/commands/buildCache.js', () => ({
+  buildCacheStats: h.buildCacheStats,
+}));
+vi.mock('../src/commands/branding.js', () => ({
+  brandingGet: h.brandingGet,
+  brandingSet: h.brandingSet,
+}));
+vi.mock('../src/commands/egress.js', () => ({
+  egressList: h.egressList,
+  egressSet: h.egressSet,
+  egressClear: h.egressClear,
+}));
+vi.mock('../src/commands/sso.js', () => ({
+  ssoList: h.ssoList,
+  ssoAdd: h.ssoAdd,
+  ssoRemove: h.ssoRemove,
 }));
 vi.mock('../src/commands/demo.js', () => ({ demoSeed: h.demoSeed }));
 vi.mock('../src/commands/server.js', () => ({
@@ -310,12 +342,12 @@ describe('program registration', () => {
     expect(root.children.map((c) => c.cmdName)).toEqual([
       'init', 'setup', 'login', 'logout', 'whoami', 'config',
       'services', 'databases', 'templates', 'deploys', 'token', 'system',
-      'env', 'domains', 'volumes', 'networks', 'sessions', 'backups', 'alerts', 'users',
+      'env', 'domains', 'config-preset', 'metrics', 'build-cache', 'branding', 'volumes', 'networks', 'sessions', 'backups', 'alerts', 'users',
       'reset-link <idOrEmail>', 'activity', 'plugins', 'config-center', 'workspaces', 'demo', 'server', 'doctor',
-      'sources', 'deploy', 'webhooks', 'firewall', 'manifest',
+      'sources', 'deploy', 'webhooks', 'firewall', 'manifest', 'egress', 'sso',
     ]);
     expect(findCommand('server').children).toHaveLength(4);
-    expect(findCommand('services').children).toHaveLength(12);
+    expect(findCommand('services').children).toHaveLength(13);
     expect(findCommand('databases').children).toHaveLength(2);
     expect(findCommand('templates').children).toHaveLength(3);
     expect(findCommand('deploys').children).toHaveLength(5);
@@ -323,7 +355,7 @@ describe('program registration', () => {
     expect(findCommand('system').children).toHaveLength(7);
     expect(findCommand('workspaces').children).toHaveLength(4);
     expect(findCommand('env').children).toHaveLength(3);
-    expect(findCommand('domains').children).toHaveLength(3);
+    expect(findCommand('domains').children).toHaveLength(4);
     expect(findCommand('volumes').children).toHaveLength(2);
     expect(findCommand('backups').children).toHaveLength(3);
     expect(findCommand('alerts').children).toHaveLength(3);
@@ -332,7 +364,13 @@ describe('program registration', () => {
     expect(findCommand('demo').children).toHaveLength(1);
     expect(findCommand('firewall').children).toHaveLength(7);
     expect(findCommand('manifest').children).toHaveLength(4);
-    expect(h.FakeCommand.instances).toHaveLength(127);
+    expect(findCommand('config-preset').children).toHaveLength(5);
+    expect(findCommand('metrics').children).toHaveLength(2);
+    expect(findCommand('build-cache').children).toHaveLength(1);
+    expect(findCommand('branding').children).toHaveLength(2);
+    expect(findCommand('egress').children).toHaveLength(3);
+    expect(findCommand('sso').children).toHaveLength(3);
+    expect(h.FakeCommand.instances).toHaveLength(151);
     // sanity: every new command we added has at least the subcommands it owns
     expect(findCommand('sources').children.length).toBeGreaterThanOrEqual(6);
     expect(findCommand('deploy').children.length).toBeGreaterThanOrEqual(1);

@@ -59,6 +59,18 @@ class EventBus extends EventEmitter {
     this.emit('event', event);
   }
 
+  /**
+   * Fire-and-forget custom event. Routes and modules that need to broadcast
+   * a one-off signal (e.g. `config.preset.applied`, `domain.preset.failed`)
+   * reach for this so subscribers do not have to know the underlying
+   * `EventEmitter` channel name. Mirrors the kernel bus's `emitCustom` so
+   * the call site is symmetric whether the listener is a kernel plugin or a
+   * top-level route.
+   */
+  emitCustom(name: string, payload: unknown): void {
+    this.emit(name, payload);
+  }
+
   backlog(): AppEvent[] {
     return [...this.recent];
   }

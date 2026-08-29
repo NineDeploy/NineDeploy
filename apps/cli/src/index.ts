@@ -2,12 +2,13 @@
 import { Command } from 'commander';
 import { getClient } from './client.js';
 import { loadConfig, saveConfig } from './config.js';
-import { banner } from './lib/format.js';
+import { banner, error } from './lib/format.js';
 import { loginAction } from './commands/login.js';
 import { setupAction } from './commands/setup.js';
 import {
   servicesCompose, servicesCreate, servicesDelete, servicesDeploy, servicesExport,
   servicesGet, servicesInspect, servicesLifecycle, servicesList, servicesLogs,
+  servicesStickyAction,
 } from './commands/services.js';
 import {
   dbCreate, dbList, deploysCancel, deploysList, deploysRemove, deploysRollback,
@@ -51,6 +52,30 @@ import {
 import { deployFromGithub } from './commands/deploy.js';
 import { manifestApply, manifestInit, manifestShow, manifestValidate } from './commands/manifest.js';
 import { templatesInit } from './commands/templates.js';
+import {
+  domainsPresetAddNamecheapAction,
+  domainsPresetApplyAction,
+  domainsPresetListAction,
+} from './commands/domains.js';
+import {
+  configPresetApplyAction, configPresetGetAction,
+  configPresetListAction, configPresetRegisterAction, configPresetRemoveAction,
+} from './commands/configPresets.js';
+import {
+  metricsFlushAction, metricsShowAction,
+} from './commands/metrics.js';
+import {
+  buildCacheStatsAction,
+} from './commands/buildCache.js';
+import {
+  brandingGetAction, brandingSetAction,
+} from './commands/branding.js';
+import {
+  egressClearAction, egressListAction, egressSetAction,
+} from './commands/egress.js';
+import {
+  ssoAddAction, ssoListAction, ssoRemoveAction,
+} from './commands/sso.js';
 
 const program = new Command();
 
@@ -148,6 +173,12 @@ services.command('compose <id>').description('Show generated runtime Docker Comp
 
 services.command('inspect <id>').description('Inspect runtime container and Traefik tags').action((id: string) => servicesInspect(getClient(), id));
 
+services.command('sticky <id>')
+  .description('Toggle sticky-session routing (Traefik sticky cookie, G-28)')
+  .option('--enable', 'Route every request to the same backend container')
+  .option('--disable', 'Remove the sticky-cookie middleware')
+  .action((id: string, opts: { enable?: boolean; disable?: boolean }) => servicesStickyAction(getClient(), id, opts));
+
 // ── Databases ────────────────────────────────────────────────────────────
 const databases = program.command('databases').description('Manage databases');
 
@@ -220,6 +251,118 @@ domainsCmd.command('add <serviceId> <host>')
   .action((id: string, host: string, opts: { path?: string; ssl?: boolean }) => domainsAdd(getClient(), id, host, opts));
 
 domainsCmd.command('rm <serviceId> <domainId>').description('Remove a domain').action((svcId: string, domId: string) => domainsRemove(getClient(), svcId, domId));
+
+const domainsPresetsCmd = domainsCmd.command('preset').description('Manage DNS presets (IDomainProvider automation)');
+domainsPresetsCmd.command('list').description('List registered IDomainProvider drivers').action(() => domainsPresetListAction(getClient()));
+domainsPresetsCmd.command('apply <hostname>')
+  .description('Create a DNS record for the given hostname via the active provider')
+  .option('-c, --content <content>', 'Override the record content (A record IPv4 or CNAME hostname)')
+  .action((hostname: string, opts: { content?: string }) => domainsPresetApplyAction(getClient(), hostname, { content: opts.content }));
+domainsPresetsCmd
+  .command('add namecheap')
+  .description('Save Namecheap API credentials so dns_records_provider=namecheap can be used')
+  .requiredOption('--api-user <user>', 'Namecheap username (account owner)')
+  .requiredOption('--api-key <key>', 'Namecheap API key (the key itself; the server encrypts it at rest)')
+  .requiredOption('--client-ip <ip>', 'Public IPv4 of this server, already whitelisted on the Namecheap account panel')
+  .action((opts: { apiUser: string; apiKey: string; clientIp: string }) =>
+    domainsPresetAddNamecheapAction(getClient(), { apiUser: opts.apiUser, apiKey: opts.apiKey, clientIp: opts.clientIp }),
+  );
+
+// ── Config Presets ───────────────────────────────────────────────────────
+const configPresetsCmd = program.command('config-preset').description('Manage named configCenter bundles that can be re-applied to a fresh instance');
+
+configPresetsCmd.command('list').description('List every registered preset id').action(() => configPresetListAction(getClient()));
+
+configPresetsCmd.command('get <id>').description('Show a preset\'s values and description').action((id: string) => configPresetGetAction(getClient(), id));
+
+configPresetsCmd.command('register <id>')
+  .description('Register a preset from a JSON values file (key → value object)')
+  .option('-f, --file <file>', 'JSON file with key → value pairs (required, validated inside the action)')
+  .option('-d, --description <text>', 'Optional human description (max 500 chars)')
+  .action((id: string, opts: { file?: string; description?: string }) => configPresetRegisterAction(getClient(), id, { file: opts.file, description: opts.description }));
+
+configPresetsCmd.command('apply <id>')
+  .description('Write every value in the preset to configCenter (idempotent)')
+  .option('--override <json>', 'Inline JSON object of one-shot overrides for this call only')
+  .action((id: string, opts: { override?: string }) => {
+    let override: Record<string, unknown> | undefined;
+    if (opts.override) {
+      try {
+        override = JSON.parse(opts.override);
+      } catch (err) {
+        error(`Invalid --override JSON: ${err instanceof Error ? err.message : String(err)}`);
+        process.exitCode = 1;
+        return;
+      }
+    }
+    void configPresetApplyAction(getClient(), id, { override });
+  });
+
+configPresetsCmd.command('remove <id>').description('Unregister a preset (does NOT undo the live apply)').action((id: string) => configPresetRemoveAction(getClient(), id));
+
+// ── Metrics (G-09) ────────────────────────────────────────────────────────
+const metricsCmd = program.command('metrics').description('Metric history plugin — archive kernel events to a pluggable backend (G-09)');
+metricsCmd.command('show').description('Show the active backend, events, and last flush marker').action(() => metricsShowAction(getClient()));
+metricsCmd.command('flush').description('Run the built-in backend retention sweep').action(() => metricsFlushAction(getClient()));
+
+// ── Build Cache (G-01) ────────────────────────────────────────────────────
+const buildCacheCmd = program.command('build-cache').description('Build cache plugin — per-backend LRU stats (G-01)');
+buildCacheCmd.command('stats').description('Show per-backend cache counters and the merged totals').action(() => buildCacheStatsAction(getClient()));
+
+// ── Branding (G-30) ───────────────────────────────────────────────────────
+const brandingCmd = program.command('branding').description('Override the panel logo, color, support email and footer (G-30)');
+brandingCmd.command('get').description('Show the current branding overrides').action(() => brandingGetAction(getClient()));
+brandingCmd
+  .command('set')
+  .description('Override one or more branding fields')
+  .option('--logo-url <url>', 'Logo URL (use --logo-url="" to clear)')
+  .option('--primary-color <hex>', 'Primary color (hex code, e.g. #1d4ed8)')
+  .option('--support-email <addr>', 'Support email shown in the help menu')
+  .option('--footer-html <html>', 'Custom footer HTML for the sign-in page')
+  .action((opts: { logoUrl?: string; primaryColor?: string; supportEmail?: string; footerHtml?: string }) => {
+    // Empty strings map to `null` so the operator can clear a value.
+    const cleaned: Record<string, string> = {};
+    if (opts.logoUrl !== undefined) cleaned.logoUrl = opts.logoUrl;
+    if (opts.primaryColor !== undefined) cleaned.primaryColor = opts.primaryColor;
+    if (opts.supportEmail !== undefined) cleaned.supportEmail = opts.supportEmail;
+    if (opts.footerHtml !== undefined) cleaned.footerHtml = opts.footerHtml;
+    void brandingSetAction(getClient(), cleaned);
+  });
+
+// ── Egress IP (G-15) ─────────────────────────────────────────────────────
+const egressCmd = program.command('egress').description('Manage per-project outbound IP rules (G-15)');
+egressCmd.command('list').description('Show every egress IP rule across every registered driver').action(() => egressListAction(getClient()));
+egressCmd
+  .command('set <projectId> <ip>')
+  .description('Attach a stable outbound IP to a project (e.g. after creating a VPS)')
+  .option('--driver <name>', 'Target a specific driver (default: first registered)')
+  .action((projectId: string, ip: string, opts: { driver?: string }) => egressSetAction(getClient(), projectId, ip, opts));
+egressCmd.command('clear <projectId>').description('Detach the egress rule for a project').action((projectId: string) => egressClearAction(getClient(), projectId));
+
+// ── SSO (G-22) ───────────────────────────────────────────────────────────
+const ssoCmd = program.command('sso').description('Manage OIDC / SAML SSO providers (G-22)');
+ssoCmd.command('list').description('List every configured provider').action(() => ssoListAction(getClient()));
+ssoCmd
+  .command('add <oidc|saml> <name>')
+  .description('Register a new OIDC or SAML provider (config flags become the config_json blob)')
+  .option('--issuer <url>', 'OIDC issuer URL (OIDC only)')
+  .option('--client-id <id>', 'OIDC client id (OIDC only)')
+  .option('--client-secret <secret>', 'OIDC client secret (OIDC only)')
+  .option('--redirect-uri <uri>', 'OIDC redirect URI (OIDC only)')
+  .option('--metadata-url <url>', 'SAML IdP metadata URL (SAML only)')
+  .action((type: string, name: string, opts: { issuer?: string; clientId?: string; clientSecret?: string; redirectUri?: string; metadataUrl?: string }) => {
+    const config: Record<string, unknown> = {};
+    if (type === 'oidc') {
+      if (opts.issuer) config.issuer = opts.issuer;
+      if (opts.clientId) config.clientId = opts.clientId;
+      if (opts.clientSecret) config.clientSecret = opts.clientSecret;
+      if (opts.redirectUri) config.redirectUri = opts.redirectUri;
+    } else {
+      if (opts.metadataUrl) config.metadataUrl = opts.metadataUrl;
+    }
+    void ssoAddAction(getClient(), type, name, config);
+  });
+ssoCmd.command('remove <id>').description('Remove a provider by id').action((id: string) => ssoRemoveAction(getClient(), id));
 
 // ── Volumes ────────────────────────────────────────────────────────────────
 const volumesCmd = program.command('volumes').description('Manage Docker volumes');

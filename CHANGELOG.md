@@ -100,6 +100,223 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **SSO (G-22).** A new official microkernel feature for OIDC and
+  SAML single sign-on. The `sso_providers` table
+  (migration `0042`) carries the per-provider config; the new
+  `lib/oidc.ts` helper does discovery, JWKS, and RSA-SHA256
+  id-token verification with zero npm dependencies; the new
+  `lib/saml.ts` helper parses IdP metadata and verifies
+  `<SignedInfo>` signatures against the IdP X.509 cert. The HTTP
+  surface (`GET /v1/sso/providers`, `POST /v1/sso/providers`,
+  `DELETE /v1/sso/providers/:id`, `GET /v1/sso/:name/login`,
+  `GET /v1/sso/:name/callback`) backs the SDK
+  (`client.sso.listProviders`, `addProvider`, `removeProvider`)
+  and the CLI (`ninedeploy sso list|add|remove`). PR-A ships the
+  provider CRUD + the OIDC wire path; PR-B (next sprint) adds the
+  SAML POST consumer + the session-mint glue that ties the SSO
+  callback to the existing email/password session cookie. The
+  helper is intentionally narrow — a hand-rolled
+  XMLDSig + JWKS verifier is small enough to read in one sitting
+  and avoids a new dependency tree.
+
+- **Sticky IP / dedicated egress (G-15).** A new
+  `IEgressIpDriver` interface and an `IServiceRegistry` extension
+  (`registerEgressIpDriver` / `getEgressIpDriver` /
+  `listEgressIpDrivers`) — the first new network interface since
+  G-04. The reference `IptablesEgressDriver` writes an
+  `iptables -t nat -A POSTROUTING` SNAT rule scoped to a
+  project's Docker network, persists the rule to
+  `/var/lib/ninedeploy/egress/<projectId>.rules` so a kernel restart
+  rehydrates, and is idempotent on `(projectId, ip)`. The
+  `StickyIpPlugin` subscribes to `service.deploying` +
+  `service.deployed`, reads `project:<id>:sticky_ip.ip` from
+  config-center on success, and emits `metric.egress.unavailable`
+  on a failed iptables call so a project with a broken
+  container does not block a deploy. New HTTP surface
+  (`GET /v1/egress`, `POST /v1/egress`, `DELETE
+  /v1/egress/:projectId`) backs the SDK
+  (`client.egress.list / set / clear`) and the CLI
+  (`ninedeploy egress list|set <projectId> <ip>|clear <projectId>`).
+  Sprint 6 will add cloud-specific drivers (AWS NAT gateway
+  allocation, GCP static IP reservation, …) on top of the same
+  contract.
+
+- **Discord notification channel can now send a coloured embed
+  (G-18 PR-A).** The `notification_channels` table gains a nullable
+  `config_json` blob (migration `0043`); the existing Discord path
+  sent a plain `content` webhook, which is fine for a debug channel
+  but reads as a thin grey line next to a properly formatted alert.
+  Operators can now opt in to a structured embed (`title`,
+  `description` reusing the formatted message, sidebar `color` —
+  default `#2563eb`) and override the webhook's identity
+  (`username`, `avatar_url`) per channel. `sendDiscord` is exported
+  from `lib/notifier.ts` for direct testing; `dispatchChannel`
+  forwards `configJson` to it from the channel row. Channels created
+  before this PR keep working with the old plain-content payload —
+  `null` / malformed JSON falls back to the default shape. PR-B (next
+  sprint) wires the operator panel's Discord form to the new blob.
+
+- **Namecheap DNS records (G-07 PR-A).** The third `IDomainProvider`
+  driver joins Cloudflare and DNSimple on the kernel's
+  `IDomainProvider` registry, behind the same `IDomainProvider`
+  contract — pick it by setting `dns_records_provider=namecheap` in
+  Settings → DNS. Namecheap's domain-DNS API has no per-record
+  endpoint; `namecheap.domains.dns.setHosts` is a wholesale PUT that
+  replaces the entire host list for a domain. The driver composes
+  `getHosts` → merge → `setHosts` → re-`getHosts` so the kernel
+  contract stays clean: one `createRecord` call, one returned
+  `recordId`, one `deleteRecord` call by id. Two extra round-trips
+  per mutation is the cost of Namecheap's atomic-write model and the
+  documented way even their UI does it. A new zero-dependency XML
+  parser (`lib/xml.ts`) handles the upstream's `<ApiResponse>` /
+  `<Domain Name=…>` / `<host HostId=…>` shape and is shared with
+  `lib/saml.ts`. Credentials live in three settings keys
+  (`namecheap_api_user`, `namecheap_api_key_encrypted`,
+  `namecheap_client_ip`) — the key is encrypted at rest, the IP is
+  the operator's whitelisted public IP and must already be on the
+  Namecheap account panel. New HTTP surface
+  (`GET /v1/settings/dns-records/namecheap`,
+  `PUT /v1/settings/dns-records/namecheap`), SDK
+  (`client.settings.namecheap.{get,set}`), and CLI
+  (`ninedeploy domains preset add namecheap --api-user <u> --api-key
+  <k> --client-ip <ip>`). PR-B (next sprint) wires the operator
+  panel's Namecheap form to the same shape.
+
+- **White-label (G-30).** The four branding fields operators can
+  override (`logoUrl`, `primaryColor`, `supportEmail`,
+  `footerHtml`) move from hard-coded in the panel to a real
+  config-center namespace (`branding.*`). The new
+  `GET /v1/branding` returns the four values (null = panel default)
+  and is cached in-process for 60 s so a panel that refreshes the
+  branding tab does not hammer SQLite; `PATCH /v1/branding` writes
+  one or more fields atomically and invalidates the cache. New SDK
+  surface (`client.branding.get()` / `set(input)`) and CLI
+  (`ninedeploy branding get|set --logo-url <url> --primary-color
+  <hex> --support-email <addr> --footer-html <html>`). Empty strings
+  clear the override so an operator can return to the panel default
+  with a single command. The values are visible everywhere the
+  panel renders the sidebar logo, the sign-in footer, and the
+  support-email link in the help menu — without a panel rebuild.
+
+- **Docker Swarm orchestrator interface (G-10 PR-A).** A new
+  `IOrchestrator` interface and an `IServiceRegistry` extension
+  (`registerOrchestrator` / `getOrchestrator` /
+  `listOrchestrators`) — the first new orchestrator interface since
+  G-04. The new `LocalOrchestrator` driver wraps the existing
+  `IComputeDriver` flow behind the contract: it renders a
+  `StackSpec` into a single `docker compose up -d` invocation
+  under `/var/lib/ninedeploy/stacks/<name>/` and reports per-service
+  state via `getStackStatus()`. Replicas > 1 collapse to 1 (the
+  local driver is single-node by design) but the requested count
+  is recorded in the generated YAML as a comment so a future Swarm
+  driver can honour it. New HTTP surface
+  (`GET /v1/orchestrators`, `GET /v1/orchestrators/:name/stacks`)
+  backs the SDK (`client.orchestrators.list()`,
+  `client.orchestrators.stackStatus(name)`). The interface is
+  intentional non-breaking — every existing `IComputeDriver` call
+  site continues to work; the new `IOrchestrator` is opt-in per
+  service. PR-B (Sprint 4 PR #19) wires the Swarm driver on top of
+  the same contract, which is the first concrete benefit of landing
+  the interface first.
+
+- **S3-backed build cache (G-01 PR-D).** A new `S3BuildCache`
+  driver that reuses the existing `lib/s3.ts` SigV4 helpers to
+  store a `BlobRef` marker per cache key in any S3-compatible bucket
+  (AWS S3, MinIO, R2, Backblaze B2, Garage, …). Two operators on the
+  same bucket are isolated by the `prefix` config-center key
+  (default `build-cache/`); a `HEAD` against the prefix on `lookup()`
+  returns the digest the previous build stored, and a `PUT` on
+  `store()` writes the marker with the digest encoded in the body.
+  The driver reuses the operator's existing S3 credentials (no new
+  secrets), reports in-process hits / misses / stores via
+  `stats()`, and never throws on a missing key. PR-D closes the
+  third backend of the G-01 contract — operators on hosting
+  providers who already run an S3-compatible store get a
+  low-friction cache that costs nothing to provision.
+
+- **Registry-backed build cache (G-01 PR-C).** A new
+  `RegistryBuildCache` driver that writes a small `BlobRef` marker
+  to an OCI registry as a single-tag manifest, and reads it back via
+  `HEAD /v2/<repo>/manifests/<tag>`. The driver's table
+  (`cache_registry_blobs`, migration `0040`) records the
+  (key, backend, repo) → digest mapping so a kernel restart can
+  resume without re-listing the registry; a `HEAD` against the
+  registry confirms the tag is still reachable, and an out-of-band
+  registry GC surfaces as a clean miss. Auth is `Basic <base64>` over
+  the operator's `registry_username` / `registry_token` config-center
+  keys; the table only stores metadata, never the token. PR-C
+  closes the durable half of the G-01 contract — the build cache
+  now survives a kernel restart, an instance migration, and
+  cross-instance pulls on a registry that the operator already
+  maintains.
+
+- **BuildKit invocation through the cache contract (G-01 PR-B).** The
+  Dockerfile build path now honours `engine.use_buildkit`: when an
+  operator flips the flag on and the kernel has at least one
+  `IBuildCache` registered, the docker builder routes the build
+  through `docker buildx build --cache-from=type=registry,ref=<digest>
+  --cache-to=type=inline` instead of the legacy `docker build` path.
+  Cache keys are content-addressed
+  (`apps/server/src/lib/buildCacheKey.ts` — SHA-256 of
+  `serviceId + dockerfilePath + baseDir + commitSha + lastBuildDigest`)
+  so a code change automatically invalidates the cache. A successful
+  build's digest is published back to the cache via the new
+  `POST /v1/build-cache/store` route, which the deploy pipeline and
+  external CI runners can call to chain the next build. The legacy
+  path stays the default (`engine.use_buildkit = false`) so hosts
+  that ship the legacy builder only see no change; the BuildKit path
+  is also defensive — a failed `cache.lookup()` becomes a logged
+  warning, a failed `cache.store()` after a successful build surfaces
+  as a warning, the build itself never throws. Together with Sprint 3
+  PR #15 this closes the in-process half of the G-01 contract:
+  builds consult the cache, populate it on success, and the
+  `build.cache.hit` / `build.cache.miss` / `build.cache.error`
+  events now have a real consumer on the build hot path.
+
+- **Build cache contract + inline LRU driver (G-01 PR-A).** A new
+  official microkernel plugin that hooks `service.deploying` and asks a
+  registered `IBuildCache` for a layer-blob hit. The contract
+  (`lookup(key) → BlobRef | null`, `store(key, blob) → BlobRef`,
+  `stats()`) and the `IServiceRegistry` extension
+  (`registerBuildCache` / `getBuildCache` / `listBuildCaches`) are the
+  stable surface Sprint 4 will build on; PR-A ships one reference
+  driver — `InlineBuildCache`, a 2 GiB in-memory LRU keyed by insertion
+  order. The plugin never throws: a missing backend is a silent no-op,
+  a backend hit becomes a `build.cache.hit` event with the digest +
+  size, a miss becomes `build.cache.miss`, and a thrown lookup becomes
+  `build.cache.error` so the deploy pipeline keeps moving. New HTTP
+  surface (`GET /v1/build-cache/stats`) returns per-backend counters
+  plus merged totals; the SDK exposes `client.buildCache.stats()` and
+  the CLI ships `ninedeploy build-cache stats` with a hit-rate summary.
+  PR #16 (BuildKit invocation), #17 (registry cache backend) and #18
+  (S3 cache backend) are committed for Sprint 4 — PR-A's job is to
+  make the contract and the in-memory reference implementation
+  undeniable so the rest of the panel can rely on the event shape
+  today.
+
+- **Metric History plugin (G-09 PR-A).** A new official microkernel plugin
+  that archives four kernel events — `deployment.status_changed`,
+  `service.health_changed`, `backup.completed`, `alert.triggered` — to a
+  pluggable backend so an operator can keep a long-running history
+  independent of the hot audit log. Three backends ship in this PR:
+  `builtin` (the default; writes a `metric.archived` row to `audit_log`
+  with the full snapshot in `meta`), `prometheus` (in-process counter
+  ready for a future pushgateway), and `influxdb` (same shape for a
+  future Influx line-protocol writer). Every archive publishes a
+  `metric.archived` custom event; failures surface as
+  `metric.archive.failed`. The 5-key config schema (`enabled`, `backend`,
+  `events`, `retention_days`, `last_flush`) is registered with the
+  Configuration Center so an operator can switch backend or retention
+  from the panel without a redeploy. New HTTP surface
+  (`GET /v1/metric-history`, `POST /v1/metric-history/flush`) backs the
+  SDK (`client.metricHistory.get/flush`) and the CLI
+  (`ninedeploy metrics show|flush`). `runRetention()` runs once at boot
+  to trim `metric.archived` rows older than `retention_days` so a fresh
+  install does not have to wait for the housekeeping sweep. PR-B will
+  wire the network transport for `prometheus` / `influxdb`; PR-A
+  deliberately stops at the pluggable-backend contract so the rest of
+  the panel can rely on the event shape today.
+
 - **The marketing site has a real template hub.** README linked
   `ninedeploy.com/templates`, but the website had no such route — the link 404'd.
   The new `/templates` page renders the same registry bundle the panel ships
@@ -295,7 +512,206 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   authenticated, and exposes only the atomic `setHosts` endpoint
   rather than a record-by-record create/delete, so a faithful
   `IDomainProvider` for Namecheap needs a separate, isolated PR
-  (G-07 PR-C) rather than a fake mapping.
+  (G-07 PR-D) rather than a fake mapping.
+
+- **Domain Presets plugin (G-07 PR-C).** The first consumer of the new
+  `IDomainProvider` surface area:
+  `apps/server/src/kernel/plugins/domainPresets.ts` (`domain-presets`,
+  v0.1.0) subscribes to the `audit.recorded` firehose and, whenever
+  `action === 'domain.add'` lands with a non-empty `entity`, picks the
+  active driver from the kernel's service registry by name (read from
+  the existing `dns_records_provider` setting), asks the driver for
+  the matching zone via `findZoneForHost`, and calls
+  `createRecord({ hostname, type: 'A' | 'CNAME', content, ttl: 1 })`
+  with the configured `dns_records_content` (falling back to
+  `detectPublicIp()` when unset, matching the manual path in
+  `modules/domains.ts`). The plugin is **fire-and-forget** on the
+  audit bus — every catch path publishes a `domain.preset.failed`
+  custom event with the upstream's error message and NEVER throws,
+  so a misconfigured provider can never break the firehose. The
+  happy path publishes `domain.preset.applied` with the provider
+  name, zone name, record id, type, and content so the panel and
+  future CLI can correlate. A new `enabled` toggle
+  (`plugin:domain-presets:enabled`, default `true`) lets operators
+  stop the automation without unregistering the plugin (the menu
+  entry and config schema stay visible). 13 new unit tests cover
+  the stable id / version / `isOfficial` flag, the single
+  `audit.recorded` subscription and `destroy()` cleanup, the
+  non-`domain.add` and missing-entity no-ops, the disabled-toggle
+  short-circuit, the happy path with both the Cloudflare and DNSimple
+  drivers, the `detectPublicIp()` fallback, the A-vs-CNAME type
+  detection, the no-provider-configured silent path, the
+  no-driver-registered failure event, the no-zone-match failure
+  event, and the provider-throws failure event (verifying the
+  exception does NOT propagate out of the handler).
+
+- **`ninedeploy domains preset {list,apply}` CLI + HTTP surface
+  (G-07 PR-D).** Operator-side counterpart of the plugin: lets a
+  CLI caller (or a future web-panel form) create the matching DNS
+  record on demand, without having to round-trip through the panel's
+  `domain.add` flow. Three layers, all sharing the existing
+  `IDomainProvider` registry:
+  - **Server** — `apps/server/src/modules/domainPresets.ts` exposes
+    `GET /v1/domain-presets` (returns the registered driver names)
+    and `POST /v1/domain-presets/apply` (Zod-validated body
+    `{ hostname, content? }`, resolved provider, `findZoneForHost`
+    + `createRecord`, audit event `domain.preset.manual` on success).
+    Mounted under `/v1/domain-presets` and protected by the standard
+    `app.authenticate` hook.
+  - **SDK** — `packages/sdk/src/index.ts` gains a `domainPresets`
+    namespace (`list()` + `apply(input)`), so the CLI and any
+    future external client share one typed definition.
+  - **CLI** — `apps/cli/src/commands/domains.ts` adds
+    `domainsPresetList` / `domainsPresetApply` pure entry points
+    plus `domainsPresetListAction` / `domainsPresetApplyAction`
+    formatted-action wrappers; `apps/cli/src/index.ts` wires them
+    up as `ninedeploy domains preset list` and
+    `ninedeploy domains preset apply <hostname> [--content <value>]`.
+  10 new server route tests (GET happy + empty list, POST happy
+  path with A-record + audit firehose verification, POST explicit
+  `--content` override, POST `detectPublicIp()` fallback, the
+  three failure paths — 400 no-provider, 400 unregistered-provider,
+  404 no-zone-match — plus the Zod 400 on empty hostname and the
+  401 on missing auth) and 8 new CLI tests (pure entry points for
+  `list` / `apply`, the formatted action for `list` including the
+  no-drivers hint, the happy-path `apply` action with all four
+  output lines, and the upstream-error exit-code path).
+
+- **Backup crypto public surface (G-13 PR-A).** Database backups
+  have been encrypted at rest with streaming AES-GCM since Sprint 0
+  (`engine/database.ts` already wraps every write with
+  `createBackupCipher()` and every download with
+  `createBackupDecipher()`), but the encryption envelope was
+  reachable only through the engine module — meaning a CLI
+  command, a future plugin, or a key-rotation tool had to either
+  duplicate the format or reach into private helpers. New
+  `apps/server/src/lib/backupCrypto.ts` is the single public
+  surface the rest of the codebase (and the future
+  `ninedeploy backups encrypt <id>` command) reaches for:
+  - `readBackupHeader(file)` → `{ keyVersion, iv } | null` so a
+    caller can detect plaintext / legacy / encrypted files
+    without parsing the bytes twice.
+  - `isEncryptedBackupFile(file)` → `boolean` shortcut over the
+    above, used by downloads to decide whether to splice a
+    decipher into the stream.
+  - `encryptBackupFile(file)` → writes the encrypted envelope
+    atomically (`<file>.<pid>.<ts>.enc` → `renameSync`) under
+    the active master-key version. Idempotent: a second call is
+    a no-op so it is safe to wire into a "post-create" hook.
+  - `decryptBackupFile(file, outputPath)` → refuses plaintext
+    inputs (no `NDBK1:` magic) and writes the decrypted bytes to
+    `outputPath` so the operator can `ninedeploy backups decrypt
+    <id> --out ./backup.sql`.
+  - `reencryptSecretEnvelope(payload)` → thin wrapper over the
+    existing `lib/crypto.ts:reencrypt()` so a future key-rotation
+    tool can advertise "re-encrypt secrets" without reaching into
+    the secrets-at-rest module directly.
+  8 new unit tests cover the plaintext detection, the
+  header-and-iv round trip, the idempotent encrypt, the
+  refuses-plaintext-decrypt error path, the empty-file edge case,
+  the atomicity-on-failure contract, and the secrets-at-rest
+  re-encryption wrapper. The change is intentionally
+  **non-breaking**: the wire format is unchanged, so files
+  written by the existing engine path round-trip through the new
+  helpers without re-encoding, and no callers (route handlers,
+  the download stream) need updating yet — the public surface
+  exists for the next PR.
+
+- **Config Presets plugin + HTTP surface (G-23 PR-A).** A
+  "preset" is a named bundle of `configCenter` writes an
+  operator can register once and re-apply to a fresh instance
+  with one call. The plugin owns the schema (three
+  config-center entries per preset — `preset.list`,
+  `preset.<id>.values`, `preset.<id>.description` — plus an
+  `enabled` toggle and a per-deployment `preset.namespace`
+  key). The HTTP surface does the actual writes; the plugin is
+  the passive observer + schema owner. Four layers, all sharing
+  the existing `IConfigCenter` shape:
+  - **Server module** — `apps/server/src/modules/configPresets.ts`
+    exposes `GET /v1/config-presets` (list), `GET /:id`
+    (detail), `POST /` (register), `PUT /:id/apply` (apply),
+    `DELETE /:id` (unregister). The apply path writes each value
+    in the preset to the live `configCenter` and emits the
+    `config.preset.applied` / `config.preset.failed` /
+    `config.preset.disabled` custom events on the global event
+    bus. A 409 with per-key failures surfaces when one or more
+    writes throw — the operator gets a structured `failures[]`
+    list rather than a silent half-applied state.
+  - **Kernel plugin** — `apps/server/src/kernel/plugins/configPresets.ts`
+    (`config-presets`, v0.1.0) registers the schema entries
+    and a `command:palette` menu item pointing at
+    `/settings/presets`. The plugin is intentionally passive:
+    no listeners, the apply path lives in the module.
+  - **SDK** — `packages/sdk/src/index.ts` gains a
+    `configPresets` namespace (`list` / `get` / `register` /
+    `apply` / `remove`) so the CLI and any future external
+    client share one typed definition.
+  - **CLI** — `apps/cli/src/commands/configPresets.ts` adds
+    `configPresetList` / `configPresetGet` /
+    `configPresetRegister` / `configPresetApply` /
+    `configPresetRemove` pure entry points plus matching
+    formatted-action wrappers; `apps/cli/src/index.ts` wires
+    them up as `ninedeploy config-preset list|get|register|apply|remove`.
+  The global event bus (`apps/server/src/lib/events.ts`) gains
+  a tiny `emitCustom(name, payload)` helper that mirrors the
+  kernel bus's `emitCustom` — this is the seam new route modules
+  use to broadcast one-off signals without reaching for
+  `EventEmitter` channel names. 14 server route tests, 3 plugin
+  tests, 14 CLI tests, and 1 `events.ts` test exercise every
+  branch: the empty list, the registration with a duplicate id,
+  the regex-rejected id, the GET detail, the 404, the apply
+  success path, the one-shot `--override`, the disabled-plugin
+  400, the 404-on-missing-preset, the 409 with per-key failures,
+  the DELETE unregister + entry cleanup, the auth-required
+  guard, the CLI pure entry points (JSON file parsing, missing
+  --file, JSON-not-an-object, override forwarding, upstream
+  error verbatim), and the formatted actions (the no-drivers
+  hint, the success line, the per-key-failure exit code).
+
+- **Sticky Session plugin (G-28 PR-A).** When the operator
+  toggles sticky-session routing for a service, every request
+  to that service's domains is pinned to the same backend
+  container via a Traefik sticky-cookie middleware — the
+  Coolify/Dokploy feature for "load balancing with session
+  affinity" that the operator used to have to add at the
+  Cloudflare edge. Three layers, all touching the same
+  settings-table key:
+  - **`engine/proxy.ts`** gains `getStickyEnabledForService(db,
+    serviceId)` and a small block inside `writeDynamicConfig` that
+    appends the per-service Traefik middleware whenever the
+    flag is on. The middleware block uses Traefik's
+    `sticky.cookie.{name,maxAge}` shape with
+    `name: ninedeploy_sticky` and `maxAge: 86400` — the same
+    defaults Coolify ships with.
+  - **`apps/server/src/modules/services.ts`** exposes
+    `POST /v1/services/:id/sticky-session` (admin role). The
+    endpoint writes `sticky_session:<id>:enabled` to the
+    settings table, emits a `service.sticky_session.enabled` /
+    `.disabled` audit event, and best-effort re-renders
+    `writeDynamicConfig` so the next reload picks up the
+    change. Toggling off removes the middleware.
+  - **`apps/server/src/kernel/plugins/stickySession.ts`**
+    (`sticky-session`, v0.1.0) is the passive observer:
+    subscribes to `service.deployed` and, on every deploy
+    whose service has the flag on, emits a
+    `proxy.sticky_session.activated` event so the panel's
+    audit log shows the activation. Errors are surfaced via
+    `proxy.sticky_session.error` — never propagated. The plugin
+    also adds a `command:palette` menu item at
+    `/settings/services`.
+  - **SDK + CLI** — `packages/sdk/src/index.ts` gains
+    `services.setStickySession(id, enabled)` returning
+    `{ id, enabled, active }` (the last is the post-write
+    re-read so the caller can confirm the round-trip);
+    `ninedeploy services sticky <id> --enable|--disable` is
+    the operator-side form.
+  6 new plugin tests cover the stable id, the single
+  `service.deployed` subscription, the destroy-cleanup, the
+  happy-path `proxy.sticky_session.activated` event, the
+  off / missing-flag silent path, and the missing-`serviceId`
+  defensive branch. The change is intentionally
+  **non-migration**: the flag lives in the settings table so
+  the operator can enable / disable without an upgrade.
 
 ### Fixed
 

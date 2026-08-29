@@ -180,7 +180,15 @@ describe('worker plugin', () => {
 
     const claim = updates.find((u) => u.status === 'building');
     expect(claim).toBeDefined();
-    expect(pipelineMock.runDeployment).toHaveBeenCalledWith(db, 5);
+    // Sprint 4 G-01 PR-B: the worker now also forwards the active
+    // `IBuildCache` + the `engine.use_buildkit` flag so the Docker
+    // builder can route through `docker buildx`. The third argument
+    // is an object with `useBuildKit: false` when the kernel has no
+    // config center in the test app.
+    const call = pipelineMock.runDeployment.mock.calls[0];
+    expect(call?.[0]).toBe(db);
+    expect(call?.[1]).toBe(5);
+    expect(call?.[2]).toMatchObject({ useBuildKit: false });
     await app.close();
   });
 
@@ -212,7 +220,11 @@ describe('worker plugin', () => {
     // The claim update sets status 'building'.
     const claim = updates.find((u) => u.status === 'building');
     expect(claim).toBeDefined();
-    expect(pipelineMock.runDeployment).toHaveBeenCalledWith(db, 5);
+    // Sprint 4 G-01 PR-B: 3rd arg is the cache flag bundle.
+    const call = pipelineMock.runDeployment.mock.calls[0];
+    expect(call?.[0]).toBe(db);
+    expect(call?.[1]).toBe(5);
+    expect(call?.[2]).toMatchObject({ useBuildKit: false });
     await app.close();
   });
 
@@ -357,8 +369,11 @@ describe('worker plugin', () => {
     const app = await buildApp(db);
     await vi.advanceTimersByTimeAsync(POLL_MS + 1000);
     expect(pipelineMock.runDeployment).toHaveBeenCalledTimes(2);
-    expect(pipelineMock.runDeployment).toHaveBeenCalledWith(db, 1);
-    expect(pipelineMock.runDeployment).toHaveBeenCalledWith(db, 2);
+    const calls = pipelineMock.runDeployment.mock.calls;
+    expect(calls[0]?.[0]).toBe(db);
+    expect(calls[0]?.[1]).toBe(1);
+    expect(calls[1]?.[0]).toBe(db);
+    expect(calls[1]?.[1]).toBe(2);
 
     // Releasing both lets the slots settle and close cleanly.
     gate1.resolve();

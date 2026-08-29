@@ -18,6 +18,7 @@ import { unprocessable } from '../lib/errors.js';
 import { getVaultConfig, setVaultConfig, testVault } from '../lib/vault.js';
 import { clearEnrolmentToken, getEnrolmentToken, rotateEnrolmentToken } from '../lib/enrolment.js';
 import { getDnsRecordsConfig, setDnsRecordsConfig, testCloudflareToken } from '../lib/cloudflare.js';
+import { getNamecheapConfig, setNamecheapConfig } from '../lib/namecheap.js';
 import { config } from '../config.js';
 import { ALLOW_REGISTRATION_DEFAULT } from './auth.js';
 
@@ -51,6 +52,16 @@ const dnsRecordsPatch = z.object({
   enabled: z.boolean(),
   token: z.string().min(10).max(4096).optional(),
   content: z.union([z.string().max(255), z.literal('')]).optional(),
+});
+// Namecheap DNS-record provisioning: `apiUser` + `apiKey` (encrypted at rest)
+// + `clientIp` (the server's public IP, which the operator must have
+// whitelisted on the Namecheap account panel). All three are required
+// together — a half-configured set is rejected so the operator has to
+// re-run with the full triple.
+const namecheapConfigPatch = z.object({
+  apiUser: z.string().min(1).max(64),
+  apiKey: z.string().min(10).max(4096),
+  clientIp: z.string().regex(/^\d{1,3}(\.\d{1,3}){3}$/, 'clientIp must be an IPv4 address'),
 });
 
 /**
@@ -199,6 +210,29 @@ export const settingsRoutes: FastifyPluginAsync = async (app) => {
     if (!cfg.token) return { ok: false, error: 'No Cloudflare token configured' };
     const status = await testCloudflareToken(cfg.token);
     return { ok: true, status };
+  });
+
+  // ── Namecheap DNS records (G-07 PR-A) ─────────────────────────────────
+  // Three values, all required together: the operator must have already
+  // whitelisted the server's public IP on the Namecheap account panel.
+  // The key is encrypted at rest by `setNamecheapConfig`; the username
+  // and client IP are stored in plaintext because they are not secret
+  // on their own.
+  app.get('/dns-records/namecheap', async () => {
+    const cfg = await getNamecheapConfig(app.db);
+    return {
+      configured: cfg !== null,
+      apiUser: cfg?.apiUser ?? null,
+      clientIp: cfg?.clientIp ?? null,
+      hasKey: cfg !== null,
+    };
+  });
+
+  app.put('/dns-records/namecheap', async (req) => {
+    const input = namecheapConfigPatch.parse(req.body);
+    await setNamecheapConfig(app.db, input);
+    void audit(app.db, req.user!.id, 'settings.dns_records.namecheap', input.apiUser);
+    return { ok: true, apiUser: input.apiUser };
   });
 
   // ── Node enrolment (M-6) ────────────────────────────────────────────────

@@ -481,6 +481,16 @@ describe('createClient', () => {
       expect(last(calls).init.method).toBe('PATCH');
       expect(JSON.parse(last(calls).init.body ?? '{}')).toEqual({ ssl: true });
     });
+
+    it('exercises setStickySession (G-28) — POST /v1/services/:id/sticky-session', async () => {
+      const { fetchMock, calls } = makeFetch(() => ok({ id: 1, enabled: true, active: true }));
+      const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
+
+      await client.domains.setStickySession(7, true);
+      expect(last(calls).url).toBe('/v1/services/7/sticky-session');
+      expect(last(calls).init.method).toBe('POST');
+      expect(JSON.parse(last(calls).init.body ?? '{}')).toEqual({ enabled: true });
+    });
   });
 
   describe('volumes', () => {
@@ -1229,6 +1239,50 @@ describe('createClient', () => {
 
       await client.config.delete('system.site_name');
       expect(last(calls)).toMatchObject({ url: '/v1/config/system.site_name', init: { method: 'DELETE' } });
+    });
+  });
+
+  describe('metricHistory', () => {
+    it('GET /v1/metric-history and POST /v1/metric-history/flush (G-09)', async () => {
+      const { fetchMock, calls } = makeFetch((url) => {
+        if (url.endsWith('/v1/metric-history/flush')) {
+          return ok({ ok: true, backend: 'builtin', deleted: 7 });
+        }
+        return ok({
+          enabled: true,
+          backend: 'builtin',
+          events: ['deployment.status_changed', 'service.health_changed', 'backup.completed', 'alert.triggered'],
+          retentionDays: 30,
+          lastFlush: { ts: 0, backend: 'builtin', count: 0 },
+        });
+      });
+      const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
+
+      const status = await client.metricHistory.get();
+      expect(status.backend).toBe('builtin');
+      expect(status.events).toHaveLength(4);
+      expect(last(calls)).toMatchObject({ url: '/v1/metric-history', init: { method: 'GET' } });
+
+      const flush = await client.metricHistory.flush();
+      expect(flush).toEqual({ ok: true, backend: 'builtin', deleted: 7 });
+      expect(last(calls)).toMatchObject({ url: '/v1/metric-history/flush', init: { method: 'POST' } });
+    });
+  });
+
+  describe('buildCache', () => {
+    it('GET /v1/build-cache/stats (G-01 PR-A)', async () => {
+      const { fetchMock, calls } = makeFetch(() =>
+        ok({
+          backends: [{ name: 'inline', entries: 1, totalBytes: 1024, hits: 4, misses: 6, stores: 5, evictions: 1 }],
+          totals: { entries: 1, totalBytes: 1024, hits: 4, misses: 6, stores: 5, evictions: 1 },
+        }),
+      );
+      const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
+
+      const stats = await client.buildCache.stats();
+      expect(stats.backends).toHaveLength(1);
+      expect(stats.totals.hits).toBe(4);
+      expect(last(calls)).toMatchObject({ url: '/v1/build-cache/stats', init: { method: 'GET' } });
     });
   });
 

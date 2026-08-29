@@ -646,6 +646,77 @@ export const auditLog = sqliteTable(
   (t) => ({ entityTsIdx: index('audit_log_entity_ts_idx').on(t.entity, t.ts) }),
 );
 
+// ─── Build cache registry (G-01 PR-C) ─────────────────────────────────────
+// One row per (key, backend, repo) triple. Bytes live in the registry
+// itself; the row tracks the digest, the size, and the last-hit
+// timestamp so the panel can render hit-rate / drop cold rows.
+export const cacheRegistryBlobs = sqliteTable(
+  'cache_registry_blobs',
+  {
+    id: id(),
+    key: text('key').notNull(),
+    backend: text('backend').notNull(),
+    repo: text('repo').notNull(),
+    digest: text('digest').notNull(),
+    sizeBytes: integer('size_bytes').notNull(),
+    storedAt: tsUpdatable('stored_at'),
+    lastHitAt: tsUpdatable('last_hit_at'),
+    hits: integer('hits').notNull().default(0),
+  },
+  (t) => ({
+    keyIdx: uniqueIndex('cache_registry_blobs_key_idx').on(t.key, t.backend, t.repo),
+    lastHitIdx: index('cache_registry_blobs_last_hit_idx').on(t.lastHitAt),
+  }),
+);
+
+export type CacheRegistryBlob = typeof cacheRegistryBlobs.$inferSelect;
+
+// ─── Swarm stacks (G-10 PR #21) ──────────────────────────────────────────
+// One row per stack the `SwarmOrchestrator` has applied. The driver
+// also writes a working file under `/var/lib/ninedeploy/stacks/<name>/`
+// for fast lookup; this row is the source of truth across a process
+// restart because the swarm daemon is a separate process we do not
+// own.
+export const swarmStacks = sqliteTable(
+  'swarm_stacks',
+  {
+    id: id(),
+    name: text('name').notNull(),
+    stateJson: text('state_json').notNull(),
+    lastAppliedAt: tsUpdatable('last_applied_at'),
+    createdAt: ts('created_at'),
+    updatedAt: tsUpdatable('updated_at'),
+  },
+  (t) => ({
+    nameIdx: uniqueIndex('swarm_stacks_name_idx').on(t.name),
+    lastAppliedIdx: index('swarm_stacks_last_applied_idx').on(t.lastAppliedAt),
+  }),
+);
+
+export type SwarmStack = typeof swarmStacks.$inferSelect;
+
+// ─── SSO providers (G-22) ────────────────────────────────────────────────
+// One row per configured OIDC or SAML provider. The `config_json`
+// blob carries the issuer URL, client id / secret, SAML metadata
+// URL, attribute mapping, and any provider-specific knobs. The
+// driver never logs the secret fields.
+export const ssoProviders = sqliteTable(
+  'sso_providers',
+  {
+    id: id(),
+    type: text('type', { enum: ['oidc', 'saml'] }).notNull(),
+    name: text('name').notNull(),
+    configJson: text('config_json').notNull(),
+    createdAt: ts('created_at'),
+    updatedAt: tsUpdatable('updated_at'),
+  },
+  (t) => ({
+    nameIdx: uniqueIndex('sso_providers_name_idx').on(t.name),
+  }),
+);
+
+export type SsoProvider = typeof ssoProviders.$inferSelect;
+
 export const settings = sqliteTable(
   'settings',
   {
@@ -775,6 +846,12 @@ export const notificationChannels = sqliteTable(
     targetEncrypted: text('target_encrypted').notNull(),
     eventFilter: text('event_filter').notNull().default(''),
     active: integer('active', { mode: 'boolean' }).notNull().default(true),
+    // Per-channel provider-specific knobs. Discord uses this for embed
+    // title/description/color and webhook identity overrides; the
+    // `dispatchChannel` switch reads the keys it cares about. Nullable
+    // so channels created before G-18 PR-A keep working with their
+    // existing plain-content payload.
+    configJson: text('config_json'),
     createdAt: ts('created_at'),
     updatedAt: tsUpdatable('updated_at'),
   },

@@ -146,6 +146,43 @@ export async function servicesDelete(client: NineDeployClient, idStr: string): P
   } catch (err) { error(err instanceof Error ? err.message : String(err)); }
 }
 
+/** Pure entry point for `ninedeploy services sticky <id> --enable|--disable` (G-28). */
+export async function servicesSticky(
+  client: NineDeployClient,
+  idStr: string,
+  opts: { enable?: boolean; disable?: boolean } = {},
+): Promise<{ id: number; enabled: boolean; active: boolean }> {
+  const id = Number(idStr);
+  if (!id) throw new Error('Usage: ninedeploy services sticky <id> --enable|--disable');
+  if (opts.enable === undefined && opts.disable === undefined) {
+    throw new Error('Specify either --enable or --disable');
+  }
+  if (opts.enable && opts.disable) {
+    throw new Error('Specify only one of --enable or --disable');
+  }
+  return await client.domains.setStickySession(id, Boolean(opts.enable));
+}
+
+/** Formatted wrapper for the CLI. */
+export async function servicesStickyAction(
+  client: NineDeployClient,
+  idStr: string,
+  opts: { enable?: boolean; disable?: boolean } = {},
+): Promise<void> {
+  header('Sticky session');
+  let result: Awaited<ReturnType<typeof servicesSticky>>;
+  try {
+    result = await servicesSticky(client, idStr, opts);
+  } catch (err) {
+    error(err instanceof Error ? err.message : String(err));
+    process.exitCode = 1;
+    return;
+  }
+  success(result.enabled
+    ? `Sticky session enabled for service #${result.id} (Traefik will pick this up on the next reload)`
+    : `Sticky session disabled for service #${result.id}`);
+}
+
 /** `ninedeploy services export <id>` */
 export async function servicesExport(client: NineDeployClient, idStr: string): Promise<void> {
   const id = Number(idStr);

@@ -1,4 +1,5 @@
 import { and, eq, inArray } from 'drizzle-orm';
+import { z } from 'zod';
 import type { FastifyPluginAsync } from 'fastify';
 import {
   buildConfigs,
@@ -17,6 +18,8 @@ import { getTemplates } from '../templates/registry.js';
 import { capture } from '../lib/exec.js';
 import { audit } from '../lib/audit.js';
 import { config } from '../config.js';
+import { getStickyEnabledForService } from '../engine/proxy.js';
+import { setSettingString } from '../lib/settings.js';
 import { badRequest, conflict, HttpError, notFound, parseId as num } from '../lib/errors.js';
 import { loadServiceForUser } from '../lib/serviceAccess.js';
 import { assertServiceRole, visibleServiceIdSet } from '../lib/resourceAccess.js';
@@ -477,6 +480,34 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
     const [svc] = await app.db.update(services).set(updateData).where(eq(services.id, id)).returning();
     if (!svc) throw notFound('Service not found');
     return { cpuShares: svc.cpuShares, memLimitMb: svc.memLimitMb };
+  });
+
+  // G-28: per-service sticky-session toggle. The setting lives in the
+  // settings table at `sticky_session:<id>:enabled` (string `"true"` /
+  // `"1"`); `engine/proxy.ts:writeDynamicConfig` reads it on every domain
+  // / deploy change and emits the Traefik `mw_sticky_<id>` middleware
+  // block. The endpoint is POST (not PATCH) because it is a command, not
+  // a description of the service's current state.
+  app.post('/:id/sticky-session', async (req) => {
+    const id = num((req.params as { id: string }).id);
+    const svc = await loadServiceForUser(app.db, id, req.user!);
+    await assertServiceRole(app.db, svc, req.user!, 'admin');
+    const input = z.object({ enabled: z.boolean() }).parse(req.body ?? {});
+    await setSettingString(
+      app.db,
+      `sticky_session:${id}:enabled`,
+      input.enabled ? 'true' : 'false',
+    );
+    void audit(app.db, req.user!.id, input.enabled ? 'service.sticky_session.enabled' : 'service.sticky_session.disabled', `#${id}`);
+    // Re-render the dynamic config so the next reload picks up the change.
+    // Best-effort: a write failure must not block the operator's toggle.
+    try {
+      const { writeDynamicConfig } = await import('../engine/proxy.js');
+      await writeDynamicConfig(app.db);
+    } catch {
+      /* the next deploy or domain change will pick it up anyway */
+    }
+    return { id, enabled: input.enabled, active: await getStickyEnabledForService(app.db, id) };
   });
 
   // ── Lifecycle: stop / start / restart ──────────────────────────────────

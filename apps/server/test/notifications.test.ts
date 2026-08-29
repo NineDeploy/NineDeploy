@@ -331,3 +331,105 @@ describe('notification routes', () => {
     ]);
   });
 });
+
+// ─── Sprint 5 G-18 PR-A: notification_channels.config_json ────────────────
+describe('notification channels configJson (G-18 PR-A)', () => {
+  const previousEgress = process.env['NINEDEPLOY_ALLOW_PRIVATE_EGRESS'];
+  beforeEach(() => {
+    process.env['NINEDEPLOY_ALLOW_PRIVATE_EGRESS'] = '1';
+  });
+  afterEach(() => {
+    if (previousEgress === undefined) delete process.env['NINEDEPLOY_ALLOW_PRIVATE_EGRESS'];
+    else process.env['NINEDEPLOY_ALLOW_PRIVATE_EGRESS'] = previousEgress;
+  });
+
+  it('surfaces configJson in the list response', async () => {
+    const cfg = JSON.stringify({ title: 'Deploy', color: 0xff0000 });
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findMany: {
+          notificationChannels: [channelRow({ id: 1, name: 'ops', type: 'discord', targetEncrypted: encrypt('https://h.example.com'), configJson: cfg })],
+        },
+      }),
+    });
+    await app.register(notificationRoutes);
+    const res = await app.inject({ method: 'GET', url: '/channels', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()[0]).toMatchObject({ configJson: cfg });
+  });
+
+  it('persists configJson on POST /channels', async () => {
+    const cfg = JSON.stringify({ title: 'Deploy' });
+    const inserts: unknown[] = [];
+    const app = await buildTestApp({
+      db: createFakeDb({
+        insert: {
+          // Resolver receives the values object as its first arg; capture it
+          // so the test can assert what the route actually persisted.
+          notification_channels: (values: unknown) => {
+            inserts.push(values);
+            return [channelRow({ id: 7, name: 'discord-ops', type: 'discord', targetEncrypted: encrypt('https://h.example.com'), configJson: cfg })];
+          },
+        },
+      }),
+    });
+    await app.register(notificationRoutes);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/channels',
+      headers: asUser(),
+      payload: { name: 'discord-ops', type: 'discord', target: 'https://h.example.com', configJson: cfg },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(inserts[0]).toMatchObject({ configJson: cfg });
+  });
+
+  it('clears configJson when PATCH sends an empty string', async () => {
+    const updates: unknown[] = [];
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { notificationChannels: channelRow({ id: 8, type: 'discord', targetEncrypted: encrypt('https://h.example.com'), configJson: '{"title":"old"}' }) },
+        update: {
+          notification_channels: (set: unknown) => {
+            updates.push(set);
+            return [channelRow({ id: 8, type: 'discord', targetEncrypted: encrypt('https://h.example.com'), configJson: null })];
+          },
+        },
+      }),
+    });
+    await app.register(notificationRoutes);
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/channels/8',
+      headers: asUser(),
+      payload: { configJson: '' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(updates[0]).toMatchObject({ configJson: null });
+  });
+
+  it('forwards configJson when testing a discord channel', async () => {
+    const fetchMock = vi.fn(async () => ({ ok: true, status: 200, text: async () => '' })) as unknown as typeof fetch;
+    vi.stubGlobal('fetch', fetchMock);
+    const cfg = JSON.stringify({ title: 'Test', color: 0x00ff00 });
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: {
+          notificationChannels: channelRow({
+            id: 9,
+            type: 'discord',
+            targetEncrypted: encrypt('https://h.example.com'),
+            configJson: cfg,
+          }),
+        },
+      }),
+    });
+    await app.register(notificationRoutes);
+    const res = await app.inject({ method: 'POST', url: '/channels/9/test', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [, init] = fetchMock.mock.calls[0]!;
+    const body = JSON.parse((init as RequestInit).body as string);
+    expect(body.embeds).toEqual([{ title: 'Test', description: expect.any(String), color: 0x00ff00 }]);
+  });
+});

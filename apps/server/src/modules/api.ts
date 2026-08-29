@@ -9,8 +9,12 @@ import { dashboardRoutes } from './dashboard.js';
 import { attachmentRoutes, databasesRoutes } from './databases.js';
 import { backupRoutes, databaseBackupRoutes } from './backups.js';
 import { backupDestinationRoutes } from './backupDestinations.js';
+import { buildCacheRoutes } from './buildCache.js';
+import { brandingRoutes } from './branding.js';
+import { configPresetsRoutes } from './configPresets.js';
 import { deploysRoutes } from './deploys.js';
 import { domainIndexRoutes } from './domainIndex.js';
+import { domainPresetsRoutes } from './domainPresets.js';
 import { domainsRoutes } from './domains.js';
 import { envRoutes, envSearchRoutes, projectEnvRoutes } from './env.js';
 import { hookReceiveRoutes, webhookMgmtRoutes } from './hooks.js';
@@ -20,7 +24,11 @@ import { serverRoutes } from './servers.js';
 import { projectRoutes } from './projects.js';
 import { notificationRoutes } from './notifications.js';
 import { networkRoutes } from './networks.js';
+import { orchestratorsRoutes } from './orchestrators.js';
+import { egressRoutes } from './egress.js';
+import { ssoRoutes } from './sso.js';
 import { metricRoutes, statsRoutes } from './stats.js';
+import { metricHistoryRoutes } from './metricHistory.js';
 import { servicesRoutes } from './services.js';
 import { serviceMigrationRoutes } from './serviceMigration.js';
 import { serviceVolumesRoutes } from './serviceVolumes.js';
@@ -82,6 +90,8 @@ export const apiRoutes: FastifyPluginAsync = async (app) => {
   await app.register(backupRoutes, { prefix: '/backups' });
   await app.register(backupDestinationRoutes, { prefix: '/backup-destinations' });
   await app.register(domainIndexRoutes, { prefix: '/domains' });
+  await app.register(domainPresetsRoutes, { prefix: '/domain-presets' });
+  await app.register(configPresetsRoutes, { prefix: '/config-presets' });
   await app.register(networkRoutes, { prefix: '/networks' });
   await app.register(volumeRoutes, { prefix: '/volumes' });
   await app.register(volumeBackupRoutes, { prefix: '/volumes' });
@@ -94,6 +104,11 @@ export const apiRoutes: FastifyPluginAsync = async (app) => {
   await app.register(settingsRoutes, { prefix: '/settings' });
   await app.register(firewallRoutes, { prefix: '/firewall' });
   await app.register(configCenterRoutes, { prefix: '/config' });
+  await app.register(buildCacheRoutes, { prefix: '/build-cache' });
+  await app.register(orchestratorsRoutes, { prefix: '/orchestrators' });
+  await app.register(brandingRoutes, { prefix: '/branding' });
+  await app.register(egressRoutes, { prefix: '/egress' });
+  await app.register(ssoRoutes, { prefix: '/sso' });
   await app.register(pluginRoutes, { prefix: '/plugins' });
   await app.register(menuRoutes, { prefix: '/menus' });
   await app.register(topologyRoutes, { prefix: '/topology' });
@@ -112,6 +127,7 @@ export const apiRoutes: FastifyPluginAsync = async (app) => {
   // 404'd, so the charts on Monitoring and the service Overview tab had nothing
   // to read while the collector kept writing a row every 30 seconds.
   await app.register(metricRoutes, { prefix: '/services' });
+  await app.register(metricHistoryRoutes, { prefix: '/metric-history' });
   await app.register(envSearchRoutes, { prefix: '/env' });
   await app.register(jobRoutes, { prefix: '/services' });
   await app.register(serverRoutes, { prefix: '/servers' });

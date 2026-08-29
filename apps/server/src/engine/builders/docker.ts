@@ -8,6 +8,7 @@ import { buildEnv, capture, run, sleep } from '../../lib/exec.js';
 import { ensureDockerImage, pullDockerImage } from '../../lib/dockerPull.js';
 import { NETWORK } from '../proxy.js';
 import { ensureServiceBridge } from '../../lib/serviceBridge.js';
+import { buildWithBuildKit } from './buildkit.js';
 import { buildProbeUrl, safeProbePath } from '../../lib/probeUrl.js';
 import { writeSecretFile, type SecretFile } from '../../lib/secretFile.js';
 import { repoRelative, resolveInRepo } from '../../lib/repoPath.js';
@@ -384,17 +385,39 @@ export const dockerBuilder: Builder = {
         builtWithNixpacks = true;
         await buildWithNixpacks(target, baseDir, buildConfig, workDir, log, ctx.manifest);
       } else {
-        await run(
-          'docker',
-          ['build', '-t', target, '-f', dockerfile, baseDir],
-          {
-            cwd: workDir,
-            env: { DOCKER_BUILDKIT: '1' },
-            heartbeatMs: DEPLOY_HEARTBEAT_MS,
-            heartbeatLabel: `Building Docker image ${target}`,
-          },
-          log,
-        );
+        // Sprint 4 G-01 PR-B: when the `engine.use_buildkit` config flag
+        // is on (default off), route the Dockerfile build through the
+        // BuildKit driver so the build can consult / populate the
+        // `IBuildCache` registered on the kernel. The legacy
+        // `docker build` path stays the default until an operator
+        // opts in, because the BuildKit invocation is incompatible
+        // with hosts that ship the legacy builder only.
+        if (ctx.useBuildKit) {
+          const result = await buildWithBuildKit({
+            workDir,
+            dockerfilePath: dockerfile,
+            baseDir,
+            target,
+            commitSha,
+            lastBuildDigest: imageDigest,
+            serviceId: service.id,
+            cache: ctx.buildCache,
+            log,
+          });
+          log(`BuildKit finished: ${result.imageDigest}${result.cacheHit ? ' (cache hit)' : ''}`);
+        } else {
+          await run(
+            'docker',
+            ['build', '-t', target, '-f', dockerfile, baseDir],
+            {
+              cwd: workDir,
+              env: { DOCKER_BUILDKIT: '1' },
+              heartbeatMs: DEPLOY_HEARTBEAT_MS,
+              heartbeatLabel: `Building Docker image ${target}`,
+            },
+            log,
+          );
+        }
       }
     }
 

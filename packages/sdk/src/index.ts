@@ -301,6 +301,147 @@ export interface NineDeployClient {
     update: (serviceId: number, domainId: number, input: DomainPatch) => Promise<Domain>;
     all: () => Promise<DomainEntry[]>;
     setSsl: (domainId: number, ssl: boolean) => Promise<{ id: number; ssl: boolean }>;
+    /** Toggle sticky-session routing for the service (G-28). */
+    setStickySession: (serviceId: number, enabled: boolean) => Promise<{ id: number; enabled: boolean; active: boolean }>;
+  };
+  domainPresets: {
+    /** Every `IDomainProvider` the running kernel has registered. */
+    list: () => Promise<{ providers: string[] }>;
+    /**
+     * Manually create the DNS record for `hostname` via the operator's
+     * active provider. `content` is optional: when omitted the route
+     * falls back to the panel's `dns_records_content` setting, then to
+     * `detectPublicIp()`. Returns the upstream recordId so the caller
+     * can correlate.
+     */
+    apply: (input: { hostname: string; content?: string }) => Promise<{
+      hostname: string;
+      provider: string;
+      zone: string;
+      recordId: string;
+      type: 'A' | 'CNAME';
+      content: string;
+    }>;
+  };
+  configPresets: {
+    /** Every preset the kernel has registered. */
+    list: () => Promise<{ presets: string[] }>;
+    /** Fetch a single preset's values + description. */
+    get: (id: string) => Promise<{
+      id: string;
+      description: string | null;
+      values: Record<string, unknown>;
+      createdAt: string;
+    }>;
+    /** Register a new preset. Throws if `id` already exists. */
+    register: (input: { id: string; description?: string; values: Record<string, unknown> }) => Promise<{ ok: boolean; id: string; keyCount: number }>;
+    /** Write every value in the preset to the live configCenter. */
+    apply: (id: string, opts?: { override?: Record<string, unknown> }) => Promise<{
+      ok: boolean;
+      id: string;
+      keyCount: number;
+      failureCount?: number;
+      failures?: Array<{ key: string; status: 'failed'; reason?: string }>;
+    }>;
+    /** Unregister a preset. Does NOT undo the apply. */
+    remove: (id: string) => Promise<{ ok: boolean; id: string }>;
+  };
+  metricHistory: {
+    /** Current configuration snapshot (backend choice, enabled flag, retention, last-flush). */
+    get: () => Promise<{
+      enabled: boolean;
+      backend: 'builtin' | 'prometheus' | 'influxdb';
+      events: string[];
+      retentionDays: number;
+      lastFlush: { ts: number; backend: string; count: number };
+    }>;
+    /** Run the built-in backend's retention sweep. Returns the row count trimmed. */
+    flush: () => Promise<{ ok: boolean; backend: 'builtin'; deleted: number }>;
+  };
+  buildCache: {
+    /** Per-backend counters + merged totals. G-01 PR-A. */
+    stats: () => Promise<{
+      backends: Array<{
+        name: string;
+        entries: number;
+        totalBytes: number;
+        hits: number;
+        misses: number;
+        stores: number;
+        evictions: number;
+      }>;
+      totals: {
+        entries: number;
+        totalBytes: number;
+        hits: number;
+        misses: number;
+        stores: number;
+        evictions: number;
+      };
+    }>;
+  };
+  orchestrators: {
+    /** Every `IOrchestrator` the running kernel has registered. G-10 PR-A. */
+    list: () => Promise<{
+      orchestrators: Array<{ name: string; stacks: Array<{ name: string; serviceCount: number }> }>;
+    }>;
+    /** Stable snapshot of one stack. Returns `null` when the orchestrator has no record. */
+    stackStatus: (name: string) => Promise<{
+      name: string;
+      services: Array<{ name: string; state: 'running' | 'stopped' | 'partial' | 'unknown'; replicas: number }>;
+      appliedAt: string;
+    } | null>;
+  };
+  branding: {
+    /** Read the four operator-overridable branding fields. G-30. */
+    get: () => Promise<{
+      logoUrl: string | null;
+      primaryColor: string | null;
+      supportEmail: string | null;
+      footerHtml: string | null;
+    }>;
+    /** Set one or more branding fields. Empty strings are stored as `null`. */
+    set: (input: {
+      logoUrl?: string | null;
+      primaryColor?: string | null;
+      supportEmail?: string | null;
+      footerHtml?: string | null;
+    }) => Promise<{ ok: boolean }>;
+  };
+  egress: {
+    /** Every egress IP rule across every registered driver. G-15. */
+    list: () => Promise<{
+      drivers: Array<{
+        name: string;
+        rules: Array<{
+          selector: { projectId: number; sourceCidr?: string };
+          ip: string;
+          createdAt: string;
+        }>;
+      }>;
+    }>;
+    /** Attach an egress IP to a project on the named (or first) driver. */
+    set: (input: { projectId: number; ip: string; driver?: string }) => Promise<{
+      ok: boolean;
+      driver: string;
+      rule: { selector: { projectId: number; sourceCidr?: string }; ip: string; createdAt: string };
+    }>;
+    /** Detach the rule for a project. */
+    clear: (projectId: number) => Promise<{ ok: boolean; driver: string }>;
+  };
+  sso: {
+    /** Every configured OIDC / SAML provider. G-22. */
+    listProviders: () => Promise<{
+      providers: Array<{ id: number; type: 'oidc' | 'saml'; name: string; createdAt: string }>;
+    }>;
+    /** Add a provider (OIDC issuer URL or SAML metadata URL lives in `config`). */
+    addProvider: (input: {
+      type: 'oidc' | 'saml';
+      name: string;
+      config: Record<string, unknown>;
+    }) => Promise<{ ok: boolean; id?: number; name?: string; type?: 'oidc' | 'saml'; error?: string }>;
+    /** Remove a provider by id. */
+    removeProvider: (id: number) => Promise<{ ok: boolean }>;
   };
   volumes: {
     list: () => Promise<VolumeEntry[]>;
@@ -396,6 +537,11 @@ export interface NineDeployClient {
       get: () => Promise<{ enabled: boolean; hasToken: boolean; content: string | null }>;
       set: (input: { enabled: boolean; token?: string; content?: string }) => Promise<{ ok: boolean; enabled: boolean }>;
       test: () => Promise<{ ok: boolean; status?: string; error?: string }>;
+    };
+    /** Namecheap DNS-record auto-provisioning for added domains (G-07 PR-A). */
+    namecheap: {
+      get: () => Promise<{ configured: boolean; apiUser: string | null; clientIp: string | null; hasKey: boolean }>;
+      set: (input: { apiUser: string; apiKey: string; clientIp: string }) => Promise<{ ok: boolean; apiUser: string }>;
     };
     /**
      * Master-key rotation. `rotate` re-encrypts every stored secret onto the
@@ -897,6 +1043,123 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
       },
       all: () => get<DomainEntry[]>('/v1/domains'),
       setSsl: (domainId, ssl) => send<{ id: number; ssl: boolean }>('PATCH', `/v1/domains/${domainId}`, { ssl }),
+      /** Toggle sticky-session routing (G-28) — sits under `/domains` for legacy compatibility. */
+      setStickySession: (serviceId, enabled) =>
+        send<{ id: number; enabled: boolean; active: boolean }>(
+          'POST',
+          `/v1/services/${serviceId}/sticky-session`,
+          { enabled },
+        ),
+    },
+    domainPresets: {
+      list: () => get<{ providers: string[] }>('/v1/domain-presets'),
+      apply: (input) => send<{
+        hostname: string;
+        provider: string;
+        zone: string;
+        recordId: string;
+        type: 'A' | 'CNAME';
+        content: string;
+      }>('POST', '/v1/domain-presets/apply', input),
+    },
+    configPresets: {
+      list: () => get<{ presets: string[] }>('/v1/config-presets'),
+      get: (id) => get<{
+        id: string;
+        description: string | null;
+        values: Record<string, unknown>;
+        createdAt: string;
+      }>(`/v1/config-presets/${encodeURIComponent(id)}`),
+      register: (input) => send<{ ok: boolean; id: string; keyCount: number }>('POST', '/v1/config-presets', input),
+      apply: (id, opts) => send<{
+        ok: boolean;
+        id: string;
+        keyCount: number;
+        failureCount?: number;
+        failures?: Array<{ key: string; status: 'failed'; reason?: string }>;
+      }>('PUT', `/v1/config-presets/${encodeURIComponent(id)}/apply`, opts ?? {}),
+      remove: (id) => send<{ ok: boolean; id: string }>('DELETE', `/v1/config-presets/${encodeURIComponent(id)}`),
+    },
+    metricHistory: {
+      get: () => get<{
+        enabled: boolean;
+        backend: 'builtin' | 'prometheus' | 'influxdb';
+        events: string[];
+        retentionDays: number;
+        lastFlush: { ts: number; backend: string; count: number };
+      }>('/v1/metric-history'),
+      flush: () => send<{ ok: boolean; backend: 'builtin'; deleted: number }>('POST', '/v1/metric-history/flush'),
+    },
+    buildCache: {
+      stats: () => get<{
+        backends: Array<{
+          name: string;
+          entries: number;
+          totalBytes: number;
+          hits: number;
+          misses: number;
+          stores: number;
+          evictions: number;
+        }>;
+        totals: {
+          entries: number;
+          totalBytes: number;
+          hits: number;
+          misses: number;
+          stores: number;
+          evictions: number;
+        };
+      }>('/v1/build-cache/stats'),
+    },
+    orchestrators: {
+      list: () => get<{
+        orchestrators: Array<{ name: string; stacks: Array<{ name: string; serviceCount: number }> }>;
+      }>('/v1/orchestrators'),
+      stackStatus: (name) => get<{
+        name: string;
+        services: Array<{ name: string; state: 'running' | 'stopped' | 'partial' | 'unknown'; replicas: number }>;
+        appliedAt: string;
+      } | null>(`/v1/orchestrators/${encodeURIComponent(name)}/stacks`),
+    },
+    branding: {
+      get: () => get<{
+        logoUrl: string | null;
+        primaryColor: string | null;
+        supportEmail: string | null;
+        footerHtml: string | null;
+      }>('/v1/branding'),
+      set: (input) => send<{ ok: boolean }>('PATCH', '/v1/branding', input),
+    },
+    egress: {
+      list: () => get<{
+        drivers: Array<{
+          name: string;
+          rules: Array<{
+            selector: { projectId: number; sourceCidr?: string };
+            ip: string;
+            createdAt: string;
+          }>;
+        }>;
+      }>('/v1/egress'),
+      set: (input) => send<{
+        ok: boolean;
+        driver: string;
+        rule: { selector: { projectId: number; sourceCidr?: string }; ip: string; createdAt: string };
+      }>('POST', '/v1/egress', input),
+      clear: (projectId) => send<{ ok: boolean; driver: string }>('DELETE', `/v1/egress/${projectId}`),
+    },
+    sso: {
+      listProviders: () => get<{
+        providers: Array<{ id: number; type: 'oidc' | 'saml'; name: string; createdAt: string }>;
+      }>('/v1/sso/providers'),
+      addProvider: (input) => send<{
+        ok: boolean;
+        id?: number;
+        name?: string;
+        type?: 'oidc' | 'saml';
+        error?: string;
+      }>('POST', '/v1/sso/providers', input),
+      removeProvider: (id) => send<{ ok: boolean }>('DELETE', `/v1/sso/providers/${id}`),
     },
     volumes: {
       list: () => get<VolumeEntry[]>('/v1/volumes'),
@@ -999,6 +1262,10 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
         get: () => get<{ enabled: boolean; hasToken: boolean; content: string | null }>('/v1/settings/dns-records'),
         set: (input) => send<{ ok: boolean; enabled: boolean }>('PUT', '/v1/settings/dns-records', input),
         test: () => send<{ ok: boolean; status?: string; error?: string }>('POST', '/v1/settings/dns-records/test'),
+      },
+      namecheap: {
+        get: () => get<{ configured: boolean; apiUser: string | null; clientIp: string | null; hasKey: boolean }>('/v1/settings/dns-records/namecheap'),
+        set: (input) => send<{ ok: boolean; apiUser: string }>('PUT', '/v1/settings/dns-records/namecheap', input),
       },
       masterKey: {
         get: () => get<{ activeVersion: number; knownVersions: number[]; rotatable: boolean }>('/v1/settings/master-key'),

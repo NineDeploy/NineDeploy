@@ -1,0 +1,111 @@
+import { describe, expect, it } from 'vitest';
+import {
+  decodeXmlEntities,
+  encodeXmlEntities,
+  findChild,
+  findChildren,
+  parseXml,
+} from '../../src/lib/xml.js';
+
+describe('lib/xml', () => {
+  describe('decodeXmlEntities / encodeXmlEntities', () => {
+    it('round-trips the five predefined entities', () => {
+      const original = 'Tom & Jerry <3 "fun" \'times\'';
+      const encoded = encodeXmlEntities(original);
+      expect(encoded).toContain('&amp;');
+      expect(encoded).toContain('&lt;');
+      expect(encoded).toContain('&quot;');
+      expect(decodeXmlEntities(encoded)).toBe(original);
+    });
+  });
+
+  describe('parseXml', () => {
+    it('parses a Namecheap ApiResponse with attributes', () => {
+      const root = parseXml(
+        '<ApiResponse Status="OK" xmlns="http://api.namecheap.com/xml.response">' +
+          '<Errors /><RequestedCommand>namecheap.domains.getList</RequestedCommand>' +
+          '</ApiResponse>',
+      );
+      expect(root.name).toBe('ApiResponse');
+      expect(root.attrs['Status']).toBe('OK');
+      // `<Errors />` is a self-closing child element, NOT a literal
+      // string in the root's text. Asserting it shows up as a child
+      // with no children of its own is the right shape.
+      const errors = findChild(root, 'Errors');
+      expect(errors).toBeDefined();
+      expect(errors!.children).toEqual([]);
+      expect(findChild(root, 'RequestedCommand')?.text).toBe('namecheap.domains.getList');
+    });
+
+    it('parses self-closing <Domain Name="…" /> children', () => {
+      const root = parseXml(
+        '<ApiResponse Status="OK">' +
+          '<CommandResponse><DomainGetListResult>' +
+          '<Domain Name="example.com" Created="2010-01-01" />' +
+          '<Domain Name="example.net" />' +
+          '</DomainGetListResult></CommandResponse></ApiResponse>',
+      );
+      // `<DomainGetListResult>` is a grandchild of `root`, not a direct
+      // child — drill through `<CommandResponse>` to find it.
+      const domains = findChildren(
+        findChild(findChild(root, 'CommandResponse')!, 'DomainGetListResult')!,
+        'Domain',
+      );
+      expect(domains).toHaveLength(2);
+      expect(domains[0]!.attrs['Name']).toBe('example.com');
+      expect(domains[0]!.children).toHaveLength(0);
+    });
+
+    it('parses self-closing <host HostId Name Type Address TTL /> entries', () => {
+      const root = parseXml(
+        '<ApiResponse Status="OK">' +
+          '<CommandResponse><DomainDNSGetHostsResult>' +
+          '<hosts>' +
+          '<host HostId="1" Name="www" Type="A" Address="1.1.1.1" TTL="1800" />' +
+          '<host HostId="2" Name="@" Type="A" Address="2.2.2.2" TTL="60" />' +
+          '</hosts></DomainDNSGetHostsResult></CommandResponse></ApiResponse>',
+      );
+      const hosts = findChildren(
+        findChild(findChild(findChild(root, 'CommandResponse')!, 'DomainDNSGetHostsResult')!, 'hosts')!,
+        'host',
+      );
+      expect(hosts).toHaveLength(2);
+      expect(hosts[0]!.attrs).toMatchObject({
+        HostId: '1',
+        Name: 'www',
+        Type: 'A',
+        Address: '1.1.1.1',
+        TTL: '1800',
+      });
+    });
+
+    it('decodes entities in attributes and text', () => {
+      const root = parseXml('<Root attr="a &amp; b">Tom &amp; Jerry</Root>');
+      expect(root.attrs['attr']).toBe('a & b');
+      expect(root.text).toBe('Tom & Jerry');
+    });
+
+    it('throws on mismatched close tag', () => {
+      expect(() => parseXml('<a></b>')).toThrow(/unexpected <\/b>/);
+    });
+
+    it('throws on unclosed tag', () => {
+      expect(() => parseXml('<a>')).toThrow(/unclosed <a>/);
+    });
+
+    it('throws on multiple roots', () => {
+      expect(() => parseXml('<a/><b/>')).toThrow(/multiple roots/);
+    });
+
+    it('throws on empty document', () => {
+      expect(() => parseXml('')).toThrow(/empty document/);
+    });
+
+    it('skips XML comments without disturbing surrounding text', () => {
+      const root = parseXml(
+        '<Root><!-- comment with > inside -->' + 'actual text' + '</Root>',
+      );
+      expect(root.text).toBe('actual text');
+    });
+  });
+});

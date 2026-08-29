@@ -1,6 +1,13 @@
 ﻿import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { notificationLog } from '@ninedeploy/db';
-import { notifyEvent, parseEmailTarget, sendSystemEmail, withRetry } from '../../src/lib/notifier.js';
+import {
+  dispatchChannel,
+  notifyEvent,
+  parseEmailTarget,
+  sendDiscord,
+  sendSystemEmail,
+  withRetry,
+} from '../../src/lib/notifier.js';
 import { encrypt } from '../../src/lib/crypto.js';
 
 const KEY_HEX = 'b'.repeat(64);
@@ -192,7 +199,7 @@ describe('notifyEvent', () => {
   it('delivers to a discord channel', async () => {
     fetchMock.mockResolvedValue(okResponse());
     const channels = [
-      { id: 8, type: 'discord', targetEncrypted: encrypt('https://discord.com/api/webhooks/x'), eventFilter: '', active: true },
+      { id: 8, type: 'discord', targetEncrypted: encrypt('https://discord.com/api/webhooks/x'), eventFilter: '', active: true, configJson: null },
     ];
     const { db, lastValues } = makeDb(channels);
     await notifyEvent(db, event);
@@ -208,7 +215,7 @@ describe('notifyEvent', () => {
     vi.useFakeTimers();
     fetchMock.mockResolvedValue(errResponse(403, 'forbidden'));
     const channels = [
-      { id: 9, type: 'discord', targetEncrypted: encrypt('https://discord.com/api/webhooks/x'), eventFilter: '', active: true },
+      { id: 9, type: 'discord', targetEncrypted: encrypt('https://discord.com/api/webhooks/x'), eventFilter: '', active: true, configJson: null },
     ];
     const { db, lastValues } = makeDb(channels);
     const pending = notifyEvent(db, event);
@@ -546,5 +553,116 @@ describe('sendSystemEmail', () => {
     ]);
     await expect(sendSystemEmail(db as never, 'subject', 'text')).resolves.toBe(false);
     expect(lastValues()).toHaveBeenCalledWith(expect.objectContaining({ status: 'failed', error: 'smtp refused' }));
+  });
+});
+
+// ─── Sprint 5 G-18 PR #24: Discord embed + identity override ──────────────
+describe('sendDiscord', () => {
+  beforeEach(() => {
+    fetchMock.mockReset();
+  });
+
+  it('posts a plain content body when no options are provided', async () => {
+    fetchMock.mockResolvedValue(okResponse());
+    await sendDiscord('https://discord.com/api/webhooks/x', 'hello');
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://discord.com/api/webhooks/x',
+      expect.objectContaining({ body: JSON.stringify({ content: 'hello' }) }),
+    );
+  });
+
+  it('forwards the username and avatar_url override', async () => {
+    fetchMock.mockResolvedValue(okResponse());
+    await sendDiscord('https://discord.com/api/webhooks/x', 'hello', {
+      username: 'NineDeploy Bot',
+      avatarUrl: 'https://cdn.example.com/avatar.png',
+    });
+    const [, init] = fetchMock.mock.calls[0]!;
+    const body = JSON.parse((init as RequestInit).body as string);
+    expect(body.username).toBe('NineDeploy Bot');
+    expect(body.avatar_url).toBe('https://cdn.example.com/avatar.png');
+    expect(body.embeds).toBeUndefined();
+  });
+
+  it('appends a coloured embed when title is set, with default blue', async () => {
+    fetchMock.mockResolvedValue(okResponse());
+    await sendDiscord('https://discord.com/api/webhooks/x', 'deploy completed', {
+      title: 'Deploy',
+    });
+    const [, init] = fetchMock.mock.calls[0]!;
+    const body = JSON.parse((init as RequestInit).body as string);
+    expect(body.embeds).toEqual([
+      { title: 'Deploy', description: 'deploy completed', color: 0x2563eb },
+    ]);
+  });
+
+  it('honours a custom embed color', async () => {
+    fetchMock.mockResolvedValue(okResponse());
+    await sendDiscord('https://discord.com/api/webhooks/x', 'alert', {
+      title: 'Alert',
+      color: 0xff0000,
+    });
+    const [, init] = fetchMock.mock.calls[0]!;
+    const body = JSON.parse((init as RequestInit).body as string);
+    expect(body.embeds[0].color).toBe(0xff0000);
+  });
+
+  it('throws on a non-2xx response', async () => {
+    fetchMock.mockResolvedValue(errResponse(429, 'rate limited'));
+    await expect(sendDiscord('https://discord.com/api/webhooks/x', 'hello')).rejects.toThrow('Discord 429');
+  });
+});
+
+describe('dispatchChannel Discord config_json', () => {
+  beforeEach(() => {
+    vi.stubEnv('NINEDEPLOY_MASTER_KEY', KEY_HEX);
+    fetchMock.mockReset();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('falls back to plain content when configJson is null', async () => {
+    fetchMock.mockResolvedValue(okResponse());
+    const appEvent = { id: 0, action: 'service.deployed', entity: 'web', ts: '2026-01-01T00:00:00.000Z', actorUserId: 1 };
+    await dispatchChannel('discord', 'https://discord.com/api/webhooks/x', appEvent, 'message', { configJson: null });
+    const [, init] = fetchMock.mock.calls[0]!;
+    const body = JSON.parse((init as RequestInit).body as string);
+    expect(body).toEqual({ content: 'message' });
+  });
+
+  it('ignores malformed configJson and sends a plain content body', async () => {
+    fetchMock.mockResolvedValue(okResponse());
+    const appEvent = { id: 0, action: 'service.deployed', entity: 'web', ts: '2026-01-01T00:00:00.000Z', actorUserId: 1 };
+    await dispatchChannel('discord', 'https://discord.com/api/webhooks/x', appEvent, 'message', { configJson: '{not-json' });
+    const [, init] = fetchMock.mock.calls[0]!;
+    const body = JSON.parse((init as RequestInit).body as string);
+    expect(body).toEqual({ content: 'message' });
+  });
+
+  it('propagates configJson title and color into the embed', async () => {
+    fetchMock.mockResolvedValue(okResponse());
+    const appEvent = { id: 0, action: 'service.deployed', entity: 'web', ts: '2026-01-01T00:00:00.000Z', actorUserId: 1 };
+    const cfg = JSON.stringify({ title: 'Service deployed', color: 0x00ff00, username: 'ND' });
+    await dispatchChannel('discord', 'https://discord.com/api/webhooks/x', appEvent, 'message', { configJson: cfg });
+    const [, init] = fetchMock.mock.calls[0]!;
+    const body = JSON.parse((init as RequestInit).body as string);
+    expect(body.username).toBe('ND');
+    expect(body.embeds).toEqual([
+      { title: 'Service deployed', description: 'message', color: 0x00ff00 },
+    ]);
+  });
+
+  it('ignores configJson keys with wrong types', async () => {
+    fetchMock.mockResolvedValue(okResponse());
+    const appEvent = { id: 0, action: 'service.deployed', entity: 'web', ts: '2026-01-01T00:00:00.000Z', actorUserId: 1 };
+    // title is a number, color is a string — both should be dropped, the embed
+    // should be omitted entirely because no usable title remains.
+    const cfg = JSON.stringify({ title: 42, color: 'red' });
+    await dispatchChannel('discord', 'https://discord.com/api/webhooks/x', appEvent, 'message', { configJson: cfg });
+    const [, init] = fetchMock.mock.calls[0]!;
+    const body = JSON.parse((init as RequestInit).body as string);
+    expect(body.embeds).toBeUndefined();
   });
 });

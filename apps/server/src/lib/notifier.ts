@@ -75,12 +75,60 @@ async function sendWebhook(url: string, payload: unknown): Promise<void> {
   if (!res.ok) throw new Error(`Webhook ${res.status}`);
 }
 
-/** Send to a Discord webhook. */
-async function sendDiscord(webhookUrl: string, message: string): Promise<void> {
+/** Public shape of a Discord channel's `config_json` blob (Sprint 5 G-18 PR #24). */
+export interface DiscordChannelConfig {
+  /** Override the webhook's display name. */
+  username?: string;
+  /** Override the webhook's avatar (must be a Discord-hosted https URL). */
+  avatarUrl?: string;
+  /** When set, a coloured embed is appended with this title. */
+  title?: string;
+  /** Embed sidebar colour (24-bit RGB). Defaults to blue when `title` is set. */
+  color?: number;
+}
+
+/** Send to a Discord webhook (Sprint 5 G-18 PR #24).
+ *
+ *  Uses Discord's `embeds` shape so the operator's webhook lights
+ *  up with a coloured sidebar and structured fields, not just a
+ *  plain text line. The shape is the same one Discord's own
+ *  webhook editor produces; an operator who pastes the same URL
+ *  into Discord's UI gets a richer preview than our plain
+ *  `content` payload.
+ *
+ *  If a custom username / avatar is configured in the channel's
+ *  `config_json` we forward it too; otherwise Discord uses the
+ *  webhook's default identity.
+ *
+ *  Exported for tests; production code reaches it via
+ *  `dispatchChannel(..., { configJson: ch.configJson })`.
+ */
+export async function sendDiscord(
+  webhookUrl: string,
+  message: string,
+  options?: DiscordChannelConfig,
+): Promise<void> {
+  const body: Record<string, unknown> = { content: message };
+  if (options?.username || options?.avatarUrl) {
+    if (options.username) body.username = options.username;
+    if (options.avatarUrl) body.avatar_url = options.avatarUrl;
+  }
+  // An optional embed with a coloured sidebar. Operators opt in by
+  // setting `title` in the channel config; the default skips the
+  // embed so a plain `content` line stays clean.
+  if (options?.title) {
+    body.embeds = [
+      {
+        title: options.title,
+        description: message,
+        color: typeof options.color === 'number' ? options.color : 0x2563eb,
+      },
+    ];
+  }
   const res = await guardedFetch(webhookUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content: message }),
+    body: JSON.stringify(body),
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
   if (!res.ok) throw new Error(`Discord ${res.status}`);
@@ -150,8 +198,32 @@ async function sendEmail(target: string, subject: string, message: string): Prom
   }
 }
 
+/**
+ * Parse a `config_json` blob into a typed object, swallowing the
+ * `null` / `''` / malformed case. Channels created before G-18 PR #24
+ * have nothing stored here and we want them to keep working with the
+ * default plain-content payload.
+ */
+function parseChannelConfig(raw: string | null | undefined): Record<string, unknown> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
 /** Dispatch a message to one channel by type. */
-export async function dispatchChannel(type: string, target: string, event: AppEvent, message: string): Promise<void> {
+export async function dispatchChannel(
+  type: string,
+  target: string,
+  event: AppEvent,
+  message: string,
+  options?: { configJson?: string | null },
+): Promise<void> {
   if (type === 'telegram') {
     const idx = target.lastIndexOf(':');
     const botToken = idx > 0 ? target.slice(0, idx) : '';
@@ -161,7 +233,16 @@ export async function dispatchChannel(type: string, target: string, event: AppEv
   } else if (type === 'webhook') {
     await sendWebhook(target, { event: event.action, entity: event.entity, ts: event.ts, message });
   } else if (type === 'discord') {
-    await sendDiscord(target, message);
+    // Forward the operator's embed / identity overrides. Each key is
+    // optional; missing keys fall through to Discord's default
+    // webhook identity and the plain `content` line.
+    const cfg = parseChannelConfig(options?.configJson);
+    const discordOpts: DiscordChannelConfig = {};
+    if (typeof cfg.username === 'string') discordOpts.username = cfg.username;
+    if (typeof cfg.avatarUrl === 'string') discordOpts.avatarUrl = cfg.avatarUrl;
+    if (typeof cfg.title === 'string') discordOpts.title = cfg.title;
+    if (typeof cfg.color === 'number' && Number.isFinite(cfg.color)) discordOpts.color = cfg.color;
+    await sendDiscord(target, message, discordOpts);
   } else if (type === 'slack') {
     await sendSlack(target, message);
   } else if (type === 'ntfy') {
@@ -201,7 +282,7 @@ export async function notifyEvent(db: DB, event: AppEvent): Promise<void> {
       const target = decrypt(ch.targetEncrypted);
 
       try {
-        const attempts = await withRetry(() => dispatchChannel(ch.type, target, event, message));
+        const attempts = await withRetry(() => dispatchChannel(ch.type, target, event, message, { configJson: ch.configJson }));
         await db.insert(notificationLog).values({ channelId: ch.id, event: event.action, entity: event.entity, status: 'sent', attempts });
       } catch (err) {
         await db.insert(notificationLog).values({

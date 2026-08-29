@@ -1,5 +1,6 @@
 import type { BuildConfig, Service, ServiceVolumeAttachment } from '@ninedeploy/db';
 import type { NinedeployManifest } from '@ninedeploy/schemas';
+import type { IBuildCache } from '../kernel/types.js';
 
 export interface BuildContext {
   deploymentId: number;
@@ -51,6 +52,15 @@ export interface BuildContext {
   manifest?: NinedeployManifest;
   /** Append a log line (persisted + broadcast to subscribers). */
   log: (line: string) => void;
+  /**
+   * Sprint 4 G-01 PR-B: when the operator has `engine.use_buildkit`
+   * turned on and a build cache is registered on the kernel, the
+   * pipeline populates these two fields so the Docker builder can
+   * route the build through `docker buildx` and consult the cache.
+   * Absent on hosts that ship the legacy builder only.
+   */
+  useBuildKit?: boolean;
+  buildCache?: IBuildCache;
 }
 
 /** Identifies a running workload so the engine can stop/inspect it later. */
