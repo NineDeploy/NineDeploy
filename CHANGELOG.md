@@ -237,7 +237,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   driver joins Cloudflare and DNSimple on the kernel's
   `IDomainProvider` registry, behind the same `IDomainProvider`
   contract — pick it by setting `dns_records_provider=namecheap` in
-  Settings → DNS. Namecheap's domain-DNS API has no per-record
+  Settings → DNS.
   endpoint; `namecheap.domains.dns.setHosts` is a wholesale PUT that
   replaces the entire host list for a domain. The driver composes
   `getHosts` → merge → `setHosts` → re-`getHosts` so the kernel

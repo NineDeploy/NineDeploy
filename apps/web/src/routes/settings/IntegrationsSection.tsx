@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import { Cloud, KeyRound } from 'lucide-react';
+import { Cloud, KeyRound, Server } from 'lucide-react';
 import { api } from '../../lib/api.js';
 import { useToast } from '../../components/Toast.js';
 import { Button, Card, CardBody } from '../../components/ui.js';
@@ -9,12 +9,13 @@ import { Button, Card, CardBody } from '../../components/ui.js';
 const REF_INFISICAL = '\u0024\u007B\u007Binfisical:KEY\u007D\u007D';
 const REF_DOPPLER = '\u0024\u007B\u007Bdoppler:KEY\u007D\u007D';
 
-/** Integrations: vault providers (deploy-time secrets) + Cloudflare DNS records. */
+/** Integrations: vault providers (deploy-time secrets) + Cloudflare + Namecheap DNS records. */
 export function IntegrationsSection() {
   return (
     <>
       <VaultCard />
       <CloudflareCard />
+      <NamecheapCard />
     </>
   );
 }
@@ -209,6 +210,98 @@ function CloudflareCard() {
               {test.isPending ? 'Testing…' : 'Test token'}
             </Button>
           </div>
+        </div>
+      </CardBody>
+    </Card>
+  );
+}
+
+// ── Namecheap DNS records (G-07 PR-B) ────────────────────────────────────
+function NamecheapCard() {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const nc = useQuery({ queryKey: ['settings-dns-records-namecheap'], queryFn: () => api.settings.namecheap.get() });
+  // The form starts with the current values from the API so the
+  // operator can just edit one field and re-save. The apiKey field
+  // is intentionally NOT pre-populated — the server's zod schema
+  // requires a non-empty key on every PUT, so the operator must
+  // re-enter it. (A future PR could split the schema into an
+  // `update` patch that omits the key, mirroring the Cloudflare
+  // form's "leave blank to keep" affordance.)
+  const [apiUser, setApiUser] = useState(nc.data?.apiUser ?? '');
+  const [apiKey, setApiKey] = useState('');
+  const [clientIp, setClientIp] = useState(nc.data?.clientIp ?? '');
+
+  const save = useMutation({
+    mutationFn: () =>
+      api.settings.namecheap.set({
+        apiUser: apiUser.trim(),
+        apiKey: apiKey.trim(),
+        clientIp: clientIp.trim(),
+      }),
+    onSuccess: () => {
+      setApiKey('');
+      qc.invalidateQueries({ queryKey: ['settings-dns-records-namecheap'] });
+      toast('Namecheap credentials saved', 'success');
+    },
+    onError: (err) => toast(err instanceof Error ? err.message : 'Save failed', 'error'),
+  });
+
+  const canSave = !!apiUser.trim() && !!apiKey.trim() && !!clientIp.trim() && /^\d{1,3}(\.\d{1,3}){3}$/.test(clientIp.trim());
+
+  return (
+    <Card className="mb-5">
+      <CardBody>
+        <h2 className="mb-1 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
+          <Server size={14} /> Namecheap DNS records
+        </h2>
+        <p className="mb-4 text-xs text-slate-500">
+          Connect a Namecheap account so adding a domain to a service can create the matching
+          host record via Namecheap&apos;s setHosts API. The public IP below must already be
+          whitelisted on the Namecheap account panel.
+        </p>
+        <div className="grid max-w-md gap-3">
+          <label className="block">
+            <span className="mb-1 block text-xs text-slate-500">API user (account owner)</span>
+            <input
+              value={apiUser}
+              onChange={(e) => setApiUser(e.target.value)}
+              placeholder="account-owner-username"
+              className="w-full rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-2 text-sm outline-none focus:border-indigo-500"
+            />
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-xs text-slate-500">
+              API key {nc.data?.hasKey ? '(re-enter to rotate — the server requires a non-empty value on every save)' : ''}
+            </span>
+            <input
+              type="password"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder="Namecheap API key"
+              autoComplete="off"
+              className="w-full rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-2 font-mono text-xs outline-none focus:border-indigo-500"
+            />
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-xs text-slate-500">Whitelisted public IPv4</span>
+            <input
+              value={clientIp}
+              onChange={(e) => setClientIp(e.target.value)}
+              placeholder="203.0.113.10"
+              pattern="^\d{1,3}(\.\d{1,3}){3}$"
+              className="w-full rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-2 font-mono text-xs outline-none focus:border-indigo-500"
+            />
+          </label>
+          <div className="flex gap-2">
+            <Button size="sm" onClick={() => save.mutate()} disabled={save.isPending || !canSave}>
+              {save.isPending ? 'Saving…' : 'Save'}
+            </Button>
+          </div>
+          <p className="text-[10px] text-slate-600">
+            Activate this provider by setting <code className="font-mono">dns_records_provider=namecheap</code>{' '}
+            in Settings → DNS.
+          </p>
         </div>
       </CardBody>
     </Card>
