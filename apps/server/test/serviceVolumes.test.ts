@@ -60,6 +60,21 @@ describe('service volume attachments', () => {
       const name = _internal.resolveVolumeName(svcRow({ slug: 'web' }), { create: { label: 'Cache & Logs' } });
       expect(name).toBe('nd-svc-web-cache-logs');
     });
+
+    it('rejects a label that slugifies to an empty string', () => {
+      // A label made entirely of non-ASCII glyphs the regex strips
+      // (e.g. emoji) collapses to '' — the route must reject, not
+      // mint a volume whose name ends in a stray dash.
+      expect(() => _internal.resolveVolumeName(svcRow({ slug: 'web' }), { create: { label: '🚀' } })).toThrow(/Invalid label/);
+    });
+
+    it('rejects an input that has neither volumeName nor create.label', () => {
+      // The route's body validator catches the missing fields first
+      // in production, but the helper is exported and reusable
+      // from other code paths (e.g. CLI smoke tests) that bypass
+      // the zod schema. Cover the guard here.
+      expect(() => _internal.resolveVolumeName(svcRow({ slug: 'web' }), {})).toThrow(/Either volumeName or create\.label/);
+    });
   });
 
   describe('GET /:id/volumes', () => {
@@ -234,7 +249,233 @@ describe('service volume attachments', () => {
       expect(queuedDeploys).toHaveLength(1);
       expect(String(queuedDeploys[0]?.message)).toContain('Volume detached');
     });
+  });
 
+  describe('PATCH /:id/volumes/:attId', () => {
+    it('updates the containerPath and readOnly flags, queues a redeploy', async () => {
+      const queuedDeploys: Array<Record<string, unknown>> = [];
+      const app = await buildTestApp({
+        db: createFakeDb({
+          findFirst: {
+            services: svcRow({ id: 1, slug: 'web' }),
+            service_volume_attachments: { id: 12, serviceId: 1, volumeName: 'nd-svc-web-uploads', containerPath: '/uploads', readOnly: false, createdAt: NOW, updatedAt: NOW },
+          },
+          update: {
+            service_volume_attachments: (set: Record<string, unknown>) => {
+              expect(set).toMatchObject({ containerPath: '/data', readOnly: true });
+              expect(set.updatedAt).toBeInstanceOf(Date);
+              return [{ id: 12, serviceId: 1, volumeName: 'nd-svc-web-uploads', containerPath: '/data', readOnly: true, createdAt: NOW, updatedAt: new Date() }];
+            },
+          },
+          insert: {
+            deployments: (values: Record<string, unknown>) => {
+              queuedDeploys.push(values);
+              return [{ id: 88 }];
+            },
+          },
+        }),
+      });
+      await app.register(serviceVolumesRoutes);
+      const res = await app.inject({
+        method: 'PATCH',
+        url: '/1/volumes/12',
+        headers: asUser(),
+        payload: { containerPath: '/data', readOnly: true },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = res.json() as { attachment: { containerPath: string; readOnly: boolean }; deploymentId: number };
+      expect(body.attachment).toMatchObject({ containerPath: '/data', readOnly: true });
+      expect(body.deploymentId).toBe(88);
+      expect(queuedDeploys).toHaveLength(1);
+      await app.close();
+    });
+
+    it('refuses to retarget the path onto the service\'s primary volumeMount', async () => {
+      const app = await buildTestApp({
+        db: createFakeDb({
+          findFirst: {
+            services: svcRow({ id: 1, slug: 'web', volumeMount: '/var/data' }),
+            service_volume_attachments: { id: 12, serviceId: 1, volumeName: 'nd-svc-web-uploads', containerPath: '/uploads', readOnly: false, createdAt: NOW, updatedAt: NOW },
+          },
+        }),
+      });
+      await app.register(serviceVolumesRoutes);
+      const res = await app.inject({
+        method: 'PATCH',
+        url: '/1/volumes/12',
+        headers: asUser(),
+        payload: { containerPath: '/var/data' },
+      });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error.message).toMatch(/primary volume mount/);
+      await app.close();
+    });
+
+    it('returns 404 when the attachment does not exist', async () => {
+      const app = await buildTestApp({
+        db: createFakeDb({
+          findFirst: {
+            services: svcRow({ id: 1, slug: 'web' }),
+            service_volume_attachments: undefined,
+          },
+        }),
+      });
+      await app.register(serviceVolumesRoutes);
+      const res = await app.inject({
+        method: 'PATCH',
+        url: '/1/volumes/999',
+        headers: asUser(),
+        payload: { readOnly: true },
+      });
+      expect(res.statusCode).toBe(404);
+      await app.close();
+    });
+  });
+
+  describe('POST /:id/volumes/config-repair (by volumeName)', () => {
+    it('runs the alpine rm against the named volume and queues a redeploy', async () => {
+      const queuedDeploys: Array<Record<string, unknown>> = [];
+      const app = await buildTestApp({
+        db: createFakeDb({
+          findFirst: { services: svcRow({ id: 1, slug: 'web' }) },
+          insert: {
+            deployments: (values: Record<string, unknown>) => {
+              queuedDeploys.push(values);
+              return [{ id: 91 }];
+            },
+          },
+        }),
+      });
+      await app.register(serviceVolumesRoutes);
+      const res = await app.inject({
+        method: 'POST',
+        url: '/1/volumes/config-repair',
+        headers: asUser(),
+        payload: { filePath: 'wp-config.php', volumeName: 'nd-svc-web-data' },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ ok: true, deploymentId: 91 });
+      // The `docker run` shelled out, with the file path injected
+      // into the rm command — a regression that drops the file
+      // name is the kind of thing that takes a week to diagnose.
+      expect(execMocks.capture).toHaveBeenCalledWith(
+        'docker',
+        expect.arrayContaining(['run', '--rm', '-v', 'nd-svc-web-data:/data', 'alpine:latest', 'sh', '-c', "rm -f -- '/data/wp-config.php'"]),
+      );
+      expect(queuedDeploys).toHaveLength(1);
+      expect(String(queuedDeploys[0]?.message)).toContain('Config repaired');
+      await app.close();
+    });
+
+    it('rejects a volumeName that does not match the managed-volume pattern', async () => {
+      const app = await buildTestApp({
+        db: createFakeDb({ findFirst: { services: svcRow({ id: 1, slug: 'web' }) } }),
+      });
+      await app.register(serviceVolumesRoutes);
+      const res = await app.inject({
+        method: 'POST',
+        url: '/1/volumes/config-repair',
+        headers: asUser(),
+        payload: { filePath: 'wp-config.php', volumeName: 'rogue-volume' },
+      });
+      expect(res.statusCode).toBe(400);
+      await app.close();
+    });
+  });
+
+  describe('POST /:id/volumes error paths', () => {
+    it('surfaces a UNIQUE container_path conflict as a 409', async () => {
+      // SQLite / Drizzle throws a runtime Error whose message
+      // contains both 'UNIQUE' and 'container_path' when the
+      // compound (serviceId, container_path) index collides.
+      // The route must catch that and surface a 409, not a 500.
+      const app = await buildTestApp({
+        db: createFakeDb({
+          findFirst: { services: svcRow({ id: 1, slug: 'web' }) },
+          insert: {
+            service_volume_attachments: () => {
+              throw new Error('UNIQUE constraint failed: service_volume_attachments.container_path');
+            },
+          },
+        }),
+      });
+      await app.register(serviceVolumesRoutes);
+      const res = await app.inject({
+        method: 'POST',
+        url: '/1/volumes',
+        headers: asUser(),
+        payload: { volumeName: 'nd-svc-web-uploads', containerPath: '/uploads' },
+      });
+      expect(res.statusCode).toBe(409);
+      expect(res.json().error.message).toMatch(/already mounted/);
+      await app.close();
+    });
+
+    it('surfaces a UNIQUE volume_name conflict as a 409', async () => {
+      const app = await buildTestApp({
+        db: createFakeDb({
+          findFirst: { services: svcRow({ id: 1, slug: 'web' }) },
+          insert: {
+            service_volume_attachments: () => {
+              throw new Error('UNIQUE constraint failed: service_volume_attachments.volume_name');
+            },
+          },
+        }),
+      });
+      await app.register(serviceVolumesRoutes);
+      const res = await app.inject({
+        method: 'POST',
+        url: '/1/volumes',
+        headers: asUser(),
+        payload: { volumeName: 'nd-svc-web-uploads', containerPath: '/uploads' },
+      });
+      expect(res.statusCode).toBe(409);
+      expect(res.json().error.message).toMatch(/already attached/);
+      await app.close();
+    });
+
+    it('rolls back the attachment row when docker volume create fails', async () => {
+      const deletedIds: number[] = [];
+      dbEngineMocks.createDockerVolume.mockRejectedValueOnce(new Error('docker daemon unreachable'));
+      const app = await buildTestApp({
+        db: createFakeDb({
+          findFirst: { services: svcRow({ id: 1, slug: 'web' }) },
+          insert: {
+            service_volume_attachments: (values: Record<string, unknown>) => {
+              expect(values).toMatchObject({ serviceId: 1, volumeName: 'nd-svc-web-data' });
+              return [{ id: 99, ...values, createdAt: NOW, updatedAt: NOW }];
+            },
+          },
+          delete: {
+            service_volume_attachments: (where: unknown) => {
+              const sql = (where as { queryChunks?: Array<{ value?: unknown }> })?.queryChunks ?? [];
+              // We don't deeply parse drizzle's `eq(...)` node here;
+              // any delete with a `service_volume_attachments.id`
+              // condition counts as the rollback. (Falling back to
+              // recording all deletes is fine — this is a mock.)
+              void sql;
+              deletedIds.push(99);
+              return [];
+            },
+          },
+        }),
+      });
+      await app.register(serviceVolumesRoutes);
+      const res = await app.inject({
+        method: 'POST',
+        url: '/1/volumes',
+        headers: asUser(),
+        payload: { create: { label: 'data' }, containerPath: '/data' },
+      });
+      // The 500 surfaces to the client — the important assertion
+      // is the rollback ran (so we are not left with a phantom row).
+      expect(res.statusCode).toBe(500);
+      expect(deletedIds).toContain(99);
+      await app.close();
+    });
+  });
+
+  describe('POST /:id/volumes/config-repair (by attachmentId)', () => {
     it('deletes the baked config from the volume and queues a redeploy (config repair)', async () => {
       const queuedDeploys: Array<Record<string, unknown>> = [];
       const app = await buildTestApp({
@@ -297,3 +538,4 @@ describe('service volume attachments', () => {
     });
   });
 });
+
