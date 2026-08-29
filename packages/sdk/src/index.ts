@@ -612,9 +612,9 @@ export interface NineDeployClient {
     }>;
   };
   notifications: {
-    listChannels: () => Promise<Array<{ id: number; name: string; type: string; eventFilter: string; active: boolean; createdAt: string }>>;
-    createChannel: (input: { name: string; type: string; target: string; eventFilter?: string }) => Promise<{ id: number; name: string; type: string }>;
-    updateChannel: (id: number, input: { name?: string; target?: string; eventFilter?: string; active?: boolean }) => Promise<{ id: number; active: boolean }>;
+    listChannels: () => Promise<Array<{ id: number; name: string; type: string; eventFilter: string; active: boolean; configJson: string | null; createdAt: string }>>;
+    createChannel: (input: { name: string; type: string; target: string; eventFilter?: string; configJson?: string | null }) => Promise<{ id: number; name: string; type: string }>;
+    updateChannel: (id: number, input: { name?: string; target?: string; eventFilter?: string; active?: boolean; configJson?: string | null }) => Promise<{ id: number; active: boolean }>;
     removeChannel: (id: number) => Promise<void>;
     testChannel: (id: number) => Promise<{ ok: boolean }>;
     log: () => Promise<Array<{ id: number; channelId: number | null; event: string; entity: string | null; status: string; error: string | null; ts: string }>>;
@@ -1304,7 +1304,7 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
       get: () => get('/v1/about'),
     },
     notifications: {
-      listChannels: () => get('/v1/notifications/channels'),
+      listChannels: () => get<Array<{ id: number; name: string; type: string; eventFilter: string; active: boolean; configJson: string | null; createdAt: string }>>('/v1/notifications/channels'),
       createChannel: (input) => send('POST', '/v1/notifications/channels', input),
       updateChannel: (id, input) => send('PATCH', `/v1/notifications/channels/${id}`, input),
       removeChannel: async (id) => { await request(`/v1/notifications/channels/${id}`, { method: 'DELETE' }); },

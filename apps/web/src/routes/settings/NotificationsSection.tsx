@@ -6,6 +6,43 @@ import { useToast } from '../../components/Toast.js';
 import { Button, Card, CardBody, Input, cn } from '../../components/ui.js';
 import { NotificationWizard } from '../../components/NotificationWizard.js';
 
+/** Shape of a Discord channel's `config_json` blob (G-18 PR-A + G-18B). */
+interface DiscordChannelConfig {
+  username?: string;
+  avatarUrl?: string;
+  title?: string;
+  color?: number;
+}
+
+/** Parse the raw `config_json` string into the typed shape, falling
+ *  back to an empty object when the blob is missing or malformed. */
+function parseDiscordConfig(raw: string | null | undefined): DiscordChannelConfig {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const cfg: DiscordChannelConfig = {};
+    if (typeof parsed.username === 'string') cfg.username = parsed.username;
+    if (typeof parsed.avatarUrl === 'string') cfg.avatarUrl = parsed.avatarUrl;
+    if (typeof parsed.title === 'string') cfg.title = parsed.title;
+    if (typeof parsed.color === 'number') cfg.color = parsed.color;
+    return cfg;
+  } catch {
+    return {};
+  }
+}
+
+/** Stringify the typed shape back to a blob the API will accept. */
+function serializeDiscordConfig(cfg: DiscordChannelConfig): string {
+  // Drop empty fields so a "clear the embed" form submission does
+  // not retain ghost keys in the JSON blob.
+  const cleaned: Record<string, string | number> = {};
+  if (cfg.username) cleaned.username = cfg.username;
+  if (cfg.avatarUrl) cleaned.avatarUrl = cfg.avatarUrl;
+  if (cfg.title) cleaned.title = cfg.title;
+  if (cfg.color !== undefined) cleaned.color = cfg.color;
+  return JSON.stringify(cleaned);
+}
+
 /** Notifications: delivery channels (Telegram, Discord, Slack, ntfy, email, webhook). */
 export function NotificationsSection() {
   const qc = useQueryClient();
@@ -14,10 +51,20 @@ export function NotificationsSection() {
   const [showChannel, setShowChannel] = useState(false);
   const removeChannel = useMutation({ mutationFn: (id: number) => api.notifications.removeChannel(id), onSuccess: () => qc.invalidateQueries({ queryKey: ['notif-channels'] }) });
   const testChannel = useMutation({ mutationFn: (id: number) => api.notifications.testChannel(id), onSuccess: () => toast('Test sent!', 'success'), onError: () => toast('Test failed', 'error') });
-  // Channel editing: toggle active / rename / adjust the event filter.
-  const [editChannel, setEditChannel] = useState<{ id: number; name: string; eventFilter: string } | null>(null);
+  // Channel editing: toggle active / rename / adjust the event filter
+  // and, for Discord channels, edit the embed options (username,
+  // avatar URL, title, color). The embed fields live inside the
+  // `config_json` blob the server stores — PR #24 added the column
+  // and the schema; PR #34 (this one) wires the panel.
+  type EditableChannel = {
+    id: number;
+    name: string;
+    eventFilter: string;
+    discord: DiscordChannelConfig;
+  };
+  const [editChannel, setEditChannel] = useState<EditableChannel | null>(null);
   const updateChannel = useMutation({
-    mutationFn: (input: { id: number; name?: string; eventFilter?: string; active?: boolean }) => {
+    mutationFn: (input: { id: number; name?: string; eventFilter?: string; active?: boolean; configJson?: string | null }) => {
       const { id, ...patch } = input;
       return api.notifications.updateChannel(id, patch);
     },
@@ -58,7 +105,7 @@ export function NotificationsSection() {
                     {ch.active ? <CirclePause size={13} /> : <CirclePlay size={13} />}
                   </button>
                   <button type="button" onClick={() => testChannel.mutate(ch.id)} className="rounded p-1.5 text-slate-500 hover:bg-white/5 hover:text-emerald-300" title="Send test"><Send size={13} /></button>
-                  <button type="button" onClick={() => setEditChannel({ id: ch.id, name: ch.name, eventFilter: ch.eventFilter ?? '' })} className="rounded p-1.5 text-slate-500 hover:bg-white/5 hover:text-indigo-300" title="Edit"><Pencil size={13} /></button>
+                  <button type="button" onClick={() => setEditChannel({ id: ch.id, name: ch.name, eventFilter: ch.eventFilter ?? '', discord: parseDiscordConfig(ch.configJson) })} className="rounded p-1.5 text-slate-500 hover:bg-white/5 hover:text-indigo-300" title="Edit"><Pencil size={13} /></button>
                   <button type="button" onClick={() => removeChannel.mutate(ch.id)} className="rounded p-1.5 text-slate-500 hover:bg-white/5 hover:text-rose-400" title="Remove"><Trash2 size={13} /></button>
                 </div>
               </div>
@@ -66,16 +113,70 @@ export function NotificationsSection() {
                 <form
                   onSubmit={(e) => {
                     e.preventDefault();
-                    updateChannel.mutate({ id: ch.id, name: editChannel.name.trim() || ch.name, eventFilter: editChannel.eventFilter });
+                    updateChannel.mutate({
+                      id: ch.id,
+                      name: editChannel.name.trim() || ch.name,
+                      eventFilter: editChannel.eventFilter,
+                      configJson: ch.type === 'discord' ? serializeDiscordConfig(editChannel.discord) : null,
+                    });
                   }}
-                  className="mt-1.5 flex flex-wrap items-center gap-2 rounded-lg bg-indigo-500/[0.04] px-3 py-2 ring-1 ring-inset ring-indigo-500/20"
+                  className="mt-1.5 space-y-2 rounded-lg bg-indigo-500/[0.04] px-3 py-2 ring-1 ring-inset ring-indigo-500/20"
                 >
-                  <Input value={editChannel.name} onChange={(e) => setEditChannel({ ...editChannel, name: e.target.value })} placeholder="name" className="h-7 w-32 text-xs" aria-label="Channel name" />
-                  <Input value={editChannel.eventFilter} onChange={(e) => setEditChannel({ ...editChannel, eventFilter: e.target.value })} placeholder="event filter (empty = all)" className="h-7 w-56 font-mono text-xs" aria-label="Event filter" />
-                  <Button type="submit" size="sm" variant="ghost" className="ml-auto h-7 px-2 text-[11px]" disabled={updateChannel.isPending}>
-                    {updateChannel.isPending ? '…' : 'Save'}
-                  </Button>
-                  <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-[11px]" onClick={() => setEditChannel(null)}>Cancel</Button>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Input value={editChannel.name} onChange={(e) => setEditChannel({ ...editChannel, name: e.target.value })} placeholder="name" className="h-7 w-32 text-xs" aria-label="Channel name" />
+                    <Input value={editChannel.eventFilter} onChange={(e) => setEditChannel({ ...editChannel, eventFilter: e.target.value })} placeholder="event filter (empty = all)" className="h-7 w-56 font-mono text-xs" aria-label="Event filter" />
+                  </div>
+                  {ch.type === 'discord' && (
+                    <div className="rounded-md border border-indigo-500/20 bg-indigo-500/[0.04] p-2">
+                      <div className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-indigo-300">Discord embed</div>
+                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                        <Input
+                          value={editChannel.discord.title ?? ''}
+                          onChange={(e) => setEditChannel({ ...editChannel, discord: { ...editChannel.discord, title: e.target.value } })}
+                          placeholder="embed title (e.g. Deploy completed)"
+                          className="h-7 w-full text-xs"
+                          aria-label="Embed title"
+                        />
+                        <Input
+                          value={editChannel.discord.username ?? ''}
+                          onChange={(e) => setEditChannel({ ...editChannel, discord: { ...editChannel.discord, username: e.target.value } })}
+                          placeholder="username override"
+                          className="h-7 w-full text-xs"
+                          aria-label="Webhook username"
+                        />
+                        <Input
+                          value={editChannel.discord.avatarUrl ?? ''}
+                          onChange={(e) => setEditChannel({ ...editChannel, discord: { ...editChannel.discord, avatarUrl: e.target.value } })}
+                          placeholder="avatar URL (https://…)"
+                          className="h-7 w-full text-xs"
+                          aria-label="Webhook avatar URL"
+                        />
+                        <Input
+                          value={editChannel.discord.color !== undefined ? `#${editChannel.discord.color.toString(16).padStart(6, '0')}` : ''}
+                          onChange={(e) => {
+                            const v = e.target.value.trim();
+                            // Accept `#rrggbb` or `rrggbb`; reject everything
+                            // else by clearing the value.
+                            const m = /^#?([0-9a-fA-F]{6})$/.exec(v);
+                            if (!m) {
+                              setEditChannel({ ...editChannel, discord: { ...editChannel.discord, color: undefined } });
+                              return;
+                            }
+                            setEditChannel({ ...editChannel, discord: { ...editChannel.discord, color: parseInt(m[1]!, 16) } });
+                          }}
+                          placeholder="color (#2563eb)"
+                          className="h-7 w-full font-mono text-xs"
+                          aria-label="Embed color"
+                        />
+                      </div>
+                    </div>
+                  )}
+                  <div className="flex items-center justify-end gap-2">
+                    <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-[11px]" onClick={() => setEditChannel(null)}>Cancel</Button>
+                    <Button type="submit" size="sm" variant="ghost" className="h-7 px-2 text-[11px]" disabled={updateChannel.isPending}>
+                      {updateChannel.isPending ? '…' : 'Save'}
+                    </Button>
+                  </div>
                 </form>
               )}
             </div>

@@ -153,8 +153,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from `lib/notifier.ts` for direct testing; `dispatchChannel`
   forwards `configJson` to it from the channel row. Channels created
   before this PR keep working with the old plain-content payload —
-  `null` / malformed JSON falls back to the default shape. PR-B (next
-  sprint) wires the operator panel's Discord form to the new blob.
+  `null` / malformed JSON falls back to the default shape.
+
+- **Discord embed form in the operator panel (G-18 PR-B).** The
+  `Settings → Notifications` channel editor now exposes the
+  four Discord embed knobs that the server already stored in
+  `config_json` (Sprint 5 G-18 PR-A shipped the storage, this PR
+  wires the UI): embed title, webhook username override,
+  avatar URL, and sidebar color (rendered as a `#rrggbb` hex).
+  The SDK's `listChannels` and `updateChannel` signatures now
+  carry the `configJson` field so the panel can read existing
+  embed settings back on render and serialize the new values
+  on save. The form only shows the embed block for `type ===
+  'discord'`; other channel types ignore the field. Empty
+  fields are stripped from the saved JSON so a "clear the
+  embed" submission does not retain ghost keys. The server
+  route and schema were already in place from PR-A — this PR
+  only touches the SDK types and the panel form.
 
 - **SAML POST consumer + session-mint glue (G-22 PR-B).** The SAML
   half of SSO finally closes the round-trip. A new
