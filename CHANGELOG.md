@@ -156,6 +156,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `null` / malformed JSON falls back to the default shape. PR-B (next
   sprint) wires the operator panel's Discord form to the new blob.
 
+- **SAML POST consumer + session-mint glue (G-22 PR-B).** The SAML
+  half of SSO finally closes the round-trip. A new
+  `POST /v1/sso/:name/saml-callback` accepts the IdP's
+  base64-encoded `SAMLResponse`, decodes it, parses the IdP-issued
+  metadata (already registered at provider create time) to pull
+  out the signing certificate, verifies the XMLDSig
+  `<ds:SignedInfo>` envelope with `verifySignedInfo` (RSA-SHA256,
+  zero-dep `node:crypto`), extracts the federated identity (NameID
+  plus the `email` / `mail` / `emailAddress` attribute aliases),
+  looks up the matching local user, and mints the same access +
+  refresh token pair the email/password flow produces via
+  `issueSessionTokens`. New `lib/saml.ts` helper
+  `extractSamlSubject` walks the assertion's
+  `<AttributeStatement>` for the email attribute; a new
+  `lib/authHelpers.ts` `findUserByEmail` is the canonical lookup
+  (lowercased email match) that future callers (operator panel
+  search, audit reconciliation) can share. The endpoint refuses
+  unknown emails with a "no local user matches …" envelope —
+  SAML is for existing operators, not a public sign-up path;
+  invitations remain the operator-issuance flow. The OIDC
+  callback's "[redacted — session mints in PR #23-b]" placeholder
+  stays in place; the OIDC session-mint glue lands in the next PR
+  alongside the `state` / `nonce` HttpOnly cookie work.
+
 - **Namecheap DNS records (G-07 PR-A).** The third `IDomainProvider`
   driver joins Cloudflare and DNSimple on the kernel's
   `IDomainProvider` registry, behind the same `IDomainProvider`

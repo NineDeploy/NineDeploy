@@ -158,3 +158,66 @@ export function canonicalDigest(input: string): string {
 export function decodeSamlResponse(b64: string): string {
   return textDecoder.decode(Buffer.from(b64, 'base64'));
 }
+
+export interface SamlAssertionSubject {
+  /** SAML `NameID` (e.g. an email-shaped string or a transient id). */
+  nameId: string;
+  /** Optional `email` from the `<AttributeStatement>`. Falls back to
+   *  `nameId` when the IdP did not emit one. */
+  email: string | null;
+}
+
+/**
+ * Walk a decoded SAML response XML and pull out the assertion's
+ * subject — the `<NameID>` value plus any `<Attribute
+ * Name="email">` (or the `mail` / `emailAddress` aliases) the IdP
+ * emitted. PR #23-b (Sprint 6) uses this to map the federated
+ * identity onto a local user before minting a session.
+ *
+ * The shape is deliberately narrow: the helper only does
+ * attribute extraction. Signature verification is the caller's
+ * responsibility (see `verifySignedInfo`).
+ */
+export function extractSamlSubject(decodedXml: string): SamlAssertionSubject {
+  const assertion = findTag(decodedXml, 'Assertion') ?? findTag(decodedXml, 'saml:Assertion');
+  if (!assertion) throw new Error('SAML response: missing <Assertion>');
+  // `<NameID>` is a leaf node carrying the federated identifier.
+  const nameIdBlock = findTag(assertion, 'NameID') ?? findTag(assertion, 'saml:NameID');
+  if (!nameIdBlock) throw new Error('SAML response: missing <NameID>');
+  const nameId = nameIdBlock.replace(/<\/?[^>]+>/g, '').trim();
+  if (!nameId) throw new Error('SAML response: empty <NameID>');
+  // `<AttributeStatement>` is the only place the IdP can publish
+  // `email` / `mail` / `emailAddress`. Try each alias.
+  const attrStatement =
+    findTag(assertion, 'AttributeStatement') ?? findTag(assertion, 'saml:AttributeStatement');
+  let email: string | null = null;
+  if (attrStatement) {
+    for (const alias of ['email', 'mail', 'emailAddress']) {
+      // We have to do a manual `<Attribute Name="email">…<AttributeValue>…</AttributeValue></Attribute>`
+      // search because the XML surface is `Attribute > AttributeValue` and
+      // our pull-parser only returns the inner block of `Attribute`. Drill
+      // a level deeper to grab the value.
+      const attrBlock =
+        findTag(attrStatement, 'Attribute') ?? findTag(attrStatement, 'saml:Attribute');
+      if (!attrBlock) break;
+      // A single Assertion can carry many `<Attribute>` blocks; scan
+      // the whole statement for one whose `Name` attribute matches.
+      const attrRe = new RegExp(
+        `<(?:saml:)?Attribute\\s+[^>]*Name=["']${alias}["'][^>]*>([\\s\\S]*?)</(?:saml:)?Attribute>`,
+        'i',
+      );
+      const m = attrRe.exec(attrStatement);
+      if (m) {
+        const value = m[1]!.replace(/<\/?[^>]+>/g, '').trim();
+        if (value) {
+          email = value;
+          break;
+        }
+      }
+      // Suppress the unused-binding warning; `attrBlock` is checked
+      // so a future change can rely on the parser having run.
+      void attrBlock;
+    }
+  }
+  return { nameId, email };
+}

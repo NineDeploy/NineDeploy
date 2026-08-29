@@ -2,6 +2,14 @@ import type { FastifyPluginAsync } from 'fastify';
 import { eq } from 'drizzle-orm';
 import { ssoProviders, type DB } from '@ninedeploy/db';
 import { discover as oidcDiscover, type OidcConfig } from '../lib/oidc.js';
+import {
+  decodeSamlResponse,
+  extractSamlSubject,
+  parseIdpMetadata,
+  verifySignedInfo,
+} from '../lib/saml.js';
+import { issueSessionTokens } from '../lib/sessions.js';
+import { findUserByEmail } from '../lib/authHelpers.js';
 
 /**
  * SSO HTTP surface — Sprint 5, Gap G-22 (PR #23).
@@ -133,6 +141,95 @@ export const ssoRoutes: FastifyPluginAsync = async (app) => {
         tokenEndpoint: discovery.token_endpoint,
         // The actual session mint lands in PR #23-b.
         code: '[redacted — session mints in PR #23-b]',
+      };
+    },
+  );
+
+  // POST /:name/saml-callback — Sprint 6 PR #23-b, SAML assertion
+  // consumer. The IdP POSTs a base64-encoded `<samlp:Response>` here
+  // after the user signs in. We decode, parse the IdP-issued
+  // metadata to get the signing certificate, verify the XML
+  // signature, extract the federated identity (NameID + email
+  // attribute), look up the matching local user, and mint a
+  // session. Unknown users are rejected — SAML is for existing
+  // operators, not a public sign-up path. (Invitations remain the
+  // operator-issuance flow.)
+  app.post<{ Params: { name: string }; Body: { SAMLResponse?: string } }>(
+    '/:name/saml-callback',
+    async (req) => {
+      const provider = await db.query.ssoProviders.findFirst({
+        where: eq(ssoProviders.name, req.params.name),
+      });
+      if (!provider) return { ok: false, error: `SSO provider "${req.params.name}" not found` };
+      if (provider.type !== 'saml') {
+        return { ok: false, error: `Provider "${req.params.name}" is not a SAML provider` };
+      }
+      const samlResponseB64 = req.body?.SAMLResponse;
+      if (!samlResponseB64) {
+        return { ok: false, error: 'Missing `SAMLResponse` body field' };
+      }
+      let decoded: string;
+      let subject: ReturnType<typeof extractSamlSubject>;
+      let certPem: string;
+      try {
+        decoded = decodeSamlResponse(samlResponseB64);
+        subject = extractSamlSubject(decoded);
+        // The IdP cert comes from the metadata the operator registered.
+        const metadata = JSON.parse(provider.configJson) as { idpMetadata?: string };
+        if (!metadata.idpMetadata) {
+          return { ok: false, error: 'SAML provider has no idpMetadata configured' };
+        }
+        const parsed = parseIdpMetadata(metadata.idpMetadata);
+        certPem = `-----BEGIN CERTIFICATE-----\n${parsed.signingCert.replace(/\s+/g, '')}\n-----END CERTIFICATE-----`;
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+      // Verify the SAML response signature. The `<SignedInfo>` block
+      // is the canonicalized payload the IdP signed; the
+      // `<SignatureValue>` carries the base64-encoded signature. We
+      // pull both out of the response XML inline here — the
+      // IdP-side flow does not give us pre-parsed pieces.
+      const signedInfoMatch = /<ds:SignedInfo[\s\S]*?<\/ds:SignedInfo>/.exec(decoded);
+      const signatureValueMatch = /<ds:SignatureValue[^>]*>([\s\S]*?)<\/ds:SignatureValue>/.exec(decoded);
+      if (!signedInfoMatch || !signatureValueMatch) {
+        return { ok: false, error: 'SAML response: missing <ds:SignedInfo> or <ds:SignatureValue>' };
+      }
+      const signatureB64 = signatureValueMatch[1]!.replace(/\s+/g, '');
+      const signedInfo = signedInfoMatch[0]!;
+      let valid: boolean;
+      try {
+        valid = verifySignedInfo({ signedInfo, signatureB64, certPem });
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+      if (!valid) {
+        return { ok: false, error: 'SAML response: signature verification failed' };
+      }
+      // Map the federated identity to a local user. The IdP's
+      // `email` attribute is the canonical join key; if the IdP
+      // didn't send one we fall back to the NameID, but only when
+      // it already looks like an email. Anything else is a
+      // misconfiguration we surface, not paper over.
+      const lookupEmail = subject.email ?? (subject.nameId.includes('@') ? subject.nameId : null);
+      if (!lookupEmail) {
+        return { ok: false, error: 'SAML response: no email attribute and NameID is not email-shaped' };
+      }
+      const user = await findUserByEmail(db, lookupEmail);
+      if (!user) {
+        return {
+          ok: false,
+          error: `SAML sign-in denied: no local user matches ${lookupEmail}. Operators must be invited first.`,
+        };
+      }
+      const tokens = await issueSessionTokens(db, user, {
+        ip: req.ip,
+        userAgent: req.headers['user-agent'],
+      });
+      return {
+        ok: true,
+        provider: provider.name,
+        subject: { nameId: subject.nameId, email: lookupEmail },
+        tokens,
       };
     },
   );

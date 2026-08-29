@@ -477,3 +477,304 @@ describe('GET /v1/sso/:name/callback', () => {
     await app.close();
   });
 });
+
+// ── Sprint 6 PR #23-b: SAML POST consumer + session-mint glue ────────────
+// The route's signature-verification call uses `verifySignedInfo`
+// from `lib/saml.js`. We replace the whole module with a thin
+// shim that flips a per-test boolean. The real verification is
+// covered in `test/lib/saml.test.ts`; here we only need to drive
+// the wire path around it (provider lookup, body parsing, user
+// resolution, session mint).
+let verifyResult = true;
+vi.mock('../../src/lib/saml.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/lib/saml.js')>();
+  return {
+    ...actual,
+    verifySignedInfo: () => verifyResult,
+  };
+});
+
+describe('POST /v1/sso/:name/saml-callback', () => {
+  beforeEach(() => {
+    verifyResult = true;
+  });
+
+  function idpMetadata(certB64 = 'AAAA'): string {
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<EntityDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata" entityID="https://idp.example.com">
+  <IDPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
+    <KeyDescriptor use="signing">
+      <KeyInfo xmlns="http://www.w3.org/2000/09/xmldsig#">
+        <X509Data><X509Certificate>${certB64}</X509Certificate></X509Data>
+      </KeyInfo>
+    </KeyDescriptor>
+    <SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"
+                          Location="https://idp.example.com/sso/post" />
+  </IDPSSODescriptor>
+</EntityDescriptor>`;
+  }
+
+  function samlResponse(email: string): string {
+    return `<samlp:Response>
+  <ds:Signature>
+    <ds:SignedInfo>canonicalized</ds:SignedInfo>
+    <ds:SignatureValue>AAAA</ds:SignatureValue>
+  </ds:Signature>
+  <saml:Assertion>
+    <saml:Subject>
+      <saml:NameID>${email}</saml:NameID>
+    </saml:Subject>
+    <saml:AttributeStatement>
+      <saml:Attribute Name="email">
+        <saml:AttributeValue>${email}</saml:AttributeValue>
+      </saml:Attribute>
+    </saml:AttributeStatement>
+  </saml:Assertion>
+</samlp:Response>`;
+  }
+
+  function b64(s: string) {
+    return Buffer.from(s, 'utf8').toString('base64');
+  }
+
+  function wiredDb(email: string, meta: string) {
+    const insert = vi.fn(async () => undefined);
+    const update = vi.fn(async () => undefined);
+    const ssoRows: Array<Record<string, unknown>> = [];
+    const userRows: Array<Record<string, unknown>> = [{ id: 1, email, tokenVersion: 0 }];
+    return {
+      db: {
+        select: () => ({ from: () => Promise.resolve(ssoRows) }),
+        insert,
+        update,
+        delete: () => ({ where: () => Promise.resolve() }),
+        query: {
+          ssoProviders: { findFirst: () => Promise.resolve(ssoRows[0]) },
+          users: { findFirst: () => Promise.resolve(userRows[0]) },
+        },
+      } as never,
+      ssoRows,
+      userRows,
+      insert,
+      seedProvider(name: string, type: 'oidc' | 'saml', config: Record<string, unknown>) {
+        ssoRows.push({
+          id: 1,
+          type,
+          name,
+          configJson: JSON.stringify(config),
+          createdAt: new Date(),
+        });
+      },
+    };
+  }
+
+  it('rejects an unknown provider', async () => {
+    const app = await buildTestApp();
+    await app.register(ssoRoutes);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/missing/saml-callback',
+      headers: asUser(),
+      payload: { SAMLResponse: b64('<samlp:Response />') },
+    });
+    const body = res.json() as { ok: boolean; error?: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toMatch(/not found/);
+    await app.close();
+  });
+
+  it('rejects a non-SAML provider', async () => {
+    const provider = {
+      id: 1,
+      type: 'oidc',
+      name: 'corp-oidc',
+      configJson: JSON.stringify({ issuer: 'x' }),
+      createdAt: new Date(),
+    };
+    const db = {
+      select: () => ({ from: () => Promise.resolve([]) }),
+      insert: vi.fn(async () => undefined),
+      update: vi.fn(async () => undefined),
+      delete: () => ({ where: () => Promise.resolve() }),
+      query: {
+        ssoProviders: { findFirst: () => Promise.resolve(provider) },
+        users: { findFirst: () => Promise.resolve(undefined) },
+      },
+    };
+    const app = await buildTestApp({ db: db as never });
+    await app.register(ssoRoutes);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/corp-oidc/saml-callback',
+      headers: asUser(),
+      payload: { SAMLResponse: b64('<samlp:Response />') },
+    });
+    const body = res.json() as { ok: boolean; error?: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toMatch(/not a SAML provider/);
+    await app.close();
+  });
+
+  it('rejects when SAMLResponse is missing from the body', async () => {
+    const meta = idpMetadata();
+    const { db, seedProvider } = wiredDb('alice@example.com', meta);
+    seedProvider('corp-saml', 'saml', { idpMetadata: meta });
+    const app = await buildTestApp({ db });
+    await app.register(ssoRoutes);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/corp-saml/saml-callback',
+      headers: asUser(),
+      payload: {},
+    });
+    const body = res.json() as { ok: boolean; error?: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toMatch(/Missing `SAMLResponse`/);
+    await app.close();
+  });
+
+  it('rejects a tampered SAML response (signature verification fails)', async () => {
+    verifyResult = false;
+    const meta = idpMetadata();
+    const { db, seedProvider } = wiredDb('alice@example.com', meta);
+    seedProvider('corp-saml', 'saml', { idpMetadata: meta });
+    const app = await buildTestApp({ db });
+    await app.register(ssoRoutes);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/corp-saml/saml-callback',
+      headers: asUser(),
+      payload: { SAMLResponse: b64(samlResponse('alice@example.com')) },
+    });
+    const body = res.json() as { ok: boolean; error?: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toMatch(/signature verification failed/);
+    await app.close();
+  });
+
+  it('mints a session when the SAML response verifies and the user exists', async () => {
+    verifyResult = true;
+    const meta = idpMetadata();
+    const { db, seedProvider, insert } = wiredDb('alice@example.com', meta);
+    seedProvider('corp-saml', 'saml', { idpMetadata: meta });
+    const app = await buildTestApp({ db });
+    await app.register(ssoRoutes);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/corp-saml/saml-callback',
+      headers: asUser(),
+      payload: { SAMLResponse: b64(samlResponse('alice@example.com')) },
+    });
+    const body = res.json() as {
+      ok: boolean;
+      provider?: string;
+      subject?: { nameId: string; email: string };
+    };
+    expect(body.ok).toBe(true);
+    expect(body.provider).toBe('corp-saml');
+    expect(body.subject).toEqual({ nameId: 'alice@example.com', email: 'alice@example.com' });
+    // `issueSessionTokens` writes a `sessions` row exactly once per
+    // successful SAML sign-in.
+    expect(insert).toHaveBeenCalledTimes(1);
+    await app.close();
+  });
+
+  it('rejects when the SAML email does not match any local user', async () => {
+    const meta = idpMetadata();
+    const db = {
+      select: () => ({ from: () => Promise.resolve([]) }),
+      insert: vi.fn(async () => undefined),
+      update: vi.fn(async () => undefined),
+      delete: () => ({ where: () => Promise.resolve() }),
+      query: {
+        ssoProviders: {
+          findFirst: () =>
+            Promise.resolve({
+              id: 1,
+              type: 'saml',
+              name: 'corp-saml',
+              configJson: JSON.stringify({ idpMetadata: meta }),
+              createdAt: new Date(),
+            }),
+        },
+        users: { findFirst: () => Promise.resolve(undefined) },
+      },
+    };
+    const app = await buildTestApp({ db: db as never });
+    await app.register(ssoRoutes);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/corp-saml/saml-callback',
+      headers: asUser(),
+      payload: { SAMLResponse: b64(samlResponse('ghost@example.com')) },
+    });
+    const body = res.json() as { ok: boolean; error?: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toMatch(/SAML sign-in denied.*ghost@example.com/);
+    await app.close();
+  });
+
+  it('falls back to NameID when no email attribute is present (and NameID is email-shaped)', async () => {
+    verifyResult = true;
+    const meta = idpMetadata();
+    const { db, seedProvider, insert } = wiredDb('operator@example.com', meta);
+    seedProvider('corp-saml', 'saml', { idpMetadata: meta });
+    const app = await buildTestApp({ db });
+    await app.register(ssoRoutes);
+    // Build a SAML response with NO <AttributeStatement> — the
+    // route should still locate the user by the NameID, since it
+    // is itself an email address.
+    const xml = `<samlp:Response>
+  <ds:Signature>
+    <ds:SignedInfo>canonicalized</ds:SignedInfo>
+    <ds:SignatureValue>AAAA</ds:SignatureValue>
+  </ds:Signature>
+  <saml:Assertion>
+    <saml:Subject>
+      <saml:NameID>operator@example.com</saml:NameID>
+    </saml:Subject>
+  </saml:Assertion>
+</samlp:Response>`;
+    const res = await app.inject({
+      method: 'POST',
+      url: '/corp-saml/saml-callback',
+      headers: asUser(),
+      payload: { SAMLResponse: b64(xml) },
+    });
+    const body = res.json() as { ok: boolean; subject?: { nameId: string; email: string } };
+    expect(body.ok).toBe(true);
+    expect(body.subject).toEqual({ nameId: 'operator@example.com', email: 'operator@example.com' });
+    expect(insert).toHaveBeenCalledTimes(1);
+    await app.close();
+  });
+
+  it('rejects when NameID is not email-shaped and no email attribute is present', async () => {
+    verifyResult = true;
+    const meta = idpMetadata();
+    const { db, seedProvider } = wiredDb('alice@example.com', meta);
+    seedProvider('corp-saml', 'saml', { idpMetadata: meta });
+    const app = await buildTestApp({ db });
+    await app.register(ssoRoutes);
+    const xml = `<samlp:Response>
+  <ds:Signature>
+    <ds:SignedInfo>canonicalized</ds:SignedInfo>
+    <ds:SignatureValue>AAAA</ds:SignatureValue>
+  </ds:Signature>
+  <saml:Assertion>
+    <saml:Subject>
+      <saml:NameID>opaque-transient-id-12345</saml:NameID>
+    </saml:Subject>
+  </saml:Assertion>
+</samlp:Response>`;
+    const res = await app.inject({
+      method: 'POST',
+      url: '/corp-saml/saml-callback',
+      headers: asUser(),
+      payload: { SAMLResponse: b64(xml) },
+    });
+    const body = res.json() as { ok: boolean; error?: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toMatch(/no email attribute/);
+    await app.close();
+  });
+});
