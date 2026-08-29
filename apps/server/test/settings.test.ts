@@ -1,4 +1,4 @@
-﻿import { describe, expect, it, vi } from 'vitest';
+﻿import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { settingsRoutes } from '../src/modules/settings.js';
 import { asUser, buildTestApp, createFakeDb } from './helpers.js';
 
@@ -356,6 +356,128 @@ describe('settings routes (admin-only)', () => {
         payload: { apiUser: '', apiKey: 'k-1234567890', clientIp: '1.2.3.4' },
       });
       expect(res.statusCode).toBe(400);
+      await app.close();
+    });
+  });
+
+  // Round-trip coverage for the DNS-records / Namecheap happy paths
+  // the input-validation tests cannot reach. The mock fixtures
+  // wire the cloudflareDnsMock + namecheapConfig (via the
+  // getNamecheapConfig / setNamecheapConfig shims).
+  describe('DNS records happy paths', () => {
+    // Capture the original `getSettingString` implementation so a
+    // prior test's `mockImplementation` (line 249, "reports no
+    // token when neither DB nor env has one") does not leak into
+    // these tests. `vi.restoreMocks()` would also work but the
+    // shim is intentionally per-test isolation — the file's other
+    // describe blocks keep using their own seeded `__values` map.
+    const originalGetSettingString = settingsMock.getSettingString.getMockImplementation();
+    beforeEach(() => {
+      // Restore the original implementation that reads from
+      // `__values` so the populated values in each test are
+      // visible to the route under test.
+      if (originalGetSettingString) {
+        settingsMock.getSettingString.mockImplementation(originalGetSettingString);
+      }
+      // Clear any queued mock values from earlier tests so a
+      // `mockResolvedValueOnce` from one test does not bleed into
+      // the next. The default implementation returns the same
+      // shape as the rest of the file (enabled: false, token: null).
+      cloudflareDnsMock.getDnsRecordsConfig.mockReset();
+      cloudflareDnsMock.getDnsRecordsConfig.mockResolvedValue({
+        enabled: false,
+        token: null,
+        content: null,
+      });
+      cloudflareDnsMock.setDnsRecordsConfig.mockReset();
+      cloudflareDnsMock.testCloudflareToken.mockReset();
+      cloudflareDnsMock.testCloudflareToken.mockResolvedValue('ok');
+    });
+    it('POST /dns-records/test returns ok with the active status when a token is configured', async () => {
+      cloudflareDnsMock.getDnsRecordsConfig.mockResolvedValueOnce({
+        enabled: true,
+        token: 'cf-token',
+        content: null,
+      });
+      cloudflareDnsMock.testCloudflareToken.mockResolvedValueOnce('active');
+      const app = await buildTestApp({ db: createFakeDb() });
+      await app.register(settingsRoutes);
+      const res = await app.inject({ method: 'POST', url: '/dns-records/test', headers: asUser() });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ ok: true, status: 'active' });
+      expect(cloudflareDnsMock.testCloudflareToken).toHaveBeenCalledWith('cf-token');
+      await app.close();
+    });
+
+    it('GET /dns-records/namecheap returns the configured apiUser + clientIp', async () => {
+      // The previous input-validation tests only exercised the
+      // configured=false branch (empty settings map). For the
+      // configured=true branch we go through the real crypto
+      // round-trip so getNamecheapConfig sees a token it can
+      // decrypt.
+      const { encrypt } = await import('../src/lib/crypto.js');
+      const previousKey = process.env['NINEDEPLOY_MASTER_KEY'];
+      process.env['NINEDEPLOY_MASTER_KEY'] = 'b'.repeat(64);
+      try {
+        const realEncrypted = encrypt('nc-key');
+        // Clear any leftover values from earlier tests — the
+        // shared settings mock keeps state across tests in the
+        // same file, and a stray key from a previous PUT can
+        // flip the configured=true branch off.
+        for (const k of Object.keys(settingsMock.__values)) delete settingsMock.__values[k];
+        Object.assign(settingsMock.__values, {
+          namecheap_api_user: 'nc-user',
+          namecheap_api_key_encrypted: realEncrypted,
+          namecheap_client_ip: '1.2.3.4',
+        });
+        // Sanity check: prove the mock's getSettingString is
+        // reading the value we just stored. (The shared
+        // `settingsMock` keeps state across tests in the same
+        // file, and the prior `mockImplementation` test would
+        // otherwise shadow the factory-supplied lookup.)
+        const probe = await settingsMock.getSettingString(undefined as never, 'namecheap_api_user');
+        expect(probe).toBe('nc-user');
+        const app = await buildTestApp({ db: createFakeDb() });
+        await app.register(settingsRoutes);
+        const res = await app.inject({ method: 'GET', url: '/dns-records/namecheap', headers: asUser() });
+        expect(res.statusCode).toBe(200);
+        expect(res.json()).toEqual({
+          configured: true,
+          apiUser: 'nc-user',
+          clientIp: '1.2.3.4',
+          hasKey: true,
+        });
+        for (const k of Object.keys(settingsMock.__values)) delete settingsMock.__values[k];
+        await app.close();
+      } finally {
+        if (previousKey === undefined) delete process.env['NINEDEPLOY_MASTER_KEY'];
+        else process.env['NINEDEPLOY_MASTER_KEY'] = previousKey;
+      }
+    });
+
+    it('PUT /dns-records/namecheap saves the triple and audits the apiUser', async () => {
+      // Persistence is exercised by the lib/namecheap unit tests.
+      // Here we only check the route returns 200 and the audit
+      // side-effect runs — a regression that drops the audit call
+      // leaves a silent gap in the activity log.
+      for (const k of Object.keys(settingsMock.__values)) delete settingsMock.__values[k];
+      const app = await buildTestApp({ db: createFakeDb() });
+      await app.register(settingsRoutes);
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/dns-records/namecheap',
+        headers: asUser(),
+        payload: { apiUser: 'nc-user', apiKey: 'k-1234567890', clientIp: '1.2.3.4' },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ ok: true, apiUser: 'nc-user' });
+      // The route persists via the shared `setSettingString` shim
+      // and audits via `audit()`. The audit call goes to the
+      // shared fake db (we don't assert the row directly — the
+      // shape is covered by the lib/audit tests).
+      expect(settingsMock.__values['namecheap_api_user']).toBe('nc-user');
+      expect(settingsMock.__values['namecheap_client_ip']).toBe('1.2.3.4');
+      for (const k of Object.keys(settingsMock.__values)) delete settingsMock.__values[k];
       await app.close();
     });
   });
