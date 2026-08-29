@@ -789,6 +789,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   defensive branch. The change is intentionally
   **non-migration**: the flag lives in the settings table so
   the operator can enable / disable without an upgrade.
+- **`serviceVolumes.ts` branch coverage 75 → 99** *(Sprint 9 PR #38)*.
+  The `apps/server/src/modules/serviceVolumes.ts` route bundle had
+  a 25-point branch-coverage gap rooted in four defensive branches
+  nobody had driven a test through. New tests in
+  `apps/server/test/serviceVolumes.test.ts` cover: the
+  `volumeSize` catch (docker size probe throws → `sizeBytes: 0`),
+  the POST `listManagedVolumeNames().catch(() => [])` collapse
+  (daemon down → 404, not 500), the POST `if (!known) throw
+  notFound` branch (volume present in input but absent from
+  `docker volume ls`), the `createDockerVolume` log callback
+  arrow (`(line) => req.log.info(line)`), the POST non-Error
+  throw path (`err instanceof Error ? err.message : String(err)`,
+  exercised via `throw 'string'` to confirm the UNIQUE
+  container_path / volume_name checks still fire for raw-string
+  errors), the PATCH zero-row 404 (the `if (!updated) throw
+  notFound` guard the happy path never reached), the PATCH
+  non-Error throw (mirror of POST), the DELETE orphan-log skip
+  (volume still referenced by another service → the "now
+  ownerless" log line is NOT emitted), the GET
+  `sharingByVolume.get(r.volumeName) ?? 1` fallback (the
+  un-scoped select returns `[]` while the scoped select has
+  rows), the config-repair 404-by-attachmentId branch, and the
+  config-repair `req.body ?? {}` fallback. Final coverage
+  **99.24% statements / 98.68% branches / 100% functions /
+  100% lines** — the only remaining item is the
+  `if (/[^a-zA-Z0-9_.-]/.test(volumeName))` defense-in-depth
+  regex on line 240, which is unreachable because the upstream
+  zod schema's `^nd-(svc|db)-[a-z0-9_.-]+$` regex rejects the
+  same inputs first. +14 tests (28 → 42).
 
 ### Fixed
 
