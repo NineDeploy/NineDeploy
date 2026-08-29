@@ -789,6 +789,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   defensive branch. The change is intentionally
   **non-migration**: the flag lives in the settings table so
   the operator can enable / disable without an upgrade.
+- **`settings.ts` coverage 92 / 97 / 82 / 94 → 100 / 100 / 100 / 100**
+  *(Sprint 9 PR #39)*. The `apps/server/src/modules/settings.ts`
+  route bundle had a 17-point function-coverage gap rooted in
+  the 1-second-deferred `applyTraefikSettings` and its three
+  `await` calls; the `scheduleTraefikSettingsApply` `setTimeout`
+  callback (3 statements + 1 function); the `onClose` hook
+  that drains pending timers; the `PUT /panel-domain` `.catch(() => undefined)`
+  swallow on `writeDynamicConfig`; the `?? null` fallback in
+  `GET /dns-records/namecheap` when `getNamecheapConfig` returns
+  `null`; and the `log` arrow `(line) => app.log.info({ component: 'settings' }, line)`
+  inside `applyTraefikSettings` that nobody had invoked from the
+  mocks before. 5 new tests in `apps/server/test/settings.test.ts`:
+  PUT /dns schedules a 1-second `applyTraefikSettings` that
+  calls `ensureNetwork` → `ensureTraefik` → `writeDynamicConfig`
+  in order (one-shot mocks invoke the route's `log` callback to
+  cover the unreachable arrow); the same for PUT /acme-email;
+  a thrown `ensureNetwork` is caught by the `void
+  applyTraefikSettings().catch(...)` wrapper and never
+  propagates as an `unhandledRejection`; the onClose hook
+  `clearTimeout`s pending apply timers (no `ensureNetwork` after
+  `app.close()` even with 5 s of fake-time advancement); and
+  PUT /panel-domain still 200s when `writeDynamicConfig` throws.
+  Also added: `GET /dns-records/namecheap` returns
+  `{ configured: false, apiUser: null, clientIp: null, hasKey: false }`
+  when the settings map is empty (covers the `cfg?.apiUser ?? null`
+  and `cfg?.clientIp ?? null` short-circuits). The fake-timer
+  scope is narrowed to `['setTimeout', 'setInterval', 'clearTimeout', 'clearInterval']`
+  — faking `setImmediate` / `process.nextTick` would deadlock
+  fastify's request scheduler. Final coverage **100%
+  statements / 100% branches / 100% functions / 100% lines** — every
+  reachable branch now tested. +5 tests (45 → 50).
+
 - **`serviceVolumes.ts` branch coverage 75 → 99** *(Sprint 9 PR #38)*.
   The `apps/server/src/modules/serviceVolumes.ts` route bundle had
   a 25-point branch-coverage gap rooted in four defensive branches

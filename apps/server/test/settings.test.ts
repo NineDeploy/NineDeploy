@@ -1,4 +1,4 @@
-﻿import { beforeEach, describe, expect, it, vi } from 'vitest';
+﻿import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { settingsRoutes } from '../src/modules/settings.js';
 import { asUser, buildTestApp, createFakeDb } from './helpers.js';
 
@@ -91,6 +91,29 @@ describe('settings routes (admin-only)', () => {
     });
     expect(resClear.statusCode).toBe(200);
     expect(resClear.json()).toEqual({ ok: true, panelDomain: null });
+    await app.close();
+  });
+
+  it('still 200s on PUT /panel-domain when writeDynamicConfig throws (caught silently)', async () => {
+    // The route calls `await writeDynamicConfig(app.db).catch(() => undefined)`
+    // — a failed dynamic-config write is treated as non-fatal so
+    // the operator can still save the panel domain. A regression
+    // that drops the .catch would 500 the request on every DNS
+    // blip.
+    dnsMock.writeDynamicConfig.mockRejectedValueOnce(new Error('docker daemon offline'));
+    const db = createFakeDb();
+    const app = await buildTestApp({ db });
+    await app.register(settingsRoutes);
+    const res = await app.inject({
+      method: 'PUT',
+      url: '/panel-domain',
+      headers: asUser(),
+      payload: { domain: 'panel.example.com' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: true, panelDomain: 'panel.example.com' });
+    expect(settingsMock.setSettingString).toHaveBeenCalledWith(db, 'panel_domain', 'panel.example.com');
+    expect(dnsMock.writeDynamicConfig).toHaveBeenCalledWith(db);
     await app.close();
   });
 
@@ -455,6 +478,28 @@ describe('settings routes (admin-only)', () => {
       }
     });
 
+    it('GET /dns-records/namecheap returns all-nulls when the operator has not configured Namecheap', async () => {
+      // The opposite of the configured=true test: an empty
+      // settings map means `getNamecheapConfig` returns `null`,
+      // and the route's `cfg?.apiUser ?? null` /
+      // `cfg?.clientIp ?? null` short-circuits fire. The two
+      // `?? null` arms are the only branches this test covers —
+      // the configured=true test above exercises the truthy
+      // side of the same expressions.
+      for (const k of Object.keys(settingsMock.__values)) delete settingsMock.__values[k];
+      const app = await buildTestApp({ db: createFakeDb() });
+      await app.register(settingsRoutes);
+      const res = await app.inject({ method: 'GET', url: '/dns-records/namecheap', headers: asUser() });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({
+        configured: false,
+        apiUser: null,
+        clientIp: null,
+        hasKey: false,
+      });
+      await app.close();
+    });
+
     it('PUT /dns-records/namecheap saves the triple and audits the apiUser', async () => {
       // Persistence is exercised by the lib/namecheap unit tests.
       // Here we only check the route returns 200 and the audit
@@ -790,5 +835,176 @@ describe('Vault provider (Infisical / Doppler)', () => {
     const res = await app.inject({ method: 'POST', url: '/vault/test', headers: asUser() });
     expect(res.json()).toEqual({ ok: true, secrets: 7 });
     await app.close();
+  });
+});
+
+describe('settings routes — Traefik apply timer', () => {
+  // PUT /dns and PUT /acme-email schedule `applyTraefikSettings`
+  // to run 1 second AFTER the response flushes, so a successful
+  // save doesn't look like a network failure to the operator
+  // (the request itself is travelling through the proxy). The
+  // timer is `unref()`'d so it does not pin the test process
+  // open, and the onClose hook drains any pending timers.
+  //
+  // These tests pin the behaviour with vitest's fake timers
+  // scoped to just `setTimeout` / `setInterval`. The narrower
+  // scope matters: faking `setImmediate` and `process.nextTick`
+  // (the global default) breaks fastify's internal request
+  // scheduler and causes `app.inject()` to deadlock before the
+  // response is ever returned.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval', 'clearTimeout', 'clearInterval'] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('schedules a Traefik apply ~1s after PUT /dns and runs it on the timer', async () => {
+    // Reset the proxy mocks so this test owns the call counts.
+    dnsMock.ensureNetwork.mockClear();
+    dnsMock.ensureTraefik.mockClear();
+    dnsMock.writeDynamicConfig.mockClear();
+    // Drive the inner `log` callback in `applyTraefikSettings`:
+    // the route hands `log` to ensureNetwork/ensureTraefik so
+    // their docker progress lines flow through pino. The
+    // factory-supplied mock just returns `undefined` and never
+    // calls the callback; a one-shot implementation here covers
+    // the otherwise-unreachable `(line) => app.log.info(...)`
+    // arrow.
+    let loggedFromApply: string | undefined;
+    dnsMock.ensureNetwork.mockImplementationOnce(async (log: (line: string) => void) => {
+      log('ensure-network: creating network ninedeploy');
+      loggedFromApply = 'ensure-network';
+      return undefined;
+    });
+    dnsMock.ensureTraefik.mockImplementationOnce(
+      async (log: (line: string) => void, _email: unknown, _dns: unknown) => {
+        log('ensure-traefik: container running');
+        return undefined;
+      },
+    );
+    const db = createFakeDb();
+    const app = await buildTestApp({ db });
+    await app.register(settingsRoutes);
+    const res = await app.inject({
+      method: 'PUT',
+      url: '/dns',
+      headers: asUser(),
+      payload: { provider: 'cloudflare', token: 'sekrit', wildcardApex: 'example.com' },
+    });
+    expect(res.statusCode).toBe(200);
+    // The apply must NOT have run yet — the timer is set for 1 s
+    // after the response, so a synchronous run would race the
+    // response flush.
+    expect(dnsMock.ensureNetwork).not.toHaveBeenCalled();
+    expect(dnsMock.ensureTraefik).not.toHaveBeenCalled();
+    expect(dnsMock.writeDynamicConfig).not.toHaveBeenCalled();
+    // Advance just past 1 s; the timer fires and the apply runs.
+    // runAllTimersAsync drains the (faked) setTimeout queue and
+    // awaits the microtask chain the timer callback scheduled.
+    await vi.runAllTimersAsync();
+    expect(dnsMock.ensureNetwork).toHaveBeenCalledTimes(1);
+    expect(dnsMock.ensureTraefik).toHaveBeenCalledTimes(1);
+    // ensureTraefik receives (log, acmeEmail, dnsConfig) — the
+    // mocks are typed as `vi.fn(async () => undefined)` so any
+    // call shape satisfies the assertion.
+    expect(dnsMock.ensureTraefik).toHaveBeenCalledWith(
+      expect.any(Function),
+      'acme@example.com',
+      null,
+    );
+    expect(dnsMock.writeDynamicConfig).toHaveBeenCalledWith(db);
+    // The one-shot mock implementations invoked the route's log
+    // callback — a regression that drops the log wiring would
+    // surface here as `loggedFromApply === undefined`.
+    expect(loggedFromApply).toBe('ensure-network');
+    await app.close();
+  });
+
+  it('schedules a Traefik apply ~1s after PUT /acme-email and runs it on the timer', async () => {
+    dnsMock.ensureNetwork.mockClear();
+    dnsMock.ensureTraefik.mockClear();
+    dnsMock.writeDynamicConfig.mockClear();
+    const db = createFakeDb();
+    const app = await buildTestApp({ db });
+    await app.register(settingsRoutes);
+    const res = await app.inject({
+      method: 'PUT',
+      url: '/acme-email',
+      headers: asUser(),
+      payload: { email: 'new-acme@example.com' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(dnsMock.ensureNetwork).not.toHaveBeenCalled();
+    await vi.runAllTimersAsync();
+    expect(dnsMock.ensureNetwork).toHaveBeenCalledTimes(1);
+    expect(dnsMock.ensureTraefik).toHaveBeenCalledTimes(1);
+    expect(dnsMock.writeDynamicConfig).toHaveBeenCalledTimes(1);
+    await app.close();
+  });
+
+  it('catches and logs a thrown error from the apply (does not propagate)', async () => {
+    // If `ensureNetwork` throws, the route must swallow it — the
+    // scheduleTraefikSettingsApply body is `void
+    // applyTraefikSettings().catch(err => app.log.error(...))`,
+    // and a leaked rejection would crash the worker on the
+    // unhandledRejection path. We assert no unhandled rejection
+    // by simply advancing time and checking the error spy.
+    dnsMock.ensureNetwork.mockClear();
+    dnsMock.ensureTraefik.mockClear();
+    dnsMock.writeDynamicConfig.mockClear();
+    dnsMock.ensureNetwork.mockRejectedValueOnce(new Error('docker daemon offline'));
+    const app = await buildTestApp({ db: createFakeDb() });
+    await app.register(settingsRoutes);
+    const unhandled = vi.fn();
+    process.once('unhandledRejection', unhandled);
+    try {
+      await app.inject({
+        method: 'PUT',
+        url: '/acme-email',
+        headers: asUser(),
+        payload: { email: 'err-acme@example.com' },
+      });
+      await vi.runAllTimersAsync();
+      // ensureNetwork was called (and rejected); the catch
+      // swallowed the rejection. ensureTraefik / writeDynamicConfig
+      // never ran because the rejection fired before them.
+      expect(dnsMock.ensureNetwork).toHaveBeenCalledTimes(1);
+      expect(dnsMock.ensureTraefik).not.toHaveBeenCalled();
+      expect(dnsMock.writeDynamicConfig).not.toHaveBeenCalled();
+      // Yield once so the rejection chain is fully settled before
+      // we assert. (A setTimeout here would never fire under fake
+      // timers — we are still in the fake-timers scope from
+      // beforeEach.)
+      await Promise.resolve();
+      expect(unhandled).not.toHaveBeenCalled();
+    } finally {
+      process.removeListener('unhandledRejection', unhandled);
+      await app.close();
+    }
+  });
+
+  it('drains pending Traefik apply timers when the app closes', async () => {
+    // The onClose hook in the settings plugin walks
+    // `traefikApplyTimers` and `clearTimeout`s each one. Without
+    // it, a PUT /dns 200 ms before the worker shuts down would
+    // fire `ensureNetwork` against a torn-down proxy.
+    dnsMock.ensureNetwork.mockClear();
+    dnsMock.ensureTraefik.mockClear();
+    const app = await buildTestApp({ db: createFakeDb() });
+    await app.register(settingsRoutes);
+    await app.inject({
+      method: 'PUT',
+      url: '/dns',
+      headers: asUser(),
+      payload: { provider: 'cloudflare', token: 'sekrit', wildcardApex: 'example.com' },
+    });
+    // The timer is pending but has not fired. Closing the app
+    // should clearTimeout it.
+    await app.close();
+    // Advance fake time — the timer must NOT fire on a closed app.
+    await vi.runAllTimersAsync();
+    expect(dnsMock.ensureNetwork).not.toHaveBeenCalled();
+    expect(dnsMock.ensureTraefik).not.toHaveBeenCalled();
   });
 });
