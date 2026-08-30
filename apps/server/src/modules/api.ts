@@ -16,6 +16,7 @@ import { deploysRoutes } from './deploys.js';
 import { domainIndexRoutes } from './domainIndex.js';
 import { domainPresetsRoutes } from './domainPresets.js';
 import { domainsRoutes } from './domains.js';
+import { domainTransferStartRoutes, domainTransferTokenRoutes } from './domainTransfers.js';
 import { envRoutes, envSearchRoutes, projectEnvRoutes } from './env.js';
 import { hookReceiveRoutes, webhookMgmtRoutes } from './hooks.js';
 import { insightsRoutes, serviceInsightsRoutes } from './insights.js';
@@ -92,6 +93,11 @@ export const apiRoutes: FastifyPluginAsync = async (app) => {
   await app.register(backupRoutes, { prefix: '/backups' });
   await app.register(backupDestinationRoutes, { prefix: '/backup-destinations' });
   await app.register(domainIndexRoutes, { prefix: '/domains' });
+  // Domain transfer (G-29): the start route lives next to
+  // the other /v1/domains/* routes, the token-based
+  // preview / accept / cancel live under /domain-transfers.
+  await app.register(domainTransferStartRoutes, { prefix: '/domains' });
+  await app.register(domainTransferTokenRoutes, { prefix: '/domain-transfers' });
   await app.register(domainPresetsRoutes, { prefix: '/domain-presets' });
   await app.register(configPresetsRoutes, { prefix: '/config-presets' });
   await app.register(networkRoutes, { prefix: '/networks' });

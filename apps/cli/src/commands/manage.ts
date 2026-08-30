@@ -99,6 +99,104 @@ export async function domainsRemove(client: NineDeployClient, idStr: string, dom
   } catch (err) { fail(err); }
 }
 
+/**
+ * `ninedeploy domains transfer <domainId> --to <email>` —
+ * start a transfer. Prints the accept URL so the operator
+ * can forward it to the target user out-of-band (email,
+ * chat, etc.). The token in the URL is the only secret;
+ * the database stores only its SHA-256.
+ */
+export async function domainsTransfer(
+  client: NineDeployClient,
+  domainIdStr: string,
+  opts: { to: string },
+): Promise<void> {
+  const domainId = num(domainIdStr, 'Usage: ninedeploy domains transfer <domainId> --to <email>');
+  if (!opts.to) return error('Usage: ninedeploy domains transfer <domainId> --to <email>');
+  let res: Awaited<ReturnType<NineDeployClient['domains']['transfer']>>;
+  try {
+    res = await spinner('Starting transfer', () => client.domains.transfer(domainId, { targetEmail: opts.to }));
+  } catch (err) { fail(err); return; }
+  success(`Transfer started. Forward this URL to ${opts.to}:`);
+  console.log();
+  console.log(`  ${c.cyan(res.acceptUrl)}`);
+  console.log();
+  const expiresIn = Math.max(0, res.expiresAt - Math.floor(Date.now() / 1000));
+  info(`Token expires in ${Math.ceil(expiresIn / 86400)} day(s). The target user accepts with`);
+  info(`  ninedeploy domains accept-transfer <token> --service-id <id>`);
+  info(`(the token is the last URL segment above).`);
+}
+
+/**
+ * `ninedeploy domains preview-transfer <token>` — read-only
+ * preview of a transfer. No auth required (the token is
+ * the secret); used by the panel's accept page.
+ */
+export async function domainsPreviewTransfer(
+  client: NineDeployClient,
+  token: string,
+): Promise<void> {
+  if (!token) return error('Usage: ninedeploy domains preview-transfer <token>');
+  let res: Awaited<ReturnType<NineDeployClient['domains']['previewTransfer']>>;
+  try {
+    res = await client.domains.previewTransfer(token);
+  } catch (err) { fail(err); return; }
+  if (res.status === 'expired' || res.effectivelyExpired) {
+    header('Transfer (expired)');
+    info(`This transfer expired and can no longer be accepted.`);
+    info(`Source: ${res.sourceEmail} -> Target: ${res.targetEmail} (${res.hostname})`);
+    return;
+  }
+  header(`Transfer (${res.status})`);
+  info(`Domain:    ${c.cyan(res.hostname)}`);
+  info(`From:      ${res.sourceEmail}`);
+  info(`To:        ${res.targetEmail}`);
+  info(`Status:    ${res.status}`);
+  const expiresIn = Math.max(0, res.expiresAt - Math.floor(Date.now() / 1000));
+  info(`Expires:   in ${Math.ceil(expiresIn / 86400)} day(s)`);
+  if (res.acceptedAt) info(`Accepted:  ${new Date(res.acceptedAt * 1000).toISOString()}`);
+  if (res.cancelledAt) info(`Cancelled: ${new Date(res.cancelledAt * 1000).toISOString()}`);
+}
+
+/**
+ * `ninedeploy domains accept-transfer <token> --service-id <id>` —
+ * accept a transfer as the target user. The CLI refuses if
+ * the caller's panel email does not match the transfer's
+ * `targetEmail`; the same check is enforced server-side.
+ */
+export async function domainsAcceptTransfer(
+  client: NineDeployClient,
+  token: string,
+  opts: { serviceId: string },
+): Promise<void> {
+  if (!token) return error('Usage: ninedeploy domains accept-transfer <token> --service-id <id>');
+  if (!opts.serviceId) return error('Usage: ninedeploy domains accept-transfer <token> --service-id <id>');
+  const serviceId = num(opts.serviceId, 'Usage: ninedeploy domains accept-transfer <token> --service-id <id>');
+  let res: Awaited<ReturnType<NineDeployClient['domains']['acceptTransfer']>>;
+  try {
+    res = await spinner('Accepting transfer', () =>
+      client.domains.acceptTransfer(token, { targetServiceId: serviceId }),
+    );
+  } catch (err) { fail(err); return; }
+  success(`Domain ${c.cyan(res.hostname)} transferred to service ${res.serviceId}.`);
+}
+
+/**
+ * `ninedeploy domains cancel-transfer <token>` — cancel a
+ * pending transfer. Only the source user (or an instance
+ * operator) can cancel; the server enforces the same gate.
+ */
+export async function domainsCancelTransfer(
+  client: NineDeployClient,
+  token: string,
+): Promise<void> {
+  if (!token) return error('Usage: ninedeploy domains cancel-transfer <token>');
+  try {
+    await client.domains.cancelTransfer(token);
+    success('Transfer cancelled.');
+  } catch (err) { fail(err); }
+}
+
 // ── volumes ────────────────────────────────────────────────────────────────
 
 /** `ninedeploy volumes list` */

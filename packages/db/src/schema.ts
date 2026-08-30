@@ -555,6 +555,55 @@ export const domains = sqliteTable(
   }),
 );
 
+// ─── domain transfers (G-29) ───────────────────────────────────────────────
+// One row per in-flight (or terminal) domain transfer. The
+// flow is: source user (admin on the source service) inserts
+// a `pending` row with a one-time URL token; target user
+// (admin on the target service) calls accept with the
+// token, which moves the `domains.service_id` and marks the
+// transfer row `accepted`. `token_sha256` is the SHA-256 of
+// the URL token — a leaked DB dump cannot be used to forge
+// a transfer. The state machine (`pending` -> `accepted` /
+// `cancelled` / `expired`) is enforced at the route layer.
+export const domainTransferStatus = ['pending', 'accepted', 'cancelled', 'expired'] as const;
+
+export const domainTransfers = sqliteTable(
+  'domain_transfers',
+  {
+    id: id(),
+    domainId: integer('domain_id')
+      .notNull()
+      .references(() => domains.id, { onDelete: 'cascade' }),
+    sourceUserId: integer('source_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    targetEmail: text('target_email').notNull(),
+    // Resolved on accept (when the user shows up); NULL
+    // while the row is still `pending`.
+    targetUserId: integer('target_user_id').references(() => users.id, { onDelete: 'set null' }),
+    targetServiceId: integer('target_service_id').references(() => services.id, {
+      onDelete: 'set null',
+    }),
+    tokenSha256: text('token_sha256').notNull(),
+    status: text('status', { enum: domainTransferStatus }).notNull().default('pending'),
+    // Unix epoch seconds; a `pending` row whose expires_at
+    // is in the past is treated as `expired` by the routes
+    // (lazy GC, no cron required).
+    expiresAt: integer('expires_at').notNull(),
+    acceptedAt: integer('accepted_at'),
+    cancelledAt: integer('cancelled_at'),
+    createdAt: ts('created_at'),
+  },
+  (t) => ({
+    tokenIdx: uniqueIndex('domain_transfers_token_idx').on(t.tokenSha256),
+    // Sweep: list pending rows that are about to expire so
+    // the housekeeping job can flip them.
+    statusIdx: index('domain_transfers_status_idx').on(t.status, t.expiresAt),
+    // Target-side "show me transfers addressed to me" lookup.
+    targetEmailIdx: index('domain_transfers_target_email_idx').on(t.targetEmail),
+  }),
+);
+
 export const webhooks = sqliteTable('webhooks', {
   id: id(),
   sourceId: integer('source_id').references(() => sources.id, { onDelete: 'set null' }),

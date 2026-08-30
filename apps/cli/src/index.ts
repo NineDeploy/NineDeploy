@@ -18,7 +18,8 @@ import {
 import {
   activityList, alertsCreate, alertsList, alertsRemove,
   backupsCreate, backupsDrill, backupsDrills, backupsList, backupsRestore,
-  deploysWatch, domainsAdd, domainsList, domainsRemove,
+  deploysWatch, domainsAcceptTransfer, domainsAdd, domainsCancelTransfer, domainsList,
+  domainsPreviewTransfer, domainsRemove, domainsTransfer,
   envList, envRemove, envSet, networksCreate, networksList, networksRemove,
   sessionsList, sessionsRevoke, systemExport, systemImport,
   usersList, usersResetLink, volumesList, volumesRemove,
@@ -251,6 +252,29 @@ domainsCmd.command('add <serviceId> <host>')
   .action((id: string, host: string, opts: { path?: string; ssl?: boolean }) => domainsAdd(getClient(), id, host, opts));
 
 domainsCmd.command('rm <serviceId> <domainId>').description('Remove a domain').action((svcId: string, domId: string) => domainsRemove(getClient(), svcId, domId));
+
+// Domain transfer (G-29) — start / preview / accept / cancel.
+domainsCmd
+  .command('transfer <domainId>')
+  .description('Start a domain transfer to a target email; prints an accept URL')
+  .requiredOption('--to <email>', 'Email of the target user (existing or future)')
+  .action((domainId: string, opts: { to: string }) => domainsTransfer(getClient(), domainId, opts));
+
+domainsCmd
+  .command('preview-transfer <token>')
+  .description('Preview a pending transfer by token (no auth required)')
+  .action((token: string) => domainsPreviewTransfer(getClient(), token));
+
+domainsCmd
+  .command('accept-transfer <token>')
+  .description('Accept a transfer as the target user; the domain moves to the given service')
+  .requiredOption('--service-id <id>', 'Target service id (must be one the caller can admin)')
+  .action((token: string, opts: { serviceId: string }) => domainsAcceptTransfer(getClient(), token, opts));
+
+domainsCmd
+  .command('cancel-transfer <token>')
+  .description('Cancel a pending transfer (source user or instance operator only)')
+  .action((token: string) => domainsCancelTransfer(getClient(), token));
 
 const domainsPresetsCmd = domainsCmd.command('preset').description('Manage DNS presets (IDomainProvider automation)');
 domainsPresetsCmd.command('list').description('List registered IDomainProvider drivers').action(() => domainsPresetListAction(getClient()));

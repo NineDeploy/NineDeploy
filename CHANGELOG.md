@@ -1114,6 +1114,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `ninedeploy images prune [--keep-last N]
   [--older-than hours] [--dangling] [--dry-run]`.
 
+- **Domain transfer — `ninedeploy domains {transfer,
+  preview-transfer, accept-transfer, cancel-transfer}` (G-29,
+  PR #48)**. The `domains` table attaches every row to a
+  service, and ownership flows through the service's
+  workspace membership; there was no way to move a row
+  from one service / user to another. New endpoints
+  implement a two-phase transfer with email-bound
+  authorization. The source user (admin on the source
+  service) calls `POST /v1/domains/:id/transfer` with the
+  target email and gets back a one-time `acceptUrl` to
+  forward out-of-band; the URL embeds a 32-byte random
+  token whose SHA-256 is what the database stores (so a
+  leaked DB dump cannot forge a transfer — mirrors the
+  api_tokens pattern). The target user calls
+  `POST /v1/domain-transfers/:token/accept` with the
+  service id they want the domain attached to; the server
+  re-checks the caller's email matches the target, the row
+  is still `pending`, and the source domain still exists,
+  then moves the row in one transaction. Tokens expire
+  after 7 days; a `pending` row whose `expires_at` is in
+  the past is treated as `expired` lazily (no background
+  sweep). `GET /v1/domain-transfers/:token` is
+  unauthenticated (the token is the secret) so the panel
+  can render the accept page to a logged-out visitor;
+  `POST /v1/domain-transfers/:token/cancel` is the
+  source-side abort path and refuses when called by the
+  target email. Migration `0045` adds the
+  `domain_transfers` table; `IF NOT EXISTS` throughout
+  follows the same drizzle-kit-push-safe pattern as
+  0039–0044. SDK surface:
+  `client.domains.transfer(domainId, { targetEmail })`,
+  `client.domains.previewTransfer(token)`,
+  `client.domains.acceptTransfer(token, {
+  targetServiceId })`, and
+  `client.domains.cancelTransfer(token)`. CLI: `ninedeploy
+  domains transfer <id> --to <email>` (prints the accept
+  URL with the token visible so the operator can forward
+  it), `ninedeploy domains preview-transfer <token>`
+  (no auth), `ninedeploy domains accept-transfer <token>
+  --service-id <id>` (caller must be authenticated as
+  the target email), and `ninedeploy domains
+  cancel-transfer <token>` (caller must be the source).
+
 ### Fixed
 
 - **`SettingsTabPrivilege` test timeouts under parallel load (unrelated

@@ -272,6 +272,51 @@ export interface PruneImagesResult {
   output: string;
 }
 
+/**
+ * Result of `POST /v1/domains/:id/transfer` (start a
+ * transfer). The caller forwards `acceptUrl` to the target
+ * user out-of-band; the token is the only secret embedded
+ * in the URL.
+ */
+export interface StartDomainTransferResult {
+  ok: boolean;
+  transferId: number;
+  acceptUrl: string;
+  expiresAt: number;
+}
+
+/**
+ * Result of `GET /v1/domain-transfers/:token` (preview).
+ * `effectivelyExpired` is true when the row is still
+ * `pending` server-side but `expiresAt` is in the past;
+ * the route reports it as `expired` and refuses accept.
+ */
+export interface DomainTransferPreview {
+  id: number;
+  status: 'pending' | 'accepted' | 'cancelled' | 'expired';
+  hostname: string;
+  sourceEmail: string;
+  targetEmail: string;
+  expiresAt: number;
+  createdAt: number;
+  acceptedAt: number | null;
+  cancelledAt: number | null;
+  effectivelyExpired: boolean;
+}
+
+/** Body for `POST /v1/domain-transfers/:token/accept`. */
+export interface AcceptDomainTransferInput {
+  targetServiceId: number;
+}
+
+export interface AcceptDomainTransferResult {
+  ok: boolean;
+  transferId: number;
+  domainId: number;
+  serviceId: number;
+  hostname: string;
+}
+
 export interface NineDeployClientOptions {
   /** Base URL of the NineDeploy API, e.g. http://localhost:3000. */
   baseUrl: string;
@@ -428,6 +473,33 @@ export interface NineDeployClient {
     setSsl: (domainId: number, ssl: boolean) => Promise<{ id: number; ssl: boolean }>;
     /** Toggle sticky-session routing for the service (G-28). */
     setStickySession: (serviceId: number, enabled: boolean) => Promise<{ id: number; enabled: boolean; active: boolean }>;
+    /**
+     * Start a domain transfer (G-29). The source user (admin
+     * on the source service) names the target email; the
+     * server returns a one-time `acceptUrl` to forward. The
+     * target user accepts via `acceptDomainTransfer(token,
+     * { targetServiceId })`. The transfer expires after 7
+     * days; cancelling is one call.
+     */
+    transfer: (domainId: number, input: { targetEmail: string }) => Promise<StartDomainTransferResult>;
+    /**
+     * Preview a transfer by token. Does NOT require auth
+     * (the token is the secret) — the panel uses this to
+     * render the accept page to a logged-out visitor.
+     */
+    previewTransfer: (token: string) => Promise<DomainTransferPreview>;
+    /**
+     * Accept a transfer. The caller must be authenticated
+     * and the caller's email must equal the transfer's
+     * target email; the panel / CLI surfaces the preview
+     * first so the user knows what they're signing in to.
+     */
+    acceptTransfer: (token: string, input: AcceptDomainTransferInput) => Promise<AcceptDomainTransferResult>;
+    /**
+     * Cancel a pending transfer. Only the source user
+     * (or an instance operator) can cancel.
+     */
+    cancelTransfer: (token: string) => Promise<{ transferId: number; status: 'cancelled' }>;
   };
   domainPresets: {
     /** Every `IDomainProvider` the running kernel has registered. */
@@ -1204,6 +1276,13 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
           `/v1/services/${serviceId}/sticky-session`,
           { enabled },
         ),
+      transfer: (domainId, input) =>
+        send<StartDomainTransferResult>('POST', `/v1/domains/${domainId}/transfer`, input),
+      previewTransfer: (token) => get<DomainTransferPreview>(`/v1/domain-transfers/${token}`),
+      acceptTransfer: (token, input) =>
+        send<AcceptDomainTransferResult>('POST', `/v1/domain-transfers/${token}/accept`, input),
+      cancelTransfer: (token) =>
+        send<{ transferId: number; status: 'cancelled' }>('POST', `/v1/domain-transfers/${token}/cancel`, {}),
     },
     domainPresets: {
       list: () => get<{ providers: string[] }>('/v1/domain-presets'),
