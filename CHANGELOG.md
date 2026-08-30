@@ -1393,6 +1393,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `globalThis.fetch` to cover the OAuth2 round-trip
     + the FCM POST happy / error paths.
 
+- **Certificate inventory — `ninedeploy certificates {list,expiring}` (G-15, PR #56)**.
+  The existing `GET /v1/traefik/certificates` route
+  returned four flat fields per cert — enough to
+  draw a list, not enough to answer "which certs
+  expire in the next 30 days?". New
+  `lib/certificateInventory.ts` wraps the existing
+  `engine/proxy.ts:readCertificates()` reader and
+  classifies each cert as `valid` /
+  `expiring-soon` / `expired` / `unknown` based on
+  the operator-configurable threshold (default 30).
+  New `GET /v1/traefik/certificates/inventory`
+  returns the full report with a `summary` block
+  (totals per status, threshold, fetchedAt) so a
+  single round-trip is enough to render the panel's
+  Certificates page. New
+  `GET /v1/traefik/certificates/expiring?days=30`
+  is a focused filter — the same shape the alert
+  engine uses to page the operator before a cert
+  falls over. Both routes are member-accessible
+  (the existing basic route stays admin-only for
+  backwards compat). SDK surface:
+  `client.traefik.certificateInventory({ threshold? })`
+  and `client.traefik.expiringCertificates({ days? })`,
+  with the `CertificateInventoryEntry` /
+  `CertificateInventoryReport` types in `@ninedeploy/schemas`.
+  CLI: `ninedeploy certificates list [--threshold N]`
+  prints a colour-coded table with totals per status;
+  `ninedeploy certificates expiring [--days N]` is
+  the focused list used by the alert cron. Caveat:
+  the rich `subject` / `sans` / `notBefore` fields
+  are populated as `null` for now — a real PEM
+  parser is a follow-up; the existing `engine/proxy.ts`
+  reads only the expiry date from acme.json, which
+  is the only field the inventory actually needs.
+
 ### Fixed
 
 - **`SettingsTabPrivilege` test timeouts under parallel load (unrelated

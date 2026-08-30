@@ -11,6 +11,10 @@ import {
   TRAEFIK_CONTAINER,
   TRAEFIK_IMAGE,
 } from '../engine/proxy.js';
+import {
+  buildCertificateInventory,
+  expiringWithin,
+} from '../lib/certificateInventory.js';
 import type { FastifyPluginAsync } from 'fastify';
 
 /** Traefik container durumu */
@@ -341,6 +345,36 @@ export const traefikRoutes: FastifyPluginAsync = async (app) => {
   app.get('/traefik/certificates', { preHandler: [app.authenticate, app.requireAdmin] }, async () => {
     return processCertificates();
   });
+
+  // Richer inventory view used by the (forthcoming)
+  // Certificates page. Member-accessible so a viewer
+  // can see "what is going to expire in 30 days"
+  // without being admin.
+  app.get<{ Querystring: { threshold?: string } }>(
+    '/traefik/certificates/inventory',
+    { preHandler: [app.authenticate] },
+    async (req) => {
+      const threshold = Number(req.query.threshold) > 0 ? Number(req.query.threshold) : 30;
+      return buildCertificateInventory(threshold);
+    },
+  );
+
+  // Focused "expiring within N days" filter. The query
+  // string `?days=30` (default) is what the alert path
+  // uses to page the operator before a cert falls over.
+  app.get<{ Querystring: { days?: string } }>(
+    '/traefik/certificates/expiring',
+    { preHandler: [app.authenticate] },
+    async (req) => {
+      const days = Number(req.query.days) > 0 ? Number(req.query.days) : 30;
+      const report = await buildCertificateInventory(days);
+      return {
+        threshold: days,
+        count: report.certificates.filter((c) => c.daysToExpiry !== null && c.daysToExpiry <= days).length,
+        certificates: expiringWithin(report, days),
+      };
+    },
+  );
 
   // Loglar
   app.get('/traefik/logs', { preHandler: [app.authenticate, app.requireAdmin] }, async (req) => {

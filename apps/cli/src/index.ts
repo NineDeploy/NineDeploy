@@ -40,6 +40,10 @@ import {
   emailTemplatesSet,
 } from './commands/emailTemplates.js';
 import {
+  certificatesExpiring,
+  certificatesList,
+} from './commands/certificates.js';
+import {
   pluginsList, pluginsMarketplace, pluginsMarketplaceRefresh, pluginsInstall,
   pluginsEnable, pluginsDisable, pluginsUninstall,
   pluginsInspect, pluginsReload,
@@ -640,6 +644,19 @@ emailTemplatesCmd
 system.command('export [file]').description('Export the full system state as JSON').action((file?: string) => systemExport(file));
 
 system.command('import <file>').description('Import a system bundle (destructive)').action((file: string) => systemImport(file));
+
+// ── Certificates (G-15) ─────────────────────────────────────────────────────
+const certificates = program.command('certificates').description('Traefik certificate inventory and renewal status');
+certificates
+  .command('list')
+  .description('List every certificate the panel knows about with days-to-expiry and status')
+  .option('--threshold <days>', 'Expiring-soon threshold in days (default 30)')
+  .action((opts: { threshold?: string }) => certificatesList(getClient(), opts));
+certificates
+  .command('expiring')
+  .description('Focused list of certificates expiring within N days')
+  .option('--days <days>', 'Window in days (default 30)')
+  .action((opts: { days?: string }) => certificatesExpiring(getClient(), opts));
 
 deploys.command('watch <serviceId> <deployId>').description('Stream a deployment\'s build logs live').action((svcId: string, depId: string) => deploysWatch(svcId, depId));
 

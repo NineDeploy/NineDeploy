@@ -407,6 +407,50 @@ export interface TraefikCertificate {
   issuer: string | null;
 }
 
+/**
+ * Richer certificate inventory (G-15). The basic
+ * `TraefikCertificate` shape is what the existing
+ * `/v1/traefik/certificates` returns; the inventory
+ * adds `sans` (parsed from the leaf cert's subject
+ * alt names when available), `notBefore`, `status`
+ * (valid / expiring-soon / expired), `autoRenew`
+ * (true when the host is owned by a Let's Encrypt
+ * solver), and `source` (`acme.json` | `static`).
+ *
+ * `daysToExpiry` is the same as `daysUntilExpiry`
+ * for backwards compat; new code should prefer
+ * `daysToExpiry` to match the column name in the
+ * alerting engine.
+ */
+export interface CertificateInventoryEntry {
+  host: string;
+  issuer: string | null;
+  subject: string | null;
+  sans: string[];
+  notBefore: string | null;
+  notAfter: string | null;
+  daysToExpiry: number | null;
+  status: 'valid' | 'expiring-soon' | 'expired' | 'unknown';
+  autoRenew: boolean;
+  source: 'acme.json' | 'static' | 'unknown';
+}
+
+export interface CertificateInventorySummary {
+  total: number;
+  valid: number;
+  expiringSoon: number;
+  expired: number;
+  /** Threshold used for `expiring-soon`; defaults to 30. */
+  expiringThresholdDays: number;
+  /** When the inventory was last rebuilt. */
+  fetchedAt: string;
+}
+
+export interface CertificateInventoryReport {
+  certificates: CertificateInventoryEntry[];
+  summary: CertificateInventorySummary;
+}
+
 export interface TraefikRouter {
   name: string;
   rule: string;

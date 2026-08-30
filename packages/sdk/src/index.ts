@@ -66,6 +66,8 @@ import type {
   TemplateSummary,
   TopologyGraph,
   TraefikCertificate,
+  CertificateInventoryEntry,
+  CertificateInventoryReport,
   TraefikInfo,
   TraefikStatus,
   TunnelEntry,
@@ -1110,6 +1112,22 @@ export interface NineDeployClient {
     get: () => Promise<TraefikInfo>;
     status: () => Promise<TraefikStatus>;
     certificates: () => Promise<TraefikCertificate[]>;
+    /**
+     * Richer certificate inventory (G-15). Same
+     * underlying data as `certificates()` but adds a
+     * `status` classification (valid / expiring-soon /
+     * expired), a `summary` block, and the full set of
+     * fields the Certificates page renders.
+     * `threshold` is the days-out cutoff for the
+     * `expiring-soon` bucket; default 30.
+     */
+    certificateInventory: (opts?: { threshold?: number }) => Promise<CertificateInventoryReport>;
+    /**
+     * Focused "expiring within N days" filter. Default
+     * 30. Used by the alert engine and by the panel's
+     * "About to expire" widget.
+     */
+    expiringCertificates: (opts?: { days?: number }) => Promise<{ threshold: number; count: number; certificates: CertificateInventoryEntry[] }>;
     logs: (lines?: number) => Promise<{ logs: string[] }>;
     restart: () => Promise<{ ok: boolean; message?: string }>;
     backupCerts: () => Promise<{ ok: boolean; message?: string; filename?: string }>;
@@ -1865,6 +1883,14 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
       get: () => get<TraefikInfo>('/v1/traefik'),
       status: () => get<TraefikStatus>('/v1/traefik/status'),
       certificates: () => get<TraefikCertificate[]>('/v1/traefik/certificates'),
+      certificateInventory: (opts) =>
+        get<CertificateInventoryReport>(
+          `/v1/traefik/certificates/inventory${opts?.threshold ? `?threshold=${opts.threshold}` : ''}`,
+        ),
+      expiringCertificates: (opts) =>
+        get<{ threshold: number; count: number; certificates: CertificateInventoryEntry[] }>(
+          `/v1/traefik/certificates/expiring${opts?.days ? `?days=${opts.days}` : ''}`,
+        ),
       logs: (lines = 50) => get<{ logs: string[] }>(`/v1/traefik/logs?lines=${lines}`),
       restart: () => send<{ ok: boolean; message: string }>('POST', '/v1/traefik/restart'),
       backupCerts: () => send<{ ok: boolean; message: string; filename?: string }>('POST', '/v1/traefik/backup-certs'),
