@@ -325,4 +325,71 @@ describe('lib/logSearch', () => {
     expect(new Date(result.window.since).getTime()).toBe(since.getTime());
     expect(new Date(result.window.until).getTime()).toBeGreaterThanOrEqual(until.getTime() - 1000);
   });
+
+  it('returns unsupported: true for a non-Loki drain type', async () => {
+    const db = buildDb();
+    // Seed ONLY a non-Loki drain — no Loki candidate at all.
+    state.drains.set(2, { id: 2, name: 'vector', type: 'vector', enabled: true, url: 'https://vector.example.com', apiKeyEncrypted: null });
+    const result = await searchLogs(db, { query: 'x', drainId: 2 });
+    expect(result.unsupported).toBe(true);
+    expect(result.lines).toEqual([]);
+    expect(result.drain).toEqual({ id: 2, name: 'vector', type: 'vector' });
+  });
+
+  it('throws when no Loki drain is configured', async () => {
+    const db = buildDb();
+    state.drains.set(3, { id: 3, name: 'disabled-loki', type: 'loki', enabled: false, url: 'https://loki.example.com', apiKeyEncrypted: null });
+    state.drains.set(4, { id: 4, name: 'vector', type: 'vector', enabled: true, url: 'https://vector.example.com', apiKeyEncrypted: null });
+    await expect(searchLogs(db, { query: 'x' })).rejects.toThrow(/No enabled Loki drain/);
+  });
+
+  it('clamps limit to the [1, 1000] range', async () => {
+    const db = buildDb();
+    state.drains.set(1, { id: 1, name: 'loki', type: 'loki', enabled: true, url: 'https://loki.example.com', apiKeyEncrypted: null });
+    setResponseFor('https://loki\\.example\\.com/loki/api/v1/query_range.*', {
+      body: { status: 'success', data: { result: [] } },
+    });
+    await searchLogs(db, { query: 'x', limit: 999_999 });
+    const url = state.captured[0]?.url ?? '';
+    expect(url).toMatch(/limit=1000/);
+    await searchLogs(db, { query: 'x', limit: -5 });
+    const url2 = state.captured[1]?.url ?? '';
+    expect(url2).toMatch(/limit=1/);
+  });
+
+  it('uses the service slug as the Loki label when serviceId is provided', async () => {
+    const db = buildDb();
+    state.drains.set(1, { id: 1, name: 'loki', type: 'loki', enabled: true, url: 'https://loki.example.com', apiKeyEncrypted: null });
+    state.services.set(7, { id: 7, slug: 'api-gateway' });
+    setResponseFor('https://loki\\.example\\.com/loki/api/v1/query_range.*', {
+      body: { status: 'success', data: { result: [] } },
+    });
+    await searchLogs(db, { query: 'x', serviceId: 7 });
+    const url = state.captured[0]?.url ?? '';
+    expect(url).toMatch(/query=%7Bservice%3D%22api-gateway%22%7D/);
+  });
+
+  it('falls back to job="ninedeploy" when the serviceId points to nothing', async () => {
+    const db = buildDb();
+    state.drains.set(1, { id: 1, name: 'loki', type: 'loki', enabled: true, url: 'https://loki.example.com', apiKeyEncrypted: null });
+    setResponseFor('https://loki\\.example\\.com/loki/api/v1/query_range.*', {
+      body: { status: 'success', data: { result: [] } },
+    });
+    await searchLogs(db, { query: 'x', serviceId: 999 });
+    const url = state.captured[0]?.url ?? '';
+    expect(url).toMatch(/query=%7Bjob%3D%22ninedeploy%22%7D/);
+  });
+
+  it('picks a specific drain when drainId is provided (and ignores enabled/type)', async () => {
+    const db = buildDb();
+    // Seed the disabled / non-Loki drain FIRST so the
+    // pickDrain-by-id branch must return it (otherwise the
+    // default-enabled-Loki branch would have matched first).
+    state.drains.set(11, { id: 11, name: 'vector', type: 'vector', enabled: false, url: 'https://vector.example.com', apiKeyEncrypted: null });
+    const result = await searchLogs(db, { query: 'x', drainId: 11 });
+    // The disabled / non-Loki drain is still chosen when
+    // drainId is set — callers know what they want.
+    expect(result.drain).toEqual({ id: 11, name: 'vector', type: 'vector' });
+    expect(result.unsupported).toBe(true);
+  });
 });
