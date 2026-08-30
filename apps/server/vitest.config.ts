@@ -25,10 +25,10 @@ export default defineConfig({
       // on lines that are outside Sprint 11's scope — the goal remains
       // 100. See CHANGELOG for the per-PR coverage delta.
       thresholds: {
-        statements: 93.5,
-        branches: 88,
-        functions: 92.5,
-        lines: 95,
+        statements: 93.6,
+        branches: 88.4,
+        functions: 93,
+        lines: 95.1,
       },
     },
   },
