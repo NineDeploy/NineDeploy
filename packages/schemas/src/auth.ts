@@ -81,8 +81,60 @@ export type PasswordReset = z.infer<typeof passwordReset>;
  * deployed in someone's CI would break their pipeline on upgrade. New tokens
  * should always be created with an explicit scope.
  */
-export const apiTokenScope = z.enum(['read', 'write', 'operator']);
+// ── API-token scopes (G-08 fine-grained) ──────────────────────────────────
+// The pre-0.3.5 enum (`read` | `write` | `operator`) was a coarse
+// binary/ternary. G-08 adds per-resource URI scopes
+// (`nd://scope/{read,write,admin}/<resource>`) so an MCP / CI token
+// can be limited to, say, `nd://scope/read/services +
+// nd://scope/read/databases` and nothing else.
+//
+// The two forms are accepted in the same array; the old enum
+// continues to be a valid shorthand (a `write` token expands to
+// "any write" at the auth plugin, which is the pre-0.3.5
+// behaviour for backwards compat).
+const LEGACY_SCOPE = z.enum(['read', 'write', 'operator']);
+const RESOURCE_SCOPE = z.string().regex(
+  /^nd:\/\/scope\/(read|write|admin)\/[a-z][a-z0-9_]{0,63}$/,
+  'expected nd://scope/{read,write,admin}/<resource>',
+);
+export const apiTokenScope = z.union([LEGACY_SCOPE, RESOURCE_SCOPE]);
 export type ApiTokenScope = z.infer<typeof apiTokenScope>;
+
+/** All known resource names. The auth plugin checks these
+ *  literally — adding a new resource is a one-line change
+ *  in the auth plugin's resource map. Listed here so the
+ *  CLI can suggest completions and the Zod regex can
+ *  cross-check. */
+export const KNOWN_SCOPE_RESOURCES = [
+  'services',
+  'databases',
+  'domains',
+  'deploys',
+  'alerts',
+  'webhooks',
+  'env',
+  'backups',
+  'volumes',
+  'projects',
+  'users',
+  'tokens',
+  'notifications',
+  'config',
+  'topology',
+  'health',
+  'settings',
+  'manifests',
+  'domains_transfer',
+  'backup_drill',
+  'images',
+  'audit',
+  'firewall',
+  'sso',
+  'egress',
+  'orchestrators',
+  'housekeeping',
+] as const;
+export type ScopeResource = (typeof KNOWN_SCOPE_RESOURCES)[number];
 
 /**
  * Grant or revoke the INSTANCE-operator flag (`PATCH /v1/users/:id/operator`).

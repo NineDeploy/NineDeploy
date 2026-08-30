@@ -3,16 +3,21 @@ import { getClient } from '../client.js';
 import { prompt } from '../prompts.js';
 
 /**
- * Normalise a typed scope answer. Empty input keeps the legacy "unrestricted"
- * behaviour, which is what every pre-0.3.5 token has; anything unrecognised is
- * dropped rather than silently widening the token.
+ * Normalise a typed scope answer. Accepts the legacy
+ * `read | write | operator` shorthand AND the fine-grained
+ * `nd://scope/(read|write|admin)/<resource>` form
+ * introduced in G-08. Empty input keeps the legacy
+ * "unrestricted" behaviour, which is what every
+ * pre-0.3.5 token has; anything unrecognised is dropped
+ * rather than silently widening the token.
  */
-export function parseScopes(answer: string): Array<'read' | 'write' | 'operator'> {
-  const valid = new Set(['read', 'write', 'operator']);
+export function parseScopes(answer: string): string[] {
+  const legacy = new Set(['read', 'write', 'operator']);
+  const resourceScope = /^nd:\/\/scope\/(read|write|admin)\/[a-z][a-z0-9_]{0,63}$/;
   return answer
     .split(',')
-    .map((s) => s.trim().toLowerCase())
-    .filter((s): s is 'read' | 'write' | 'operator' => valid.has(s));
+    .map((s) => s.trim())
+    .filter((s) => legacy.has(s) || resourceScope.test(s));
 }
 
 /** `ninedeploy token create` — mint an API token (shown once). */

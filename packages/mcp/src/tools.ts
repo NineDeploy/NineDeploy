@@ -17,6 +17,18 @@ export interface ToolDef {
   description: string;
   input: z.ZodTypeAny;
   handler: (client: NineDeployClient, input: unknown) => Promise<unknown>;
+  /**
+   * Fine-grained scopes the token must hold for this tool
+   * to be registered (G-08). Multiple scopes are AND'd;
+   * the token must hold every one. An empty / missing
+   * array means "any token" — the existing behaviour for
+   * the pre-G-08 read-only env var continues to apply
+   * separately. The introspection layer maps the legacy
+   * `read` / `write` / `operator` shorthand to the
+   * resource-scoped form, so a `write` token covers
+   * `nd://scope/write/<resource>` for every resource.
+   */
+  requiredScopes?: string[];
 }
 
 const serviceId = z.object({ serviceId: z.number().int().positive() });
@@ -27,6 +39,7 @@ export const TOOLS: ToolDef[] = [
     name: 'list_services',
     description: 'List all deployed services with status, type and branch. Optionally scope to a project.',
     input: z.object({ projectId: z.number().int().positive().optional() }),
+    requiredScopes: ['nd://scope/read/services'],
     handler: (c, input) => {
       const { projectId } = input as { projectId?: number };
       return c.services.list(projectId != null ? `?projectId=${projectId}` : '');
@@ -36,48 +49,56 @@ export const TOOLS: ToolDef[] = [
     name: 'get_service',
     description: 'Get one service in full detail (build config, limits, runtime).',
     input: serviceId,
+    requiredScopes: ['nd://scope/read/services'],
     handler: (c, input) => c.services.get((input as { serviceId: number }).serviceId),
   },
   {
     name: 'service_logs',
     description: 'Read the recent runtime logs of a service.',
     input: serviceId,
+    requiredScopes: ['nd://scope/read/services'],
     handler: (c, input) => c.services.logs((input as { serviceId: number }).serviceId),
   },
   {
     name: 'list_deploys',
     description: 'Deployment history of a service (status, commit, trigger).',
     input: serviceId,
+    requiredScopes: ['nd://scope/read/deploys'],
     handler: (c, input) => c.deploys.list((input as { serviceId: number }).serviceId),
   },
   {
     name: 'list_domains',
     description: 'All routed domains across services, with SSL and status.',
     input: z.object({}),
+    requiredScopes: ['nd://scope/read/domains'],
     handler: (c) => c.domains.all(),
   },
   {
     name: 'list_databases',
     description: 'Managed databases with engine and status.',
     input: z.object({}),
+    requiredScopes: ['nd://scope/read/databases'],
     handler: (c) => c.databases.list(),
   },
   {
     name: 'list_projects',
     description: 'Projects with service/database counts.',
     input: z.object({}),
+    requiredScopes: ['nd://scope/read/projects'],
     handler: (c) => c.projects.list(),
   },
   {
     name: 'list_alerts',
     description: 'Configured alert rules (cpu, memory, cert-expiry).',
     input: z.object({}),
+    requiredScopes: ['nd://scope/read/alerts'],
     handler: (c) => c.alerts.list(),
   },
   {
     name: 'activity_log',
     description: 'Recent audit activity; optionally filter by entity name.',
     input: entityOpt,
+    requiredScopes: ['nd://scope/read/audit'],
     handler: (c, input) => c.activity.list({ entity: (input as { entity?: string }).entity }),
   },
   {
@@ -90,12 +111,14 @@ export const TOOLS: ToolDef[] = [
     name: 'topology',
     description: 'The domains → services → databases routing graph.',
     input: z.object({}),
+    requiredScopes: ['nd://scope/read/topology'],
     handler: (c) => c.topology.get(),
   },
   {
     name: 'health',
     description: 'NineDeploy instance health (API + DB).',
     input: z.object({}),
+    requiredScopes: ['nd://scope/read/health'],
     handler: (c) => c.health(),
   },
   // ── Actions (mutating) ─────────────────────────────────────────────────
@@ -103,12 +126,14 @@ export const TOOLS: ToolDef[] = [
     name: 'deploy_service',
     description: 'Trigger a new deployment for a service. Returns the deployment id.',
     input: serviceId,
+    requiredScopes: ['nd://scope/write/deploys'],
     handler: (c, input) => c.deploys.trigger((input as { serviceId: number }).serviceId),
   },
   {
     name: 'restart_service',
     description: 'Restart a running service runtime.',
     input: serviceId,
+    requiredScopes: ['nd://scope/write/services'],
     handler: (c, input) => c.services.restart((input as { serviceId: number }).serviceId),
   },
   {
@@ -116,6 +141,7 @@ export const TOOLS: ToolDef[] = [
     description:
       'Cancel a queued or in-flight deployment. A queued deployment stops immediately; an in-flight one stops at the next pipeline step boundary, leaving the previous version serving.',
     input: z.object({ serviceId: z.number().int().positive(), deploymentId: z.number().int().positive() }),
+    requiredScopes: ['nd://scope/write/deploys'],
     handler: (c, input) => {
       const { serviceId, deploymentId } = input as { serviceId: number; deploymentId: number };
       return c.deploys.cancel(serviceId, deploymentId);
@@ -125,6 +151,7 @@ export const TOOLS: ToolDef[] = [
     name: 'rollback_deploy',
     description: 'Roll a service back to a previous deployment (by deployment id).',
     input: z.object({ serviceId: z.number().int().positive(), deploymentId: z.number().int().positive() }),
+    requiredScopes: ['nd://scope/write/deploys'],
     handler: (c, input) => {
       const { serviceId, deploymentId } = input as { serviceId: number; deploymentId: number };
       return c.deploys.rollback(serviceId, deploymentId);
@@ -135,12 +162,14 @@ export const TOOLS: ToolDef[] = [
     name: 'list_plugins',
     description: 'List all installed and active kernel plugins, extensions, and their operational status.',
     input: z.object({}),
+    requiredScopes: ['nd://scope/read/config'],
     handler: (c) => c.plugins.list(),
   },
   {
     name: 'marketplace_plugins',
     description: 'Get verified plugins and extensions from the official NineDeploy Marketplace catalog.',
     input: z.object({}),
+    requiredScopes: ['nd://scope/read/config'],
     handler: (c) => c.plugins.marketplace(),
   },
   {
@@ -153,24 +182,28 @@ export const TOOLS: ToolDef[] = [
       version: z.string().optional(),
       description: z.string().optional(),
     }),
+    requiredScopes: ['nd://scope/admin/config'],
     handler: (c, input) => c.plugins.install(input as any),
   },
   {
     name: 'enable_plugin',
     description: 'Enable an installed plugin in the microkernel runtime.',
     input: z.object({ id: z.string() }),
+    requiredScopes: ['nd://scope/admin/config'],
     handler: (c, input) => c.plugins.enable((input as { id: string }).id),
   },
   {
     name: 'disable_plugin',
     description: 'Disable a plugin and temporarily unload its runtime hooks and menu integrations.',
     input: z.object({ id: z.string() }),
+    requiredScopes: ['nd://scope/admin/config'],
     handler: (c, input) => c.plugins.disable((input as { id: string }).id),
   },
   {
     name: 'uninstall_plugin',
     description: 'Uninstall a plugin, destroying its runtime resources and purging its registered menus/schemas.',
     input: z.object({ id: z.string() }),
+    requiredScopes: ['nd://scope/admin/config'],
     handler: (c, input) => c.plugins.uninstall((input as { id: string }).id),
   },
   // ── Configuration Center ───────────────────────────────────────────────
@@ -182,12 +215,14 @@ export const TOOLS: ToolDef[] = [
       pluginId: z.string().optional(),
       reveal: z.boolean().optional(),
     }),
+    requiredScopes: ['nd://scope/read/config'],
     handler: (c, input) => c.config.list(input as any),
   },
   {
     name: 'get_config',
     description: 'Get details and value for a specific configuration key.',
     input: z.object({ key: z.string() }),
+    requiredScopes: ['nd://scope/read/config'],
     handler: (c, input) => c.config.get((input as { key: string }).key),
   },
   {
@@ -200,6 +235,7 @@ export const TOOLS: ToolDef[] = [
       description: z.string().optional(),
       tags: z.array(z.string()).optional(),
     }),
+    requiredScopes: ['nd://scope/write/config'],
     handler: (c, input) => {
       const { key, ...body } = input as { key: string; value: unknown; isSecret?: boolean; description?: string; tags?: string[] };
       return c.config.set(key, body);
@@ -209,6 +245,7 @@ export const TOOLS: ToolDef[] = [
     name: 'delete_config',
     description: 'Delete a custom configuration key from the configuration center.',
     input: z.object({ key: z.string() }),
+    requiredScopes: ['nd://scope/admin/config'],
     handler: (c, input) => c.config.delete((input as { key: string }).key),
   },
   // ── Navigation & Menus ─────────────────────────────────────────────────
@@ -216,6 +253,7 @@ export const TOOLS: ToolDef[] = [
     name: 'list_menus',
     description: 'List dynamic navigation menu items contributed by official and community plugins.',
     input: z.object({ slot: z.string().optional() }),
+    requiredScopes: ['nd://scope/read/config'],
     handler: (c, input) => c.menus.list(input as any),
   },
   // ── Demo & Service Configuration ───────────────────────────────────────
@@ -223,6 +261,7 @@ export const TOOLS: ToolDef[] = [
     name: 'seed_demo',
     description: 'Seed the full demo stack including PostgreSQL database, Next.js Docker app with host port publishing, and Next.js PM2 service.',
     input: z.object({}),
+    requiredScopes: ['nd://scope/admin/services'],
     handler: (c) => c.demo.seed(),
   },
   {
@@ -235,6 +274,7 @@ export const TOOLS: ToolDef[] = [
       publishedPort: z.number().int().min(1).max(65535).nullable().optional(),
       branch: z.string().optional(),
     }),
+    requiredScopes: ['nd://scope/write/services'],
     handler: (c, input) => {
       const { serviceId, ...patch } = input as { serviceId: number; name?: string; port?: number; publishedPort?: number | null; branch?: string };
       return c.services.update(serviceId, patch);
@@ -245,12 +285,14 @@ export const TOOLS: ToolDef[] = [
     name: 'list_workspaces',
     description: 'List all accessible workspaces and organizations with roles and member counts.',
     input: z.object({}),
+    requiredScopes: ['nd://scope/read/projects'],
     handler: (c) => c.workspaces.list(),
   },
   {
     name: 'get_workspace',
     description: 'Get details of a specific workspace including full member list and roles.',
     input: z.object({ id: z.number().int().positive() }),
+    requiredScopes: ['nd://scope/read/projects'],
     handler: (c, input) => c.workspaces.get((input as { id: number }).id),
   },
   // ── Containers & Files ─────────────────────────────────────────────────
@@ -261,6 +303,7 @@ export const TOOLS: ToolDef[] = [
       container: z.string().min(1),
       path: z.string().optional(),
     }),
+    requiredScopes: ['nd://scope/admin/services'],
     handler: (c, input) => {
       const { container, path } = input as { container: string; path?: string };
       return c.containers.listFiles(container, path);
@@ -270,12 +313,14 @@ export const TOOLS: ToolDef[] = [
     name: 'inspect_container',
     description: 'Get deep runtime inspection data for a container including state, mounts, network IP, resource limits, and Traefik tags.',
     input: z.object({ container: z.string().min(1) }),
+    requiredScopes: ['nd://scope/admin/services'],
     handler: (c, input) => c.containers.inspect((input as { container: string }).container),
   },
   {
     name: 'get_container_compose',
     description: 'Generate and retrieve the live Docker Compose YAML manifest for a running container or service.',
     input: z.object({ container: z.string().min(1) }),
+    requiredScopes: ['nd://scope/admin/services'],
     handler: (c, input) => c.containers.compose((input as { container: string }).container),
   },
   // ── Observability & Log Drains ─────────────────────────────────────────
@@ -283,6 +328,7 @@ export const TOOLS: ToolDef[] = [
     name: 'list_log_drains',
     description: 'List structured log drain endpoints (Loki, Datadog, Vector, Syslog, HTTP) forwarding runtime logs.',
     input: z.object({ serviceId: z.number().int().positive().optional() }),
+    requiredScopes: ['nd://scope/read/services'],
     handler: (c, input) => c.logDrains.list(input as { serviceId?: number }),
   },
   // ── Housekeeping & Maintenance ─────────────────────────────────────────
@@ -290,6 +336,7 @@ export const TOOLS: ToolDef[] = [
     name: 'system_autoprune',
     description: 'Trigger immediate housekeeping prune to purge dangling Docker images, stopped containers, and expired build artifacts.',
     input: z.object({}),
+    requiredScopes: ['nd://scope/write/housekeeping'],
     handler: (c) => c.housekeeping.runPrune(),
   },
 ];

@@ -39,6 +39,19 @@ declare module 'fastify' {
      * the same operator check. Existing call sites keep working unchanged.
      */
     requireAdmin: (req: import('fastify').FastifyRequest, reply: import('fastify').FastifyReply) => Promise<void>;
+    /**
+     * Per-route fine-grained scope check (G-08). A route can
+     * declare `config: { scope: 'write:services' }` (legacy
+     * shorthand) or `config: { scope: 'nd://scope/write/services' }`
+     * (resource-scoped) and this pre-handler will refuse the
+     * request when the bearer token's stored scopes do not
+     * cover it. Operator scope and the legacy `write`
+     * shorthand cover any fine-grained scope; an interactive
+     * session (JWT) is always treated as fully covered.
+     */
+    requireScope: (
+      scope: string,
+    ) => (req: import('fastify').FastifyRequest, reply: import('fastify').FastifyReply) => Promise<void>;
   }
   interface FastifyRequest {
     user: AuthUser | null;
@@ -104,6 +117,58 @@ export default fp(
       if (!req.user) throw unauthorized();
       if (!req.user.isOperator) throw forbidden('Admin access required');
     });
+
+    // Per-route fine-grained scope check (G-08). The factory
+    // closes over the required scope; the pre-handler reads
+    // the bearer token's stored scopes (already on
+    // `req.user.tokenScopes` from the authenticate hook) and
+    // refuses when they don't cover the requirement.
+    fastify.decorate('requireScope', (scope) => async (req) => {
+      if (!req.user) throw unauthorized();
+      if (!scopeCovers(req.user, scope)) throw forbidden(`This token is missing the required scope: ${scope}`);
+    });
   },
   { name: 'ninedeploy-auth' },
 );
+
+/**
+ * Decide whether `user`'s token scopes cover the
+ * `required` scope. The rule:
+ *   - `null` scopes (interactive JWT or legacy token) cover
+ *     every fine-grained scope.
+ *   - The legacy `operator` scope covers every scope.
+ *   - The legacy `write` scope covers every fine-grained
+ *     `nd://scope/write/<resource>` AND
+ *     `nd://scope/admin/<resource>` (admin implies write).
+ *   - The legacy `read` scope covers every fine-grained
+ *     `nd://scope/read/<resource>`.
+ *   - Otherwise exact match on the URI form.
+ */
+function scopeCovers(user: AuthUser, required: string): boolean {
+  const scopes = user.tokenScopes;
+  if (scopes === null) return true;
+  if (scopes.includes('operator')) return true;
+  if (scopes.includes(required)) return true;
+  // Match the legacy coarse scopes against a fine-grained
+  // URI requirement.
+  if (required.startsWith('nd://scope/admin/') || required.startsWith('nd://scope/write/')) {
+    if (scopes.includes('write') || scopes.includes('admin')) return true;
+  }
+  if (required.startsWith('nd://scope/read/')) {
+    if (scopes.includes('read')) return true;
+  }
+  // `nd://scope/admin/X` is a strict superset of
+  // `nd://scope/write/X` and `nd://scope/read/X`; the
+  // resource-scope form does NOT cross resources (an
+  // admin scope on `services` does not cover `databases`).
+  if (required.startsWith('nd://scope/write/')) {
+    const resource = required.slice('nd://scope/write/'.length);
+    if (scopes.includes(`nd://scope/admin/${resource}`)) return true;
+  }
+  if (required.startsWith('nd://scope/read/')) {
+    const resource = required.slice('nd://scope/read/'.length);
+    if (scopes.includes(`nd://scope/write/${resource}`)) return true;
+    if (scopes.includes(`nd://scope/admin/${resource}`)) return true;
+  }
+  return false;
+}

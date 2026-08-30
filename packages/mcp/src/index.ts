@@ -19,11 +19,24 @@ export { TOOLS };
 export function buildServer(
   client: ReturnType<typeof createClient>,
   warn: (msg: string) => void = console.error,
-  options: { readOnly?: boolean } = {},
+  options: { readOnly?: boolean; tokenScopes?: string[] | null } = {},
 ): McpServer {
   const server = new McpServer({ name: 'ninedeploy', version: '0.3.4' });
 
-  const tools = options.readOnly ? TOOLS.filter((tool) => READ_ONLY_TOOL_NAMES.has(tool.name)) : TOOLS;
+  // Read-only mode keeps the pre-existing behaviour (a
+  // hand-picked allowlist of mutating-free tools). The
+  // fine-grained filter is applied AFTER readOnly: a
+  // token that holds `nd://scope/admin/services` can
+  // still use the read-only allowlist (those tools don't
+  // declare any required scope, so the filter is a no-op
+  // for them). A token with no `nd://scope/read/services`
+  // scope does NOT lose access to the health / topology
+  // tools either, because those declare `read/services`
+  // not the broader `read/anything`.
+  let tools = options.readOnly ? TOOLS.filter((tool) => READ_ONLY_TOOL_NAMES.has(tool.name)) : TOOLS;
+  if (options.tokenScopes !== undefined) {
+    tools = tools.filter((tool) => toolMeetsScope(tool.requiredScopes, options.tokenScopes ?? null));
+  }
   for (const tool of tools) {
     server.registerTool(
       tool.name,
@@ -51,6 +64,44 @@ export function buildServer(
   return server;
 }
 
+/**
+ * Decide whether a token with the given `scopes` may
+ * invoke a tool that declares `required`. Mirrors the
+ * server-side `scopeCovers` (plugins/auth.ts):
+ *   - null/undefined scopes = interactive JWT or legacy
+ *     unrestricted token, every required scope is covered.
+ *   - 'operator' covers any required scope.
+ *   - Legacy `write` / `read` shorthands cover every
+ *     `nd://scope/write/<r>` / `nd://scope/read/<r>`.
+ *   - The resource-scoped form does NOT cross resources.
+ *   - `admin/<r>` covers `write/<r>` and `read/<r>` for
+ *     the same resource.
+ */
+function toolMeetsScope(required: string[] | undefined, scopes: string[] | null): boolean {
+  if (!required || required.length === 0) return true;
+  if (scopes === null) return true;
+  if (scopes.includes('operator')) return true;
+  for (const r of required) {
+    if (scopes.includes(r)) continue;
+    if (r.startsWith('nd://scope/admin/') || r.startsWith('nd://scope/write/')) {
+      if (scopes.includes('write') || scopes.includes('admin')) continue;
+    }
+    if (r.startsWith('nd://scope/read/')) {
+      if (scopes.includes('read')) continue;
+    }
+    if (r.startsWith('nd://scope/write/')) {
+      const res = r.slice('nd://scope/write/'.length);
+      if (scopes.includes(`nd://scope/admin/${res}`)) continue;
+    }
+    if (r.startsWith('nd://scope/read/')) {
+      const res = r.slice('nd://scope/read/'.length);
+      if (scopes.includes(`nd://scope/write/${res}`) || scopes.includes(`nd://scope/admin/${res}`)) continue;
+    }
+    return false;
+  }
+  return true;
+}
+
 export async function main(
   env: { NINEDEPLOY_URL?: string; NINEDEPLOY_TOKEN?: string; NINEDEPLOY_MCP_READONLY?: string } = process.env,
   io: {
@@ -64,11 +115,25 @@ export async function main(
   if (!token) {
     io.error('NINEDEPLOY_TOKEN is required (Settings → API tokens in the web UI).');
     io.exit(1);
-  } else {
-    const client = createClient({ baseUrl: url, getToken: staticToken(token) });
-    const readOnly = /^(?:1|true|yes)$/i.test(env.NINEDEPLOY_MCP_READONLY ?? '');
-    await io.connect(buildServer(client, console.error, { readOnly }));
+    return;
   }
+  const client = createClient({ baseUrl: url, getToken: staticToken(token) });
+  const readOnly = /^(?:1|true|yes)$/i.test(env.NINEDEPLOY_MCP_READONLY ?? '');
+  // G-08: introspect the bearer token so the build
+  // server can filter tools by the token's fine-grained
+  // scopes. A failure here means the token is bad or
+  // the server is unreachable — fall back to the
+  // existing behaviour (no scope filter) so a network
+  // blip during startup doesn't silently drop tools.
+  let tokenScopes: string[] | null | undefined;
+  try {
+    const info = await client.auth.introspectToken();
+    tokenScopes = info.scopes;
+  } catch (err) {
+    io.error(`token introspection failed: ${err instanceof Error ? err.message : String(err)}; continuing without scope filter`);
+    tokenScopes = undefined;
+  }
+  await io.connect(buildServer(client, console.error, { readOnly, tokenScopes }));
 }
 
 /** Explicit allowlist: newly added tools default to unavailable in read-only mode. */

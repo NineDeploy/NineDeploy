@@ -141,6 +141,26 @@ export interface HealthStatus {
   time?: string;
 }
 
+/**
+ * Result of `GET /v1/auth/token`. Tells the caller what
+ * the current bearer credential is and what it can do.
+ * `kind` is `'session'` for JWTs and `'api'` for opaque
+ * API tokens. `scopes` lists the resource-scoped
+ * authorities (or the legacy `read` / `write` / `operator`
+ * shorthand); an interactive session reports
+ * `['session']` which is implicit full authority.
+ */
+export interface TokenIntrospection {
+  kind: 'session' | 'api';
+  userId: number;
+  scopes: string[];
+  expiresAt: string | null;
+  isOperator: boolean;
+  /** API tokens only. */
+  tokenId?: number;
+  name?: string;
+}
+
 export interface TemplateDeployResult {
   serviceId: number;
   serviceName: string;
@@ -329,6 +349,15 @@ export interface NineDeployClientOptions {
 export interface NineDeployClient {
   auth: {
     status: () => Promise<{ initialized: boolean }>;
+    /**
+     * Introspect the current bearer token. Returns the
+     * token's id (when opaque), name, scopes, expiry and
+     * the operator flag. Interactive sessions (JWT) report
+     * `scopes: ['session']`. The MCP server uses this to
+     * discover the token's authority before registering
+     * tools.
+     */
+    introspectToken: () => Promise<TokenIntrospection>;
     setup: (input: Register) => Promise<Session>;
     register: (input: Register) => Promise<Session>;
     login: (input: Login) => Promise<Session>;
@@ -1134,6 +1163,7 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
   return {
     auth: {
       status: () => get<{ initialized: boolean }>('/v1/auth/status'),
+      introspectToken: () => get<TokenIntrospection>('/v1/auth/token'),
       setup: (input) => send<Session>('POST', '/v1/setup', input),
       register: (input) => send<Session>('POST', '/v1/auth/register', input),
       login: (input) => send<Session>('POST', '/v1/auth/login', input),

@@ -118,7 +118,14 @@ export async function tokenCreate(client: NineDeployClient): Promise<void> {
   const name = await prompt('Token name', 'ci');
   // read = safe methods only · write = mutate as a non-operator ·
   // operator = no extra restriction. Blank = unrestricted (legacy tokens).
-  const scopes = parseScopes(await prompt('Scopes (read,write,operator — blank = unrestricted)', 'write'));
+  // G-08 fine-grained: also accept
+  // 'nd://scope/(read|write|admin)/<resource>' for per-resource
+  // restriction; the server's scopeCovers() expands the legacy
+  // shorthand against the URI form so a `write` token still
+  // covers every `nd://scope/write/<r>`.
+  const scopes = parseScopes(
+    await prompt('Scopes (read,write,operator or nd://scope/(read|write|admin)/<resource> — blank = unrestricted)', 'write'),
+  );
   try {
     const tok = await spinner('Creating token', () => client.auth.tokens.create({ name, scopes }));
     success(`Token created: ${c.cyan(tok.token)}`);

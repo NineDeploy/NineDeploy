@@ -162,6 +162,50 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     allowRegistration: await getSetting(app.db, 'allow_registration', ALLOW_REGISTRATION_DEFAULT),
   }));
 
+  /**
+   * `GET /v1/auth/token` — introspect the current bearer
+   * token. Returns the same shape for both interactive
+   * sessions (JWT) and opaque API tokens, so the MCP /
+   * CLI can use one endpoint to discover "what scopes
+   * does this credential carry" without an extra round
+   * trip to a `me` + token lookup.
+   *
+   * Interactive sessions (JWT) report `scopes: ['session']`
+   * which is the implicit full-authority marker. API tokens
+   * report their stored `scopes` array (empty means
+   * "unrestricted legacy" — same semantics as the
+   * pre-0.3.5 behaviour).
+   */
+  app.get('/token', async (req) => {
+    if (!req.user) throw unauthorized();
+    const header = req.headers.authorization ?? '';
+    const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
+    if (!token) throw unauthorized();
+    const isJwt = token.split('.').length === 3;
+    if (isJwt) {
+      return {
+        kind: 'session' as const,
+        userId: req.user.id,
+        scopes: ['session'],
+        expiresAt: null,
+        isOperator: req.user.isOperator,
+      };
+    }
+    // Opaque API token: look up the row by hash to surface
+    // the persistent id + expiry alongside the scopes.
+    const row = await app.db.query.apiTokens.findFirst({ where: eq(apiTokens.hash, sha256(token)) });
+    if (!row) throw unauthorized();
+    return {
+      kind: 'api' as const,
+      tokenId: row.id,
+      name: row.name,
+      userId: req.user.id,
+      scopes: Array.isArray(row.scopes) ? row.scopes : [],
+      expiresAt: row.expiresAt instanceof Date ? row.expiresAt.toISOString() : null,
+      isOperator: req.user.isOperator,
+    };
+  });
+
   app.post('/register', { config: { rateLimit: AUTH_LIMIT } }, async (req) => {
     // Open registration can be disabled by an admin (anyone who finds the
     // panel URL could otherwise self-provision a member account). Bootstrap

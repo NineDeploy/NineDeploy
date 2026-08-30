@@ -1185,6 +1185,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   test event so the operator can confirm the receiver is
   set up before relying on it.
 
+- **Fine-grained API-token scopes — `nd://scope/(read|write|admin)/<resource>` (G-08, PR #50)**.
+  The pre-0.3.5 `api_tokens.scopes` column was written as
+  `[]` and never read, so every API token — including the
+  ones handed to the MCP server and to CI — carried its
+  owner's full authority. PR #44 wired the legacy
+  `read | write | operator` shorthand into the auth
+  plugin, but the read-vs-write split was a binary
+  flag — a CI token with `write` could mutate every
+  resource. New `apiTokenScope` schema (in
+  `packages/schemas/src/auth.ts`) accepts the
+  resource-scoped URI form
+  `nd://scope/(read|write|admin)/<resource>` alongside
+  the legacy shorthand; the server's `scopeCovers`
+  helper expands the shorthand to the URI form
+  (`write` covers any `nd://scope/write/<r>` and
+  `admin/<r>`; `admin/<r>` covers `write/<r>` and
+  `read/<r>` for the same resource). New
+  `app.requireScope(scope)` decorator on the auth
+  plugin closes over the required scope and refuses
+  the request when the token doesn't cover it; a route
+  can opt in with `{ preHandler: app.requireScope('nd://scope/write/services') }`
+  (the existing read/write enforcement at the auth
+  layer is unchanged — the new decorator is the per-route
+  extension point). The MCP server declares
+  `requiredScopes` on every tool; on startup it
+  introspects the bearer token via the new
+  `GET /v1/auth/token` endpoint, then filters its tool
+  list to those whose scopes are covered. CLI:
+  `ninedeploy token create` accepts the URI form in
+  the scope prompt. The introspection endpoint also
+  reports `tokenId` + `name` + `expiresAt` + `isOperator`
+  for API tokens, `['session']` for JWTs — the
+  one-call shape the MCP and any future token-aware
+  client (CI, monitoring agent) needs.
+
 ### Fixed
 
 - **`SettingsTabPrivilege` test timeouts under parallel load (unrelated
