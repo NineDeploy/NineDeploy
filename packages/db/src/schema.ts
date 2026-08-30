@@ -848,6 +848,14 @@ export const databases = sqliteTable(
       .$type<string[]>()
       .notNull()
       .default(sql`'[]'`),
+    // G-32: PgBouncer sidecar. Only meaningful for engine
+    // 'postgres'; the route refuses to enable a sidecar for
+    // MySQL / Redis / etc. The container is named by
+    // convention `nd-pgb-<slug>` so `docker ps` can
+    // discover it without a separate registry.
+    pgbouncerEnabled: integer('pgbouncer_enabled', { mode: 'boolean' }).notNull().default(false),
+    pgbouncerContainerName: text('pgbouncer_container_name'),
+    pgbouncerPort: integer('pgbouncer_port').notNull().default(6432),
     createdAt: ts('created_at'),
     updatedAt: tsUpdatable('updated_at'),
   },

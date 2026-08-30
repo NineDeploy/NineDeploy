@@ -30,6 +30,7 @@ import {
   notificationsRemove as _notifRemove,
   notificationsTest as _notifTest,
 } from './commands/notifications.js';
+import { databasePgbouncer } from './commands/pgbouncer.js';
 import {
   pluginsList, pluginsMarketplace, pluginsInstall,
   pluginsEnable, pluginsDisable, pluginsUninstall,
@@ -192,6 +193,15 @@ const databases = program.command('databases').description('Manage databases');
 databases.command('list').description('List all databases').action(() => dbList(getClient()));
 
 databases.command('create').description('Create a database (interactive)').action(() => dbCreate(getClient()));
+
+// ── PgBouncer sidecar (G-32) ─────────────────────────────────────────────
+databases
+  .command('pgbouncer <dbId> <action>')
+  .description('Manage the PgBouncer sidecar: enable | disable | status (postgres only)')
+  .option('--port <port>', 'Override the listen port (enable only)', (v: string) => Number(v))
+  .action((dbId: string, action: string, opts: { port?: number }) =>
+    databasePgbouncer(getClient(), dbId, action, opts),
+  );
 
 // ── Templates ─────────────────────────────────────────────────────────────
 const templates = program.command('templates').description('Browse the template hub and scaffold starter manifests from it');

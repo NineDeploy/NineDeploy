@@ -256,6 +256,23 @@ export interface BackupDrillEntry {
 }
 
 /**
+ * Result of `GET /v1/databases/:id/pgbouncer` (and the
+ * post-mutation body of the enable / disable routes).
+ * `pooledConnectionString` is non-null only when `running`
+ * is true — a `docker inspect` failure on the sidecar
+ * reports `enabled: true, running: false` so the panel
+ * can surface the discrepancy.
+ */
+export interface PgbouncerStatus {
+  enabled: boolean;
+  containerName: string | null;
+  port: number;
+  running: boolean;
+  poolMode: string | null;
+  pooledConnectionString: string | null;
+}
+
+/**
  * Single image row from `GET /v1/housekeeping/images`. Both
  * the human-readable `size` ("1.2GB") and a parsed byte
  * count are returned so the panel can sort without
@@ -889,6 +906,23 @@ export interface NineDeployClient {
     setLimits: (id: number, input: SetLimitsInput) => Promise<{ cpuShares: number | null; memLimitMb: number | null }>;
     startStudio: (id: number, port?: number) => Promise<{ ok: boolean; port: number; url: string }>;
     stopStudio: (id: number) => Promise<{ ok: boolean }>;
+    /**
+     * PgBouncer sidecar (G-32). Returns the current sidecar
+     * state — `enabled` + `running` + the URL the services
+     * should connect to. Use the same call after
+     * `enablePgbouncer` / `disablePgbouncer` for a fresh
+     * read (the route returns the post-mutation status).
+     */
+    pgbouncerStatus: (id: number) => Promise<PgbouncerStatus>;
+    /**
+     * Spin up the sidecar. `port` is optional — the row's
+     * existing `pgbouncerPort` (default 6432) is used
+     * when omitted. Only `engine='postgres'` is supported;
+     * the server returns 422 for any other engine.
+     */
+    enablePgbouncer: (id: number, input?: { port?: number }) => Promise<PgbouncerStatus>;
+    /** Stop + remove the sidecar and clear the row's flags. */
+    disablePgbouncer: (id: number) => Promise<PgbouncerStatus>;
     /**
      * Run an engine-specific smoke check against a backup
      * file (pg_restore --list, redis-check-rdb, mysqldump
@@ -1625,6 +1659,11 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
       drillBackup: (id, input) =>
         send<BackupDrillResult>('POST', `/v1/databases/${id}/backups/drill`, input),
       drills: (id) => get<BackupDrillEntry[]>(`/v1/databases/${id}/drills`),
+      pgbouncerStatus: (id) => get<PgbouncerStatus>(`/v1/databases/${id}/pgbouncer`),
+      enablePgbouncer: (id, input) =>
+        send<PgbouncerStatus>('POST', `/v1/databases/${id}/pgbouncer/enable`, input ?? {}),
+      disablePgbouncer: (id) =>
+        send<PgbouncerStatus>('POST', `/v1/databases/${id}/pgbouncer/disable`, {}),
     },
     attachments: {
       list: (serviceId) => get<Attachment[]>(`/v1/services/${serviceId}/attachments`),

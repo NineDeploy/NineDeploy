@@ -55,6 +55,9 @@ describe('databases table — schema/migration drift guard', () => {
       'web_gui_enabled',
       'web_gui_port',
       'extensions',
+      'pgbouncer_enabled',
+      'pgbouncer_container_name',
+      'pgbouncer_port',
       'created_at',
       'updated_at',
     ];

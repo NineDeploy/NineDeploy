@@ -1220,6 +1220,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one-call shape the MCP and any future token-aware
   client (CI, monitoring agent) needs.
 
+- **PgBouncer sidecar — `ninedeploy databases pgbouncer <dbId> {enable,disable,status}` (G-32, PR #51)**.
+  Production Postgres workloads are routinely fronted by
+  PgBouncer so a thousand client connections don't
+  multiply into a thousand Postgres backends. NineDeploy
+  had the database engine fully wired but no built-in
+  way to bring up a pool proxy. New migration `0046`
+  adds three columns to `databases`
+  (`pgbouncer_enabled`, `pgbouncer_container_name`,
+  `pgbouncer_port`, default 6432). New
+  `apps/server/src/lib/pgbouncer.ts` writes a
+  `pgbouncer.ini` (auth_type=md5, pool_mode=transaction,
+  default_pool_size=20, reserve_pool for burst) plus
+  the userlist (MD5-hashed creds), bind-mounts both into
+  a `bitnami/pgbouncer:1.24.1` container named
+  `nd-pgb-<slug>`, and stamps the row. The
+  `pooledConnectionString(d)` helper returns the
+  sidecar's URL when enabled (services that want pooled
+  connections use it instead of the direct
+  `connectionString(d)`). New routes under
+  `/v1/databases/:id/pgbouncer`:
+  `GET` (status, member role),
+  `POST /:id/pgbouncer/enable` (admin, optional `--port`),
+  `POST /:id/pgbouncer/disable` (admin). Routes are
+  mounted on the existing `/databases` prefix; the
+  engine guard returns 422 for any non-postgres engine.
+  SDK surface: `client.databases.pgbouncerStatus(id)`,
+  `client.databases.enablePgbouncer(id, { port? })`,
+  `client.databases.disablePgbouncer(id)`. CLI:
+  `ninedeploy databases pgbouncer <dbId> enable [--port
+  N] | disable | status` — the status subcommand
+  prints the pooled URL the operator pastes into a
+  new attachment's `envAlias`. The sidecar is per-DB
+  rather than a shared proxy: a stuck pool only
+  affects one tenant, and the credentials on the wire
+  are scoped to a single service-to-database pair.
+
 ### Fixed
 
 - **`SettingsTabPrivilege` test timeouts under parallel load (unrelated
