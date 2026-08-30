@@ -25,6 +25,7 @@ import {
   usersList, usersResetLink, volumesList, volumesRemove,
 } from './commands/manage.js';
 import {
+  notificationsCreateFcm as _notifCreateFcm,
   notificationsCreateWebhook as _notifCreateWebhook,
   notificationsList as _notifList,
   notificationsRemove as _notifRemove,
@@ -480,6 +481,13 @@ notificationsCmd
   .action(
     (name: string, url: string, opts: { secret?: string; header?: string; algo?: 'sha256' | 'sha1'; eventFilter?: string; template?: string[] }) =>
       _notifCreateWebhook(getClient(), name, url, opts),
+  );
+notificationsCmd
+  .command('create-fcm <name> <deviceToken>')
+  .description('Create an FCM push channel (Firebase Cloud Messaging HTTP v1; G-22)')
+  .requiredOption('--service-account <file>', 'Path to a Firebase service account JSON file')
+  .action((name: string, deviceToken: string, opts: { serviceAccount: string }) =>
+    _notifCreateFcm(getClient(), name, deviceToken, opts),
   );
 notificationsCmd.command('test <id>').description('Fire a test event through the channel').action((id: string) => _notifTest(getClient(), id));
 notificationsCmd.command('rm <id>').description('Remove a channel').action((id: string) => _notifRemove(getClient(), id));

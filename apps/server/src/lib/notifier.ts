@@ -5,6 +5,7 @@ import { decrypt } from './crypto.js';
 import type { AppEvent } from './events.js';
 import { encrypt } from './crypto.js';
 import { guardedFetch } from './egressGuard.js';
+import { sendFcm } from './fcm.js';
 
 /** Check if an event matches a channel's filter (comma-separated prefixes). */
 function matchesFilter(eventAction: string, filter: string): boolean {
@@ -328,6 +329,27 @@ export async function dispatchChannel(
     await sendNtfy(target, message);
   } else if (type === 'email') {
     await sendEmail(target, `NineDeploy: ${event.action}`, message);
+  } else if (type === 'fcm') {
+    // `target` is the device token; `configJson` carries
+    // the service account JSON. The body is the
+    // notification body; the title defaults to the brand
+    // inside `sendFcm`.
+    if (!options?.configJson) {
+      throw new Error('FCM channel missing service account configJson');
+    }
+    await sendFcm({
+      deviceToken: target,
+      serviceAccountJson: options.configJson,
+      body: message,
+      data: {
+        // Hand the receiver the action + entity so a
+        // mobile client can route on it without parsing
+        // the localised body.
+        action: event.action,
+        entity: event.entity ?? '',
+        ts: event.ts,
+      },
+    });
   } else {
     // Unknown channel types would otherwise log a misleading "sent" entry.
     throw new Error(`Unknown notification channel type: ${type}`);

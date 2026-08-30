@@ -104,6 +104,56 @@ export async function notificationsCreateWebhook(
   } catch (err) { fail(err); }
 }
 
+/**
+ * `ninedeploy notifications create-fcm <name> <deviceToken>
+ *                                          --service-account <file>`
+ *
+ * The `fcm` channel type is the G-22 push-notification
+ * integration (Firebase Cloud Messaging HTTP v1). The
+ * device token is the FCM registration token of a
+ * target device; the service account JSON is the file
+ * Firebase issues when the operator creates a project
+ * service account with the `Firebase Cloud Messaging
+ * API` role. The CLI reads the file from disk so the
+ * service account never lands on the operator's shell
+ * history.
+ *
+ * Caveat: the service account's `private_key` is a PEM
+ * block; the SDK will store the rendered `configJson`
+ * encrypted at rest by `notificationChannels`. Treat
+ * the service account JSON as a secret — same posture
+ * as an SMTP password.
+ */
+export async function notificationsCreateFcm(
+  client: NineDeployClient,
+  name: string,
+  deviceToken: string,
+  opts: { serviceAccount: string },
+): Promise<void> {
+  if (!name || !deviceToken || !opts.serviceAccount) {
+    error('Usage: ninedeploy notifications create-fcm <name> <deviceToken> --service-account <file.json>');
+    return;
+  }
+  const fs = await import('node:fs/promises');
+  let sa: string;
+  try {
+    sa = await fs.readFile(opts.serviceAccount, 'utf8');
+  } catch (err) {
+    error(`Failed to read service account JSON: ${err instanceof Error ? err.message : String(err)}`);
+    return;
+  }
+  try {
+    const ch = await client.notifications.createChannel({
+      name,
+      type: 'fcm',
+      target: deviceToken,
+      configJson: sa,
+    });
+    success(`FCM channel "${ch.name}" created (id: ${ch.id}).`);
+    info('Send a test event with `ninedeploy notifications test <id>` to verify wiring.');
+  } catch (err) { fail(err); }
+}
+
 /** `ninedeploy notifications test <id>` — fire a test event
  *  through the channel so the operator can verify wiring. */
 export async function notificationsTest(client: NineDeployClient, idStr: string): Promise<void> {

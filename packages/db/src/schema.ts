@@ -955,7 +955,7 @@ export const tunnels = sqliteTable(
 );
 
 // ─── notification channels ────────────────────────────────────────────────
-export const channelType = ['telegram', 'webhook', 'discord', 'slack', 'ntfy', 'email'] as const;
+export const channelType = ['telegram', 'webhook', 'discord', 'slack', 'ntfy', 'email', 'fcm'] as const;
 export const notificationChannels = sqliteTable(
   'notification_channels',
   {

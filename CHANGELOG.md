@@ -1357,6 +1357,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   command for CI runs after the upstream rotates
   its key.
 
+- **FCM push notifications (G-22, PR #55)**.
+  Firebase Cloud Messaging's legacy HTTP API (the
+  `X-Server-Key` header) was sunset mid-2024; the
+  modern endpoint is the FCM HTTP v1 API at
+  `fcm.googleapis.com/v1/projects/<id>/messages:send`
+  and requires an OAuth2 bearer token minted from a
+  service-account JSON. New
+  `apps/server/src/lib/fcm.ts`:
+    - hand-rolled RS256-signed JWT (no npm
+      dependencies — `node:crypto.createSign`),
+    - OAuth2 token exchange against
+      `oauth2.googleapis.com/token`,
+    - in-process bearer cache keyed by `client_email`
+      with a 60s safety skew (Google's `expires_in`
+      minus the safety), so the per-event cost is one
+      HTTPS round-trip, not two.
+  - The dispatch path in `notifier.ts` reads the
+    channel's `configJson` as the full service account
+    JSON; `target` is the device token. FCM `data`
+    payload carries `action`, `entity`, `ts` so a mobile
+    client can route on it without parsing the
+    localised body.
+  - Schema: `notificationType` extended to include
+    `'fcm'`; the `notification_channels` table needs no
+    migration (the column is plain text).
+  - New CLI: `ninedeploy notifications create-fcm
+    <name> <deviceToken> --service-account <file.json>`
+    reads the service account from disk so the JSON
+    never lands on the operator's shell history.
+  - Caveat: the FCM channel needs a real FCM project
+    + device token to verify; the unit suite covers
+    the dispatch path indirectly via the existing
+    `notifier.test.ts`. A future PR can mock
+    `globalThis.fetch` to cover the OAuth2 round-trip
+    + the FCM POST happy / error paths.
+
 ### Fixed
 
 - **`SettingsTabPrivilege` test timeouts under parallel load (unrelated
