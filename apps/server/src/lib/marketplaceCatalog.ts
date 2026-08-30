@@ -203,13 +203,19 @@ function decodeKey(publicKeyBase64: string): ReturnType<typeof createPublicKey> 
   try {
     const raw = Buffer.from(publicKeyBase64, 'base64');
     if (raw.length !== 32) return null;
-    // Raw 32 bytes is the Ed25519 public key seed, not a SPKI
-    // envelope (SPKI would be 44 bytes — 12-byte prefix + key).
-    // `createPublicKey(raw)` auto-detects the algorithm from the
-    // raw key shape; `{ format: 'der', type: 'spki' }` would
-    // reject the raw key in Node 24 with
-    // "Failed to read asymmetric key".
-    return createPublicKey(raw);
+    // The env var carries the raw 32-byte Ed25519 public key
+    // (NOT a 44-byte DER-encoded SPKI envelope). Node's
+    // `createPublicKey` cannot read a raw 32-byte seed
+    // directly, and the `{ format: 'der', type: 'spki' }` form
+    // rejects the raw key with `Failed to read asymmetric key`.
+    // The JWK form is the supported way to import a raw OKP
+    // public key: `kty: 'OKP'`, `crv: 'Ed25519'`, and the
+    // base64url-encoded `x` coordinate.
+    const x = raw.toString('base64url');
+    return createPublicKey({
+      key: { kty: 'OKP', crv: 'Ed25519', x },
+      format: 'jwk',
+    });
   } catch {
     return null;
   }

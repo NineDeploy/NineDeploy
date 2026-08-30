@@ -45,6 +45,7 @@ const hoisted = vi.hoisted(() => {
     fetchState: {
       responses: new Map<string, { status?: number; body?: string; throw?: Error }>(),
       defaultThrow: null as Error | null,
+      calls: [] as string[],
     },
   };
 });
@@ -59,6 +60,7 @@ vi.mock('../../src/kernel/pluginLoader.js', () => ({
 
 vi.mock('../../src/lib/egressGuard.js', () => ({
   guardedFetch: vi.fn(async (url: string) => {
+    fetchState.calls.push(url);
     const r = fetchState.responses.get(url);
     if (r?.throw) throw r.throw;
     if (fetchState.defaultThrow) throw fetchState.defaultThrow;
@@ -103,6 +105,7 @@ beforeEach(() => {
   kernelState.catalog = staticCatalog;
   fetchState.responses.clear();
   fetchState.defaultThrow = null;
+  fetchState.calls.length = 0;
   delete process.env['NINEDEPLOY_MARKETPLACE_URL'];
   delete process.env['NINEDEPLOY_MARKETPLACE_PUBLIC_KEY'];
 });
@@ -190,56 +193,130 @@ describe('lib/marketplaceCatalog', () => {
     expect(result.catalog.map((c) => c.id)).toEqual(['static-a']);
   });
 
-  // TODO(PR #59): the lib's decodeKey is unreachable as shipped.
-  //
-  //   function decodeKey(publicKeyBase64: string) {
-  //     const raw = Buffer.from(publicKeyBase64, 'base64');
-  //     if (raw.length !== 32) return null;
-  //     return createPublicKey({ key: raw, format: 'der', type: 'spki' });
-  //   }
-  //
-  // A raw 32-byte ed25519 public key is NOT a DER-encoded SPKI; passing
-  // it as such throws `Failed to read asymmetric key` in Node 24. The
-  // `verifyIndex` happy path (verified merge -> `live: true`) is
-  // therefore unreachable until decodeKey is rewritten — e.g. via
-  //   createPublicKey({ key: { kty: 'OKP', crv: 'Ed25519', x: base64url(raw) }, format: 'jwk' })
-  // Once that's fixed, the 6 removed tests can come back: happy-path
-  // merge, `isInstalled` propagation, per-call opts, cache hit on
-  // second call, `force: true` bypass, and opts precedence over env.
-  it('refuses to merge the upstream entries while decodeKey is broken (TODO PR #59)', async () => {
+  it('merges a verified upstream entry into the catalog and flags isInstalled', async () => {
     process.env['NINEDEPLOY_MARKETPLACE_URL'] = 'https://upstream.test/index.json';
-    process.env['NINEDEPLOY_MARKETPLACE_PUBLIC_KEY'] = Buffer.alloc(32).toString('base64');
-    const communityEntry = { id: 'community-x', name: 'X', version: '1', description: 'd', category: 'misc' };
+    process.env['NINEDEPLOY_MARKETPLACE_PUBLIC_KEY'] = publicKeyBase64;
+    const communityEntry = {
+      id: 'community-x',
+      name: 'X',
+      version: '1',
+      description: 'd',
+      category: 'misc',
+    };
     const { signature, key_id } = signIndex([communityEntry]);
     fetchState.responses.set('https://upstream.test/index.json', {
       body: JSON.stringify({ entries: [communityEntry], signature, key_id }),
     });
-    // decodeKey returns null -> verifyIndex returns false -> lib falls
-    // back to the static catalog. The community entry never lands.
+    // The community entry is NOT yet installed; the static entry
+    // (static-a) is also not yet installed. The merged catalog
+    // should land the community entry with `isInstalled: false`,
+    // `isOfficial: false`, `author: 'Community'`, `implemented: false`.
     const result = await loadMarketplaceCatalog(new Set());
-    expect(result.live).toBe(false);
-    expect(result.catalog.map((c) => c.id)).toEqual(['static-a']);
+    expect(result.live).toBe(true);
+    const community = result.catalog.find((c) => c.id === 'community-x');
+    expect(community).toMatchObject({
+      id: 'community-x',
+      name: 'X',
+      category: 'misc',
+      isOfficial: false,
+      isInstalled: false,
+      implemented: false,
+      author: 'Community',
+    });
+  });
+
+  it('flips isInstalled when the caller passes the id in installedIds', async () => {
+    process.env['NINEDEPLOY_MARKETPLACE_URL'] = 'https://upstream.test/index.json';
+    process.env['NINEDEPLOY_MARKETPLACE_PUBLIC_KEY'] = publicKeyBase64;
+    const e = { id: 'community-y', name: 'Y', version: '1', description: 'd', category: 'misc' };
+    const { signature, key_id } = signIndex([e]);
+    fetchState.responses.set('https://upstream.test/index.json', {
+      body: JSON.stringify({ entries: [e], signature, key_id }),
+    });
+    const result = await loadMarketplaceCatalog(new Set(['community-y']));
+    expect(result.live).toBe(true);
+    const entry = result.catalog.find((c) => c.id === 'community-y')!;
+    expect(entry.isInstalled).toBe(true);
+  });
+
+  it('caches the upstream response and re-uses it on the next call', async () => {
+    process.env['NINEDEPLOY_MARKETPLACE_URL'] = 'https://upstream.test/index.json';
+    process.env['NINEDEPLOY_MARKETPLACE_PUBLIC_KEY'] = publicKeyBase64;
+    const e = { id: 'community-z', name: 'Z', version: '1', description: 'd', category: 'misc' };
+    const { signature, key_id } = signIndex([e]);
+    fetchState.responses.set('https://upstream.test/index.json', {
+      body: JSON.stringify({ entries: [e], signature, key_id }),
+    });
+    const a = await loadMarketplaceCatalog(new Set());
+    const b = await loadMarketplaceCatalog(new Set());
+    expect(a.fetchedAt).toBe(b.fetchedAt);
+    // Only one upstream fetch — the second call hit the cache.
+    expect(fetchState.calls).toHaveLength(1);
+  });
+
+  it('bypasses the cache when force: true', async () => {
+    process.env['NINEDEPLOY_MARKETPLACE_URL'] = 'https://upstream.test/index.json';
+    process.env['NINEDEPLOY_MARKETPLACE_PUBLIC_KEY'] = publicKeyBase64;
+    const e = { id: 'community-q', name: 'Q', version: '1', description: 'd', category: 'misc' };
+    const { signature, key_id } = signIndex([e]);
+    fetchState.responses.set('https://upstream.test/index.json', {
+      body: JSON.stringify({ entries: [e], signature, key_id }),
+    });
+    await loadMarketplaceCatalog(new Set());
+    await loadMarketplaceCatalog(new Set(), { force: true });
+    expect(fetchState.calls).toHaveLength(2);
+  });
+
+  it('clears the in-process cache when clearMarketplaceCache() is called', async () => {
+    process.env['NINEDEPLOY_MARKETPLACE_URL'] = 'https://upstream.test/index.json';
+    process.env['NINEDEPLOY_MARKETPLACE_PUBLIC_KEY'] = publicKeyBase64;
+    const e = { id: 'community-r', name: 'R', version: '1', description: 'd', category: 'misc' };
+    const { signature, key_id } = signIndex([e]);
+    fetchState.responses.set('https://upstream.test/index.json', {
+      body: JSON.stringify({ entries: [e], signature, key_id }),
+    });
+    await loadMarketplaceCatalog(new Set());
+    clearMarketplaceCache();
+    await loadMarketplaceCatalog(new Set());
+    expect(fetchState.calls).toHaveLength(2);
   });
 
   it('honours opts.url / opts.publicKey over env vars', async () => {
-    // TODO(PR #59): the lib's decodeKey is unreachable, so even an
-    // opts-passed URL cannot produce `live: true`. Cover only the
-    // negative path here (the env-var URL is NOT called when opts.url
-    // overrides it) and leave the positive assertion for after the
-    // decodeKey fix.
     process.env['NINEDEPLOY_MARKETPLACE_URL'] = 'https://wrong.test/index.json';
     process.env['NINEDEPLOY_MARKETPLACE_PUBLIC_KEY'] = publicKeyBase64;
     const e = { id: 'inline-2', name: 'Inline2', version: '1', description: 'd', category: 'misc' };
-    const { signature, key_id } = signIndex([e]);
+    const expectedKeyId = `ed25519:${publicKeyBase64.slice(0, 8)}`;
+    const { signature, key_id } = signIndex([e], expectedKeyId);
     fetchState.responses.set('https://opts.test/index.json', {
       body: JSON.stringify({ entries: [e], signature, key_id }),
     });
     const result = await loadMarketplaceCatalog(new Set(), {
       url: 'https://opts.test/index.json',
     });
-    // decodeKey is broken -> verifyIndex false -> lib falls back. The
-    // env-var URL must NOT be hit because opts.url overrides it; the
-    // fallback returns the static catalog.
+    expect(result.live).toBe(true);
+    // The env-var URL must NOT be hit because opts.url overrides it.
+    expect(result.keyId).toBe(expectedKeyId);
+  });
+
+  it('falls back when the public key is the wrong length (not 32 bytes)', async () => {
+    process.env['NINEDEPLOY_MARKETPLACE_URL'] = 'https://upstream.test/index.json';
+    // base64 of 16 random bytes — too short to be an ed25519 public key.
+    process.env['NINEDEPLOY_MARKETPLACE_PUBLIC_KEY'] = Buffer.alloc(16).toString('base64');
+    fetchState.responses.set('https://upstream.test/index.json', { body: JSON.stringify({ entries: [] }) });
+    const result = await loadMarketplaceCatalog(new Set());
+    expect(result.live).toBe(false);
+  });
+
+  it('falls back when the signature does not verify', async () => {
+    process.env['NINEDEPLOY_MARKETPLACE_URL'] = 'https://upstream.test/index.json';
+    process.env['NINEDEPLOY_MARKETPLACE_PUBLIC_KEY'] = publicKeyBase64;
+    // Sign with a DIFFERENT key — verification must fail.
+    const other = generateKeyPairSync('ed25519');
+    const bad = edSign(null, Buffer.from('{}', 'utf8'), other['privateKey']).toString('base64');
+    fetchState.responses.set('https://upstream.test/index.json', {
+      body: JSON.stringify({ entries: [], signature: bad, key_id: 'ed25519:wrong' }),
+    });
+    const result = await loadMarketplaceCatalog(new Set());
     expect(result.live).toBe(false);
     expect(result.catalog.map((c) => c.id)).toEqual(['static-a']);
   });

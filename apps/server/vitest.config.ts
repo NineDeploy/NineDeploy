@@ -17,18 +17,18 @@ export default defineConfig({
       // path is counted (the remaining gap is mostly unreachable error-shape
       // branches in third-party-style helpers). The Sprint 11 PR set
       // (PRs #45–#58) added ~200 new tests and pushed statements from
-      // 88.12% to 92.61% (+4.49pp) and branches from 86.00% to 87.54%
-      // (+1.54pp). The remaining gap is pre-Sprint 11 code that's
+      // 88.12% to 93.65% (+5.53pp) and branches from 86.00% to 88.44%
+      // (+2.44pp). The remaining gap is pre-Sprint 11 code that's
       // scheduled for dedicated follow-up PRs (each surface gets its
       // own coverage push). The floor reflects the current reachable
       // baseline so the gate catches real regressions without blocking
       // on lines that are outside Sprint 11's scope — the goal remains
       // 100. See CHANGELOG for the per-PR coverage delta.
       thresholds: {
-        statements: 92,
-        branches: 87,
-        functions: 92,
-        lines: 94,
+        statements: 93.5,
+        branches: 88,
+        functions: 92.5,
+        lines: 95,
       },
     },
   },

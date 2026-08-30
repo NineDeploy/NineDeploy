@@ -35,9 +35,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to `createPublicKey({ format: 'der', type: 'spki' })`, which
   Node 24 rejects with `Failed to read asymmetric key` (SPKI
   envelopes are 44 bytes — 12-byte prefix + 32-byte key). The
-  fix is `createPublicKey(raw)` so the runtime autodetects
-  the Ed25519 algorithm from the raw key shape. The signed
-  marketplace index now verifies cleanly on Node 24.
+  new path imports the raw key as a JWK
+  (`{ kty: 'OKP', crv: 'Ed25519', x: base64url(raw) }`),
+  the only form Node's key importer accepts for an OKP
+  public key. `createPublicKey(raw)` directly throws
+  `error:1E08010C:DECODER routines::unsupported` because
+  the 32-byte seed is not a self-describing key blob. The
+  signed marketplace index now verifies cleanly on Node 24
+  and the 6 TODO-marked happy-path tests (merge, `isInstalled`
+  propagation, cache hit, `force: true` bypass,
+  `clearMarketplaceCache`, opts precedence over env) are
+  back.
 - **`domainTransfer.test.ts` state-tracking fix** (the
   side-effect of the new `test/helpers.ts` update). The
   fake-DB `update` resolver now reads the bound `id` from
