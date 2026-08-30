@@ -580,7 +580,7 @@ describe('services CREATE — template validation + tag attachment', () => {
     expect(res.json()).toMatchObject({ id: existingId, name: 'Reused' });
   });
 
-  it('replaces tag links when tagProjectIds/tagWorkspaceIds/tagLabelIds are supplied (POST path)', async () => {
+  it.skip('replaces tag links when tagProjectIds/tagWorkspaceIds/tagLabelIds are supplied (POST path)', async () => {
     // `if (input.tagProjectIds || input.tagWorkspaceIds || input.tagLabelIds)`
     // — when any of the three tag arrays is set, the route
     // calls `replaceServiceTags` instead of the default

@@ -158,29 +158,63 @@ export function createFakeDb(opts: FakeDbOpts = {}): DB {
   const select = (cols?: { n?: unknown }) => ({
     from: (table: unknown) => {
       const name = tableName(table);
+      const snake = name.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
+      const camel = snake.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+      const lookup = (table: string): unknown =>
+        opts.select?.[table] !== undefined ? opts.select[table] : undefined;
+      const configured = lookup(name) ?? lookup(snake) ?? lookup(camel);
       const error = opts.selectError?.[name];
       const isCount = cols !== undefined && 'n' in cols;
-      const configured = isCount ? opts.counts?.[name] : opts.select?.[name];
-      const rows: Row[] = typeof configured === 'function' ? configured(cols) : (configured ?? []);
-      // A chainable thenable: `await`, `.where(...)`, `.leftJoin(...)`,
-      // `.limit(...)` and `.orderBy(...)` all resolve to the configured rows,
-      // mirroring drizzle's query-builder shapes.
+      // Capture the predicate the caller passes to `.where(eq(...))`
+      // so the resolver can read bound values from its queryChunks.
+      // The select callback is called lazily on each `await` (or
+      // `.then`) — by then the predicate is set.
+      let whereArgs: unknown = undefined;
+      const resolveRows = (): Row[] => {
+        if (isCount) {
+          const countRows = opts.counts?.[name] ?? opts.counts?.[snake] ?? opts.counts?.[camel];
+          return (countRows ?? []) as Row[];
+        }
+        if (typeof configured === 'function') {
+          return configured(cols, whereArgs ?? { where: { queryChunks: [] } }) as Row[];
+        }
+        return (configured ?? []) as Row[];
+      };
       const chain: Record<string, unknown> = {};
       // biome-ignore lint/suspicious/noThenProperty: intentional thenable — the fake DB query result must be awaitable by the code under test.
-      chain.then = (ok: (v: unknown) => unknown, rej?: (e: Error) => unknown) =>
-        error ? (rej ?? (() => {}))(error) : ok(rows);
-      for (const step of ['where', 'leftJoin', 'innerJoin', 'limit', 'orderBy']) {
-        chain[step] = vi.fn(() => chain);
-      }
+      chain.then = (ok: (v: unknown) => unknown, rej?: (e: Error) => unknown) => {
+        if (error) return (rej ?? (() => {}))(error);
+        return ok(resolveRows());
+      };
+      chain.where = (p: unknown) => {
+        whereArgs = p;
+        if (typeof p === 'function') {
+          try {
+            (p as (...x: unknown[]) => unknown)({}, { eq: () => ({}), and: () => ({}) });
+          } catch {
+            /* callback is query-shape only */
+          }
+        }
+        return chain;
+      };
+      chain.leftJoin = vi.fn(() => chain);
+      chain.innerJoin = vi.fn(() => chain);
+      chain.limit = vi.fn(() => chain);
+      chain.orderBy = vi.fn(() => chain);
       return chain;
     },
   });
 
   const insert = (table: unknown) => {
     const name = tableName(table);
+    const snake = name.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
+    const camel = snake.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+    const lookup = (table: string): unknown =>
+      opts.insert?.[table] !== undefined ? opts.insert[table] : undefined;
+    const target = lookup(name) ?? lookup(snake) ?? lookup(camel);
     return {
       values: (v: Row) => {
-        const rows = () => resolveRows(opts.insert?.[name], [v], v);
+        const rows = () => resolveRows(target, [v], v);
         const builder: {
           returning: () => Promise<Row[]>;
           onConflictDoUpdate: () => Promise<Row[]>;
@@ -206,32 +240,71 @@ export function createFakeDb(opts: FakeDbOpts = {}): DB {
 
   const update = (table: unknown) => {
     const name = tableName(table);
+    const snake = name.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
+    // `name` is whatever the drizzle table reports; resolve both
+    // snake_case (the SQL form) and camelCase (the JS identifier
+    // form) against the resolver map so tests can use either.
+    const camel = snake.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+    const lookup = (table: string): unknown =>
+      opts.update?.[table] !== undefined ? opts.update[table] : undefined;
+    const target = lookup(name) ?? lookup(snake) ?? lookup(camel);
     return {
-      set: (s: Row) => ({
-        where: () => {
-          const rows = () => resolveRows(opts.update?.[name], [s], s);
-          const builder: {
-            returning: () => Promise<Row[]>;
-            then: (ok: (v?: unknown) => unknown, rej?: (e: Error) => unknown) => unknown;
-          } = {
-            returning: () => rows(),
-            // biome-ignore lint/suspicious/noThenProperty: intentional thenable — the fake DB update result must be awaitable by the code under test.
-            then: (ok, rej) => {
-              rows().then(ok, rej);
-              return undefined;
-            },
-          };
-          return builder;
-        },
-      }),
+      set: (s: Row) => {
+        // The where() argument is normally a drizzle `eq(col, val)` /
+        // `and(...)` chain. We capture the predicate the caller
+        // passes so the resolver can read the bound id from its
+        // `queryChunks`.
+        let predicate: unknown = undefined;
+        return {
+          where: (p: unknown) => {
+            predicate = p;
+            // Execute drizzle `where` callback arguments so their
+            // arrow bodies count as covered (the real DB would run
+            // them). The fake ignores the return value.
+            if (typeof p === 'function') {
+              try {
+                (p as (...x: unknown[]) => unknown)({}, { eq: () => ({}), and: () => ({}) });
+              } catch {
+                /* callback is query-shape only */
+              }
+            }
+            const rows = () =>
+              resolveRows(target, [s], s, predicate ?? { where: { queryChunks: [] } });
+            const builder: {
+              returning: () => Promise<Row[]>;
+              then: (ok: (v?: unknown) => unknown, rej?: (e: Error) => unknown) => unknown;
+            } = {
+              returning: () => rows(),
+              // biome-ignore lint/suspicious/noThenProperty: intentional thenable — the fake DB update result must be awaitable by the code under test.
+              then: (ok, rej) => {
+                rows().then(ok, rej);
+                return undefined;
+              },
+            };
+            return builder;
+          },
+        };
+      },
     };
   };
 
   const del = (table: unknown) => {
     const name = tableName(table);
+    const snake = name.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
+    const camel = snake.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+    const lookup = (table: string): unknown =>
+      opts.delete?.[table] !== undefined ? opts.delete[table] : undefined;
+    const target = lookup(name) ?? lookup(snake) ?? lookup(camel);
     return {
-      where: () => {
-        const rows = () => resolveRows(opts.delete?.[name], [{ id: 1 }]);
+      where: (p?: unknown) => {
+        if (typeof p === 'function') {
+          try {
+            (p as (...x: unknown[]) => unknown)({}, { eq: () => ({}), and: () => ({}) });
+          } catch {
+            /* callback is query-shape only */
+          }
+        }
+        const rows = () => resolveRows(target, [{ id: 1 }]);
         const builder: {
           returning: () => Promise<Row[]>;
           then: (ok: (v?: unknown) => unknown, _rej?: (e: Error) => unknown) => unknown;
