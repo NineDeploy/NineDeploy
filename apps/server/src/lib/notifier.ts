@@ -1,4 +1,6 @@
 import { type DB, notificationLog, type NotificationChannel } from '@ninedeploy/db';
+import { webhookChannelConfig, type WebhookChannelConfig } from '@ninedeploy/schemas';
+import { createHmac } from 'node:crypto';
 import { decrypt } from './crypto.js';
 import type { AppEvent } from './events.js';
 import { encrypt } from './crypto.js';
@@ -64,15 +66,92 @@ async function sendTelegram(botToken: string, chatId: string, message: string): 
   if (!res.ok) throw new Error(`Telegram API ${res.status}: ${await res.text()}`);
 }
 
-/** Send to a generic webhook (POST JSON). */
-async function sendWebhook(url: string, payload: unknown): Promise<void> {
+/**
+ * Send to a generic webhook (POST JSON) with optional
+ * HMAC signing and a custom body template. The signing
+ * secret, header name, algorithm, and template are read
+ * from the channel's `configJson` blob (G-06).
+ *
+ * Signature format: the header carries
+ * `<algorithm>=<hex-digest>`. The receiver verifies by
+ * recomputing HMAC over the EXACT body bytes — the panel
+ * does not strip whitespace or re-encode.
+ */
+async function sendWebhook(
+  url: string,
+  payload: { event: string; entity: string | null; ts: string; message: string },
+  configJson: string | null,
+): Promise<void> {
+  const cfg = parseWebhookConfig(configJson);
+  const body = renderWebhookBody(cfg, payload);
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (cfg.secret) {
+    const algo = cfg.algorithm ?? 'sha256';
+    const sig = createHmac(algo, cfg.secret).update(body).digest('hex');
+    headers[cfg.headerName ?? 'X-NineDeploy-Signature'] = `${algo}=${sig}`;
+  }
   const res = await guardedFetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    headers,
+    body,
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
   if (!res.ok) throw new Error(`Webhook ${res.status}`);
+}
+
+/** Validate the channel's `configJson` blob against the
+ *  webhook config schema; malformed input falls back to
+ *  the default (no signing, default envelope). */
+function parseWebhookConfig(raw: string | null | undefined): WebhookChannelConfig {
+  if (!raw) return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return {};
+  }
+  const result = webhookChannelConfig.safeParse(parsed);
+  return result.success ? result.data : {};
+}
+
+/**
+ * Render the request body. The default is the
+ * `{ event, entity, ts, message }` envelope. A
+ * `template: { ... }` object has its `${...}` placeholders
+ * expanded string-by-string; a `template: "..."` string is
+ * passed through JSON-encoded (after expansion).
+ */
+function renderWebhookBody(
+  cfg: WebhookChannelConfig,
+  payload: { event: string; entity: string | null; ts: string; message: string },
+): string {
+  if (!cfg.template) {
+    return JSON.stringify(payload);
+  }
+  const substitutions: Record<string, string> = {
+    event: payload.event,
+    entity: payload.entity ?? '',
+    ts: payload.ts,
+    message: payload.message,
+  };
+  const expand = (s: string): string =>
+    s.replace(/\$\{(event|entity|ts|message)\}/g, (_, k) => substitutions[k] ?? '');
+  if (typeof cfg.template === 'string') {
+    // The user wrote a JSON template. We expand placeholders
+    // BEFORE JSON.parse so they don't conflict with the
+    // string-delimiter escape rules.
+    const expanded = expand(cfg.template);
+    try {
+      return JSON.stringify(JSON.parse(expanded));
+    } catch {
+      return JSON.stringify(expanded);
+    }
+  }
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(cfg.template)) {
+    out[k] = typeof v === 'string' ? expand(v) : v;
+  }
+  return JSON.stringify(out);
 }
 
 /** Public shape of a Discord channel's `config_json` blob (Sprint 5 G-18 PR #24). */
@@ -231,7 +310,7 @@ export async function dispatchChannel(
     if (!botToken || !chatId) throw new Error('Invalid Telegram target (expected botToken:chatId)');
     await sendTelegram(botToken, chatId, message);
   } else if (type === 'webhook') {
-    await sendWebhook(target, { event: event.action, entity: event.entity, ts: event.ts, message });
+    await sendWebhook(target, { event: event.action, entity: event.entity, ts: event.ts, message }, options?.configJson ?? null);
   } else if (type === 'discord') {
     // Forward the operator's embed / identity overrides. Each key is
     // optional; missing keys fall through to Discord's default

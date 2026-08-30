@@ -1157,6 +1157,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the target email), and `ninedeploy domains
   cancel-transfer <token>` (caller must be the source).
 
+- **Outbound webhook — HMAC-signed `webhook` channel (G-06,
+  PR #49)**. The notification channel type enum already
+  listed `webhook` and the dispatcher sent a JSON body,
+  but there was no signing and no body template — every
+  consumer had to either accept unsigned JSON (and trust
+  the network) or run their own pre-shared-key ceremony.
+  New `webhookChannelConfig` schema (in
+  `packages/schemas/src/management.ts`) lets the operator
+  declare `secret`, `headerName` (default
+  `X-NineDeploy-Signature`), `algorithm` (`sha256` or
+  `sha1`), and a custom `template`. The dispatcher
+  (`apps/server/src/lib/notifier.ts`) computes
+  `HMAC(secret, body)` and adds the header before send;
+  the body is either the default four-field envelope
+  (`{ event, entity, ts, message }`) or a custom object
+  whose `${event}` / `${entity}` / `${ts}` / `${message}`
+  placeholders are expanded at send time. The receiver
+  verifies by recomputing HMAC over the EXACT body bytes
+  — the panel does not strip whitespace or re-encode.
+  New CLI surface: `ninedeploy notifications {list,
+  create-webhook, test, rm}`. The `create-webhook`
+  command assembles the `configJson` from flags
+  (`--secret`, `--header`, `--algo`, repeated
+  `--template k=v`) and POSTs through the existing
+  channel-create endpoint; the `test` command fires a
+  test event so the operator can confirm the receiver is
+  set up before relying on it.
+
 ### Fixed
 
 - **`SettingsTabPrivilege` test timeouts under parallel load (unrelated

@@ -73,11 +73,45 @@ export const notificationChannelCreate = z.object({
   target: z.string().min(1).max(2048),
   eventFilter: z.string().max(1000).optional(),
   // Per-provider configuration blob. Discord reads username / avatarUrl /
-  // title / color for the embed; other channel types ignore it. Capped
-  // at 4KB so a misbehaving client can't bloat the row.
+  // title / color for the embed; webhook (G-06) reads
+  // `secret` / `headerName` / `algorithm` / `template`; other
+  // channel types ignore it. Capped at 4KB so a misbehaving
+  // client can't bloat the row.
   configJson: z.string().max(4096).optional(),
 });
 export type NotificationChannelCreate = z.infer<typeof notificationChannelCreate>;
+
+/**
+ * Webhook channel config (G-06). The dispatch path reads
+ * this from the `configJson` blob; the schema here is
+ * exported for the SDK and CLI to validate user input
+ * BEFORE the string is round-tripped to the database.
+ */
+export const webhookChannelConfig = z
+  .object({
+    /** HMAC secret. Required for the signature header to be emitted. */
+    secret: z.string().min(1).max(256).optional(),
+    /** Signature header name. Defaults to `X-NineDeploy-Signature`. */
+    headerName: z.string().min(1).max(64).regex(/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/, 'invalid HTTP header name').optional(),
+    /** Hash algorithm. Defaults to `sha256`. */
+    algorithm: z.enum(['sha256', 'sha1']).optional(),
+    /**
+     * Body template. Either a JSON object (sent verbatim, with
+     * `${event}` / `${entity}` / `${message}` / `${ts}`
+     * placeholders expanded) or a string template that's
+     * JSON-encoded before send. The default — when this is
+     * absent — is the four-field envelope
+     * `{ event, entity, ts, message }`.
+     */
+    template: z
+      .union([
+        z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])),
+        z.string().max(2048),
+      ])
+      .optional(),
+  })
+  .strict();
+export type WebhookChannelConfig = z.infer<typeof webhookChannelConfig>;
 
 export const notificationChannelPatch = z.object({
   name: z.string().min(1).max(100).optional(),

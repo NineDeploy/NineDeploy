@@ -25,6 +25,12 @@ import {
   usersList, usersResetLink, volumesList, volumesRemove,
 } from './commands/manage.js';
 import {
+  notificationsCreateWebhook as _notifCreateWebhook,
+  notificationsList as _notifList,
+  notificationsRemove as _notifRemove,
+  notificationsTest as _notifTest,
+} from './commands/notifications.js';
+import {
   pluginsList, pluginsMarketplace, pluginsInstall,
   pluginsEnable, pluginsDisable, pluginsUninstall,
   pluginsInspect, pluginsReload,
@@ -442,6 +448,24 @@ alertsCmd.command('create <name> <metric> <operator> <threshold>')
   .action((name: string, metric: string, op: string, threshold: string, opts: { windows?: string; service?: string }) => alertsCreate(getClient(), name, metric, op, threshold, opts));
 
 alertsCmd.command('rm <id>').description('Delete an alert rule').action((id: string) => alertsRemove(getClient(), id));
+
+// ── Notifications (G-06) ───────────────────────────────────────────────────
+const notificationsCmd = program.command('notifications').description('Manage notification channels (admin)');
+notificationsCmd.command('list').description('List configured channels').action(() => _notifList(getClient()));
+notificationsCmd
+  .command('create-webhook <name> <url>')
+  .description('Create a webhook channel (HMAC-signed POST; G-06)')
+  .option('--secret <s>', 'HMAC secret used to sign the body')
+  .option('--header <h>', 'Signature header name (default: X-NineDeploy-Signature)')
+  .option('--algo <algo>', 'Hash algorithm: sha256 (default) or sha1', 'sha256')
+  .option('--event-filter <prefix>', 'Comma-separated event prefixes to match (default: all)')
+  .option('--template <kv>', 'Body template field (key=value, repeatable)', (v: string, prev: string[] = []) => [...prev, v])
+  .action(
+    (name: string, url: string, opts: { secret?: string; header?: string; algo?: 'sha256' | 'sha1'; eventFilter?: string; template?: string[] }) =>
+      _notifCreateWebhook(getClient(), name, url, opts),
+  );
+notificationsCmd.command('test <id>').description('Fire a test event through the channel').action((id: string) => _notifTest(getClient(), id));
+notificationsCmd.command('rm <id>').description('Remove a channel').action((id: string) => _notifRemove(getClient(), id));
 
 // ── Users & activity ───────────────────────────────────────────────────────
 program.command('users').description('List users (admin)').action(() => usersList(getClient()));
