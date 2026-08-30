@@ -55,6 +55,7 @@ import { logDrainRoutes } from './logDrains.js';
 import { housekeepingRoutes } from './housekeeping.js';
 import { housekeepingImageRoutes } from './images.js';
 import { workspaceRoutes } from './workspaces.js';
+import { emailTemplateRoutes } from './emailTemplates.js';
 import { firewallRoutes } from './firewall.js';
 import { acceptInvitationRoutes, invitationRoutes, publicInvitationRoutes } from './invitations.js';
 import { labelRoutes } from './labels.js';
@@ -79,6 +80,11 @@ export const apiRoutes: FastifyPluginAsync = async (app) => {
   // Authenticated accept route — public path, but requires a valid session.
   await app.register(acceptInvitationRoutes);
   await app.register(workspaceRoutes, { prefix: '/workspaces' });
+  // Email template overrides (G-30) — workspace-scoped.
+  // The /:wid path is owned by workspaceRoutes; the new
+  // module re-uses it as the prefix and the routes add
+  // the /:wid/email-templates suffix.
+  await app.register(emailTemplateRoutes, { prefix: '/workspaces' });
   // Workspace-scoped invitation management (auth required) piggy-backs on the
   // workspaces prefix so callers see a single /v1/workspaces/:id/invitations.
   await app.register(invitationRoutes, { prefix: '/workspaces' });

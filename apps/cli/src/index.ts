@@ -33,6 +33,12 @@ import {
 import { databasePgbouncer } from './commands/pgbouncer.js';
 import { logsSearch } from './commands/logs.js';
 import {
+  emailTemplatesList,
+  emailTemplatesPreview,
+  emailTemplatesReset,
+  emailTemplatesSet,
+} from './commands/emailTemplates.js';
+import {
   pluginsList, pluginsMarketplace, pluginsInstall,
   pluginsEnable, pluginsDisable, pluginsUninstall,
   pluginsInspect, pluginsReload,
@@ -596,6 +602,30 @@ logsCmd
     (query: string, opts: { service?: string; since?: string; limit?: string; drain?: string; json?: boolean }) =>
       logsSearch(getClient(), query, opts),
   );
+
+// ── Email templates (G-30) ─────────────────────────────────────────────────
+const emailTemplatesCmd = program.command('email-templates').description('Manage per-workspace email template overrides');
+emailTemplatesCmd
+  .command('list <workspaceId>')
+  .description('List the built-in templates and whether the workspace has overridden each')
+  .action((wid: string) => emailTemplatesList(getClient(), wid));
+
+emailTemplatesCmd
+  .command('preview <workspaceId> <name> [vars...]')
+  .description('Render a template with the supplied vars (key=value pairs)')
+  .action((wid: string, name: string, vars: string[]) => emailTemplatesPreview(getClient(), wid, name, vars));
+
+emailTemplatesCmd
+  .command('set <workspaceId> <name>')
+  .description('Upsert the workspace override for a template (admin only)')
+  .requiredOption('--subject <subject>', 'Override subject line')
+  .requiredOption('--text <text>', 'Override plain-text body (use {{var}} placeholders)')
+  .action((wid: string, name: string, opts: { subject: string; text: string }) => emailTemplatesSet(getClient(), wid, name, opts));
+
+emailTemplatesCmd
+  .command('reset <workspaceId> <name>')
+  .description('Drop the workspace override and fall back to the built-in default')
+  .action((wid: string, name: string) => emailTemplatesReset(getClient(), wid, name));
 
 // ── System export/import + deploy log streaming ────────────────────────────
 system.command('export [file]').description('Export the full system state as JSON').action((file?: string) => systemExport(file));

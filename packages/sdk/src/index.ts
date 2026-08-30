@@ -286,6 +286,38 @@ export interface LogSearchResult {
 }
 
 /**
+ * Built-in email template names (G-30). The full set
+ * lives in `apps/server/src/lib/emailTemplates.ts`; the
+ * union here is the closed set the SDK can name. The
+ * server validates on the wire (zod enum) — a string
+ * the SDK does not know about returns 400.
+ */
+export type EmailTemplateName =
+  | 'password-reset'
+  | 'workspace-invitation'
+  | 'domain-transfer'
+  | 'backup-drill-failed';
+
+/** One row from `GET /v1/workspaces/:wid/email-templates`. */
+export interface EmailTemplateEntry {
+  name: EmailTemplateName;
+  /** True when the workspace has an override for this name. */
+  overridden: boolean;
+  /** Override subject; null when the built-in default applies. */
+  subject: string | null;
+  /** Override text body; null when the built-in default applies. */
+  text: string | null;
+}
+
+/** Result of `POST /v1/workspaces/:wid/email-templates/preview`. */
+export interface EmailTemplateRender {
+  subject: string;
+  text: string;
+  /** True when the rendered text came from a tenant override. */
+  overridden: boolean;
+}
+
+/**
  * Result of `GET /v1/databases/:id/pgbouncer` (and the
  * post-mutation body of the enable / disable routes).
  * `pooledConnectionString` is non-null only when `running`
@@ -1120,6 +1152,19 @@ export interface NineDeployClient {
      */
     search: (input: LogSearchInput) => Promise<LogSearchResult>;
   };
+  /**
+   * Per-workspace email template overrides (G-30).
+   * Read-side is open to members; write-side requires the
+   * workspace's admin role. The list / preview are safe
+   * to call from a CI script; `set` / `reset` mutate the
+   * panel's outbound email and should be operator-only.
+   */
+  emailTemplates: {
+    list: (workspaceId: number) => Promise<{ workspaceId: number; templates: EmailTemplateEntry[] }>;
+    preview: (workspaceId: number, name: EmailTemplateName, vars?: Record<string, string | number | null>) => Promise<EmailTemplateRender>;
+    set: (workspaceId: number, name: EmailTemplateName, subject: string, text: string) => Promise<{ ok: boolean }>;
+    reset: (workspaceId: number, name: EmailTemplateName) => Promise<{ ok: boolean }>;
+  };
   housekeeping: {
     getAutoPrune: () => Promise<AutoPruneStatus>;
     updateAutoPrune: (input: AutoPruneConfigUpdateInput) => Promise<AutoPruneStatus>;
@@ -1867,6 +1912,26 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
       remove: (id) => send<{ ok: boolean }>('DELETE', `/v1/log-drains/${id}`),
       test: (id) => send<LogDrainTestResult>('POST', `/v1/log-drains/${id}/test`),
       search: (input) => send<LogSearchResult>('POST', '/v1/log-drains/search', input),
+    },
+    emailTemplates: {
+      list: (workspaceId) =>
+        get<{ workspaceId: number; templates: EmailTemplateEntry[] }>(
+          `/v1/workspaces/${workspaceId}/email-templates`,
+        ),
+      preview: (workspaceId, name, vars) =>
+        send<EmailTemplateRender>(
+          'POST',
+          `/v1/workspaces/${workspaceId}/email-templates/preview`,
+          { name, vars: vars ?? {} },
+        ),
+      set: (workspaceId, name, subject, text) =>
+        send<{ ok: boolean }>(
+          'PUT',
+          `/v1/workspaces/${workspaceId}/email-templates/${name}`,
+          { subject, text },
+        ),
+      reset: (workspaceId, name) =>
+        send<{ ok: boolean }>('DELETE', `/v1/workspaces/${workspaceId}/email-templates/${name}`, {}),
     },
     housekeeping: {
       getAutoPrune: () => get<AutoPruneStatus>('/v1/housekeeping/prune/config'),

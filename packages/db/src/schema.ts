@@ -189,6 +189,32 @@ export const workspaceMembers = sqliteTable(
   }),
 );
 
+// ─── email template overrides (G-30) ───────────────────────────────────────
+// One row per (workspace, name) overrides the subject + text
+// of a built-in transactional email. The (workspace_id, name)
+// pair is the unique key; the renderer falls back to the
+// built-in default when no override exists.
+export const emailTemplateOverrides = sqliteTable(
+  'email_template_overrides',
+  {
+    id: id(),
+    workspaceId: integer('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    // Same string set as `lib/emailTemplates.ts` DEFAULTS keys.
+    // Validated at the route layer; the column is plain text
+    // to keep the migration add-only.
+    name: text('name').notNull(),
+    subject: text('subject').notNull(),
+    text: text('text').notNull(),
+    createdAt: ts('created_at'),
+    updatedAt: tsUpdatable('updated_at'),
+  },
+  (t) => ({
+    workspaceNameIdx: uniqueIndex('email_template_overrides_workspace_name_idx').on(t.workspaceId, t.name),
+  }),
+);
+
 export const oidcProviders = sqliteTable('oidc_providers', {
   id: id(),
   name: text('name').notNull(),

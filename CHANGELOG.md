@@ -1288,6 +1288,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the raw `LogSearchResult` shape for piping into
   `jq` / `grep` / etc.
 
+- **Per-workspace email template overrides — `ninedeploy email-templates {list,set,reset,preview}` (G-30, PR #53)**.
+  NineDeploy's outbound emails (password reset, workspace
+  invitation, domain transfer, backup drill failed)
+  used to live as a string-templated function per
+  call site (`buildInviteEmail` in `invitations.ts`,
+  inline string in `auth.ts`). Operators who wanted
+  to brand the outbound mail had to fork the
+  codebase. New `lib/emailTemplates.ts` ships four
+  built-in templates with `{{var}}` interpolation
+  and a `setOverride / clearOverride / renderTemplate`
+  trio; migration `0047` adds the
+  `email_template_overrides` table (one row per
+  `(workspace, name)` overrides the subject + text).
+  Routes under `/v1/workspaces/:wid/email-templates`:
+  `GET` (member, lists every name + whether each is
+  overridden), `POST /preview` (member, renders with
+  supplied vars — paste the result into a test
+  inbox), `PUT /:name` (admin, upsert the override),
+  `DELETE /:name` (admin, drop it). The renderer is
+  side-effect free; a future PR can call it from
+  every existing outbound site so the override
+  takes effect automatically. SDK surface:
+  `client.emailTemplates.{list, preview, set, reset}`
+  with `EmailTemplateName` / `EmailTemplateEntry` /
+  `EmailTemplateRender` types. CLI:
+  `ninedeploy email-templates <wid> {list | preview
+  <name> [k=v ...] | set <name> --subject S --text T
+  | reset <name>}`. The interpolation engine
+  handles `{{var}}` and `\{\{` (literal) escapes;
+  unknown vars render as the empty string rather
+  than `{{undefined}}` so a half-broken template
+  cannot surface in an outbound email.
+
 ### Fixed
 
 - **`SettingsTabPrivilege` test timeouts under parallel load (unrelated
