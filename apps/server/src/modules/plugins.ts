@@ -4,7 +4,8 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { InstallPluginInput } from '@ninedeploy/schemas';
 import { installPluginSchema } from '@ninedeploy/schemas';
 import { audit } from '../lib/audit.js';
-import { getMarketplaceCatalog, installPlugin, uninstallPlugin } from '../kernel/pluginLoader.js';
+import { clearMarketplaceCache, loadMarketplaceCatalog } from '../lib/marketplaceCatalog.js';
+import { installPlugin, uninstallPlugin } from '../kernel/pluginLoader.js';
 
 export const pluginRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('onRequest', app.authenticate);
@@ -57,12 +58,46 @@ export const pluginRoutes: FastifyPluginAsync = async (app) => {
     return { plugins: result };
   });
 
-  // Get marketplace catalog (admin & members)
-  app.get('/marketplace', async () => {
+  // Get marketplace catalog (admin & members). The live
+  // signed index (when `NINEDEPLOY_MARKETPLACE_URL` is
+  // configured) is preferred; the in-code catalog is the
+  // fallback so a missing upstream never returns an
+  // empty list. `?refresh=true` bypasses the 5-minute
+  // cache (G-24).
+  app.get<{ Querystring: { refresh?: string } }>('/marketplace', async (req) => {
     const dbPlugins = await app.db.query.installedPlugins.findMany();
     const installedIds = new Set(dbPlugins.map((p) => p.id));
-    const catalog = getMarketplaceCatalog(installedIds);
-    return { catalog };
+    const force = req.query.refresh === 'true' || req.query.refresh === '1';
+    if (force) clearMarketplaceCache();
+    const result = await loadMarketplaceCatalog(installedIds, { force });
+    return {
+      catalog: result.catalog,
+      live: result.live,
+      keyId: result.keyId,
+      fetchedAt: result.fetchedAt,
+    };
+  });
+
+  // Force-refresh the in-process catalog cache. Useful
+  // for `ninedeploy plugins marketplace refresh` in CI
+  // after the upstream rotated its key.
+  app.post('/marketplace/refresh', async (req) => {
+    const dbPlugins = await app.db.query.installedPlugins.findMany();
+    const installedIds = new Set(dbPlugins.map((p) => p.id));
+    const result = await loadMarketplaceCatalog(installedIds, { force: true });
+    void audit(
+      app.db,
+      req.user!.id,
+      'plugin.marketplace_refresh',
+      `live=${result.live} entries=${result.catalog.length}`,
+    );
+    return {
+      ok: true,
+      live: result.live,
+      keyId: result.keyId,
+      entries: result.catalog.length,
+      fetchedAt: result.fetchedAt,
+    };
   });
 
   // Install external/marketplace plugin (admin only)

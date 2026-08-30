@@ -1122,7 +1122,7 @@ export interface NineDeployClient {
   };
   plugins: {
     list: () => Promise<PluginListResponse>;
-    marketplace: () => Promise<MarketplaceCatalogResponse>;
+    marketplace: (opts?: { refresh?: boolean }) => Promise<MarketplaceCatalogResponse>;
     install: (input: InstallPluginInput) => Promise<{ ok: boolean; id: string; status: string }>;
     enable: (id: string) => Promise<{ ok: boolean; id: string; status: string }>;
     disable: (id: string) => Promise<{ ok: boolean; id: string; status: string }>;
@@ -1884,7 +1884,10 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
     },
     plugins: {
       list: () => get<PluginListResponse>('/v1/plugins'),
-      marketplace: () => get<MarketplaceCatalogResponse>('/v1/plugins/marketplace'),
+      marketplace: (opts) =>
+        get<MarketplaceCatalogResponse>(
+          `/v1/plugins/marketplace${opts?.refresh ? '?refresh=true' : ''}`,
+        ),
       install: (input) => send<{ ok: boolean; id: string; status: string }>('POST', '/v1/plugins/install', input),
       enable: (id) => send<{ ok: boolean; id: string; status: string }>('POST', `/v1/plugins/${encodeURIComponent(id)}/enable`),
       disable: (id) => send<{ ok: boolean; id: string; status: string }>('POST', `/v1/plugins/${encodeURIComponent(id)}/disable`),

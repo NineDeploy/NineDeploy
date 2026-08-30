@@ -106,6 +106,14 @@ export type MarketplacePluginItem = z.infer<typeof marketplacePluginItemSchema>;
 
 export const marketplaceCatalogSchema = z.object({
   catalog: z.array(marketplacePluginItemSchema),
+  /** True when the live signed index was reached and
+   *  verified; false when the upstream was unreachable
+   *  and the static catalog was served. */
+  live: z.boolean().default(false),
+  /** The verifying key id, when the live index was used. */
+  keyId: z.string().nullable().optional(),
+  /** When the cache was last refreshed (ms since epoch). */
+  fetchedAt: z.number().optional(),
 });
 export type MarketplaceCatalogResponse = z.infer<typeof marketplaceCatalogSchema>;
 

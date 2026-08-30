@@ -21,11 +21,25 @@ export async function pluginsList(client: NineDeployClient): Promise<void> {
 }
 
 export async function pluginsMarketplace(client: NineDeployClient): Promise<void> {
-  const { catalog } = await client.plugins.marketplace();
+  const { catalog, live, keyId, fetchedAt } = await client.plugins.marketplace();
   if (catalog.length === 0) {
     console.log('  Marketplace catalog is currently empty.');
     return;
   }
+
+  // Surface the source (live signed index vs. static
+  // fallback) so the operator knows whether a planned
+  // install was discovered automatically or is a
+  // roadmap item.
+  const source = live
+    ? `live signed index (key=${keyId ?? 'unknown'})`
+    : 'static fallback (upstream unreachable or NINEDEPLOY_MARKETPLACE_URL not set)';
+  console.log(`  Source: ${source}`);
+  if (fetchedAt) {
+    const ageMin = Math.max(0, Math.round((Date.now() - fetchedAt) / 60_000));
+    console.log(`  Fetched: ${ageMin} min ago`);
+  }
+  console.log();
 
   table(
     catalog.map((c) => ({
@@ -37,6 +51,15 @@ export async function pluginsMarketplace(client: NineDeployClient): Promise<void
       status: c.isInstalled ? '✓ Installed' : 'Available',
     })),
     ['id', 'name', 'category', 'version', 'type', 'status'],
+  );
+}
+
+/** `ninedeploy plugins marketplace refresh` — bypass the
+ *  5-minute cache and re-fetch the live signed index. */
+export async function pluginsMarketplaceRefresh(client: NineDeployClient): Promise<void> {
+  const res = await client.plugins.marketplace({ refresh: true });
+  console.log(
+    `  ✓ Refreshed (${res.catalog.length} entries, live=${res.live}, keyId=${res.keyId ?? 'n/a'}).`,
   );
 }
 

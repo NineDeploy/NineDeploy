@@ -39,7 +39,7 @@ import {
   emailTemplatesSet,
 } from './commands/emailTemplates.js';
 import {
-  pluginsList, pluginsMarketplace, pluginsInstall,
+  pluginsList, pluginsMarketplace, pluginsMarketplaceRefresh, pluginsInstall,
   pluginsEnable, pluginsDisable, pluginsUninstall,
   pluginsInspect, pluginsReload,
 } from './commands/plugins.js';
@@ -495,6 +495,7 @@ program.command('activity').description('Show recent activity').action(() => act
 const plugins = program.command('plugins').description('Manage plugins and marketplace extensions');
 plugins.command('list').description('List all installed plugins').action(() => pluginsList(getClient()));
 plugins.command('marketplace').description('Browse verified marketplace extensions').action(() => pluginsMarketplace(getClient()));
+plugins.command('marketplace-refresh').description('Bypass the cache and re-fetch the live signed marketplace index').action(() => pluginsMarketplaceRefresh(getClient()));
 plugins.command('inspect <id>').description('Inspect plugin manifest and runtime telemetry').action((id: string) => pluginsInspect(getClient(), id));
 plugins.command('install <target>').description('Install a plugin (marketplace, npm, git, local)')
   .option('-s, --source <source>', 'Source type (marketplace, npm, git, local)', 'marketplace')

@@ -1321,6 +1321,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   than `{{undefined}}` so a half-broken template
   cannot surface in an outbound email.
 
+- **Live signed marketplace index (G-24, PR #54)**.
+  The previous `MARKETPLACE_CATALOG` was a static
+  in-code list — the panel could not discover new
+  plugins without a server release. New
+  `lib/marketplaceCatalog.ts` fetches a signed JSON
+  index from `NINEDEPLOY_MARKETPLACE_URL`, verifies
+  the ed25519 signature against
+  `NINEDEPLOY_MARKETPLACE_PUBLIC_KEY`, and merges
+  the verified entries with the in-code fallback
+  (which is also kept as the installable-surface
+  baseline — the live index is never allowed to
+  override an entry that maps onto compiled-in
+  behaviour). The envelope format is
+  `{ entries, signature, key_id }`; the signature
+  is over the canonical JSON of `entries`
+  (sorted keys, no whitespace). A 5-minute
+  in-process cache avoids hammering the upstream;
+  the existing `GET /v1/plugins/marketplace`
+  route gains a `?refresh=true` query, and a new
+  `POST /v1/plugins/marketplace/refresh` route
+  bypasses the cache. The response shape grows
+  from `{ catalog }` to `{ catalog, live, keyId,
+  fetchedAt }` so the panel can show "live signed
+  index (key=ed25519:abc123) — fetched 2 min ago"
+  vs. the static fallback. A live index that fails
+  signature verification is dropped entirely —
+  production with `NINEDEPLOY_MARKETPLACE_URL` set
+  but no public key refuses to serve the live data
+  rather than trust an unverified blob. SDK surface:
+  `client.plugins.marketplace({ refresh?: boolean })`.
+  CLI: `ninedeploy plugins marketplace
+  [--refresh]` (the option now also re-fetches) and
+  a new `ninedeploy plugins marketplace-refresh`
+  command for CI runs after the upstream rotates
+  its key.
+
 ### Fixed
 
 - **`SettingsTabPrivilege` test timeouts under parallel load (unrelated
