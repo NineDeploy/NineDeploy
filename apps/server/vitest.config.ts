@@ -11,7 +11,7 @@ export default defineConfig({
       include: ['src/**/*.ts'],
       // types.ts and index.ts are interfaces-only / barrel re-exports.
       exclude: ['src/engine/types.ts', 'src/kernel/types.ts', 'src/kernel/index.ts'],
-      reporter: ['text'],
+      reporter: ['text', 'text-summary', 'json-summary'],
       // The README advertises 100% coverage; the actual reachable coverage
       // today is ~97% statements / ~94% branches once every defensive code
       // path is counted (the remaining gap is mostly unreachable error-shape
