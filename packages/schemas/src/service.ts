@@ -604,6 +604,30 @@ export const template = z.object({
 export type Template = z.infer<typeof template>;
 
 /**
+ * Community template contribution (G-13). A `*.json`
+ * file dropped into `<dataDir>/community-templates/` is
+ * parsed against the `template` schema and surfaced in
+ * the `community.list` response. Files that fail to
+ * parse are reported in `errors` (one entry per file)
+ * so a single bad contribution does not hide the rest.
+ */
+export const communityTemplateEntrySchema = z.object({
+  id: z.string(),
+  template: template,
+  file: z.string(),
+  bytes: z.number().int().nonnegative(),
+  mtime: z.number(),
+});
+export type CommunityTemplateEntry = z.infer<typeof communityTemplateEntrySchema>;
+
+export const communityTemplateListResultSchema = z.object({
+  entries: z.array(communityTemplateEntrySchema),
+  errors: z.array(z.object({ file: z.string(), error: z.string() })),
+  totalBytes: z.number().int().nonnegative(),
+});
+export type CommunityTemplateListResult = z.infer<typeof communityTemplateListResultSchema>;
+
+/**
  * One canonical Hub installation request. Image, internal port, volume,
  * command, Docker socket and database mapping are intentionally absent: they
  * are privileged registry-owned fields resolved by the server.

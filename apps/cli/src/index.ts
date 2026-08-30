@@ -44,6 +44,11 @@ import {
   certificatesList,
 } from './commands/certificates.js';
 import {
+  communityTemplatesImport,
+  communityTemplatesList,
+  communityTemplatesRemove,
+} from './commands/communityTemplates.js';
+import {
   pluginsList, pluginsMarketplace, pluginsMarketplaceRefresh, pluginsInstall,
   pluginsEnable, pluginsDisable, pluginsUninstall,
   pluginsInspect, pluginsReload,
@@ -221,6 +226,22 @@ const templates = program.command('templates').description('Browse the template 
 templates.command('list').description('List all templates').action(() => tplList(getClient()));
 
 templates.command('deploy <id>').description('Deploy a template by ID').action((id: string) => tplDeploy(getClient(), id));
+
+// ── Community templates (G-13) ───────────────────────────────────────────
+const community = templates.command('community').description('Manage per-instance community template contributions');
+community
+  .command('list')
+  .description('List every community template (curated + community merged in the regular `list`)')
+  .action(() => communityTemplatesList(getClient()));
+community
+  .command('import <file>')
+  .description('Import a community template (file path, or `-` for stdin)')
+  .option('--replace', 'Overwrite an existing template with the same id')
+  .action((file: string, opts: { replace?: boolean }) => communityTemplatesImport(getClient(), file, opts));
+community
+  .command('remove <id>')
+  .description('Remove a community template by id')
+  .action((id: string) => communityTemplatesRemove(getClient(), id));
 
 // ── Deploys ───────────────────────────────────────────────────────────────
 const deploys = program.command('deploys').description('Manage deployments');

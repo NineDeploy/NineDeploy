@@ -1428,6 +1428,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reads only the expiry date from acme.json, which
   is the only field the inventory actually needs.
 
+- **Community template contributions (G-13, PR #57)**.
+  The Hub template catalog was a closed set: the
+  bundled registry plus an optional remote URL. A
+  contributor with a new template had to open a PR
+  against the registry. New
+  `lib/communityTemplates.ts` opens a third source:
+  any `*.json` file dropped into
+  `<dataDir>/community-templates/` is parsed, validated
+  against the template schema and merged into the
+  panel-facing catalog by `id`. The merge rule is
+  "curated wins": a community entry that collides on
+  `id` with a bundled entry is dropped, so a
+  copy-paste cannot shadow the installable baseline.
+  Three new routes on `modules/templates.ts`:
+  `GET /v1/templates/community` lists every file with
+  a per-file error list (a single bad JSON does not
+  hide the rest), `POST /v1/templates/community/import`
+  accepts a single-template JSON envelope and refuses
+  to overwrite an existing `id` unless `replace: true`
+  is passed, and `DELETE /v1/templates/community/:id`
+  unlinks the file. Both writes are `requireAdmin` and
+  emit an audit row (`templates.community_import` /
+  `templates.community_remove`). SDK surface:
+  `client.templates.community.{list, import, remove}`,
+  with `CommunityTemplateListResult` re-exported from
+  `@ninedeploy/schemas`. CLI: `ninedeploy templates
+  community list | import <file> [--replace] | remove
+  <id>`; `import -` reads from stdin so a
+  `curl -s https://.../template.json | ninedeploy
+  templates community import -` pipeline lands an
+  upstream contribution without writing it to disk
+  first. Files are pretty-printed (`JSON.stringify(x,
+  null, 2)`) so the diff against the upstream PR is
+  reviewable. The `list` route also surfaces community
+  entries in the main `GET /v1/templates` response
+  (filtered for id-collision), so the existing panel
+  flow gets new entries without a code change.
+
 ### Fixed
 
 - **`SettingsTabPrivilege` test timeouts under parallel load (unrelated

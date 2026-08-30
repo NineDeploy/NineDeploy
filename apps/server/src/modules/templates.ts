@@ -11,6 +11,11 @@ import { and, desc, eq, inArray } from 'drizzle-orm';
 import { audit } from '../lib/audit.js';
 import type { FastifyInstance, FastifyPluginAsync, FastifyRequest } from 'fastify';
 import { getTemplates, type Template } from '../templates/registry.js';
+import {
+  importCommunityTemplate as importCommunityTemplateLib,
+  listCommunityTemplates,
+  removeCommunityTemplate as removeCommunityTemplateLib,
+} from '../lib/communityTemplates.js';
 import { encrypt, randomToken } from '../lib/crypto.js';
 import { badRequest, notFound } from '../lib/errors.js';
 import { assertMayUseHostPrivilege } from '../lib/hostPrivilege.js';
@@ -198,13 +203,76 @@ async function defaultWorkspaceIdsForUser(db: import('@ninedeploy/db').DB, user:
 export const templateRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('onRequest', app.authenticate);
 
-  app.get('/', async () => (await getTemplates(app.db)).map(summary));
+  app.get('/', async () => {
+    // Community contributions (G-13) are merged into the
+    // curated list. The bundled / remote entries are the
+    // installable baseline; a community entry that
+    // collides on `id` is dropped (the curated entry
+    // wins) so the operator can't accidentally shadow a
+    // shipped template.
+    const curated = await getTemplates(app.db);
+    const curatedIds = new Set(curated.map((t) => t.id));
+    const community = (await listCommunityTemplates()).entries
+      .filter((e) => !curatedIds.has(e.id))
+      .map((e) => e.template);
+    return [...curated, ...community].map(summary);
+  });
 
   app.get('/:id', async (req) => {
     const t = (await getTemplates(app.db)).find((x) => x.id === (req.params as { id: string }).id);
     if (!t) throw notFound('Template not found');
     return { ...t, runtimeVerified: t.runtimeVerified === true };
   });
+
+  // ── community contributions (G-13) ──────────────────────────────────
+  // `GET /templates/community` lists every file in
+  // `<dataDir>/community-templates/`. The result includes
+  // a per-file error list so a single bad JSON does not
+  // hide the rest of the catalog.
+  app.get('/community', async () => listCommunityTemplates());
+
+  // Import a community template. The body carries the
+  // raw JSON content (the operator pastes it from a PR
+  // comment, a `curl | ninedeploy templates community
+  // import -` pipeline, etc.). The helper validates the
+  // schema and refuses an existing id unless `replace:
+  // true` is passed.
+  app.post<{ Body: { content?: string; replace?: boolean } }>(
+    '/community/import',
+    { preHandler: app.requireAdmin },
+    async (req) => {
+      const body = (req.body ?? {}) as { content?: string; replace?: boolean };
+      if (typeof body.content !== 'string' || body.content.length === 0) {
+        throw badRequest('content is required (a single-template JSON envelope)');
+      }
+      try {
+        const result = await importCommunityTemplateLib(body.content, { replace: body.replace });
+        void audit(
+          app.db,
+          req.user!.id,
+          'templates.community_import',
+          `${result.id} (${result.bytes} bytes)`,
+        );
+        return { ok: true, ...result };
+      } catch (err) {
+        throw badRequest(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // Remove a community template by id. The file is
+  // unlinked; the next list call will no longer surface
+  // it. Bundled templates are unaffected.
+  app.delete<{ Params: { id: string } }>(
+    '/community/:id',
+    { preHandler: app.requireAdmin },
+    async (req) => {
+      const result = await removeCommunityTemplateLib((req.params as { id: string }).id);
+      if (!result.removed) throw notFound(`Community template "${result.id}" not found`);
+      void audit(app.db, req.user!.id, 'templates.community_remove', result.id);
+      return { ok: true, ...result };
+    },
+  );
 
   const queue = async (req: FastifyRequest) => {
     const t = (await getTemplates(app.db)).find((x) => x.id === (req.params as { id: string }).id);
