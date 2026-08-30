@@ -203,7 +203,13 @@ function decodeKey(publicKeyBase64: string): ReturnType<typeof createPublicKey> 
   try {
     const raw = Buffer.from(publicKeyBase64, 'base64');
     if (raw.length !== 32) return null;
-    return createPublicKey({ key: raw, format: 'der', type: 'spki' });
+    // Raw 32 bytes is the Ed25519 public key seed, not a SPKI
+    // envelope (SPKI would be 44 bytes — 12-byte prefix + key).
+    // `createPublicKey(raw)` auto-detects the algorithm from the
+    // raw key shape; `{ format: 'der', type: 'spki' }` would
+    // reject the raw key in Node 24 with
+    // "Failed to read asymmetric key".
+    return createPublicKey(raw);
   } catch {
     return null;
   }
