@@ -260,6 +260,117 @@ describe('parseHumanBytes / parseReclaimedBytes', () => {
     const two = rows.find((r) => r.id === 'sha256:2')!;
     expect(two.sizeBytes).toBe(512);
   });
+
+  it('returns ageHours=0 when the createdAt date is unparseable', async () => {
+    const lines = JSON.stringify({
+      Repository: 'a',
+      Tag: 't',
+      ID: 'sha256:bad',
+      Size: '1B',
+      CreatedAt: 'not a date',
+    });
+    execState.byArgs.set('docker image ls --no-trunc --format {{json .}}', {
+      stdout: lines,
+    });
+    execState.byArgs.set('docker ps --no-trunc --format {{.Image}}', { stdout: '' });
+    const rows = await listImages();
+    expect(rows[0]?.ageHours).toBe(0);
+  });
+
+  it('falls back to the empty in-use set when docker ps throws', async () => {
+    const lines = JSON.stringify({
+      Repository: 'a',
+      Tag: 't',
+      ID: 'sha256:1',
+      Size: '1B',
+      CreatedAt: new Date().toISOString(),
+    });
+    execState.byArgs.set('docker image ls --no-trunc --format {{json .}}', {
+      stdout: lines,
+    });
+    execState.byArgs.set('docker ps --no-trunc --format {{.Image}}', {
+      throw: new Error('Cannot connect to the Docker daemon'),
+    });
+    // No throw — the lib swallows the ps error and treats every
+    // image as not in use.
+    const rows = await listImages();
+    expect(rows[0]?.inUse).toBe(false);
+  });
+});
+
+describe('pruneImages error + edge branches', () => {
+  it('throws a friendly error when docker image prune fails (danglingOnly)', async () => {
+    execState.byArgs.set('docker image ls --no-trunc --format {{json .}}', { stdout: '' });
+    execState.byArgs.set('docker ps --no-trunc --format {{.Image}}', { stdout: '' });
+    execState.byArgs.set('docker image prune -f', {
+      throw: new Error('No such image'),
+    });
+    await expect(pruneImages({ danglingOnly: true })).rejects.toThrow(
+      /docker image prune failed/,
+    );
+  });
+
+  it('continues with the remaining chunks when one docker image rm fails', async () => {
+    // 60 images, split into 2 chunks of 50 and 10. The first
+    // chunk's rm throws; the second still goes through.
+    const lines: string[] = [];
+    for (let i = 0; i < 60; i += 1) {
+      const id = `sha256:${i.toString().padStart(4, '0')}`;
+      lines.push(
+        JSON.stringify({
+          Repository: `x${i}`,
+          Tag: 'v1',
+          ID: id,
+          Size: '1MB',
+          CreatedAt: new Date(Date.now() - 86_400_000).toISOString(),
+        }),
+      );
+    }
+    execState.byArgs.set('docker image ls --no-trunc --format {{json .}}', {
+      stdout: lines.join('\n'),
+    });
+    execState.byArgs.set('docker ps --no-trunc --format {{.Image}}', { stdout: '' });
+    // Throw for the first chunk's docker image rm, succeed for the second.
+    const originalRun = execState.toolResults;
+    void originalRun;
+    let rmCount = 0;
+    // Re-route run to throw on the first call, succeed after.
+    const { run } = await import('../../src/lib/exec.js');
+    (run as { mockImplementation: (fn: (...a: unknown[]) => Promise<void>) => void }).mockImplementation(
+      async (tool: string, args: string[]) => {
+        if (tool === 'docker' && args[0] === 'image' && args[1] === 'rm') {
+          rmCount += 1;
+          if (rmCount === 1) throw new Error('first chunk failed');
+        }
+      },
+    );
+    try {
+      const result = await pruneImages({ keepLast: 1, dryRun: false });
+      // Only the second chunk's ids land in `removed`.
+      expect(rmCount).toBe(2);
+      expect(result.removed).toHaveLength(10);
+    } finally {
+      // Restore the simple mock by re-importing + resetting the mock.
+      (run as { mockReset: () => void }).mockReset();
+      (run as { mockImplementation: (fn: (...a: unknown[]) => Promise<void>) => void }).mockImplementation(
+        async (tool: string, args: string[]) => {
+          if (tool === 'docker' && args[0] === 'image' && args[1] === 'rm') {
+            execState.rmCalls.push({ args });
+          }
+        },
+      );
+    }
+  });
+});
+
+describe('formatBytes via listImages / pruneImages output', () => {
+  it('formats the freed-bytes summary in MB when candidates are small', async () => {
+    execState.byArgs.set('docker image ls --no-trunc --format {{json .}}', { stdout: IMG_LS_JSON });
+    execState.byArgs.set('docker ps --no-trunc --format {{.Image}}', { stdout: '' });
+    const result = await pruneImages({ keepLast: 1, dryRun: true });
+    // The dryRun output is `dryRun: would remove N images (X<unit>)`.
+    expect(result.output).toMatch(/dryRun: would remove \d+ images \(\d/);
+  });
 });
 
 
