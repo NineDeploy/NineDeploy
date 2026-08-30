@@ -9,6 +9,7 @@ import { dashboardRoutes } from './dashboard.js';
 import { attachmentRoutes, databasesRoutes } from './databases.js';
 import { backupRoutes, databaseBackupRoutes } from './backups.js';
 import { pgbouncerRoutes } from './pgbouncer.js';
+import { logSearchRoutes } from './logSearch.js';
 import { backupDestinationRoutes } from './backupDestinations.js';
 import { buildCacheRoutes } from './buildCache.js';
 import { brandingRoutes } from './branding.js';
@@ -146,6 +147,11 @@ export const apiRoutes: FastifyPluginAsync = async (app) => {
   await app.register(jobRoutes, { prefix: '/services' });
   await app.register(serverRoutes, { prefix: '/servers' });
   await app.register(logDrainRoutes, { prefix: '/log-drains' });
+  // Cluster log search (G-16) — round-trips to the
+  // configured Loki drain. Sits next to the log-drain
+  // admin routes because it shares the URL prefix; the
+  // route itself is member-only.
+  await app.register(logSearchRoutes, { prefix: '/log-drains' });
   await app.register(housekeepingRoutes, { prefix: '/housekeeping' });
   // Image inventory + retention — sibling routes to auto-prune
   // (both live under /housekeeping). Mounted after

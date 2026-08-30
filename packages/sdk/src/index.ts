@@ -256,6 +256,36 @@ export interface BackupDrillEntry {
 }
 
 /**
+ * Body for `POST /v1/log-drains/search` (G-16). The
+ * search round-trips to the configured Loki drain.
+ */
+export interface LogSearchInput {
+  /** Free-text search (case-insensitive substring). */
+  query: string;
+  /** Restrict to one service. */
+  serviceId?: number;
+  /** Window length in minutes (default 15). */
+  sinceMinutes?: number;
+  /** Hard cap on returned lines (default 200, max 1000). */
+  limit?: number;
+  /** Query a specific drain. */
+  drainId?: number;
+}
+
+export interface LogSearchLine {
+  ts: number;
+  line: string;
+  service: string | null;
+}
+
+export interface LogSearchResult {
+  drain: { id: number; name: string; type: string };
+  serviceId: number | null;
+  window: { since: string; until: string };
+  lines: LogSearchLine[];
+}
+
+/**
  * Result of `GET /v1/databases/:id/pgbouncer` (and the
  * post-mutation body of the enable / disable routes).
  * `pooledConnectionString` is non-null only when `running`
@@ -1081,6 +1111,14 @@ export interface NineDeployClient {
     update: (id: number, input: LogDrainUpdateInput) => Promise<LogDrain>;
     remove: (id: number) => Promise<{ ok: boolean }>;
     test: (id: number) => Promise<LogDrainTestResult>;
+    /**
+     * Search the configured Loki drain for `query` over
+     * the last `sinceMinutes` (default 15). The route
+     * round-trips to the drain's `url` so the upstream
+     * does the heavy lifting; this is the same shape
+     * the operator sees in the Loki Grafana panel.
+     */
+    search: (input: LogSearchInput) => Promise<LogSearchResult>;
   };
   housekeeping: {
     getAutoPrune: () => Promise<AutoPruneStatus>;
@@ -1828,6 +1866,7 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
       update: (id, input) => send<LogDrain>('PATCH', `/v1/log-drains/${id}`, input),
       remove: (id) => send<{ ok: boolean }>('DELETE', `/v1/log-drains/${id}`),
       test: (id) => send<LogDrainTestResult>('POST', `/v1/log-drains/${id}/test`),
+      search: (input) => send<LogSearchResult>('POST', '/v1/log-drains/search', input),
     },
     housekeeping: {
       getAutoPrune: () => get<AutoPruneStatus>('/v1/housekeeping/prune/config'),

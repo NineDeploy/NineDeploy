@@ -1256,6 +1256,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   affects one tenant, and the credentials on the wire
   are scoped to a single service-to-database pair.
 
+- **Cluster log search — `ninedeploy logs search <query>` (G-16, PR #52)**.
+  NineDeploy's `logDrains` pipeline forwards every
+  container's stdout / stderr to a remote sink (Loki,
+  Vector, Datadog, ...), but the panel had no
+  corresponding read-side. Operators fell back to the
+  upstream's own UI, which meant two dashboards. New
+  `POST /v1/log-drains/search` round-trips to the
+  configured Loki drain's `/loki/api/v1/query_range`
+  with `{service="<slug>"} |= "<query>"` and the
+  window the caller asked for (default 15 minutes,
+  max 7 days). Other drain types don't expose a
+  query API; the route returns 400 with a clear "add
+  a Loki drain alongside it" message rather than
+  silently returning nothing. The drain's
+  `apiKeyEncrypted` is sent as `Authorization: Bearer
+  <key>`; the egress guard is intentionally NOT
+  applied because the operator's log host is the
+  canonical destination of the log drain itself.
+  Auth is `member` (a viewer can search). SDK surface:
+  `client.logDrains.search({ query, serviceId?,
+  sinceMinutes?, limit?, drainId? })` and
+  `LogSearchInput` / `LogSearchResult` / `LogSearchLine`
+  types. CLI: `ninedeploy logs search <query>
+  [--service <id>] [--since 15m|2h|1d]
+  [--limit <N>] [--drain <id>] [--json]`. The CLI
+  parses `--since` shorthand (`15m`, `2h`, `1d`,
+  `30s`) and prints each line as
+  `<iso-ts> [<service>] <line>` so the operator can
+  read the output as a stream; `--json` switches to
+  the raw `LogSearchResult` shape for piping into
+  `jq` / `grep` / etc.
+
 ### Fixed
 
 - **`SettingsTabPrivilege` test timeouts under parallel load (unrelated

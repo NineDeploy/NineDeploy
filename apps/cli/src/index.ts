@@ -31,6 +31,7 @@ import {
   notificationsTest as _notifTest,
 } from './commands/notifications.js';
 import { databasePgbouncer } from './commands/pgbouncer.js';
+import { logsSearch } from './commands/logs.js';
 import {
   pluginsList, pluginsMarketplace, pluginsInstall,
   pluginsEnable, pluginsDisable, pluginsUninstall,
@@ -580,6 +581,21 @@ serverCmd.command('logs')
   .option('-n, --lines <lines>', 'Number of lines to show', '50')
   .option('-c, --name <name>', 'Container name', 'ninedeploy')
   .action((opts: { lines?: string; name?: string }) => serverLogsAction(opts));
+
+// ── Cluster log search (G-16) ─────────────────────────────────────────────
+const logsCmd = program.command('logs').description('Search the configured log drain (Loki)');
+logsCmd
+  .command('search <query>')
+  .description('Full-text search across the configured Loki drain')
+  .option('--service <id>', 'Restrict to one service id')
+  .option('--since <window>', 'How far back to search (e.g. 15m, 2h, 1d)', '15m')
+  .option('--limit <n>', 'Max lines to return (default 200, max 1000)')
+  .option('--drain <id>', 'Query a specific drain (default: first enabled Loki drain)')
+  .option('--json', 'Print raw JSON instead of the human-readable table')
+  .action(
+    (query: string, opts: { service?: string; since?: string; limit?: string; drain?: string; json?: boolean }) =>
+      logsSearch(getClient(), query, opts),
+  );
 
 // ── System export/import + deploy log streaming ────────────────────────────
 system.command('export [file]').description('Export the full system state as JSON').action((file?: string) => systemExport(file));
