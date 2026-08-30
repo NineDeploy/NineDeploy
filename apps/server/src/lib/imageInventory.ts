@@ -273,7 +273,7 @@ async function inUseImageIds(allIds: Set<string>): Promise<Set<string>> {
  * "850MB", "12kB") into bytes. Returns 0 on any unrecognised
  * format — the panel then sorts by `sizeBytes` 0 == unknown.
  */
-function parseHumanBytes(s: string): number {
+export function parseHumanBytes(s: string): number {
   const m = /^([\d.]+)\s*([KMGTP]?B)$/i.exec(s.trim());
   if (!m) return 0;
   const val = parseFloat(m[1]!);
@@ -282,7 +282,7 @@ function parseHumanBytes(s: string): number {
   return Math.round(val * (mult[unit] ?? 0));
 }
 
-function parseReclaimedBytes(output: string): number {
+export function parseReclaimedBytes(output: string): number {
   const m = /Total reclaimed space:\s*([\d.]+)\s*([KMGT]?B)/i.exec(output);
   if (!m) return 0;
   const val = parseFloat(m[1]!);
@@ -291,7 +291,7 @@ function parseReclaimedBytes(output: string): number {
   return Math.round(val * (mult[unit] ?? 0));
 }
 
-function formatBytes(bytes: number): string {
+export function formatBytes(bytes: number): string {
   if (!bytes) return '0B';
   const units = ['B', 'KB', 'MB', 'GB', 'TB'];
   let v = bytes;

@@ -50,7 +50,13 @@ vi.mock('../../src/lib/exec.js', () => ({
   }),
 }));
 
-import { listImages, pruneImages } from '../../src/lib/imageInventory.js';
+import {
+  formatBytes,
+  listImages,
+  parseHumanBytes,
+  parseReclaimedBytes,
+  pruneImages,
+} from '../../src/lib/imageInventory.js';
 
 beforeEach(() => {
   execState.byArgs.clear();
@@ -370,6 +376,63 @@ describe('formatBytes via listImages / pruneImages output', () => {
     const result = await pruneImages({ keepLast: 1, dryRun: true });
     // The dryRun output is `dryRun: would remove N images (X<unit>)`.
     expect(result.output).toMatch(/dryRun: would remove \d+ images \(\d/);
+  });
+});
+
+describe('parseHumanBytes', () => {
+  it.each([
+    ['0B', 0],
+    ['100B', 100],
+    ['1KB', 1024],
+    ['1.5KB', Math.round(1.5 * 1024)],
+    ['1MB', 1024 * 1024],
+    ['1.5MB', Math.round(1.5 * 1024 * 1024)],
+    ['1GB', 1024 * 1024 * 1024],
+    ['1.5GB', Math.round(1.5 * 1024 * 1024 * 1024)],
+    ['1TB', 1024 ** 4],
+    ['1.5TB', Math.round(1.5 * 1024 ** 4)],
+    ['1PB', 1024 ** 5],
+    ['1.5PB', Math.round(1.5 * 1024 ** 5)],
+    ['  1KB  ', 1024], // surrounding whitespace is trimmed
+  ])('parses %s', (input, expected) => {
+    expect(parseHumanBytes(input)).toBe(expected);
+  });
+
+  it('returns 0 for empty / unparseable input', () => {
+    expect(parseHumanBytes('')).toBe(0);
+    expect(parseHumanBytes('garbage')).toBe(0);
+  });
+});
+
+describe('parseReclaimedBytes', () => {
+  it.each([
+    ['Total reclaimed space: 12.0MB', 12 * 1024 * 1024],
+    ['Total reclaimed space: 1.5GB (something)', Math.round(1.5 * 1024 ** 3)],
+    ['Total reclaimed space: 1TB', 1024 ** 4],
+    ['Total reclaimed space: 0B', 0],
+  ])('parses %s', (input, expected) => {
+    expect(parseReclaimedBytes(input)).toBe(expected);
+  });
+
+  it('returns 0 when the summary line is missing', () => {
+    expect(parseReclaimedBytes('no summary here')).toBe(0);
+    expect(parseReclaimedBytes('')).toBe(0);
+  });
+});
+
+describe('formatBytes', () => {
+  it.each([
+    [0, '0B'],
+    [100, '100B'],
+    [1024, '1.0KB'],
+    [1024 * 1024, '1.0MB'],
+    [1024 * 1024 * 1024, '1.0GB'],
+    [1024 ** 4, '1.0TB'],
+    // Above 100 → no decimal.
+    [100 * 1024 ** 3, '100GB'],
+    [1500, '1.5KB'],
+  ])('formats %i as %s', (input, expected) => {
+    expect(formatBytes(input)).toBe(expected);
   });
 });
 
