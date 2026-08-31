@@ -110,8 +110,16 @@ export default function App() {
         <Route path="traefik" element={<Traefik />} />
         <Route path="services/:id" element={<ServiceDetail />} />
         <Route path="databases/:id" element={<DatabaseDetail />} />
+        {/*
+          The catch-all lives INSIDE the Layout so an unknown path
+          inside the authed area still shows the sidebar (the second
+          group is the default landing pad — see Layout.tsx) instead of
+          dropping the user onto a bare "Not found" page. Anything that
+          resolves before the authed parent (e.g. /login, /invite/:token)
+          still routes normally.
+        */}
+        <Route path="*" element={<NotFound />} />
       </Route>
-      <Route path="*" element={<NotFound />} />
     </Routes>
   );
 }

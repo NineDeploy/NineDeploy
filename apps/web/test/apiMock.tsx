@@ -285,3 +285,22 @@ export function createWorkspaceMock() {
     })),
   };
 }
+
+/** Mock module for `src/lib/mode.js`. The mode is parameterized per render
+ * so the menu smoke test can flip between Simple and Advanced for the
+ * `advancedOnly` items (Networks, Tunnels, Docker, Servers). The factory
+ * returns a stub; individual tests override `useExperienceMode` with
+ * `mockOf(...).mockReturnValue(...)` to flip the mode. */
+export function createModeMock() {
+  return {
+    ModeProvider: ({ children }: { children?: ReactNode }) => <>{children}</>,
+    ModeToggle: () => null,
+    useExperienceMode: vi.fn(() => ({
+      mode: 'simple' as 'simple' | 'advanced',
+      isAdvanced: false,
+      isSimple: true,
+      setMode: vi.fn(),
+      toggleMode: vi.fn(),
+    })),
+  };
+}
