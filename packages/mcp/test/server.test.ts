@@ -23,17 +23,26 @@ async function connected(client: NineDeployClient, options: { readOnly?: boolean
 const fake = () =>
   ({
     services: { list: vi.fn(async () => [{ id: 1, name: 'api', status: 'running' }]), restart: vi.fn(async () => ({ ok: true })) },
-    deploys: { trigger: vi.fn(async () => ({ deploymentId: 42 })) },
+    deploys: {
+      trigger: vi.fn(async () => ({ deploymentId: 42 })),
+      cancel: vi.fn(async () => ({ ok: true, status: 'cancelled' })),
+      remove: vi.fn(async () => ({ ok: true, id: 42 })),
+      queue: vi.fn(async () => ({ items: [], count: 0, byStatus: { queued: 0, building: 0, deploying: 0 } })),
+    },
   }) as unknown as NineDeployClient;
 
 describe('buildServer', () => {
   it('lists all tools with schemas', async () => {
     const mcp = await connected(fake());
     const tools = await mcp.listTools();
-    expect(tools.tools).toHaveLength(36);
+    expect(tools.tools).toHaveLength(38);
     expect(tools.tools.map((t) => t.name)).toContain('deploy_service');
     // An agent that can start a build must be able to stop one.
     expect(tools.tools.map((t) => t.name)).toContain('cancel_deploy');
+    // An agent that lists builds should also be able to clean them up.
+    expect(tools.tools.map((t) => t.name)).toContain('remove_deploy');
+    // Global queue view mirrors the web /deploys page.
+    expect(tools.tools.map((t) => t.name)).toContain('list_queue');
     expect(tools.tools.map((t) => t.name)).toContain('list_services');
     expect(tools.tools.map((t) => t.name)).toContain('list_workspaces');
     expect(tools.tools.map((t) => t.name)).toContain('list_container_files');

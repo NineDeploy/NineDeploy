@@ -148,6 +148,17 @@ export const TOOLS: ToolDef[] = [
     },
   },
   {
+    name: 'remove_deploy',
+    description:
+      'Remove a finished deployment from history, with its build log. Refused for an in-flight deployment (cancel it first) and for the one currently serving traffic — that row carries the digest a rollback re-deploys.',
+    input: z.object({ serviceId: z.number().int().positive(), deploymentId: z.number().int().positive() }),
+    requiredScopes: ['nd://scope/write/deploys'],
+    handler: (c, input) => {
+      const { serviceId, deploymentId } = input as { serviceId: number; deploymentId: number };
+      return c.deploys.remove(serviceId, deploymentId);
+    },
+  },
+  {
     name: 'rollback_deploy',
     description: 'Roll a service back to a previous deployment (by deployment id).',
     input: z.object({ serviceId: z.number().int().positive(), deploymentId: z.number().int().positive() }),
@@ -156,6 +167,14 @@ export const TOOLS: ToolDef[] = [
       const { serviceId, deploymentId } = input as { serviceId: number; deploymentId: number };
       return c.deploys.rollback(serviceId, deploymentId);
     },
+  },
+  {
+    name: 'list_queue',
+    description:
+      'List every in-flight (queued / building / deploying) deployment across every service the caller can see. Mirrors the web panel\'s /deploys page so an agent can audit the build pipeline without opening a browser.',
+    input: z.object({}),
+    requiredScopes: ['nd://scope/read/deploys'],
+    handler: (c) => c.deploys.queue(),
   },
   // ── Plugins & Microkernel Extensibility ────────────────────────────────
   {

@@ -18,6 +18,8 @@ function fakeClient(): NineDeployClient {
       trigger: vi.fn(async () => 'TRIGGER'),
       rollback: vi.fn(async () => 'ROLLBACK'),
       cancel: vi.fn(async () => 'CANCEL'),
+      remove: vi.fn(async () => 'REMOVED'),
+      queue: vi.fn(async () => 'QUEUE'),
     },
     domains: { all: vi.fn(async () => 'DOMAINS') },
     databases: { list: vi.fn(async () => 'DBS') },
@@ -70,9 +72,9 @@ const byName = (name: string) => {
 };
 
 describe('MCP tools', () => {
-  it('exposes 35 unique tools with descriptions', () => {
-    expect(TOOLS).toHaveLength(36);
-    expect(new Set(TOOLS.map((t) => t.name)).size).toBe(36);
+  it('exposes 37 unique tools with descriptions', () => {
+    expect(TOOLS).toHaveLength(38);
+    expect(new Set(TOOLS.map((t) => t.name)).size).toBe(38);
     for (const t of TOOLS) expect(t.description.length).toBeGreaterThan(10);
   });
 
@@ -108,6 +110,20 @@ describe('MCP tools', () => {
     const c = fakeClient();
     await byName('cancel_deploy').handler(c, { serviceId: 4, deploymentId: 9 });
     expect(c.deploys.cancel).toHaveBeenCalledWith(4, 9);
+  });
+
+  it('remove_deploy forwards serviceId+deploymentId and requires a write scope', async () => {
+    const c = fakeClient();
+    await byName('remove_deploy').handler(c, { serviceId: 4, deploymentId: 9 });
+    expect(c.deploys.remove).toHaveBeenCalledWith(4, 9);
+    expect(byName('remove_deploy').requiredScopes).toEqual(['nd://scope/write/deploys']);
+  });
+
+  it('list_queue returns the global in-flight view and requires a read scope', async () => {
+    const c = fakeClient();
+    expect(await byName('list_queue').handler(c, {})).toBe('QUEUE');
+    expect(c.deploys.queue).toHaveBeenCalled();
+    expect(byName('list_queue').requiredScopes).toEqual(['nd://scope/read/deploys']);
   });
 
   it('activity_log forwards the optional entity filter', async () => {
