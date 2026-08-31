@@ -1,4 +1,4 @@
-export const VERSION = '0.4.1';
+export const VERSION = '0.4.2';
 
 export interface ChangelogEntry {
   version: string;
@@ -8,6 +8,25 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.4.2',
+    date: '2026-08-31',
+    title: 'Plugin Audit Fixes & Deploy Queue Management',
+    changes: [
+      'Post-0.4.1 plugin audit fixes: NotificationsDispatcherPlugin ships a command:palette menuItem (/settings?section=notifications) — it previously had no menu entry at all, so its only path was the hidden /settings?section=plugins URL',
+      'TelemetryStreamerPlugin actually POSTs to export_endpoint now — the field was exposed and described as push-based but silently ignored; wires a real fetch() with HMAC-SHA256 signing (X-NineDeploy-Signature: sha256=<hex>) and a per-request AbortSignal timeout, failures land on telemetry.export.error so the audit pipeline picks them up',
+      'TelemetryStreamerPlugin wildcard filter drops telemetry.recorded (recursion guard) and telemetry.export.error — a non-2xx response used to re-emit itself as a new record, re-fetch, re-fail and OOM the process; plugin.* / config.* events are dropped from audit data too',
+      'Layout sidebar no longer leaks command:palette items into the Extensions group — menus are filtered to sidebar:secondary so Build Cache / Webhook Out / Domain Presets / Sticky IP appear only in the Cmd+K palette, and findGroup picks the longest prefix match so plugin routes like /settings/extensions/<id> stop being swallowed by the System group',
+      'ConfigPresetsPlugin menuItem repointed from /settings/presets (no such route) to /settings?section=config, where the preset.list / preset.<id>.values rows actually render',
+      'plugin-sdk MenuSlot union extended with database:tabs — the slot was in the kernel runtime type but missing from the SDK, so an external plugin declaring a database-tab menuItem compiled against the SDK and was rejected by the kernel at runtime',
+      'Global deploy queue page at /deploys: every in-flight (queued / building / deploying) deploy the caller can see, with per-service position chips (#3 of 5), one-click cancel + remove, 3s auto-refresh and a DeployQueueBadge in the top bar; member sessions see only services they can admin',
+      'Multiple queued deploys per service (50-row cap) — the old trigger dedup short-circuited on ANY queued/building match, so a second services deploy click during a long build was silently dropped; split into in-flight (still wins) + per-service queued stack running in enqueue order',
+      'Cancel + remove routes on services.deploys — queued deploys stop immediately, in-flight ones stop at the next pipeline step boundary with the previous version still serving; remove refuses in-flight rows (cancel first) and the running row (it carries the digest a rollback re-deploys)',
+      'CLI ninedeploy deploys queue and MCP list_queue + remove_deploy tools ship the same queue surface with the matching requiredScopes (read lists, write removes)',
+      'SDK ↔ server queue end-to-end test through Fastify app.inject() pins the response shape, so a renamed key or removed field between the SDK schema and the route JSON surfaces in CI',
+      'Release pipeline hardened: strict semver tag validation (v0.4.0-foo / v0.4.0+build.1 used to build a real image no install path can reach) and multi-arch (amd64 + arm64) release images so ARM hosts stop hitting "no matching manifest" on docker pull',
+    ],
+  },
   {
     version: '0.4.1',
     date: '2026-08-31',
