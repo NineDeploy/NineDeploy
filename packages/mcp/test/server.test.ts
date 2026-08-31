@@ -114,10 +114,56 @@ describe('main (entrypoint wiring)', () => {
     const error = vi.fn();
     const exit = vi.fn();
     const connect = vi.fn(async () => {});
-    await main({ NINEDEPLOY_TOKEN: 'tok', NINEDEPLOY_URL: 'http://x' }, { error, exit, connect });
-    expect(connect).toHaveBeenCalledOnce();
-    expect(exit).not.toHaveBeenCalled();
-    expect(error).not.toHaveBeenCalled();
+    // Stub the global fetch so the token introspection at startup
+    // resolves cleanly — the test only cares that `main` wires
+    // through to `connect` and that no fatal error is logged.
+    // A real fetch to `http://x` would fail on Node's DNS resolver
+    // and surface as a "token introspection failed" warning, which
+    // is intentional behaviour (the lib falls back to no scope
+    // filter) but unrelated to what this test exercises.
+    const fakeFetch = vi.fn(async () =>
+      new Response(JSON.stringify({ scopes: [] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    vi.stubGlobal('fetch', fakeFetch as unknown as typeof fetch);
+    try {
+      await main({ NINEDEPLOY_TOKEN: 'tok', NINEDEPLOY_URL: 'http://x' }, { error, exit, connect });
+      expect(connect).toHaveBeenCalledOnce();
+      expect(exit).not.toHaveBeenCalled();
+      expect(error).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('falls back to no scope filter when token introspection throws (logs once, keeps going)', async () => {
+    const error = vi.fn();
+    const exit = vi.fn();
+    const connect = vi.fn(async () => {});
+    // The fetch rejects outright (network blip, DNS failure, etc).
+    // The lib catches and logs the failure, then continues without
+    // a scope filter so a startup-time introspection failure does
+    // NOT silently drop every tool.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('ECONNREFUSED');
+      }) as unknown as typeof fetch,
+    );
+    try {
+      await main({ NINEDEPLOY_TOKEN: 'tok', NINEDEPLOY_URL: 'http://x' }, { error, exit, connect });
+      expect(connect).toHaveBeenCalledOnce();
+      expect(exit).not.toHaveBeenCalled();
+      // The lib logs the introspection failure exactly once via
+      // `io.error`. The message acknowledges the fallback.
+      expect(error).toHaveBeenCalledWith(
+        expect.stringMatching(/token introspection failed.*continuing without scope filter/),
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
 
