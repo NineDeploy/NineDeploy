@@ -67,14 +67,17 @@ jobs:
           # tag in the default branch case and buildx
           # rejects it.
           images: ghcr.io/ninedeploy/ninedeploy
-          # Empty `branches` list tells meta-action to
-          # ignore branch references entirely. The default
-          # is "all branches", which is what produces the
-          # `:edge` slug on every push (and trips the
-          # uppercase-repo buildx failure). Tag push only
-          # needs the tag reference, which is still
-          # processed by the `tags:` list below.
-          branches: []
+          # Branch references are skipped by the trigger
+          # itself (`on: push: tags: ['v*']`) so no branch
+          # slug is ever produced. The previous attempt used
+          # `branches: []` here to mute the meta-action's
+          # default `:edge` tag, but GitHub's workflow YAML
+          # parser rejects an inline empty sequence with
+          # `A sequence was not expected` at parse time
+          # and the whole job fails before metadata-action
+          # ever runs. The trigger is the only thing that
+          # has to suppress branch refs; no `branches:`
+          # key is needed.
           tags: |
             # Two slugs only — the canonical `:v0.4.0` and
             # the unprefixed `:latest` that install.sh pulls
