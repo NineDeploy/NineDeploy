@@ -147,6 +147,49 @@ describe('deploys routes', () => {
     expect(res.json()).toEqual({ deploymentId: 42, alreadyInProgress: true });
   });
 
+  it('queues a second deploy when only queued rows exist for the service', async () => {
+    // Once the per-service dedup dropped the queued/building match and
+    // was split into "in-flight only", stacking multiple queued deploys
+    // became the supported behaviour. This is what makes the per-service
+    // queue badge in the panel meaningful.
+    const app = await buildTestApp({
+      db: createFakeDb({
+        // loadServiceForUser: services.findFirst must return the row
+        // (anything else → 404). The in-flight check looks for
+        // deployments in [building, deploying] and should return nothing.
+        findFirst: {
+          services: svcRow({ id: 1 }),
+          deployments: undefined,
+        },
+        findMany: {
+          deployments: [],
+        },
+        insert: { deployments: [depRow({ id: 99, status: 'queued' })] },
+      }),
+    });
+    await app.register(deploysRoutes, { prefix: '/services' });
+    const res = await app.inject({ method: 'POST', url: '/services/1/deploys', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ deploymentId: 99 });
+  });
+
+  it('rejects a new deploy when the per-service queued cap is reached', async () => {
+    // 50 is the documented cap. The fake does not apply the route's
+    // 50-row filter, so we hand back exactly 50 queued rows and expect
+    // the route to refuse the next one.
+    const queued = Array.from({ length: 50 }, (_, i) => ({ id: i + 1 }));
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { services: svcRow({ id: 1 }) },
+        findMany: { deployments: queued },
+      }),
+    });
+    await app.register(deploysRoutes, { prefix: '/services' });
+    const res = await app.inject({ method: 'POST', url: '/services/1/deploys', headers: asUser() });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.message).toMatch(/max 50/i);
+  });
+
   it('returns 404 when deploying a missing service', async () => {
     const app = await buildTestApp({ db: createFakeDb() });
     await app.register(deploysRoutes, { prefix: '/services' });

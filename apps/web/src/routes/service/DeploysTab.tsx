@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Activity, GitCompare, RotateCcw, Trash2, X } from 'lucide-react';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { Deployment } from '@ninedeploy/sdk';
 import { api } from '../../lib/api.js';
 import { useToast } from '../../components/Toast.js';
@@ -34,6 +34,22 @@ export function DeploysTab({
   const { toast } = useToast();
   const activeDeployRow = deploys.find((d) => d.id === activeId) ?? null;
   const inFlight = !!activeDeployRow && IN_FLIGHT.includes(activeDeployRow.status);
+
+  // Per-row queue position so the per-service tab carries the same
+  // affordance the global /deploys page exposes. Oldest queued id
+  // becomes position #1, the next one #2, etc. The position is
+  // computed from the local list because the server's per-service
+  // list is already id-descending and bounded to 50 rows, which is
+  // wider than the server-side 50-row cap so the two views agree.
+  const positionById = useMemo(() => {
+    // Reverse-iterate to claim positions in claim order (oldest queued
+    // first). The list is id-desc so reverse-id-asc.
+    const queued = deploys.filter((d) => d.status === 'queued');
+    const sortedAsc = [...queued].sort((a, b) => a.id - b.id);
+    const map = new Map<number, { position: number; total: number }>();
+    sortedAsc.forEach((d, i) => map.set(d.id, { position: i + 1, total: sortedAsc.length }));
+    return map;
+  }, [deploys]);
 
   const rollback = useMutation({
     mutationFn: (depId: number) => api.deploys.rollback(serviceId, depId),
@@ -83,6 +99,7 @@ export function DeploysTab({
         onCancel={(depId) => cancelDeploy.mutate(depId)}
         onRemove={(depId) => removeDeploy.mutate(depId)}
         loading={loading}
+        positionById={positionById}
       />
 
       <Card>
@@ -185,6 +202,7 @@ function DeploymentsCard({
   onCancel,
   onRemove,
   loading,
+  positionById,
 }: {
   deploys: Deployment[];
   activeId: number | null;
@@ -193,6 +211,12 @@ function DeploymentsCard({
   onCancel?: (deploymentId: number) => void;
   onRemove?: (deploymentId: number) => void;
   loading: boolean;
+  /**
+   * Map from queued deployment id to its position + total in the
+   * per-service queue. Computed by `DeploysTab` once and threaded
+   * down so the row component stays pure.
+   */
+  positionById: Map<number, { position: number; total: number }>;
 }) {
   return (
     <Card>
@@ -231,6 +255,14 @@ function DeploymentsCard({
                         <span className="font-mono text-xs text-slate-500">#{d.id}</span>
                         <span className="font-mono text-xs text-slate-300">{d.commitSha?.slice(0, 7) ?? '—'}</span>
                         <StatusBadge status={d.status} />
+                        {d.status === 'queued' && positionById.get(d.id) && (
+                          <span
+                            className="rounded bg-amber-500/15 px-1.5 py-0.5 font-mono text-[10px] font-medium text-amber-300 ring-1 ring-inset ring-amber-500/20"
+                            title={`Position ${positionById.get(d.id)!.position} of ${positionById.get(d.id)!.total} queued for this service`}
+                          >
+                            #{positionById.get(d.id)!.position} of {positionById.get(d.id)!.total}
+                          </span>
+                        )}
                       </span>
                       <span className="mt-0.5 block truncate text-[11px] text-slate-500">
                         {d.message ? d.message : <span className="italic">no commit message</span>}

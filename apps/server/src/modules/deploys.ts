@@ -34,17 +34,32 @@ export const deploysRoutes: FastifyPluginAsync = async (app) => {
     // Definitions created before this rule (or by an admin) must not become a
     // back door: deploying them is what actually executes on the host.
     await assertMayDeployStoredService(app.db, req.user!, svc);
-    // In-progress dedup: a service with a queued/building deploy gets that
-    // deployment returned instead of another queue entry (button-hammering
-    // must not flood unbounded queued rows for one service).
-    const existing = await app.db.query.deployments.findFirst({
+    // In-progress dedup: a service that is CURRENTLY building or deploying
+    // gets that deployment returned (the worker only claims a queued
+    // row once the in-flight one finishes, so a brand-new trigger
+    // would just sit behind it). Queued rows, on the other hand, ARE
+    // the queue: the operator expects to be able to stack more than
+    // one and have them run in enqueue order. The 50-row cap stops
+    // unbounded growth from a runaway client without needing to fail
+    // a legitimate second-click.
+    const MAX_QUEUED_PER_SERVICE = 50;
+    const inflight = await app.db.query.deployments.findFirst({
       where: and(
         eq(deployments.serviceId, id),
-        inArray(deployments.status, ['queued', 'building']),
+        inArray(deployments.status, ['building', 'deploying']),
       ),
       orderBy: desc(deployments.id),
     });
-    if (existing) return { deploymentId: existing.id, alreadyInProgress: true };
+    if (inflight) return { deploymentId: inflight.id, alreadyInProgress: true };
+    const queuedRows = await app.db.query.deployments.findMany({
+      where: and(eq(deployments.serviceId, id), eq(deployments.status, 'queued')),
+      columns: { id: true },
+    });
+    if (queuedRows.length >= MAX_QUEUED_PER_SERVICE) {
+      throw badRequest(
+        `Service already has ${queuedRows.length} queued deploys (max ${MAX_QUEUED_PER_SERVICE}). Cancel one first.`,
+      );
+    }
     void audit(app.db, req.user!.id, 'deploy.trigger', svc.name);
     const [dep] = await app.db
       .insert(deployments)

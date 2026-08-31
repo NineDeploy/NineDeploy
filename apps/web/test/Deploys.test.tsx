@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { Deploys } from '../src/routes/Deploys.js';
 import { api } from '../src/lib/api.js';
 import { useAuth } from '../src/lib/auth.js';
@@ -38,6 +38,7 @@ vi.mock('../src/components/Toast.js', async () => {
     ToastProvider: ({ children }: { children?: React.ReactNode }) => React.createElement(React.Fragment, null, children),
   };
 });
+void useToast; // type-only reference kept for symmetry with sibling tests; not used here.
 
 function queueResponse(items: Array<Partial<{
   id: number;
