@@ -67,7 +67,7 @@ function settingsDb(over: Record<string, string> = {}) {
   });
 }
 
-function callUrl() {
+function _callUrl() {
   const [url] = fetchMock.mock.calls[0]!;
   return url as string;
 }

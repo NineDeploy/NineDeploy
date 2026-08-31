@@ -180,8 +180,7 @@ describe('renderTemplate', () => {
   it('throws for an unknown template name', async () => {
     const db = makeDb();
     await expect(
-      // biome-ignore lint/suspicious/noExplicitAny: testing defensive branch
-      renderTemplate(db, 'unknown' as any, {}),
+      renderTemplate(db, 'unknown' as unknown as Parameters<typeof renderTemplate>[1], {}),
     ).rejects.toThrow(/Unknown email template/);
   });
 
@@ -229,10 +228,10 @@ describe('renderTemplate — interpolation', () => {
   it('honors \\{{ escape so a literal {{ can be written', async () => {
     // Build the input via String.raw to avoid the TS source-escape
     // round-trip; the template is literally `literal \{{ x }}`.
-    const escape = String.raw`\{{`;
+    const esc = String.raw`\{{`;
     state.overrides.set(42, {
-      subject: `literal ${escape} x }}`,
-      text: `${escape} not interpolated }}: {{hostname}}`,
+      subject: `literal ${esc} x }}`,
+      text: `${esc} not interpolated }}: {{hostname}}`,
     });
     const db = makeDb();
     const result = await renderTemplate(

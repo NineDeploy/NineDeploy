@@ -554,7 +554,7 @@ describe('POST-style OIDC callback (Sprint 6 PR #30)', () => {
   }
 
   function makeRsaKeyPair() {
-    const { generateKeyPairSync, createSign } = require('node:crypto') as typeof import('node:crypto');
+    const { generateKeyPairSync } = require('node:crypto') as typeof import('node:crypto');
     const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
     // Export the public key in JWK form so the JWKS endpoint can
     // ship it directly without an extra conversion.
@@ -960,7 +960,7 @@ describe('POST /v1/sso/:name/saml-callback', () => {
     return Buffer.from(s, 'utf8').toString('base64');
   }
 
-  function wiredDb(email: string, meta: string) {
+  function wiredDb(email: string, _meta: string) {
     const insert = vi.fn(async () => undefined);
     const update = vi.fn(async () => undefined);
     const ssoRows: Array<Record<string, unknown>> = [];

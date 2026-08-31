@@ -45,11 +45,9 @@ const lib = vi.hoisted(() => ({
 }));
 
 vi.mock('../../src/lib/pgbouncer.js', async () => {
-  const actual =
-    // biome-ignore lint/suspicious/noExplicitAny: dynamic re-export shim
-    await vi.importActual<any>('../../src/lib/pgbouncer.js');
+  const actual = await vi.importActual<unknown>('../../src/lib/pgbouncer.js');
   return {
-    ...actual,
+    ...(actual as Record<string, unknown>),
     pgbouncerStatusFor: vi.fn(async () => lib.status),
     enablePgbouncer: vi.fn(async () => {
       lib.enableCalls++;

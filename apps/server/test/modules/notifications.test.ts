@@ -69,7 +69,7 @@ const logRow = (over: Partial<{ id: number; channelId: number; event: string; en
 
 async function buildApp(
   db: ReturnType<typeof createFakeDb>,
-  userOpts: Parameters<typeof asUser>[0] = { isOperator: true },
+  _userOpts: Parameters<typeof asUser>[0] = { isOperator: true },
 ) {
   const app = await buildTestApp({ db, logger: false });
   await app.register(notificationRoutes);

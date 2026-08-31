@@ -10,7 +10,6 @@
  * daemon or S3 bucket.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { readFileSync } from 'node:fs';
 import { backupRoutes, databaseBackupRoutes } from '../../src/modules/backups.js';
 import { asUser, buildTestApp, createFakeDb } from '../helpers.js';
 

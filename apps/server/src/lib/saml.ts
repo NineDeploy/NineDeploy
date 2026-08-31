@@ -46,7 +46,7 @@ function findTag(block: string, tag: string): string | null {
   const openRe = new RegExp(`<${tag}\\b[^>]*>`, 'g');
   const first = openRe.exec(block);
   if (first === null) return null;
-  let m: RegExpExecArray | null = first;
+  const m: RegExpExecArray | null = first;
   while (m) {
     const start = m.index;
     const openTag = m[0];

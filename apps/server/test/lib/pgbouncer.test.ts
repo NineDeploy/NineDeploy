@@ -153,7 +153,6 @@ const dbState = vi.hoisted(() => ({
 
 vi.mock('@ninedeploy/db', () => ({
   databases: { _: { name: 'databases' } },
-  // biome-ignore lint/suspicious/noExplicitAny: fake — tests cast through createFakeDb
 }));
 
 const db = createFakeDb({

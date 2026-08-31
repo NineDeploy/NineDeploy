@@ -36,11 +36,9 @@ const lib = vi.hoisted(() => ({
 }));
 
 vi.mock('../../src/lib/emailTemplates.js', async () => {
-  const actual =
-    // biome-ignore lint/suspicious/noExplicitAny: dynamic re-export shim
-    await vi.importActual<any>('../../src/lib/emailTemplates.js');
+  const actual = await vi.importActual<unknown>('../../src/lib/emailTemplates.js');
   return {
-    ...actual,
+    ...(actual as Record<string, unknown>),
     renderTemplate: vi.fn(async (_db: unknown, name: string, vars: Record<string, unknown>) => {
       lib.renderCalls.push({ name, vars });
       if (lib.override) {

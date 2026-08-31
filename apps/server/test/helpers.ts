@@ -169,7 +169,7 @@ export function createFakeDb(opts: FakeDbOpts = {}): DB {
       // so the resolver can read bound values from its queryChunks.
       // The select callback is called lazily on each `await` (or
       // `.then`) — by then the predicate is set.
-      let whereArgs: unknown = undefined;
+      let whereArgs: unknown;
       const resolveRows = (): Row[] => {
         if (isCount) {
           const countRows = opts.counts?.[name] ?? opts.counts?.[snake] ?? opts.counts?.[camel];
@@ -254,7 +254,7 @@ export function createFakeDb(opts: FakeDbOpts = {}): DB {
         // `and(...)` chain. We capture the predicate the caller
         // passes so the resolver can read the bound id from its
         // `queryChunks`.
-        let predicate: unknown = undefined;
+        let predicate: unknown;
         return {
           where: (p: unknown) => {
             predicate = p;
