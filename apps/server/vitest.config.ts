@@ -4,6 +4,17 @@ export default defineConfig({
   test: {
     environment: 'node',
     fileParallelism: false,
+    // Server tests boot a real Fastify kernel, apply Drizzle
+    // migrations against an in-memory SQLite (PGlite) and wire
+    // the full plugin graph. CI runners are slower than the
+    // developer's box and the first test in a file can blow
+    // past the 5s default. 30s is comfortable for the slowest
+    // individual case in the suite (e.g. the OIDC admin test,
+    // which assembles a JWK pair + JWKS + Fastify boot before
+    // the assertion runs) and still tight enough to catch a
+    // genuine hang.
+    testTimeout: 30000,
+    hookTimeout: 30000,
     include: ['test/**/*.test.ts'],
     exclude: [
       'test/integration/**',
