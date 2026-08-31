@@ -51,6 +51,11 @@ const h = vi.hoisted(() => {
       return this;
     }
 
+    requiredOption(flags: string, opts?: unknown) {
+      this.opts = { flags, opts, required: true };
+      return this;
+    }
+
     command(name: string) {
       const child = new FakeCommand();
       child.cmdName = name;
@@ -288,7 +293,20 @@ vi.mock('../src/commands/manage.js', () => ({
   sessionsRevoke: h.sessionsRevoke,
   volumesRemove: h.volumesRemove,
 }));
-vi.mock('../src/lib/format.js', () => ({ banner: h.banner }));
+vi.mock('../src/lib/format.js', async () => {
+  // Preserve the real implementation for every helper the
+  // sibling unit tests (certificates, communityTemplates)
+  // expect to call through to. Only `banner` is overridden
+  // here — the smoke test asserts on it. `vi.importActual`
+  // inside a hoisted `vi.mock` factory resolves to the
+  // unmocked module, not the previously-installed per-worker
+  // mock, so running this file alongside its siblings no
+  // longer steals the format.js surface from them.
+  const actual = await vi.importActual<typeof import('../src/lib/format.js')>(
+    '../src/lib/format.js',
+  );
+  return { ...actual, banner: h.banner };
+});
 
 // ── helpers ─────────────────────────────────────────────────────────────────
 
@@ -342,24 +360,30 @@ describe('program registration', () => {
     expect(root.children.map((c) => c.cmdName)).toEqual([
       'init', 'setup', 'login', 'logout', 'whoami', 'config',
       'services', 'databases', 'templates', 'deploys', 'token', 'system',
-      'env', 'domains', 'config-preset', 'metrics', 'build-cache', 'branding', 'volumes', 'networks', 'sessions', 'backups', 'alerts', 'users',
-      'reset-link <idOrEmail>', 'activity', 'plugins', 'config-center', 'workspaces', 'demo', 'server', 'doctor',
-      'sources', 'deploy', 'webhooks', 'firewall', 'manifest', 'egress', 'sso',
+      'env', 'domains', 'config-preset', 'metrics', 'build-cache', 'branding',
+      'egress', 'sso',
+      'volumes', 'networks', 'sessions', 'backups', 'alerts',
+      'notifications', 'users',
+      'reset-link <idOrEmail>', 'activity', 'plugins', 'config-center', 'workspaces',
+      'images', 'demo', 'server',
+      'logs', 'email-templates', 'certificates',
+      'doctor',
+      'sources', 'deploy', 'webhooks', 'firewall', 'manifest',
     ]);
     expect(findCommand('server').children).toHaveLength(4);
     expect(findCommand('services').children).toHaveLength(13);
-    expect(findCommand('databases').children).toHaveLength(2);
-    expect(findCommand('templates').children).toHaveLength(3);
+    expect(findCommand('databases').children).toHaveLength(3);
+    expect(findCommand('templates').children).toHaveLength(4);
     expect(findCommand('deploys').children).toHaveLength(5);
     expect(findCommand('token').children).toHaveLength(2);
     expect(findCommand('system').children).toHaveLength(7);
     expect(findCommand('workspaces').children).toHaveLength(4);
     expect(findCommand('env').children).toHaveLength(3);
-    expect(findCommand('domains').children).toHaveLength(4);
+    expect(findCommand('domains').children).toHaveLength(8);
     expect(findCommand('volumes').children).toHaveLength(2);
-    expect(findCommand('backups').children).toHaveLength(3);
+    expect(findCommand('backups').children).toHaveLength(5);
     expect(findCommand('alerts').children).toHaveLength(3);
-    expect(findCommand('plugins').children).toHaveLength(8);
+    expect(findCommand('plugins').children).toHaveLength(9);
     expect(findCommand('config-center').children).toHaveLength(4);
     expect(findCommand('demo').children).toHaveLength(1);
     expect(findCommand('firewall').children).toHaveLength(7);
@@ -370,7 +394,7 @@ describe('program registration', () => {
     expect(findCommand('branding').children).toHaveLength(2);
     expect(findCommand('egress').children).toHaveLength(3);
     expect(findCommand('sso').children).toHaveLength(3);
-    expect(h.FakeCommand.instances).toHaveLength(151);
+    expect(h.FakeCommand.instances).toHaveLength(185);
     // sanity: every new command we added has at least the subcommands it owns
     expect(findCommand('sources').children.length).toBeGreaterThanOrEqual(6);
     expect(findCommand('deploy').children.length).toBeGreaterThanOrEqual(1);

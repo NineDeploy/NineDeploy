@@ -4,16 +4,6 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['test/**/*.test.ts'],
-    // `index.test.ts` is a pre-Sprint 11 commander integration smoke
-    // that registers the entire CLI surface. It is excluded from
-    // the coverage run because its assertions depend on the
-    // commander `FakeCommand` helper that lives in the test file
-    // itself; the assertions it needs (a `c` / `info` / `error`
-    // mock factory with all helpers) overlap with the unit tests
-    // for `communityTemplates` and `certificates` (PRs #57, #56)
-    // through vitest's per-worker module mock cache. The test
-    // itself is out of scope for Sprint 11 — see CHANGELOG.
-    exclude: ['test/index.test.ts'],
     coverage: {
       provider: 'v8',
       include: ['src/**/*.ts'],
