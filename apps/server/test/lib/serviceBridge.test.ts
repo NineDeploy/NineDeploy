@@ -47,7 +47,10 @@ afterEach(() => {
 });
 
 const HAS_ND_SVC = 'nd-svc-foo\n';
-const TRAEFIK_WITH_ND_SVC_FOO = JSON.stringify({ nd_svc_foo: {} });
+// `docker network create nd-svc-foo` preserves the hyphenated name in
+// `inspect` output (`{"nd-svc-foo": ...}`), so the lib's literal-string
+// search matches correctly and the operation is idempotent.
+const TRAEFIK_WITH_ND_SVC_FOO = JSON.stringify({ 'nd-svc-foo': {} });
 const TRAEFIK_NO_BRIDGE = JSON.stringify({});
 
 describe('serviceBridgeName', () => {
@@ -76,20 +79,18 @@ describe('ensureServiceBridge', () => {
     ).toBeDefined();
   });
 
-  it('attaches Traefik when the bridge exists but Traefik is not on it', async () => {
-    // The current implementation matches the bridge name with
-    // a literal string search (`"nd-svc-foo"`); docker's
-    // `inspect` output uses the underscore form (`nd_svc_foo`).
-    // The two never match, so a no-op is unreachable in
-    // practice — this test pins the current behaviour.
+  it('is a no-op when the bridge exists and Traefik is already on it', async () => {
+    // Idempotent path: docker `inspect` output preserves the
+    // hyphenated bridge name (`"nd-svc-foo"`), so the lib's
+    // literal-string search correctly detects the existing
+    // membership and skips the re-attach.
     execState.byArgs.set('docker network ls --filter name=^nd-svc-foo$ --format {{.Name}}', { stdout: HAS_ND_SVC });
     execState.byArgs.set('docker inspect nd-traefik --format {{json .NetworkSettings.Networks}}', {
       stdout: TRAEFIK_WITH_ND_SVC_FOO,
     });
-    await ensureServiceBridge('foo', vi.fn());
-    // The bridge is NOT re-created (the network ls already
-    // includes the name), but Traefik IS re-attached because
-    // the literal string search misses the underscored key.
+    const log = vi.fn();
+    const name = await ensureServiceBridge('foo', log);
+    expect(name).toBe('nd-svc-foo');
     expect(
       execState.runCalls.find((c) => c.args[0] === 'network' && c.args[1] === 'create'),
     ).toBeUndefined();
@@ -97,7 +98,7 @@ describe('ensureServiceBridge', () => {
       execState.runCalls.find(
         (c) => c.args[0] === 'network' && c.args[1] === 'connect' && c.args[2] === 'nd-svc-foo',
       ),
-    ).toBeDefined();
+    ).toBeUndefined();
   });
 
   it('attaches Traefik but does not re-create when the bridge exists', async () => {
@@ -130,19 +131,19 @@ describe('ensureServiceBridge', () => {
 });
 
 describe('connectContainerToServiceBridge', () => {
-  it('attaches a missing container (literal string search misses underscored keys)', async () => {
-    // Same underscore-vs-dash issue as the lib: the literal
-    // search for "nd-svc-foo" never matches the JSON key
-    // "nd_svc_foo", so the lib always re-connects.
+  it('is a no-op when the container is already on the bridge', async () => {
+    // Idempotent path: docker `inspect` output preserves the
+    // hyphenated network name, so the literal-string search
+    // matches and the lib skips the re-attach.
     execState.byArgs.set('docker inspect svc-1 --format {{json .NetworkSettings.Networks}}', {
-      stdout: JSON.stringify({ nd_svc_foo: {} }),
+      stdout: JSON.stringify({ 'nd-svc-foo': {} }),
     });
     await connectContainerToServiceBridge('svc-1', 'foo', vi.fn());
     expect(
       execState.runCalls.find(
         (c) => c.args[0] === 'network' && c.args[1] === 'connect' && c.args[2] === 'nd-svc-foo',
       ),
-    ).toBeDefined();
+    ).toBeUndefined();
   });
 
   it('connects a missing container to the bridge', async () => {
@@ -179,13 +180,16 @@ describe('reapTraefikNetworks', () => {
       stdout: 'ndcmp-baz_default\n',
     });
     execState.byArgs.set('docker inspect nd-traefik --format {{json .NetworkSettings.Networks}}', {
-      stdout: JSON.stringify({ nd_svc_foo: {} }),
+      stdout: JSON.stringify({ 'nd-svc-foo': {} }),
     });
     await reapTraefikNetworks(vi.fn());
     const connects = execState.runCalls
       .filter((c) => c.args[0] === 'network' && c.args[1] === 'connect')
       .map((c) => c.args[2]);
+    // `nd-svc-foo` is already a member (idempotent skip); the
+    // other two bridges are missing and re-attached.
     expect(connects).toEqual(expect.arrayContaining(['nd-svc-bar', 'ndcmp-baz_default']));
+    expect(connects).not.toContain('nd-svc-foo');
   });
 
   it('tolerates a missing Traefik (inspect throws) and skips the connect', async () => {
@@ -214,18 +218,21 @@ describe('connectTraefikToComposeNetwork', () => {
     ).toBeDefined();
   });
 
-  it('always (re-)attaches Traefik (literal search misses underscored compose keys)', async () => {
-    // Same underscore-vs-dash issue: `ndcmp_foo_default` in
-    // JSON, `ndcmp-foo_default` in the lib's search string.
+  it('is a no-op when Traefik is already on ndcmp-<slug>_default', async () => {
+    // Docker Compose normalises the project name with underscores
+    // in the inspect JSON key, but here the lib creates the
+    // network directly via `ndcmp-<slug>_default` (hyphenated), so
+    // the inspect JSON key keeps the hyphen. The literal-string
+    // search matches and the lib skips the re-attach.
     execState.byArgs.set('docker inspect nd-traefik --format {{json .NetworkSettings.Networks}}', {
-      stdout: JSON.stringify({ ndcmp_foo_default: {} }),
+      stdout: JSON.stringify({ 'ndcmp-foo_default': {} }),
     });
     await connectTraefikToComposeNetwork('foo', vi.fn());
     expect(
       execState.runCalls.find(
         (c) => c.args[0] === 'network' && c.args[1] === 'connect' && c.args[2] === 'ndcmp-foo_default',
       ),
-    ).toBeDefined();
+    ).toBeUndefined();
   });
 
   it('is a no-op when Traefik is missing (defers to the next reap)', async () => {
