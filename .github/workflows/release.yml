@@ -47,15 +47,16 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            # The `v` prefix matches the git tag convention
-            # (`v0.4.0`, not `0.4.0`) so `docker pull
-            # ghcr.io/ninedeploy/ninedeploy:v0.4.0` resolves
-            # instead of 404'ing. Without the prefix the
-            # action strips it and only `0.4.0` / `0.4` / `0` /
-            # `latest` are produced.
+            # Two slugs only — the canonical `:v0.4.0` and
+            # the unprefixed `:latest` that install.sh pulls
+            # by default. Major / major-minor roll-ups
+            # (`v0`, `v0.4`, `0`, `0.4`) are deliberately
+            # omitted: this project does not ship patch-level
+            # backports, so a `:v0.4` tag would mislead
+            # anyone pinning to "the latest 0.4.x" into
+            # thinking a 0.4.1 release exists. Only
+            # `:v0.4.0` and `:latest` are produced.
             type=semver,pattern=v{{version}}
-            type=semver,pattern=v{{major}}.{{minor}}
-            type=semver,pattern=v{{major}}
             type=raw,value=latest
 
       - name: Log in to GHCR
@@ -81,6 +82,41 @@ jobs:
             -H "Accept: application/vnd.github+json" \
             /orgs/${{ github.repository_owner }}/packages/container/ninedeploy \
             -f immutable_tags=false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Delete the legacy tag slugs from prior releases
+      # (`:v0`, `:v0.4`, `:0.4.0`, `:0.4`, `:0`). The new
+      # build below only produces `:v0.4.0` and `:latest`,
+      # so anything left over from earlier rollups would
+      # otherwise hang around as orphan pointers to the
+      # old digest. We keep the version row whose tags are
+      # a subset of the canonical set (`:v0.4.0` /
+      # `:latest`) and delete every other version.
+      - name: Prune legacy GHCR tag slugs
+        if: success()
+        run: |
+          set -euo pipefail
+          canonical="v${{ github.ref_name }} latest"
+          echo "Canonical tag set: ${canonical}"
+          gh api "/orgs/${{ github.repository_owner }}/packages/container/ninedeploy/versions?per_page=100" \
+            | jq -r '.[] | "\(.id)\t\(.metadata.container.tags | join(","))"' \
+            | while IFS=$'\t' read -r id tags; do
+                keep=true
+                for t in ${tags//,/ }; do
+                  case " ${canonical} " in
+                    *" ${t} "*) ;;
+                    *) keep=false ;;
+                  esac
+                done
+                if [ "${keep}" = "false" ]; then
+                  echo "Deleting version ${id} (tags: ${tags})"
+                  gh api --method DELETE \
+                    "/orgs/${{ github.repository_owner }}/packages/container/ninedeploy/versions/${id}"
+                else
+                  echo "Keeping version ${id} (tags: ${tags})"
+                fi
+              done
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
