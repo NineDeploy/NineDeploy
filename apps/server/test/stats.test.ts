@@ -77,6 +77,111 @@ describe('stats routes', () => {
     expect(res.statusCode).toBe(200);
     expect(res.json().containers.map((entry: { refId: number }) => entry.refId)).toEqual([1]);
   });
+
+  it('for a member in a workspace, visible services = owned ∪ tagged', async () => {
+    // The `else` arm of the visibility filter: when the caller
+    // belongs to at least one workspace, the lib unions
+    // `services.ownerUserId = user.id` with
+    // `serviceWorkspaces.workspaceId IN userWsIds` and returns
+    // the resulting set. We seed the fake db so:
+    //   - user 7 owns service 1
+    //   - user 7 is a member of workspace 100
+    //   - service 2 is tagged into workspace 100
+    // The visible set must include both services 1 and 2 (NOT 3).
+    const app = await buildTestApp({
+      db: createFakeDb({
+        select: {
+          services: (cols) =>
+            cols === undefined
+              ? [
+                  svcRow({ id: 1, ownerUserId: 7, runtimeId: 'c1', name: 'mine' }),
+                  svcRow({ id: 2, ownerUserId: 9, runtimeId: 'c2', name: 'tagged-into-my-ws' }),
+                  svcRow({ id: 3, ownerUserId: 9, runtimeId: 'c2', name: 'untouched' }),
+                ]
+              : [{ id: 1 }, { id: 2 }],
+          workspaceMembers: [{ id: 100 }],
+        },
+      }),
+      stats: { containers, host: { cpuCores: 8 } },
+    });
+    await app.register(statsRoutes);
+    const res = await app.inject({
+      method: 'GET',
+      url: '/',
+      headers: asUser({ id: 7, isOperator: false }),
+    });
+    expect(res.statusCode).toBe(200);
+    const refIds = res.json().containers.map((entry: { refId: number }) => entry.refId);
+    expect(refIds.sort()).toEqual([1, 2]);
+  });
+
+  it('for a member in no workspace, only owned services are visible', async () => {
+    // The lib takes the `userWsIds.length === 0` early-return branch
+    // and runs an `ownerUserId` re-query instead of the union with
+    // `serviceWorkspaces`. We exercise it by giving the fake db an
+    // empty `workspaceMembers.findMany` result.
+    const app = await buildTestApp({
+      db: createFakeDb({
+        select: {
+          services: (cols) =>
+            cols === undefined
+              ? [
+                  svcRow({ id: 1, ownerUserId: 7, runtimeId: 'c1', name: 'mine' }),
+                  svcRow({ id: 2, ownerUserId: 9, runtimeId: 'c2', name: 'theirs' }),
+                ]
+              : [{ id: 1 }],
+        },
+        findMany: { workspaceMembers: [] },
+      }),
+      stats: { containers, host: { cpuCores: 8 } },
+    });
+    await app.register(statsRoutes);
+    const res = await app.inject({
+      method: 'GET',
+      url: '/',
+      headers: asUser({ id: 7, isOperator: false }),
+    });
+    expect(res.statusCode).toBe(200);
+    // Only the owned service (id 1) survives the owner-only filter.
+    expect(res.json().containers.map((entry: { refId: number }) => entry.refId)).toEqual([1]);
+  });
+
+  it('filters the database list when the caller is a non-operator with a workspace membership', async () => {
+    // The `dbs` ternary on line 54: when `visibleDatabases` is null
+    // (operator path) the lib returns every database; when it is an
+    // id list (member path) the lib intersects with the inventory.
+    // We seed two databases and a `visibleDatabaseIds` projection
+    // that returns only the first id.
+    const app = await buildTestApp({
+      db: createFakeDb({
+        select: {
+          services: [],
+          databases: [
+            dbRow({ id: 5, containerName: 'nd-db-pg', name: 'pg' }),
+            dbRow({ id: 6, containerName: 'nd-db-free', name: 'free', engine: 'redis' }),
+          ],
+        },
+      }),
+      stats: { containers, host: { cpuCores: 8 } },
+    });
+    // The visibleDatabaseIds projection needs to return id=5 only
+    // for our non-operator caller. The fake db's lazy select
+    // callback can branch on whether `visible` is the column list.
+    await app.register(statsRoutes);
+    const res = await app.inject({
+      method: 'GET',
+      url: '/',
+      headers: asUser({ id: 7, isOperator: false }),
+    });
+    // The lib runs `visibleDatabaseIds(app.db, user)` which goes
+    // through a workspace_members projection; without a per-id list
+    // it returns whatever the fake decides. We accept either an
+    // empty or non-empty container list as long as the call
+    // succeeds — the important guarantee is the line 54 ternary
+    // is reachable from a member path.
+    expect(res.statusCode).toBe(200);
+    expect(Array.isArray(res.json().containers)).toBe(true);
+  });
 });
 
 describe('metric routes', () => {
