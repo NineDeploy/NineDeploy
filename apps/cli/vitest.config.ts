@@ -3,6 +3,14 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     environment: 'node',
+    // The CLI smoke test (`test/index.test.ts > registers the
+    // CLI with name, description, and all subcommands`) boots
+    // every command module, resolves the program tree, and
+    // walks the commander AST. On a fresh CI runner this can
+    // tip past the 5s default. 30s is comfortable for that
+    // case and still tight enough to catch a real hang.
+    testTimeout: 30000,
+    hookTimeout: 30000,
     include: ['test/**/*.test.ts'],
     coverage: {
       provider: 'v8',
