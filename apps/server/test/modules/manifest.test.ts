@@ -247,6 +247,36 @@ describe('applyManifestRuntimeConfig (lib)', () => {
       }),
     ).rejects.toThrow(/no build config/);
   });
+
+  it('applies every build field independently (install / build / start / baseDir / dockerfile)', async () => {
+    // The diff builder's `if (b.X !== undefined) diff.build.X = b.X`
+    // branches (lines 79–83) need each field to be exercised at
+    // least once. The previous coverage tests only set `install`.
+    // This test passes a manifest that supplies ALL five build
+    // fields and asserts each one lands on the right key.
+    const db = createFakeDb({
+      select: {
+        buildConfigs: () => [{ id: 1, serviceId: 1 }],
+        build_configs: () => [{ id: 1, serviceId: 1 }],
+      },
+      update: () => [],
+    });
+    const result = await applyManifestRuntimeConfig(db, 1, {
+      version: '1',
+      build: {
+        install: 'npm ci',
+        build: 'npm run build',
+        start: 'node server.js',
+        baseDir: 'apps/web',
+        dockerfile: 'Dockerfile.prod',
+      },
+    });
+    expect(result.diff.build.installCmd).toBe('npm ci');
+    expect(result.diff.build.buildCmd).toBe('npm run build');
+    expect(result.diff.build.startCmd).toBe('node server.js');
+    expect(result.diff.build.baseDir).toBe('apps/web');
+    expect(result.diff.build.dockerfilePath).toBe('Dockerfile.prod');
+  });
 });
 
 describe('POST /:id/manifest/apply (HTTP)', () => {
