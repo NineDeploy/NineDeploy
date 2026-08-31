@@ -8,14 +8,20 @@ import {
   templateCount,
   type HubTemplate,
 } from "../hub";
+import { Logo } from "../components/Logo";
 
 function TemplateCard({ template }: { template: HubTemplate }) {
   return (
     <article className="group relative flex flex-col border-2 border-edge dark:border-line bg-[var(--nd-panel)] p-4 transition-all hover:-translate-y-0.5 hover:border-ink dark:hover:border-phosphor-dim hover:shadow-[6px_6px_0_0_var(--nd-shadow)]">
       <div className="flex items-start justify-between gap-2">
-        <span className="text-2xl leading-none" aria-hidden="true">
-          {template.emoji}
-        </span>
+        <Logo className="w-9 h-9 shrink-0" />
+        {/*
+          Per-template emoji icons (registry `emoji` field) are intentionally
+          not rendered — free-form emoji can read as off-brand or worse, and
+          the NineDeploy brand mark is the right icon for "this is a template
+          in the NineDeploy hub". The registry field stays in the bundle so
+          the data shape is preserved for future per-template brand work.
+        */}
         <div className="flex items-center gap-1.5">
           {template.featured && <span className="tag">featured</span>}
           {template.runtimeVerified ? (
