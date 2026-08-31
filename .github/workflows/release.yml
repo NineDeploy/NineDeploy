@@ -47,9 +47,15 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
+            # The `v` prefix matches the git tag convention
+            # (`v0.4.0`, not `0.4.0`) so `docker pull
+            # ghcr.io/ninedeploy/ninedeploy:v0.4.0` resolves
+            # instead of 404'ing. Without the prefix the
+            # action strips it and only `0.4.0` / `0.4` / `0` /
+            # `latest` are produced.
+            type=semver,pattern=v{{version}}
+            type=semver,pattern=v{{major}}.{{minor}}
+            type=semver,pattern=v{{major}}
             type=raw,value=latest
 
       - name: Log in to GHCR
