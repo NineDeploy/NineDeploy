@@ -1,4 +1,4 @@
-export const VERSION = '0.3.4';
+export const VERSION = '0.4.1';
 
 export interface ChangelogEntry {
   version: string;
@@ -8,6 +8,22 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.4.1',
+    date: '2026-08-31',
+    title: 'GHCR Image Pipeline & Post-Sprint 11 Fixes',
+    changes: [
+      'CI publishes the panel image to GHCR on every push to main: multi-arch (amd64 + arm64) tagged :edge + :main-<sha>, release tag re-tagged :latest so install.sh --docker pulls the most recent artifact, and a preflight docker manifest inspect runs before compose pull so a private GHCR package surfaces a clear one-line error instead of "image pull failed"',
+      'Sprint 11 PR #58 coverage push: 200+ tests across 17 new files covering PRs #45–#58. Server 88.12% → 93.53% statements, 86.00% → 88.31% branches; CLI 73% → 84% on the back of the test/index.test.ts restore; SDK 100% on every axis. Thresholds re-bumped to server 93.6/88.4/93/95.1, CLI 83/80/80/83',
+      'serviceBridge test premise corrected: docker network ls / inspect preserves the bridge name verbatim ({"nd-svc-foo": {…}}) so the lib\'s literal-string search matches correctly and every ensure/connect/reap/reconcile call is idempotent. The lib was right; the tests were not (16/16)',
+      'imageInventory.pruneImages.keepLast semantics: the loop now protects exactly the newest N and leaves the rest as candidates, instead of the previous inverse-of-docstring behavior that made keepLast=0 a silent no-op (45/45)',
+      'marketplaceCatalog.decodeKey Node 24 raw 32-byte Ed25519 import: the key is imported as a JWK ({kty: OKP, crv: Ed25519, x: base64url(raw)}), the only form Node\'s key importer accepts for an OKP public key, so the signed marketplace index verifies cleanly (16/16)',
+      'localOrchestrator.listStacks service-count regex was always 0 for compose files with body under each service entry. The per-block scanner now counts top-level service lines inside the services: block and excludes 4+-space-indented body lines (24/24)',
+      'Coverage follow-ups: stickyIpPlugin 32%→100%, swarmOrchestrator 42%→100% statements / 100% lines (cross-platform in-memory fs shim), localOrchestrator 60%→97% / 98% lines, auth 38%→97%, stats 85%→98%, notifications 0%→100%, backups 0%→97% / 98% lines, manifest 92%→98% / 100% lines, templates hub 0%→30%, servicesCoverage un-skipped (20/20)',
+      'CLI vitest testTimeout / hookTimeout lifted to 30s; server vitest the same; web vitest the same. The CI runner is 2–3× slower than a local box and the privilege-gating / patch-merge branches blow past the 5s default and 15s in-suite override',
+      'release-publish workflow hardened: the inline empty branches:[] was a parse-time failure (GitHub rejected the workflow at parse with "A sequence was not expected", every run since 4fd2bc4 produced 0 jobs). The key is now redundant with on: push: tags and was dropped. The publish-image job is granted contents:write + packages:write so softprops/action-gh-release can create the GitHub Release',
+    ],
+  },
   {
     version: '0.3.4',
     date: '2026-08-27',

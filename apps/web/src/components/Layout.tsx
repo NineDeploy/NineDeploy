@@ -152,7 +152,16 @@ export function Layout() {
     ];
   }, [menus.data, isSimple]);
 
-  const [activeGroup, setActiveGroup] = useState<string | null>(() => findGroup(location.pathname, GROUPS));
+  const [activeGroup, setActiveGroup] = useState<string | null>(() => {
+    // On first paint: if the current path matches a known group, open that
+    // group; otherwise fall back to the second group ("Organize") so the
+    // secondary panel always has something visible on a fresh load (the
+    // /nowhere and root paths otherwise render an empty rail and a panel
+    // header with no items).
+    const fromPath = findGroup(location.pathname, GROUPS);
+    if (fromPath) return fromPath;
+    return GROUPS[1]?.id ?? null;
+  });
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
 

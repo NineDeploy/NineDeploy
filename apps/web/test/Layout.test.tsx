@@ -119,10 +119,40 @@ describe('Layout', () => {
     expect(screen.getByText('/')).toBeInTheDocument(); // breadcrumb separator
   });
 
-  it('falls back to the NineDeploy header without a panel for unknown paths', () => {
+  it('falls back to the second group ("Organize") with the panel open for unknown paths', () => {
+    // Unknown paths must still show a useful secondary panel instead of an
+    // empty rail. The second group is "Organize" (Workspaces / Projects /
+    // Labels) — discoverable, never advancedOnly, and the right default
+    // landing pad for a fresh load that has not picked a destination yet.
     renderLayout('/nowhere');
-    expect(screen.getByText('NineDeploy')).toBeInTheDocument();
-    expect(screen.queryByText('Collapse')).not.toBeInTheDocument();
+    // The activity-bar tooltip, the secondary-panel header, and the
+    // breadcrumb all spell "Organize" — assert at least one match.
+    expect(screen.getAllByText('Organize').length).toBeGreaterThan(0);
+    expect(screen.getByRole('link', { name: /Workspaces/ })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Projects/ })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Labels/ })).toBeInTheDocument();
+    expect(screen.getByText('Collapse')).toBeInTheDocument();
+  });
+
+  it('keeps the second group open after a navigation between two unknown paths', () => {
+    // The auto-open effect runs on every pathname change. If neither path
+    // matches a group, the second group must stay open across navigations
+    // (and not flicker to null) — otherwise the rail briefly closes and
+    // the breadcrumb area collapses.
+    renderLayout('/nowhere');
+    expect(screen.getAllByText('Organize').length).toBeGreaterThan(0);
+    // The auto-open effect runs on every pathname change, but with no
+    // route group matching, it must keep the second group as the
+    // fallback rather than re-render to null.
+    expect(screen.getByText('Collapse')).toBeInTheDocument();
+  });
+
+  it('still opens the matching group when the path lands on a known route', () => {
+    // Regression guard: the default-to-second-group behavior must NOT
+    // override a path that already maps to a different group.
+    renderLayout('/databases');
+    expect(screen.getAllByText('Data').length).toBeGreaterThan(0);
+    expect(screen.getByRole('link', { name: /Databases/ })).toBeInTheDocument();
   });
 
   it('marks the Services link active on /services', () => {

@@ -9,7 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.4.0] - 2026-08-31
+## [0.4.1] - 2026-08-31
+
+> The v0.4.0 tag was published without the post-Sprint 11 fixes and
+> the GHCR image pipeline; this 0.4.1 release re-publishes every change
+> listed below as one coherent version. There will not be further
+> `vX.Y.Z-hotfixN` tags — patch fixes ship as the next semver patch
+> so install.sh / one-click panel self-update can find them through
+> `^v\d+\.\d+\.\d+$` without manual version pinning.
+
+### Installer & Release
 
 ### Installer & Release
 
