@@ -104,11 +104,16 @@ export class TelemetryStreamerPlugin implements KernelPlugin {
   private unsubs: Array<() => void> = [];
 
   init(ctx: KernelContext): void {
-    // Kernel-internal events that should NOT be re-broadcast as
-    // telemetry. The audit firehose is meant to capture user-facing
-    // actions (deploys, health transitions, backup completions, …);
-    // a `plugin.registered` tick is bookkeeping noise that has no
-    // value for an external OTLP/Prometheus consumer.
+    // Events the plugin itself emits and events that the kernel uses
+    // for bookkeeping. Re-emitting any of these as `telemetry.recorded`
+    // would either loop the export path forever (a non-2xx response
+    // emits `telemetry.export.error`, which would re-emit as
+    // `telemetry.recorded`, which would fetch again, …) or surface
+    // kernel plumbing as user-facing audit data.
+    const selfOrBookkeeping = new Set<string>([
+      'telemetry.recorded', // recursion guard for the local re-emit
+      'telemetry.export.error', // do not loop the export on a failure
+    ]);
     const internalPrefixes = ['plugin.', 'config.'];
 
     // 1. Local re-emit. The wildcard handler only emits the typed
@@ -116,7 +121,8 @@ export class TelemetryStreamerPlugin implements KernelPlugin {
     //    (the typed listener below is the single export point so the
     //    same record is never exported twice).
     const unsubWild = ctx.events.onCustom('*', (payload: unknown, eventName?: string) => {
-      if (!eventName || eventName === 'telemetry.recorded') return;
+      if (!eventName) return;
+      if (selfOrBookkeeping.has(eventName)) return;
       if (internalPrefixes.some((p) => eventName.startsWith(p))) return;
       ctx.events.emit('telemetry.recorded', {
         sourceEvent: eventName,
