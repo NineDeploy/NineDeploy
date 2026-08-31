@@ -70,3 +70,5 @@ apps/server/templates-mirror.json
 .tmp-real-validate/
 
 .tmp-*.*
+.tpm-*.log
+.tpm-*.py
