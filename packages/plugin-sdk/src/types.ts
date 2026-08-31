@@ -2,6 +2,7 @@ export type MenuSlot =
   | 'sidebar:main'
   | 'sidebar:secondary'
   | 'service:tabs'
+  | 'database:tabs'
   | 'settings:nav'
   | 'command:palette'
   | 'user:menu';

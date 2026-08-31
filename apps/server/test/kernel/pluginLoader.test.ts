@@ -46,6 +46,34 @@ describe('PluginLoader', () => {
       expect(s3?.isInstalled).toBe(true);
       expect(slack?.isInstalled).toBe(false);
     });
+
+    // The marketplace catalog ships entries that the user can install with
+    // one click. A regression here (typo in an id, missing name, malformed
+    // menuItem) would break the install flow silently — the panel would
+    // just refuse to load the row. Pin every entry against the same shape
+    // the loader expects.
+    it('every catalog entry has the shape the loader requires', () => {
+      const idPattern = /^[a-z0-9-_]+$/;
+      for (const entry of MARKETPLACE_CATALOG) {
+        expect(entry.id, `entry ${entry.id} id`).toMatch(idPattern);
+        expect(typeof entry.name, `entry ${entry.id} name`).toBe('string');
+        expect(entry.name.length, `entry ${entry.id} name length`).toBeGreaterThan(0);
+        expect(typeof entry.version, `entry ${entry.id} version`).toBe('string');
+        // semver-ish — strict check is overkill, but it must include digits.
+        expect(entry.version, `entry ${entry.id} version`).toMatch(/\d/);
+        for (const item of entry.menuItems ?? []) {
+          expect(item.id, `${entry.id}/${item.id} id`).toBeTruthy();
+          expect(item.slot, `${entry.id}/${item.id} slot`).toBeTruthy();
+          expect(item.label, `${entry.id}/${item.id} label`).toBeTruthy();
+          expect(item.route, `${entry.id}/${item.id} route`).toMatch(/^\//);
+        }
+        for (const opt of entry.configSchema ?? []) {
+          expect(opt.key, `${entry.id}/${opt.key} key`).toBeTruthy();
+          expect(opt.label, `${entry.id}/${opt.key} label`).toBeTruthy();
+          expect(typeof opt.isSecret, `${entry.id}/${opt.key} isSecret`).toBe('boolean');
+        }
+      }
+    });
   });
 
   describe('createDynamicPlugin', () => {
