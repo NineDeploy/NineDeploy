@@ -75,7 +75,11 @@ export class ConfigPresetsPlugin implements KernelPlugin {
       id: 'config-presets-command',
       slot: 'command:palette' as const,
       label: 'Config Presets',
-      route: '/settings/presets',
+      // Routes to the Config Center section, which is where the panel
+      // already renders the `preset.list` / `preset.<id>.values`
+      // entries this plugin owns. There is no dedicated `/settings/presets`
+      // page, so the previous route was a dead link.
+      route: '/settings?section=config',
       icon: 'Layers',
       order: 92,
       permission: 'admin' as const,
