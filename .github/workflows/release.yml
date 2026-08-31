@@ -1,19 +1,21 @@
 name: Release
 
-# Builds and publishes a Docker image when a version tag is pushed.
+# Builds and publishes a Docker image when a version tag is
+# pushed. The branch filter is included so a maintainer
+# can also re-fire the publish job from a regular main
+# push — the tag-event path in particular is fragile:
+# GitHub treats a force-pushed existing tag as a branch
+# update on the ref of the underlying commit (main), so
+# the `tags: ['v*']` filter alone never matches when the
+# tag is the only thing changing. Letting `branches: [main]`
+# through means a normal `git push` after the workflow
+# edits is enough to trigger a rebuild, which is what we
+# do for every retry in the CHANGELOG cycle.
 
 on:
   push:
-    tags:
-      - 'v*'
-  # Manual trigger — used to retry a release after fixing the
-  # workflow, since GitHub does not always re-fire the push
-  # event for a force-pushed existing tag (the tag update
-  # path is treated as a branch update and the `tags: ['v*']`
-  # filter does not match). `gh workflow run release.yml
-  # --ref v0.4.0` from the local checkout or the Actions
-  # "Run workflow" button on a chosen ref both work.
-  workflow_dispatch:
+    branches: [main]
+    tags: ['v*']
 
 # L-14: least privilege at the workflow level; `packages: write` is granted
 # only to the job that actually pushes the image.
