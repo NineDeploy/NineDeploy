@@ -54,7 +54,10 @@ describe('ConfigPresetsPlugin', () => {
     expect(schemaKeys).toContain('preset.namespace');
     const menu = p.menuItems?.[0];
     expect(menu?.slot).toBe('command:palette');
-    expect(menu?.route).toBe('/settings/presets');
+    // The plugin owns the `preset.list` / `preset.<id>.values` rows in
+    // the Config Center section, so the palette entry lands on that
+    // section. There is no /settings/presets page.
+    expect(menu?.route).toBe('/settings?section=config');
   });
 
   it('init is a no-op (passive plugin) and destroy releases nothing', () => {
