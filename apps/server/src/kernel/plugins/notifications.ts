@@ -31,6 +31,18 @@ export class NotificationsDispatcherPlugin implements KernelPlugin {
     },
   ];
 
+  readonly menuItems = [
+    {
+      id: 'notifications-dispatcher-command',
+      slot: 'command:palette' as const,
+      label: 'Notification Channels',
+      route: '/settings?section=notifications',
+      icon: 'Bell',
+      order: 80,
+      permission: 'admin' as const,
+    },
+  ];
+
   private unsubs: Array<() => void> = [];
 
   init(ctx: KernelContext): void {
