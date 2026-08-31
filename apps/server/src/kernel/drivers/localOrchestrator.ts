@@ -1,5 +1,4 @@
-import { existsSync } from 'node:fs';
-import { writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { capture, run } from '../../lib/exec.js';
 import type {
@@ -211,7 +210,14 @@ export class LocalOrchestrator implements IOrchestrator {
 }
 
 function runSyncMkdir(dir: string): void {
-  const { mkdirSync } = require('node:fs') as typeof import('node:fs');
+  // Use the top-level `mkdirSync` import (not an inline
+  // `require('node:fs')`) so vitest's `vi.mock('node:fs', …)` in
+  // the test suite actually intercepts the call. A dynamic
+  // `require` inside a function body is invisible to the module
+  // mock in ESM — the previous shape silently bypassed the spy
+  // and went straight to the real fs, which surfaced as
+  // "ENOENT: /var/lib/ninedeploy/stacks/demo" on the CI runner
+  // (no parent directory, no permission to create one).
   mkdirSync(dir, { recursive: true });
 }
 

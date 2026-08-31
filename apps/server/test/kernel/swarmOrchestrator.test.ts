@@ -62,21 +62,21 @@ vi.mock('node:fs', async () => {
   return {
     ...actual,
     existsSync: (p: string) => fsState.has(p),
-    mkdirSync: (p: string, opts?: { recursive?: boolean }) => {
-      if (opts?.recursive) {
-        // Auto-create every missing parent segment. Handle both
-        // POSIX `/` and Windows `\` separators (node:path on Windows
-        // joins POSIX-style inputs with `\`).
-        const segments = p.split(/[\\/]/);
-        let cur = '';
-        for (const seg of segments) {
-          if (!seg) continue;
-          cur = `${cur}\\${seg}`;
-          if (!fsState.has(cur)) fsState.set(cur, { dir: true });
-        }
-      } else {
-        fsState.set(p, { dir: true });
-      }
+    mkdirSync: (p: string, _opts?: { recursive?: boolean }) => {
+      // The in-memory fs uses path-as-key. Whatever path the
+      // production code passes is the canonical key — it must
+      // match the key used by readFileSync / writeFileSync /
+      // existsSync below. Walking the parents and re-joining
+      // with `\` (the previous implementation) would silently
+      // produce a different key on POSIX runners, which is
+      // what caused the CI-only ENOENT on
+      // `/var/lib/ninedeploy/stacks/demo`. Production calls
+      // mkdirSync(p, { recursive: true }) which would create
+      // every missing parent on a real fs; the mock just needs
+      // to record that the leaf path now exists, and writeFileSync's
+      // own parent check (which uses the same key) takes care of
+      // the rest.
+      fsState.set(p, { dir: true });
     },
     readFileSync: (p: string) => {
       const entry = fsState.get(p);
