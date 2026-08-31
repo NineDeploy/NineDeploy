@@ -7,9 +7,17 @@ name: Release
 # with 0 jobs, twice), so we now only fire on tags.
 # A workflow_dispatch trigger is kept so an operator
 # can re-run the same job graph manually with
-# `gh workflow run release.yml --ref v0.4.0-hotfix1`
-# from the local checkout or the Actions "Run workflow"
-# dropdown on a chosen ref.
+# `gh workflow run release.yml --ref v0.4.0` from the
+# local checkout or the Actions "Run workflow" dropdown
+# on a chosen ref.
+#
+# Tag format: STRICT semver (`vX.Y.Z`). The v0.4.1 release
+# dropped the old `-hotfixN` suffix because install.sh and
+# selfUpdate.ts refuse anything that does not match
+# `^v\d+\.\d+\.\d+$`. A `v0.4.0-foo` tag would build
+# successfully and push an image that no install path can
+# ever resolve, so the workflow rejects it at the first
+# step rather than shipping a phantom release.
 
 on:
   push:
@@ -17,7 +25,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to publish as (e.g. v0.4.0-hotfix1). Must already exist on the remote.'
+        description: 'Tag to publish as (e.g. v0.4.0). Must already exist on the remote and match ^v\\d+\\.\\d+\\.\\d+$'
         required: true
         type: string
 
@@ -39,6 +47,21 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Fail fast on a non-semver tag (e.g. v0.4.0-foo, v0.4.0+meta).
+      # The trigger filter `v*` accepts any v-prefixed ref, but
+      # install.sh + selfUpdate.ts only resolve `^v\d+\.\d+\.\d+$`
+      # — pushing a different shape would produce a tag that no
+      # install path can ever reach. Validate before the long
+      # install / build / push pipeline runs.
+      - name: Validate tag format (^v\d+\.\d+\.\d+$)
+        run: |
+          if [ ! -n "${GITHUB_REF_NAME:-}" ] || ! echo "$GITHUB_REF_NAME" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Ref '$GITHUB_REF_NAME' is not a strict semver tag (expected vX.Y.Z, got '$GITHUB_REF_NAME')"
+            echo "Hint: install.sh and selfUpdate.ts only resolve ^v\\d+\\.\\d+\\.\\d+\$ — pushing a different shape would ship a tag no install path can reach."
+            exit 1
+          fi
+          echo "Tag '$GITHUB_REF_NAME' is a valid semver release."
 
       - name: Setup pnpm
         # Derived from "packageManager" in package.json — see ci.yml.
@@ -94,6 +117,15 @@ jobs:
             # `:v0.4.0` and `:latest` are produced.
             type=semver,pattern=v{{version}}
             type=raw,value=latest
+
+      - name: Set up Docker Buildx
+        # Multi-arch (amd64 + arm64) matches what the
+        # ci.yml `publish-image` job does on main. Without
+        # this the release would silently ship a linux/amd64
+        # image only — every ARM host (Raspberry Pi, AWS
+        # Graviton, Apple-Silicon-as-Tinkerbell-target) would
+        # hit the "no matching manifest" error on `docker pull`.
+        uses: docker/setup-buildx-action@988b5a0280414f521da01fcc63a27aeeb4b104db # v6.7.0
 
       - name: Log in to GHCR
         if: success()
@@ -152,6 +184,12 @@ jobs:
         with:
           context: .
           push: true
+          # Multi-arch mirrors the ci.yml `publish-image` job:
+          # every install path (amd64 VPS, arm64 Raspberry
+          # Pi / AWS Graviton / Apple-Silicon-as-target) can
+          # pull a single tag without having to pin a
+          # platform-specific digest.
+          platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
