@@ -53,16 +53,14 @@ jobs:
           # tag in the default branch case and buildx
           # rejects it.
           images: ghcr.io/ninedeploy/ninedeploy
-          # Disable the default branch-based flavor for
-          # non-default branches. The default would push
-          # an `:edge` tag alongside the versioned
-          # `:v0.4.0` and `:latest` slugs; the project does
-          # not advertise an edge channel, and the
-          # uppercase repo name in that path is what
-          # triggered the buildx failure.
-          flavor: |
-            latest=auto
-            edge=disabled
+          # Empty `branches` list tells meta-action to
+          # ignore branch references entirely. The default
+          # is "all branches", which is what produces the
+          # `:edge` slug on every push (and trips the
+          # uppercase-repo buildx failure). Tag push only
+          # needs the tag reference, which is still
+          # processed by the `tags:` list below.
+          branches: []
           tags: |
             # Two slugs only — the canonical `:v0.4.0` and
             # the unprefixed `:latest` that install.sh pulls
