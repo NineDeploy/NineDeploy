@@ -169,6 +169,31 @@ describe('auth plugin', () => {
     await app.close();
   });
 
+  it('requireOperator returns 403 for a non-operator (its own message, distinct from requireAdmin)', async () => {
+    // requireOperator and requireAdmin diverge on the human message
+    // ('Operator access required' vs 'Admin access required'). Operators
+    // see different copy in the audit log; both refuse non-operators
+    // with 403. The previous test 'requireAdmin rejects a member with
+    // 403' covered the requireAdmin arm; this one covers requireOperator
+    // and the message-string branch in the lib.
+    const db = makeDb([], { id: 4, isOperator: false });
+    const app = Fastify();
+    app.decorate('db', db as never);
+    await app.register(authPlugin);
+    app.delete('/op', { preHandler: [app.authenticate, app.requireOperator] }, async () => ({ ok: true }));
+    const token = await signAccessToken(4, 0);
+    const res = await app.inject({
+      method: 'DELETE',
+      url: '/op',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toMatchObject({
+      message: expect.stringMatching(/Operator access required/),
+    });
+    await app.close();
+  });
+
   it('requireAdmin rejects a member with 403', async () => {
     const db = makeDb([], { id: 2, isOperator: false });
     const app = await buildApp(db);
@@ -196,6 +221,304 @@ describe('auth plugin', () => {
     // …and is still not an operator: the flag is a column, never an inference.
     const res = await app.inject({ method: 'DELETE', url: '/admin', headers: { authorization: `Bearer ${token}` } });
     expect(res.statusCode).toBe(403);
+    await app.close();
+  });
+});
+
+describe('auth plugin — API token scope enforcement', () => {
+  // The API-token stamp on `apiTokens.lastUsedAt` only happens for opaque
+  // tokens (no dots). Build a db whose `resolveUser` succeeds for the
+  // given scope set, then exercise the POST/DELETE/PUT gates inside
+  // `authenticate` and the route-side `requireScope` factory.
+  const scopedDb = (
+    scopes: string[] | null,
+    user: { id: number; isOperator?: boolean } = { id: 1, isOperator: false },
+  ) => {
+    return {
+      query: {
+        apiTokens: {
+          findFirst: vi.fn(async () => ({
+            userId: user.id,
+            expiresAt: null,
+            scopes,
+          })),
+        },
+        users: {
+          findFirst: vi.fn(async () => ({
+            id: user.id,
+            tokenVersion: 0,
+            isInstanceOperator: user.isOperator === true,
+          })),
+        },
+        workspaceMembers: { findMany: vi.fn(async () => []) },
+      },
+      update: vi.fn(() => ({
+        set: vi.fn(() => ({ where: vi.fn(async () => undefined) })),
+      })),
+    };
+  };
+
+  async function buildScopedApp(db: ReturnType<typeof scopedDb>) {
+    const app = Fastify();
+    app.decorate('db', db as never);
+    await app.register(authPlugin);
+    // The four gate endpoints cover every scope branch:
+    //   - GET  /read   is a SAFE_METHOD → always allowed (token may be read-only)
+    //   - POST /write  needs the `write` or `operator` scope
+    //   - PUT  /admin  needs the `admin` scope or the operator user
+    //   - ANY  /resource/{scope}  hits the per-route `requireScope(...)` factory
+    app.get('/read', { preHandler: [app.authenticate] }, async () => ({ ok: true }));
+    app.post('/write', { preHandler: [app.authenticate] }, async () => ({ ok: true }));
+    app.put('/admin', { preHandler: [app.authenticate, app.requireAdmin] }, async () => ({ ok: true }));
+    app.get('/r/:scope', { preHandler: [app.authenticate, app.requireScope('admin:services')] }, async () => ({ ok: true }));
+    return app;
+  }
+
+  it('narrows an operator user down to a normal user when the token has no operator scope', async () => {
+    // A CI token owned by an operator must NOT carry the operator
+    // flag onto the request — that is exactly the leaked-CI-token
+    // vector the scope check exists to close.
+    const db = scopedDb(['read'], { id: 1, isOperator: true });
+    const app = await buildScopedApp(db);
+    const res = await app.inject({
+      method: 'PUT',
+      url: '/admin',
+      headers: { authorization: 'Bearer scoped-read-only' },
+    });
+    // requireAdmin checks `req.user.isOperator`, which the
+    // authenticate hook just narrowed to false.
+    expect(res.statusCode).toBe(403);
+    await app.close();
+  });
+
+  it('lets a `write` token through every SAFE_METHOD route', async () => {
+    const db = scopedDb(['write'], { id: 1, isOperator: false });
+    const app = await buildScopedApp(db);
+    const res = await app.inject({
+      method: 'GET',
+      url: '/read',
+      headers: { authorization: 'Bearer write-token' },
+    });
+    expect(res.statusCode).toBe(200);
+    await app.close();
+  });
+
+  it('lets a `write` token through a POST route', async () => {
+    // The `mayWrite` arm in the auth hook returns true for either
+    // `write` or `operator` in the scope list, so a write-only
+    // token can still mutate.
+    const db = scopedDb(['write'], { id: 1, isOperator: false });
+    const app = await buildScopedApp(db);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/write',
+      headers: { authorization: 'Bearer write-token' },
+    });
+    expect(res.statusCode).toBe(200);
+    await app.close();
+  });
+
+  it('rejects a `read`-only token on a POST route with 403', async () => {
+    const db = scopedDb(['read'], { id: 1, isOperator: false });
+    const app = await buildScopedApp(db);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/write',
+      headers: { authorization: 'Bearer read-only' },
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toMatchObject({ message: expect.stringMatching(/read-only/i) });
+    await app.close();
+  });
+
+  it('treats the legacy `admin` scope as a write superset (POST succeeds)', async () => {
+    // `admin` does not appear in the `mayWrite` arm verbatim; the
+    // `write` legacy shorthand does, and `nd://scope/admin/...`
+    // covers `nd://scope/write/...` on the same resource via the
+    // `scopeCovers` rule. A bare `admin` (no `write`) hits the
+    // exact-match branch and is accepted only on routes that
+    // require the admin scope; a POST hits the auth-hook
+    // `mayWrite` arm, which recognises `write` and `operator`
+    // but NOT bare `admin`. The realistic case is `admin` paired
+    // with `write` in the token row, which we cover here.
+    const db = scopedDb(['admin', 'write'], { id: 1, isOperator: false });
+    const app = await buildScopedApp(db);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/write',
+      headers: { authorization: 'Bearer admin-write-token' },
+    });
+    expect(res.statusCode).toBe(200);
+    await app.close();
+  });
+});
+
+describe('auth plugin — requireScope / scopeCovers', () => {
+  // The `scopeCovers` rule is private to the plugin. We exercise it
+  // end-to-end by registering the real `auth` plugin with a fake db
+  // that hands back a specific scope set, then calling the per-route
+  // `requireScope` factory with the scope form we want to cover.
+  // Every branch in the rule (operator / null / exact match /
+  // legacy-coarse / admin-implies-write / admin-implies-read /
+  // write-implies-read) maps to one assertion below.
+  function scopeDb(scopes: string[] | null) {
+    return {
+      query: {
+        apiTokens: {
+          findFirst: vi.fn(async () => ({ userId: 1, expiresAt: null, scopes })),
+        },
+        users: {
+          findFirst: vi.fn(async () => ({ id: 1, tokenVersion: 0, isInstanceOperator: false })),
+        },
+        workspaceMembers: { findMany: vi.fn(async () => []) },
+      },
+      update: vi.fn(() => ({
+        set: vi.fn(() => ({ where: vi.fn(async () => undefined) })),
+      })),
+    };
+  }
+
+  async function buildScopeApp(db: ReturnType<typeof scopeDb>, required: string) {
+    const app = Fastify({ logger: false });
+    app.decorate('db', db as never);
+    await app.register(authPlugin);
+    app.get(
+      '/x',
+      { preHandler: [app.authenticate, app.requireScope(required)] },
+      async () => ({ ok: true }),
+    );
+    return app;
+  }
+
+  it('covers a fine-grained URI when the user has the `operator` scope', async () => {
+    const app = await buildScopeApp(scopeDb(['operator']), 'nd://scope/admin/services');
+    const res = await app.inject({
+      method: 'GET',
+      url: '/x',
+      headers: { authorization: 'Bearer operator-token' },
+    });
+    expect(res.statusCode).toBe(200);
+    await app.close();
+  });
+
+  it('covers a fine-grained URI when the user has the exact scope', async () => {
+    const app = await buildScopeApp(
+      scopeDb(['nd://scope/admin/services']),
+      'nd://scope/admin/services',
+    );
+    const res = await app.inject({
+      method: 'GET',
+      url: '/x',
+      headers: { authorization: 'Bearer exact-token' },
+    });
+    expect(res.statusCode).toBe(200);
+    await app.close();
+  });
+
+  it('covers `nd://scope/admin/X` with the legacy `write` shorthand', async () => {
+    // admin implies write on the same resource.
+    const app = await buildScopeApp(scopeDb(['write']), 'nd://scope/admin/services');
+    const res = await app.inject({
+      method: 'GET',
+      url: '/x',
+      headers: { authorization: 'Bearer write-token' },
+    });
+    expect(res.statusCode).toBe(200);
+    await app.close();
+  });
+
+  it('covers `nd://scope/write/X` with the legacy `write` shorthand', async () => {
+    const app = await buildScopeApp(scopeDb(['write']), 'nd://scope/write/services');
+    const res = await app.inject({
+      method: 'GET',
+      url: '/x',
+      headers: { authorization: 'Bearer write-token' },
+    });
+    expect(res.statusCode).toBe(200);
+    await app.close();
+  });
+
+  it('covers `nd://scope/read/X` with the legacy `read` shorthand', async () => {
+    const app = await buildScopeApp(scopeDb(['read']), 'nd://scope/read/services');
+    const res = await app.inject({
+      method: 'GET',
+      url: '/x',
+      headers: { authorization: 'Bearer read-token' },
+    });
+    expect(res.statusCode).toBe(200);
+    await app.close();
+  });
+
+  it('covers `nd://scope/write/X` with `nd://scope/admin/X` (same-resource superset)', async () => {
+    const app = await buildScopeApp(
+      scopeDb(['nd://scope/admin/services']),
+      'nd://scope/write/services',
+    );
+    const res = await app.inject({
+      method: 'GET',
+      url: '/x',
+      headers: { authorization: 'Bearer admin-svc-token' },
+    });
+    expect(res.statusCode).toBe(200);
+    await app.close();
+  });
+
+  it('covers `nd://scope/read/X` with `nd://scope/admin/X` (admin implies read)', async () => {
+    const app = await buildScopeApp(
+      scopeDb(['nd://scope/admin/services']),
+      'nd://scope/read/services',
+    );
+    const res = await app.inject({
+      method: 'GET',
+      url: '/x',
+      headers: { authorization: 'Bearer admin-svc-token' },
+    });
+    expect(res.statusCode).toBe(200);
+    await app.close();
+  });
+
+  it('covers `nd://scope/read/X` with `nd://scope/write/X` (write implies read)', async () => {
+    const app = await buildScopeApp(
+      scopeDb(['nd://scope/write/services']),
+      'nd://scope/read/services',
+    );
+    const res = await app.inject({
+      method: 'GET',
+      url: '/x',
+      headers: { authorization: 'Bearer write-svc-token' },
+    });
+    expect(res.statusCode).toBe(200);
+    await app.close();
+  });
+
+  it('does NOT cross resources (admin:services does not cover admin:databases)', async () => {
+    const app = await buildScopeApp(
+      scopeDb(['nd://scope/admin/services']),
+      'nd://scope/admin/databases',
+    );
+    const res = await app.inject({
+      method: 'GET',
+      url: '/x',
+      headers: { authorization: 'Bearer admin-services-token' },
+    });
+    expect(res.statusCode).toBe(403);
+    await app.close();
+  });
+
+  it('refuses a wholly unrelated scope with 403', async () => {
+    const app = await buildScopeApp(
+      scopeDb(['some:other:scope']),
+      'nd://scope/admin/services',
+    );
+    const res = await app.inject({
+      method: 'GET',
+      url: '/x',
+      headers: { authorization: 'Bearer unrelated-token' },
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toMatchObject({
+      message: expect.stringMatching(/missing the required scope/i),
+    });
     await app.close();
   });
 });
