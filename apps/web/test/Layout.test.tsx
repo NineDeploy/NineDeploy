@@ -175,7 +175,6 @@ describe('Layout', () => {
         },
       ],
     } as never);
-    const user = userEvent.setup();
     renderLayout('/settings/extensions/plugin-foo');
     // The plugin's link is rendered and active (bg-indigo-500/15).
     // Wait for it: the menus query has to settle before the

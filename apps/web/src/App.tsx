@@ -36,6 +36,7 @@ import { Traefik } from './routes/Traefik.js';
 import { Activity } from './routes/Activity.js';
 import { Projects } from './routes/Projects.js';
 import { Labels } from './routes/Labels.js';
+import { Deploys } from './routes/Deploys.js';
 
 function RequireAuth({ children }: { children: ReactNode }) {
   const { user } = useAuth();
@@ -92,6 +93,7 @@ export default function App() {
         <Route path="services" element={<ServicesList />} />
         <Route path="hub" element={<Hub />} />
         <Route path="manifest-creator" element={<ManifestCreator />} />
+        <Route path="deploys" element={<Deploys />} />
         <Route path="databases" element={<Databases />} />
         <Route path="domains" element={<Domains />} />
         <Route path="tunnels" element={<Tunnels />} />

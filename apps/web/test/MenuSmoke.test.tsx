@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import App from '../src/App.js';
@@ -71,6 +71,7 @@ const MENU_CASES: MenuCase[] = [
   { path: '/dashboard', group: 'Deploy', activeLink: /Dashboard/ },
   { path: '/services', group: 'Deploy', activeLink: /Services/ },
   { path: '/services/abc-123', group: 'Deploy', activeLink: /Services/ },
+  { path: '/deploys', group: 'Deploy', activeLink: /Queue/ },
 
   // Organize
   { path: '/workspaces', group: 'Organize', activeLink: /Workspaces/ },

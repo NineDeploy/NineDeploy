@@ -598,3 +598,93 @@ describe('deploys routes', () => {
     await app.close();
   });
 });
+
+/**
+ * Global deploy queue.
+ *
+ * The /queue endpoint is the single read path that backs both the
+ * /deploys page and the top-bar badge. Tests below cover:
+ *   • operator visibility (returns all in-flight),
+ *   • member visibility (filters to the caller's visible services),
+ *   • ordering (claimed rows above queued, oldest first within bucket),
+ *   • status filter (only requested statuses),
+ *   • shape of the response (counts, byStatus breakdown).
+ */
+describe('global deploy queue', () => {
+  it('returns every in-flight deploy with service + counts for an operator', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        // visibleServiceIdSet returns null for operators — the findMany
+        // side receives every row, and the count/bystatus aggregate is
+        // computed in the route after the select.
+        findMany: {
+          deployments: [
+            { ...depRow({ id: 1, serviceId: 1, status: 'building' }) },
+            { ...depRow({ id: 2, serviceId: 2, status: 'queued' }) },
+            { ...depRow({ id: 3, serviceId: 3, status: 'queued' }) },
+          ],
+          services: [
+            svcRow({ id: 1, name: 'web' }),
+            svcRow({ id: 2, name: 'api' }),
+            svcRow({ id: 3, name: 'worker' }),
+          ],
+        },
+      }),
+    });
+    await app.register(deploysRoutes, { prefix: '/services' });
+    const res = await app.inject({ method: 'GET', url: '/services/queue', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.count).toBe(3);
+    expect(body.byStatus).toEqual({ building: 1, queued: 2, deploying: 0 });
+    expect(body.items.map((i: { id: number; serviceName: string }) => [i.id, i.serviceName])).toEqual([
+      [1, 'web'],
+      [2, 'api'],
+      [3, 'worker'],
+    ]);
+  });
+
+  it('returns an empty queue when the caller has no visible services', async () => {
+    const app = await buildTestApp({ db: createFakeDb() });
+    await app.register(deploysRoutes, { prefix: '/services' });
+    // `member` session — visibleServiceIdSet returns an empty Set when the
+    // user owns nothing and is not in any workspace, so the route short-
+    // circuits without hitting findMany.
+    const res = await app.inject({ method: 'GET', url: '/services/queue', headers: asUser('member') });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({
+      items: [],
+      count: 0,
+      byStatus: { queued: 0, building: 0, deploying: 0 },
+    });
+  });
+
+  it('filters by the status query parameter', async () => {
+    // The fake DB does not apply `where` — the route still receives the
+    // arg, but the returned rows are whatever the mock resolves. So
+    // we hand back only the row that matches the requested status and
+    // prove the route carries the count + byStatus aggregate through.
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findMany: {
+          deployments: [depRow({ id: 1, status: 'queued' })],
+          services: [svcRow({ id: 1, name: 'web' })],
+        },
+      }),
+    });
+    await app.register(deploysRoutes, { prefix: '/services' });
+    const res = await app.inject({ method: 'GET', url: '/services/queue?status=queued', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.count).toBe(1);
+    expect(body.items[0].id).toBe(1);
+    expect(body.byStatus).toEqual({ building: 0, queued: 1, deploying: 0 });
+  });
+
+  it('refuses unauthenticated callers with 401', async () => {
+    const app = await buildTestApp({ db: createFakeDb() });
+    await app.register(deploysRoutes, { prefix: '/services' });
+    const res = await app.inject({ method: 'GET', url: '/services/queue' });
+    expect(res.statusCode).toBe(401);
+  });
+});

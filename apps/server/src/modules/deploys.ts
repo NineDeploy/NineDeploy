@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { and, desc, eq, inArray, isNotNull, lt, notInArray } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNotNull, lt, notInArray } from 'drizzle-orm';
 import { deployments, services } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { diffLines, renderDiff } from '../lib/diff.js';
@@ -9,7 +9,7 @@ import { deleteLog, logBus } from '../engine/logs.js';
 import { resolveUser } from '../lib/auth.js';
 import { loadServiceForUser } from '../lib/serviceAccess.js';
 import { assertMayDeployStoredService } from '../lib/hostPrivilege.js';
-import { assertServiceRole } from '../lib/resourceAccess.js';
+import { assertServiceRole, visibleServiceIdSet } from '../lib/resourceAccess.js';
 import { badRequest, notFound, parseId as num } from '../lib/errors.js';
 import { websocketBearerToken } from '../lib/websocketAuth.js';
 
@@ -75,6 +75,99 @@ export const deploysRoutes: FastifyPluginAsync = async (app) => {
       finishedAt: d.finishedAt ? d.finishedAt.toISOString() : null,
       createdAt: d.createdAt.toISOString(),
     }));
+  });
+
+  /**
+   * Global deploy queue.
+   *
+   * Returns every in-flight deployment (queued, building, deploying) the
+   * caller can see, with enough service metadata to operate on it without
+   * the panel having to make a second roundtrip. Ordered the way the
+   * worker claims them: building/deploying first (oldest in-flight wins),
+   * then queued (oldest enqueue wins), so the UI can show a single
+   * "what is happening and what is coming next" column without re-sorting.
+   *
+   * The status filter is optional and accepts the same tokens the worker
+   * writes; an empty list means "all in-flight" (the panel's normal view).
+   * The "claimed" row is the building/deploying deploy for a service; the
+   * remaining queued rows for the same service are not yet visible to
+   * the worker because of the per-service concurrency rule, and the UI
+   * must surface that with the position number.
+   */
+  app.get('/queue', { onRequest: [app.authenticate] }, async (req) => {
+    const query = req.query as { status?: string };
+    const allowed = ['queued', 'building', 'deploying'] as const;
+    type AllowedStatus = (typeof allowed)[number];
+    const statusFilter: AllowedStatus[] | null = query.status
+      ? allowed.filter((s) => query.status!.split(',').map((s) => s.trim()).includes(s))
+      : null;
+
+    // Scope by the caller's visible service set; operators see everything
+    // (visibleServiceIdSet returns null in that case and the filter is
+    // skipped).
+    const visible = await visibleServiceIdSet(app.db, req.user!);
+    if (visible && visible.size === 0) {
+      return { items: [], count: 0, byStatus: { queued: 0, building: 0, deploying: 0 } };
+    }
+
+    // Two-step query: the deployment rows through the relational helper
+    // (which the test fake supports), then a single services lookup to
+    // hydrate the service name. A JOIN-via-drizzle-select() would need a
+    // chainable stub the fake DB does not provide.
+    const whereClauses = [inArray(deployments.status, statusFilter ?? [...allowed])];
+    if (visible) whereClauses.push(inArray(deployments.serviceId, Array.from(visible)));
+
+    const rows = await app.db.query.deployments.findMany({
+      where: and(...whereClauses),
+      // Claim order: building / deploying first (oldest id first within
+      // each), then queued (oldest id first). drizzle's relational query
+      // does not support CASE in orderBy, so we sort in JS after the
+      // fetch — the row count is bounded by `limit` and the IN-flight
+      // set is small in practice.
+      orderBy: asc(deployments.id),
+      limit: 200,
+    });
+
+    // Hydrate service names with a single query.
+    const serviceIds = Array.from(new Set(rows.map((r) => r.serviceId)));
+    const serviceRows = serviceIds.length
+      ? await app.db.query.services.findMany({ where: inArray(services.id, serviceIds) })
+      : [];
+    const serviceNameById = new Map<number, string>();
+    for (const s of serviceRows) serviceNameById.set(s.id, s.name);
+
+    // Stable, status-aware reorder: building / deploying come above
+    // queued, oldest id first inside each bucket. SQL ORDER BY would
+    // be more efficient, but the in-flight set is bounded and the
+    // JS sort keeps the fake-DB contract intact.
+    const items = rows
+      .map((d) => ({
+        id: d.id,
+        serviceId: d.serviceId,
+        serviceName: serviceNameById.get(d.serviceId) ?? `service-${d.serviceId}`,
+        status: d.status,
+        commitSha: d.commitSha,
+        imageDigest: d.imageDigest,
+        message: d.message,
+        author: d.author,
+        trigger: d.trigger,
+        startedAt: d.startedAt ? d.startedAt.toISOString() : null,
+        finishedAt: d.finishedAt ? d.finishedAt.toISOString() : null,
+        createdAt: d.createdAt.toISOString(),
+      }))
+      .sort((a, b) => {
+        const rank = (s: string) => (s === 'building' ? 0 : s === 'deploying' ? 1 : 2);
+        const ra = rank(a.status);
+        const rb = rank(b.status);
+        if (ra !== rb) return ra - rb;
+        return a.id - b.id;
+      });
+
+    // Aggregate counts for the badge in the top bar.
+    const byStatus = { queued: 0, building: 0, deploying: 0 };
+    for (const it of items) byStatus[it.status as AllowedStatus] += 1;
+
+    return { items, count: items.length, byStatus };
   });
 
   // Rollback to a previous deployment. Re-runs the exact commit SHA (repo

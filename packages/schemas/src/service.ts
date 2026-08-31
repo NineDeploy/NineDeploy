@@ -228,6 +228,41 @@ export const deployment = z.object({
 });
 export type Deployment = z.infer<typeof deployment>;
 
+/**
+ * A single row in the global deploy queue (`GET /v1/services/queue`).
+ *
+ * Same fields as `Deployment` plus the service + project metadata the
+ * panel needs to render "what is happening and what is coming next"
+ * without a follow-up round-trip. `imageDigest` is populated for image
+ * deploys where `commitSha` is null.
+ */
+export const queueItem = z.object({
+  id: z.number().int(),
+  serviceId: z.number().int(),
+  serviceName: z.string(),
+  status: z.enum(['queued', 'building', 'deploying']),
+  commitSha: z.string().nullable(),
+  imageDigest: z.string().nullable(),
+  message: z.string().nullable(),
+  author: z.string().nullable(),
+  trigger: z.string(),
+  startedAt: z.string().datetime().nullable(),
+  finishedAt: z.string().datetime().nullable(),
+  createdAt: z.string().datetime(),
+});
+export type QueueItem = z.infer<typeof queueItem>;
+
+export const queueResponse = z.object({
+  items: z.array(queueItem),
+  count: z.number().int(),
+  byStatus: z.object({
+    queued: z.number().int(),
+    building: z.number().int(),
+    deploying: z.number().int(),
+  }),
+});
+export type QueueResponse = z.infer<typeof queueResponse>;
+
 // ── Domains (Traefik routing) ─────────────────────────────────────────────
 export const createDomain = z.object({
   hostname: z.string().min(3).max(253),

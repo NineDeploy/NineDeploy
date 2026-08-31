@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   Activity, Building2, ChevronLeft, ChevronRight, Clock, Cloud, Container, Database, FolderKanban, Globe, HardDrive,
-  FileCode, Info, KeyRound, Layers, LayoutDashboard, Moon, Network, Shield, Tag, type LucideIcon,
+  FileCode, Info, KeyRound, Layers, LayoutDashboard, ListOrdered, Moon, Network, Shield, Tag, type LucideIcon,
   Rocket, Search, Server, Settings as SettingsIcon, Sparkles, Sun, Users, X,
 } from 'lucide-react';
 import { Link, Outlet, useLocation } from 'react-router';
@@ -17,6 +17,7 @@ import { TopBarFilters } from './TopBarFilters.js';
 import { ModeToggle } from './ModeToggle.js';
 import { UpdateBanner } from './UpdateBanner.js';
 import { HelpButton, HelpDrawer } from './HelpDrawer.js';
+import { DeployQueueBadge } from './DeployQueueBadge.js';
 import { HelpProvider } from '../help/HelpContext.js';
 import { useExperienceMode } from '../lib/mode.js';
 import { installPanelAutofillGuard } from '../lib/autofill.js';
@@ -51,6 +52,12 @@ const GROUPS: NavGroup[] = [
       { to: '/manifest-creator', label: 'Manifest Creator', icon: FileCode },
       { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
       { to: '/services', label: 'Services', icon: Server },
+      // Global queue view: every in-flight (queued / building / deploying)
+      // deploy across every service the caller can see, with one-click
+      // cancel + remove. Sits in the Deploy group because that is what the
+      // page is for; the per-service Deploys tab still owns the per-row
+      // log and config diff.
+      { to: '/deploys', label: 'Queue', icon: ListOrdered },
     ],
   },
   {
@@ -334,6 +341,7 @@ export function Layout() {
               <span className="hidden sm:inline">Search</span>
               <kbd className="rounded bg-white/[0.06] px-1 py-0.5 text-[9px]">⌘K</kbd>
             </button>
+            <DeployQueueBadge />
             <button type="button"
               onClick={() => setDrawerOpen(true)}
               className="relative rounded-lg p-2 text-slate-500 transition hover:bg-white/[0.06] hover:text-slate-300"

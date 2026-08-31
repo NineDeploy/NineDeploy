@@ -33,6 +33,7 @@ import type {
   MenuListResponse,
   DemoSeedResult,
   Deployment,
+  QueueResponse,
   DeployTemplateInput,
   DockerResources,
   Domain,
@@ -562,6 +563,13 @@ export interface NineDeployClient {
   deploys: {
     trigger: (serviceId: number, input?: TriggerDeploy) => Promise<{ deploymentId: number }>;
     list: (serviceId: number) => Promise<Deployment[]>;
+    /**
+     * Global deploy queue view: every in-flight (queued / building /
+     * deploying) deployment the caller can see, with service + project
+     * metadata. The optional `status` filter is a comma-separated token
+     * list (e.g. `?status=queued,building`).
+     */
+    queue: (query?: string) => Promise<QueueResponse>;
     rollback: (serviceId: number, deploymentId: number) => Promise<{ deploymentId: number }>;
     /** Cancel a queued/in-flight deployment (checkpoints abort at step boundaries). */
     cancel: (serviceId: number, deploymentId: number) => Promise<{ ok: boolean; status: string }>;
@@ -1426,6 +1434,7 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
       trigger: (serviceId, input) =>
         send<{ deploymentId: number }>('POST', `/v1/services/${serviceId}/deploys`, input ?? {}),
       list: (serviceId) => get<Deployment[]>(`/v1/services/${serviceId}/deploys`),
+      queue: (query) => get<QueueResponse>(`/v1/services/queue${query ? `?${query}` : ''}`),
       rollback: (serviceId, deploymentId) =>
         send<{ deploymentId: number }>('POST', `/v1/services/${serviceId}/deploys/${deploymentId}/rollback`),
       cancel: (serviceId, deploymentId) =>
