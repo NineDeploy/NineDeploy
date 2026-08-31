@@ -64,6 +64,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   while leaving the test available for `vitest run
   test/index.test.ts` (run on demand). PR #58 does not
   rewrite that test — it lands in a dedicated follow-up.
+- **`serviceBridge.test.ts` premise fix** *(post-merge)*. The
+  coverage tests were written against a *fictional* docker
+  behaviour that the bridge name `nd-svc-foo` would be
+  reported as `nd_svc_foo` (underscore) in `docker inspect`
+  output. Real `docker network create nd-svc-foo` keeps the
+  hyphenated name in the JSON, so the lib's literal-string
+  search `state.includes('"nd-svc-foo"')` matches
+  correctly and the operation is genuinely idempotent. The
+  tests now assert the correct no-op behaviour for
+  `ensureServiceBridge` / `connectContainerToServiceBridge`
+  / `reapTraefikNetworks` / `connectTraefikToComposeNetwork`
+  when the bridge is already on the network, and 16/16
+  tests pass on the real docker output.
+- **`imageInventory.pruneImages.keepLast` fix** *(post-merge,
+  functional bug)*. The previous loop
+  `for (let i = keep; i < list.length; i += 1) protectedIds.add(list[i]!.id)`
+  with `keep = Math.max(0, keepLast)` produced the *opposite*
+  of the docstring's "Keep at least this many images per
+  repo:tag (newest first)": with `keepLast = 0` it
+  protected every entry, so the prune was a silent no-op,
+  and with `keepLast = 1` it protected everything except
+  the *newest*. The new loop
+  `for (let i = 0; i < keep; i += 1) protectedIds.add(list[i]!.id)`
+  with `keep = Math.min(Math.max(0, keepLast), list.length)`
+  protects exactly the newest N and lets the rest fall into
+  the candidate filter (in-use, dangling, age). 45/45
+  `imageInventory` tests pass, including a new
+  `keepLast = 0 removes every non-dangling image` happy
+  path that previously asserted the no-op was the
+  expected behaviour. The 50-id chunking test was
+  re-fixtured to 60 distinct repo:tag × 3 images so it
+  still produces 120 candidates (50 + 50 + 20 across 3
+  `docker image rm` chunks).
+- **CLI `test/index.test.ts` restore** *(post-merge)*. The
+  commander integration smoke is no longer excluded. Three
+  blockers had to go: (1) the
+  `vi.mock('../src/lib/format.js', () => ({ banner: h.banner }))`
+  factory replaced the entire `format.js` surface with just
+  `banner`, which the sibling unit tests for
+  `communityTemplates` and `certificates` depended on. The
+  new factory uses `vi.importActual` so the real
+  implementation is preserved and only `banner` is
+  overridden; (2) the `FakeCommand` helper in the test
+  file did not implement `requiredOption`, so every new
+  command using `.requiredOption(...)` (`domains
+  transfer`, `pgbouncer`, `metrics`, `notifications
+  create-fcm`, `email-templates set`) crashed during
+  registration. The fake now implements `requiredOption`
+  alongside the existing `option`; (3) the test's hard-coded
+  list of registered commands and per-command child counts
+  was stale. The list now includes `notifications`, `images`,
+  `logs`, `email-templates`, `certificates` and the new
+  `egress`/`sso` order, and the per-command lengths are
+  updated (`databases` 2→3 with `pgbouncer`, `templates`
+  3→4 with `init <templateId>`, `domains` 4→8 with
+  `preset` + 4 transfer commands, `backups` 3→5 with
+  `drill` + `drills`, `plugins` 8→9 with
+  `marketplace-refresh`). 24/24 index tests pass; total
+  CLI suite 33 files / 596 tests pass. Coverage jumps
+  from ~73% to **84.12% statements / 81.83% branches /
+  81.8% functions / 84.17% lines** because the inline
+  `.action((...args) => fn(...))` bodies that the unit
+  tests never invoked are now driven through
+  `program.parseAsync()`. Threshold bumped to
+  **83/80/80/83** to match the new reachable baseline; the
+  goal of 100% on every new module is unchanged.
 - **`test/helpers.ts` update**: `update`/`select`/`delete`
   resolvers now try `name` / `snake` / `camel` lookups in
   order so tests can register resolvers under either
