@@ -1,5 +1,38 @@
 const releases = [
   {
+    version: "0.4.0",
+    date: "2026-08-31",
+    status: "current",
+    notes: [
+      {
+        t: "Installer & Release",
+        items: [
+          "CI publishes the panel image to GHCR on every push to main, so a fresh `install.sh --channel=main` lands on a current image, not a stale one — the multi-arch build is tagged `:edge` and the existing tag-push flow re-tags `:latest` for the release channel",
+          "`install.sh` now substitutes the right tag (`:edge` for main, `:latest` for release) into the rendered compose file, and a preflight `docker manifest inspect` runs before `compose pull` so a private GHCR package surfaces a clear one-line error instead of the generic 'image pull failed'",
+          "Sprint 11 PR #58 coverage push — 200+ tests across 17 new files covering the Sprint 11 surface (PRs #45–#58); server coverage 88.12% → 93.53% statements, 86.00% → 88.31% branches; CLI 73% → 84% on the back of the `test/index.test.ts` restore; SDK 100% on every axis; thresholds re-bumped to server 93.6/88.4/93/95.1, CLI 83/80/80/83",
+        ],
+      },
+      {
+        t: "Fixed (post-Sprint 11)",
+        items: [
+          "`serviceBridge` test premise — docker `network ls` / `inspect` output preserves the bridge name verbatim, so the lib's literal-string search matches correctly and every ensure/connect/reap/reconcile call is idempotent (the lib was right; the tests were not)",
+          "`imageInventory.pruneImages.keepLast` semantics — the loop now protects exactly the newest N and leaves the rest as candidates, instead of the previous inverse-of-docstring behaviour that made `keepLast = 0` a silent no-op (45/45)",
+          "`marketplaceCatalog.decodeKey` Node 24 raw 32-byte Ed25519 import — the key is now imported as a JWK, the only form Node's key importer accepts for an OKP public key, so the signed marketplace index verifies cleanly (16/16)",
+          "`localOrchestrator.listStacks` service-count regex was always 0 for any compose file with body under each service entry — a per-block scanner now counts top-level service lines inside the `services:` block and excludes 4+-space-indented body lines (24/24)",
+        ],
+      },
+      {
+        t: "Coverage Follow-ups",
+        items: [
+          "`stickyIpPlugin.ts`: 32% → 100% on every axis, driving the real `NineDeployKernel` event bus + `configCenter` + `IEgressIpDriver` through the metadata, attach (success / failed / no projectId / master switch off / no ip / no driver / driver throws), detach and destroy lifecycle",
+          "`swarmOrchestrator.ts`: 42% → 100% statements / 100% lines, with a cross-platform in-memory `node:fs` shim covering the network / secret / config / service create + update paths, every `getStackStatus` replica state label, the `readState` file-vs-DB fallback, and the ordered `removeStack` with best-effort docker rm tolerance",
+          "`localOrchestrator.ts`: 60% → 97% statements / 98% lines, every `renderCompose` block, `deployStack` failure modes, `removeStack` best-effort paths, `getStackStatus` null paths, and `listStacks` STACK_ROOT unreadable",
+          "`auth.ts`, `stats.ts`, `notifications.ts`, `backups.ts`, `manifest.ts`, `templates.ts` hub — every Sprint 11 module lifted to ≥97% statements with dedicated tests for the operator-vs-scope gates, the per-resource scope superset rule, channel CRUD, the per-database route branches, the `diff.build` field branches, and the community-merge collision drop",
+        ],
+      },
+    ],
+  },
+  {
     version: "0.3.4",
     date: "2026-08",
     status: "current",
