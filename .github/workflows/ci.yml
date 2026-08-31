@@ -97,6 +97,62 @@ jobs:
       - name: Build the image
         run: docker build -t ninedeploy:ci .
 
+  # Publishes the panel image to GHCR on every push to main so an
+  # `install.sh --docker` from the main channel never lands on a stale
+  # `:latest`. The release workflow (release.yml) does the same on tag
+  # push and re-tags `:latest`, so :latest on GHCR always points to the
+  # most recent published image regardless of channel.
+  #
+  # One-time setup: the GHCR package must be set to "Public" visibility
+  # at https://github.com/orgs/NineDeploy/packages/container/ninedeploy/settings
+  # so an unauthenticated `docker pull` works for fresh installs. This
+  # is a GitHub Packages UI setting; there is no API call that can do
+  # it from CI.
+  publish-image:
+    name: Publish Docker image to GHCR
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Only build + push from main. PRs run the build-only job above
+    # to keep the workflow cheap and to avoid forking a public image
+    # for every fork PR.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # L-14: least privilege. `packages: write` is the only permission
+    # this job needs; everything else stays at the workflow default
+    # of `contents: read`.
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Build the multi-arch image (amd64 + arm64) and push only on main.
+      # The cache-from layer accelerates the next push and keeps the
+      # build under the 20-minute job timeout even on a clean runner.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@988b5a0280414f521da01fcc63a27aeeb4b104db # v6.7.0
+
+      - name: Build and push (edge + main-<sha>)
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          # `:edge` is what `install.sh --channel=main` pulls; the
+          # sha-pinned tag is the immutable artifact a release manager
+          # can re-tag to `:latest` (or roll back to) without rebuilding.
+          tags: |
+            ghcr.io/${{ github.repository }}:edge
+            ghcr.io/${{ github.repository }}:main-${{ github.sha }}
+          cache-from: type=registry,ref=ghcr.io/${{ github.repository }}:edge
+          cache-to: type=inline
+
   integration:
     name: Integration tests (real Docker + PostgreSQL)
     runs-on: ubuntu-latest

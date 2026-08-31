@@ -802,6 +802,23 @@ install_docker_mode() {
     || fail "The fetched compose file does not look right (missing 'services:') — refusing to deploy it"
   mv "$DOCKER_INSTALL_DIR/docker-compose.yml.new" "$DOCKER_INSTALL_DIR/docker-compose.yml"
 
+  # Substitute the image tag the release workflow tagged for this ref.
+  # `:latest` for release tags (set by release.yml on tag push) and `:edge`
+  # for the main channel (set by ci.yml on every push to main). A pinned
+  # `--version` always uses `:latest` because the tag was promoted to
+  # :latest at release time.
+  IMAGE_TAG="latest"
+  if [ "$CHANNEL" = "main" ] && [ -z "$PINNED_VERSION" ]; then
+    IMAGE_TAG="edge"
+  fi
+  if grep -q 'ghcr.io/.*:latest' "$DOCKER_INSTALL_DIR/docker-compose.yml"; then
+    sed -i.bak "s|ghcr.io/${REPO_SLUG}:latest|ghcr.io/${REPO_SLUG}:${IMAGE_TAG}|" \
+      "$DOCKER_INSTALL_DIR/docker-compose.yml" \
+      && rm -f "$DOCKER_INSTALL_DIR/docker-compose.yml.bak" \
+      || fail "Could not substitute the image tag in docker-compose.yml"
+    info "Compose file pinned to ghcr.io/${REPO_SLUG}:${IMAGE_TAG}"
+  fi
+
   cd "$DOCKER_INSTALL_DIR"
 
   # .env: created 0600, then upserted per run. The JWT secret survives
@@ -844,6 +861,17 @@ install_docker_mode() {
   umask "$old_umask"
 
   info "Pulling the NineDeploy panel image (a few hundred MB on first run)…"
+  # Preflight: try an unauthenticated `docker manifest inspect` against
+  # the exact tag the compose file will use. A 401/403 here means the
+  # GHCR package is still private and the operator must flip its
+  # visibility to "Public" at
+  # https://github.com/orgs/NineDeploy/packages/container/ninedeploy/settings
+  # — the docs page (docs/INSTALL.md) has a one-time checklist. Failing
+  # fast here is friendlier than the generic "image pull failed" the
+  # compose call would otherwise surface ten seconds later.
+  if ! docker_cmd manifest inspect "ghcr.io/${REPO_SLUG}:${IMAGE_TAG}" >/dev/null 2>&1; then
+    fail "ghcr.io/${REPO_SLUG}:${IMAGE_TAG} is not publicly pullable. Make the GHCR package 'Public' at https://github.com/orgs/NineDeploy/packages/container/ninedeploy/settings (one-time setup), or use the bare-metal installer (./install.sh without --docker) which builds from source."
+  fi
   docker_cmd compose pull \
     || fail "Image pull failed — check registry connectivity and re-run the installer."
   docker_cmd compose up -d \
