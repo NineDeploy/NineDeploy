@@ -93,8 +93,16 @@ jobs:
                 done
                 if [ "${keep}" = "false" ]; then
                   echo "Deleting version ${id} (tags: ${tags})"
+                  # GHCR refuses to delete any version with
+                  # > 5000 downloads (HTTP 400). Those rows are
+                  # the public-tag trail of past releases
+                  # (0.2, 0.2.1, 0.3.x, etc.) and we cannot
+                  # remove them — but the loop must continue
+                  # so the new v0.4.0 / latest publish below
+                  # still runs. Swallow the failure per-row.
                   gh api --method DELETE \
-                    "/orgs/${{ github.repository_owner }}/packages/container/ninedeploy/versions/${id}"
+                    "/orgs/${{ github.repository_owner }}/packages/container/ninedeploy/versions/${id}" \
+                    || echo "  delete blocked (>5000 downloads or immutable); keeping version ${id}"
                 else
                   echo "Keeping version ${id} (tags: ${tags})"
                 fi
