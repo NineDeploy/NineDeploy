@@ -6,6 +6,14 @@ export default defineConfig({
     environmentOptions: { jsdom: { url: 'http://localhost/' } },
     include: ['test/**/*.test.ts', 'test/**/*.test.tsx'],
     setupFiles: ['test/setup.ts'],
+    // The CI runner is roughly 2–3× slower than a local box; the
+    // SettingsTabPrivilege / Hub suite touches many privilege-gating
+    // branches and patches that, on a slow runner, blow past the
+    // 5s default and 15s in-suite override. Lift both to 30s so
+    // release:check is stable on ubuntu-latest without any
+    // individual test waiting on a tight per-test timer.
+    testTimeout: 30_000,
+    hookTimeout: 30_000,
     coverage: {
       provider: 'v8',
       include: ['src/**/*.ts', 'src/**/*.tsx'],
