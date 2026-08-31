@@ -67,24 +67,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Disable GHCR's "Immutable tags" toggle on the package
-      # so subsequent releases can overwrite the existing
-      # `:0.4.0` / `:0.4` / `:0` / `:latest` tag slugs with
-      # the new build instead of leaving the old digest
-      # dangling alongside `:v0.4.0`. The PATCH is idempotent —
-      # once the toggle is off it stays off, and the call is
-      # a no-op on subsequent runs.
-      - name: Allow GHCR tag overrides
-        if: success()
-        run: |
-          gh api \
-            --method PATCH \
-            -H "Accept: application/vnd.github+json" \
-            /orgs/${{ github.repository_owner }}/packages/container/ninedeploy \
-            -f immutable_tags=false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
       # Delete the legacy tag slugs from prior releases
       # (`:v0`, `:v0.4`, `:0.4.0`, `:0.4`, `:0`). The new
       # build below only produces `:v0.4.0` and `:latest`,
