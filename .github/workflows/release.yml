@@ -6,6 +6,14 @@ on:
   push:
     tags:
       - 'v*'
+  # Manual trigger — used to retry a release after fixing the
+  # workflow, since GitHub does not always re-fire the push
+  # event for a force-pushed existing tag (the tag update
+  # path is treated as a branch update and the `tags: ['v*']`
+  # filter does not match). `gh workflow run release.yml
+  # --ref v0.4.0` from the local checkout or the Actions
+  # "Run workflow" button on a chosen ref both work.
+  workflow_dispatch:
 
 # L-14: least privilege at the workflow level; `packages: write` is granted
 # only to the job that actually pushes the image.
