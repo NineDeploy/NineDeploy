@@ -1,8 +1,51 @@
 const releases = [
   {
-    version: "0.4.1",
+    version: "0.4.2",
     date: "2026-08-31",
     status: "current",
+    notes: [
+      {
+        t: "Plugin Audit & Fixes",
+        items: [
+          "NotificationsDispatcherPlugin ships a command:palette menuItem now — the plugin listened on deployment / service.health_changed / backup.completed and emitted notification.queued, but had no menuItems entry at all, so the only path to its config was the hidden /settings?section=plugins URL. The new entry points to /settings?section=notifications",
+          "TelemetryStreamerPlugin actually POSTs to export_endpoint now — the configSchema exposed the field and the description said records were pushed, but the init handler only re-emitted telemetry.recorded as a pass-through and the endpoint was silently ignored. Wires a real fetch() with HMAC-SHA256 signing (X-NineDeploy-Signature: sha256=<hex>) and a per-request AbortSignal timeout; failures land on telemetry.export.error custom events",
+          "TelemetryStreamerPlugin wildcard filter drops telemetry.recorded (recursion guard) and telemetry.export.error (a non-2xx response re-emitted itself as telemetry.recorded, re-fetched, re-failed, and OOMed the test process — the export now short-circuits before the loop can build). Also drops plugin.* / config.* so a plugin.registered tick never surfaces as user-facing audit data",
+          "Layout sidebar no longer leaks command:palette items into the Extensions group. Every built-in plugin that registered any menuItems ended up in the rail-mounted Extensions group regardless of slot — Build Cache, Webhook Out, Domain Presets, Sticky IP showed up in BOTH the Cmd+K palette AND the sidebar. Filter menus.data to m.slot === 'sidebar:secondary' so only Cloudflare Tunnels (the only built-in plugin that uses that slot) lands in the rail",
+          "ConfigPresetsPlugin menuItem repointed from /settings/presets (no such route) to /settings?section=config, where the panel renders the preset.list / preset.<id>.values rows the plugin owns",
+          "plugin-sdk MenuSlot union extended with database:tabs — the slot was in the kernel's runtime type but missing from the SDK type, so an external plugin declaring a database-tab menuItem would compile against the SDK and then have the kernel reject the row at runtime. SDK now mirrors the kernel exactly",
+        ],
+      },
+      {
+        t: "Deploy Queue Management",
+        items: [
+          "Global queue page at /deploys — every in-flight (queued / building / deploying) deploy across every service the caller can see, with one-click cancel + remove, per-service position chip on queued rows (#3 of 5 next to the timestamp), 3s auto-refresh, and a DeployQueueBadge in the top bar that hides when the queue is empty and pulses while a row is live. Member sessions see only the rows on services they can admin",
+          "Multiple queued deploys per service (50-row cap) — the old dedup short-circuited on ANY queued/building match, so a services deploy click during a long build silently dropped. Split into in-flight (still wins) + per-service queued (cap 50, returns the actual row)",
+          "Cancel + remove routes on services.deploys — queued deploys stop immediately, in-flight ones stop at the next pipeline step boundary with the previous version still serving. Remove refuses in-flight (cancel first) and refuses the running row (it carries the digest a rollback re-deploys)",
+          "CLI: ninedeploy deploys queue — same data the web panel's /deploys page renders, with per-service 1-based queue position (queued rows only; in-flight rows get a dash so the column reads cleanly) and a by-status k/v block at the bottom (queued / building / deploying) so the operator can confirm the empty state at a glance",
+          "MCP: list_queue + remove_deploy tools register the matching requiredScopes (read for queue, write for remove) so a read-only token can list the queue but cannot delete a deploy — same gate the SDK + HTTP layer enforce",
+          "Longest-match sidebar routing — Layout.findGroup now picks the longest prefix match, not the first one. Plugin-contributed menu items register routes like /settings/extensions/<plugin-id>; the static System group also owns /settings, so a first-match lookup routed every plugin click into System and the user landed in the wrong panel",
+        ],
+      },
+      {
+        t: "Integration Coverage",
+        items: [
+          "SDK ↔ server queue end-to-end test — wires the real SDK client to the real Fastify route via Fastify's app.inject() (no port binding, no real network). A custom fetch translates the SDK's standard Authorization: Bearer <token> header to the in-process test app's x-test-user header. Pins the contract that the SDK schema and the route JSON agree — a renamed response key, a removed field, a 404 that became a 400, an SDK shape that no longer matches the route JSON will all surface here first",
+        ],
+      },
+      {
+        t: "Installer & Release",
+        items: [
+          "Strict-semver tag validation in the release workflow. The trigger on: push: tags: ['v*'] accepted any v-prefixed ref — v0.4.0-foo, v0.4.0+build.1, even a stray v0.4.0 with trailing whitespace. install.sh and selfUpdate.ts only resolve ^v\\d+\\.\\d+\\.\\d+$, so pushing a different shape would build a real image no install path can ever reach. A new first step fails fast on anything that does not match strict semver",
+          "Multi-arch release build — the ci.yml publish-image job was already multi-arch (linux/amd64 + linux/arm64), but the release tag pipeline (which is what install.sh --docker actually pulls) was silently amd64-only. Every ARM host (Raspberry Pi, AWS Graviton, Apple-Silicon-as-target) hit a no matching manifest error on docker pull. Mirrors the daily edge build's architecture coverage",
+          "Marketplace catalog shape smoke test — every entry in MARKETPLACE_CATALOG is walked and asserted against the shape the loader depends on (id / name / version / menuItem id+slot+label+route+route-format / configSchema key+label+isSecret). A typo in a new catalog entry would have shipped as a row the panel could show but not install; the test makes that fail in CI",
+        ],
+      },
+    ],
+  },
+  {
+    version: "0.4.1",
+    date: "2026-08-31",
+    status: "stable",
     notes: [
       {
         t: "Installer & Release",

@@ -47,7 +47,10 @@ export function DeploysTab({
     const queued = deploys.filter((d) => d.status === 'queued');
     const sortedAsc = [...queued].sort((a, b) => a.id - b.id);
     const map = new Map<number, { position: number; total: number }>();
-    sortedAsc.forEach((d, i) => map.set(d.id, { position: i + 1, total: sortedAsc.length }));
+    for (let i = 0; i < sortedAsc.length; i++) {
+      const d = sortedAsc[i]!;
+      map.set(d.id, { position: i + 1, total: sortedAsc.length });
+    }
     return map;
   }, [deploys]);
 

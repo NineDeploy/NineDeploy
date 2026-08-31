@@ -327,6 +327,15 @@ describe('createClient', () => {
 
       await client.deploys.remove(1, 2);
       expect(last(calls)).toMatchObject({ url: '/v1/services/1/deploys/2', init: { method: 'DELETE' } });
+
+      await client.deploys.queue();
+      expect(last(calls)).toMatchObject({ url: '/v1/services/queue', init: { method: 'GET' } });
+
+      await client.deploys.queue('?status=queued,building');
+      expect(last(calls)).toMatchObject({ url: '/v1/services/queue?status=queued,building', init: { method: 'GET' } });
+
+      await client.deploys.queue('status=queued');
+      expect(last(calls)).toMatchObject({ url: '/v1/services/queue?status=queued', init: { method: 'GET' } });
     });
   });
 

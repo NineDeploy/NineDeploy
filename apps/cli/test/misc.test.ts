@@ -357,8 +357,11 @@ describe('deploysQueue', () => {
     // The two `queued` rows for service 7 should be 1 and 2; the
     // single `queued` row for service 9 resets the counter to 1.
     // Strip ANSI color codes so the regex doesn't have to care about
-    // them — the table() helper colors the `status` column.
-    const stripAnsi = (s: string): string => s.replace(/\u001b\[[0-9;]*m/g, '');
+    // them — the table() helper colors the `status` column. Built from
+    // String.fromCharCode(0x1b) to avoid a literal control character in
+    // the source (the biome lint disallows \u001b inside regex literals).
+    const ESC = String.fromCharCode(0x1b);
+    const stripAnsi = (s: string): string => s.replace(new RegExp(`${ESC}\\[[0-9;]*m`, 'g'), '');
     const lines = logSpy.mock.calls.map((c) => String(c[0])).map(stripAnsi).join('\n');
     expect(lines).toMatch(/api\s+7\s+102\s+queued\s+1/);
     expect(lines).toMatch(/api\s+7\s+103\s+queued\s+2/);

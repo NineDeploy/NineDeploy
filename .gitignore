@@ -72,3 +72,4 @@ apps/server/templates-mirror.json
 .tmp-*.*
 .tpm-*.log
 .tpm-*.py
+.temp_files/

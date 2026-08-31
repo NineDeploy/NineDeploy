@@ -1434,7 +1434,8 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
       trigger: (serviceId, input) =>
         send<{ deploymentId: number }>('POST', `/v1/services/${serviceId}/deploys`, input ?? {}),
       list: (serviceId) => get<Deployment[]>(`/v1/services/${serviceId}/deploys`),
-      queue: (query) => get<QueueResponse>(`/v1/services/queue${query ? `?${query}` : ''}`),
+      queue: (query) =>
+        get<QueueResponse>(`/v1/services/queue${query ? (query.startsWith('?') ? query : `?${query}`) : ''}`),
       rollback: (serviceId, deploymentId) =>
         send<{ deploymentId: number }>('POST', `/v1/services/${serviceId}/deploys/${deploymentId}/rollback`),
       cancel: (serviceId, deploymentId) =>
