@@ -313,27 +313,71 @@ describe('LocalOrchestrator', () => {
       expect(await newOrchestrator().listStacks()).toEqual([]);
     });
 
-    it('lists every entry under STACK_ROOT with a serviceCount from the regex hit', async () => {
-      // The lib's regex is intentionally strict (`^services:\n((?:
-      // {2}[A-Za-z0-9_.-]+:\n)+)`) and the post-split filter is
-      // `endsWith(':')`, so a real compose file (with content under
-      // each service) counts as 0. This test pins the contract: the
-      // lib iterates `readdirSync(STACK_ROOT)`, skips entries whose
-      // compose file is missing, and reports 0 for malformed bodies.
-      // A future improvement would be a smarter service-count
-      // parser — that's out of scope here.
-      readdirSyncSpy.mockReturnValue(['demo', 'broken']);
-      existsSyncSpy.mockImplementation((p: string) =>
-        p.includes('demo') && p.endsWith('docker-compose.yml'),
-      );
+    it('lists every entry under STACK_ROOT with the real service count from the body', async () => {
+      // The lib now scans the body between `\nservices:\n` and the
+      // next top-level key for lines matching `^  <name>:$` (4+
+      // space-indented lines, which are body of `environment` /
+      // `volumes` / `labels`, are excluded). The previous regex
+      // required consecutive `  name:\n` lines and returned 0 for
+      // any compose file with content under each service — the
+      // format the driver itself emits.
+      readdirSyncSpy.mockReturnValue(['demo']);
+      existsSyncSpy.mockReturnValue(true);
       readFileSyncSpy.mockReturnValue(
-        'services:\n  web:\n    image: nginx\n  api:\n    image: api\n',
+        [
+          'version: "3.9"',
+          'services:',
+          '  web:',
+          '    image: nginx:1.27',
+          '    environment:',
+          '      LOG_LEVEL: "info"',
+          '    networks:',
+          '      - frontend',
+          '  api:',
+          '    image: myorg/api:1.0',
+          '    environment:',
+          '      PORT: "8080"',
+          '      LOG_LEVEL: "info"',
+          'networks:',
+          '  frontend:',
+          '    driver: bridge',
+        ].join('\n'),
       );
       const list = await newOrchestrator().listStacks();
-      // `broken` has no compose file (existsSync returns false) so
-      // the lib skips it entirely. Only `demo` shows up, with the
-      // zero-serviceCount from the strict regex + post-split filter.
-      expect(list).toEqual([{ name: 'demo', serviceCount: 0 }]);
+      // 2 top-level service entries (`web` + `api`). The
+      // `environment:` and `networks:` blocks are body — they
+      // don't count.
+      expect(list).toEqual([{ name: 'demo', serviceCount: 2 }]);
+    });
+
+    it('returns 0 services when the compose file has no services: block', async () => {
+      readdirSyncSpy.mockReturnValue(['empty']);
+      existsSyncSpy.mockReturnValue(true);
+      readFileSyncSpy.mockReturnValue('# just a comment, nothing else\n');
+      const list = await newOrchestrator().listStacks();
+      expect(list).toEqual([{ name: 'empty', serviceCount: 0 }]);
+    });
+
+    it('does not count keys that appear before the services: block', async () => {
+      // The first top-level key (`networks:`) ends the services
+      // block; keys after it are body of that next section, not
+      // services.
+      readdirSyncSpy.mockReturnValue(['two-section']);
+      existsSyncSpy.mockReturnValue(true);
+      readFileSyncSpy.mockReturnValue(
+        [
+          'services:',
+          '  web:',
+          '    image: nginx',
+          '  api:',
+          '    image: api',
+          'networks:',
+          '  frontend:',
+          '    driver: bridge',
+        ].join('\n'),
+      );
+      const list = await newOrchestrator().listStacks();
+      expect(list).toEqual([{ name: 'two-section', serviceCount: 2 }]);
     });
 
     it('reports 0 services when a compose file is unparseable', async () => {

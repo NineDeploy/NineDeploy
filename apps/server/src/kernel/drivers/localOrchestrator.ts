@@ -129,7 +129,7 @@ export class LocalOrchestrator implements IOrchestrator {
   }
 
   async listStacks(): Promise<Array<{ name: string; serviceCount: number }>> {
-    const { readdirSync, statSync, readFileSync } = await import('node:fs');
+    const { readdirSync, readFileSync } = await import('node:fs');
     let entries: string[] = [];
     try {
       entries = readdirSync(STACK_ROOT);
@@ -143,15 +143,30 @@ export class LocalOrchestrator implements IOrchestrator {
       let count = 0;
       try {
         const text = readFileSync(composePath, 'utf8');
-        // The compose file is deterministic — count `services:` block
-        // entries by counting the top-level `- name:` lines that
-        // appear under it. A regex is enough for the format we emit.
-        const match = text.match(/^services:\n((?: {2}[A-Za-z0-9_.-]+:\n)+)/m);
-        if (match) count = (match[1] ?? '').split('\n  ').filter((s) => s.endsWith(':')).length;
+        // Count every top-level service entry inside the `services:`
+        // block — lines that start with two spaces and a `name:` (no
+        // trailing whitespace, no children). The previous regex
+        // required consecutive `  name:\n` lines, which collapsed to
+        // zero entries for any compose file with body under the
+        // service (the format the driver itself emits). 4+-space
+        // indented lines are body of `environment` / `volumes` /
+        // `labels` etc. and must not be counted.
+        // Locate `services:\n` whether it appears mid-file (after a
+        // top-level `version:` / `name:`) or at column 0 (e.g. a
+        // hand-curated minimal compose file). The first \n is the
+        // end of the previous top-level key, not a leading separator.
+        const servicesIdx = text.indexOf('services:\n');
+        if (servicesIdx !== -1) {
+          const after = text.slice(servicesIdx + 'services:\n'.length);
+          // The block runs until the next column-0 key (volumes /
+          // networks / configs / secrets) or end-of-file.
+          const nextSection = after.search(/^[A-Za-z]/m);
+          const block = nextSection === -1 ? after : after.slice(0, nextSection);
+          count = (block.match(/^ {2}[A-Za-z0-9_.-]+:$/gm) ?? []).length;
+        }
       } catch {
         // ignore — the stack is half-written; report 0 services
       }
-      void statSync;
       result.push({ name: entry, serviceCount: count });
     }
     return result;
