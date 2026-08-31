@@ -66,6 +66,24 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Disable GHCR's "Immutable tags" toggle on the package
+      # so subsequent releases can overwrite the existing
+      # `:0.4.0` / `:0.4` / `:0` / `:latest` tag slugs with
+      # the new build instead of leaving the old digest
+      # dangling alongside `:v0.4.0`. The PATCH is idempotent —
+      # once the toggle is off it stays off, and the call is
+      # a no-op on subsequent runs.
+      - name: Allow GHCR tag overrides
+        if: success()
+        run: |
+          gh api \
+            --method PATCH \
+            -H "Accept: application/vnd.github+json" \
+            /orgs/${{ github.repository_owner }}/packages/container/ninedeploy \
+            -f immutable_tags=false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Build and push
         if: success()
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
@@ -74,3 +92,32 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+      # Create the GitHub Release for this tag. Without this
+      # step the tag exists in git but the Releases page stays
+      # empty — every `git describe`, GitHub download URL, or
+      # Releases-page visitor lands on a "No release notes"
+      # dead-end. We pull the body from CHANGELOG.md (the
+      # `## [0.4.0] - …` section) and pin the `v0.4.0` image
+      # as the canonical download, so the page mirrors what
+      # the project actually ships.
+      - name: Publish GitHub Release
+        if: success()
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          body: |
+            See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/CHANGELOG.md) for the full release notes.
+
+            **Pull the image:**
+            ```
+            docker pull ghcr.io/${{ github.repository }}:${{ github.ref_name }}
+            docker pull ghcr.io/${{ github.repository }}:latest
+            ```
+          files: |
+            CHANGELOG.md
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
