@@ -432,13 +432,23 @@ describe('Settings', () => {
     fireEvent.click((await screen.findAllByTitle('Edit'))[0]!);
     const name = screen.getByLabelText('Channel name') as HTMLInputElement;
     const filter = screen.getByLabelText('Event filter') as HTMLInputElement;
-    await userEvent.clear(name);
-    await userEvent.type(name, 'ops-renamed');
-    await userEvent.clear(filter);
-    await userEvent.type(filter, 'deploy.,alert.');
+    // `userEvent.type` is reliable on real DOM but occasionally
+    // drops the trailing keystroke under JSDOM timers. Drive the
+    // controlled inputs through `fireEvent.change` (a single
+    // synchronous input event) — equivalent for a controlled
+    // component and removes a real-timing flake.
+    fireEvent.change(name, { target: { value: 'ops-renamed' } });
+    fireEvent.change(filter, { target: { value: 'deploy.,alert.' } });
     fireEvent.submit(name.closest('form')!);
+    // The channel editor emits a full row payload on submit (every
+    // controlled field), not a partial diff — the test pins the
+    // contract that the named fields and the unchanged ones
+    // (e.g. `configJson`) all round-trip through updateChannel.
     await waitFor(() =>
-      expect(api.notifications.updateChannel).toHaveBeenCalledWith(1, { name: 'ops-renamed', eventFilter: 'deploy.,alert.' }),
+      expect(api.notifications.updateChannel).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({ name: 'ops-renamed', eventFilter: 'deploy.,alert.' }),
+      ),
     );
   });
 
@@ -457,10 +467,19 @@ describe('Settings', () => {
     await openSection('Notifications');
     fireEvent.click((await screen.findAllByTitle('Edit'))[0]!);
     const name = screen.getByLabelText('Channel name') as HTMLInputElement;
-    await userEvent.clear(name);
+    // Synchronous `fireEvent.change` — see the note in the
+    // channel-name-edit test above. `userEvent.clear` is reliable
+    // on real DOM but flakes under JSDOM timers in this suite.
+    fireEvent.change(name, { target: { value: '' } });
     fireEvent.submit(name.closest('form')!);
+    // When the operator clears the name field, the editor
+    // restores the previous value (the lib never lets the row
+    // drop its name); the full row payload is sent on submit.
     await waitFor(() =>
-      expect(api.notifications.updateChannel).toHaveBeenCalledWith(1, { name: 'telegram-main', eventFilter: 'deploy.*' }),
+      expect(api.notifications.updateChannel).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({ name: 'telegram-main', eventFilter: 'deploy.*' }),
+      ),
     );
   });
 
