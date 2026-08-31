@@ -100,11 +100,32 @@ function matchItem(item: NavItem, pathname: string): boolean {
   return pathname.startsWith(item.to);
 }
 
+/**
+ * Resolve the active sidebar group for a given path.
+ *
+ * Iterates every group/item and returns the group whose item is the
+ * LONGEST prefix match, not the first one declared. Plugin-contributed
+ * menu items register with routes like `/settings/extensions/foo` and
+ * those routes also start with the built-in `/settings` (System group)
+ * — without a longest-match rule, the System group would always win
+ * because the static GROUPS are declared before the dynamic
+ * extensions group, and the user would land in the wrong panel
+ * every time they clicked an extension link. The longest-match
+ * strategy still keeps the simple "this route maps to that group"
+ * behaviour for every built-in nav item; it just prefers the more
+ * specific item when two groups both match.
+ */
 function findGroup(pathname: string, groups: NavGroup[] = GROUPS): string | null {
+  let best: { groupId: string; prefixLen: number } | null = null;
   for (const g of groups) {
-    if (g.items.some((i) => matchItem(i, pathname))) return g.id;
+    for (const i of g.items) {
+      if (!matchItem(i, pathname)) continue;
+      if (best === null || i.to.length > best.prefixLen) {
+        best = { groupId: g.id, prefixLen: i.to.length };
+      }
+    }
   }
-  return null;
+  return best?.groupId ?? null;
 }
 
 export function Layout() {

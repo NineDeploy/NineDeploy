@@ -155,6 +155,42 @@ describe('Layout', () => {
     expect(screen.getByRole('link', { name: /Databases/ })).toBeInTheDocument();
   });
 
+  it('prefers the longer (more specific) prefix when two groups could match', async () => {
+    // Plugin-contributed menu items register routes like
+    // /settings/extensions/<plugin-id>. The static System group also
+    // owns /settings, so a naive "first match wins" lookup would
+    // route the click into System and the user would land in the
+    // wrong panel. findGroup() must pick the longer prefix so the
+    // extensions panel stays open and the plugin's own link is the
+    // one marked active.
+    apiMock.api.menus.list.mockResolvedValue({
+      items: [
+        {
+          id: 'plugin-foo',
+          pluginId: 'plugin-foo',
+          slot: 'sidebar',
+          label: 'Plugin Foo',
+          route: '/settings/extensions/plugin-foo',
+          icon: 'globe',
+        },
+      ],
+    } as never);
+    const user = userEvent.setup();
+    renderLayout('/settings/extensions/plugin-foo');
+    // The plugin's link is rendered and active (bg-indigo-500/15).
+    // Wait for it: the menus query has to settle before the
+    // extensions group is appended to the sidebar.
+    const pluginLink = await screen.findByRole('link', { name: /Plugin Foo/ });
+    expect(pluginLink.className).toContain('bg-indigo-500/15');
+    // The "Extensions" group header is now visible (it appears in
+    // the activity-bar tooltip, the panel header, and the
+    // breadcrumb — at least one match is enough).
+    expect(screen.getAllByText('Extensions').length).toBeGreaterThan(0);
+    // The built-in Settings link is NOT in the panel — the user is in
+    // the Extensions group now, not the System group.
+    expect(screen.queryByRole('link', { name: /^Settings$/ })).not.toBeInTheDocument();
+  });
+
   it('marks the Services link active on /services', () => {
     renderLayout('/services');
     const link = screen.getByRole('link', { name: /Services/ });
