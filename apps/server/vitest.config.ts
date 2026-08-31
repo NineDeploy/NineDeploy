@@ -5,7 +5,12 @@ export default defineConfig({
     environment: 'node',
     fileParallelism: false,
     include: ['test/**/*.test.ts'],
-    exclude: ['test/integration/**', '**/node_modules/**', '**/dist/**'],
+    exclude: [
+      'test/integration/**',
+      'test/diag/**',
+      '**/node_modules/**',
+      '**/dist/**',
+    ],
     coverage: {
       provider: 'v8',
       include: ['src/**/*.ts'],
