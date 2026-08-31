@@ -79,7 +79,7 @@ jobs:
         if: success()
         run: |
           set -euo pipefail
-          canonical="v${{ github.ref_name }} latest"
+          canonical="${{ github.ref_name }} latest"
           echo "Canonical tag set: ${canonical}"
           gh api "/orgs/${{ github.repository_owner }}/packages/container/ninedeploy/versions?per_page=100" \
             | jq -r '.[] | "\(.id)\t\(.metadata.container.tags | join(","))"' \
