@@ -89,7 +89,7 @@ export function parseMagicToken(raw: string): ParsedMagicToken | null {
     return sized ? { raw, kind: 'password', size: Number(sized[1]) } : { raw, kind: 'password', size: 32 };
   }
 
-  const baseSized = rest.match(/^BASE64_(32|64|128)_/);
+  const baseSized = rest.match(/^BASE64_(32|64|128)(_|$)/);
   if (baseSized) return { raw, kind: 'randomLength', size: Number(baseSized[1]) };
   if (rest.startsWith('BASE64_')) return { raw, kind: 'randomLength', size: 64 };
 
@@ -97,7 +97,7 @@ export function parseMagicToken(raw: string): ParsedMagicToken | null {
   if (realSized) return { raw, kind: 'realBase64', size: Number(realSized[1]) };
   if (rest.startsWith('REALBASE64_')) return { raw, kind: 'realBase64', size: 32 };
 
-  const hexSized = rest.match(/^HEX_(32|64|128)_/);
+  const hexSized = rest.match(/^HEX_(32|64|128)(_|$)/);
   if (hexSized) return { raw, kind: 'hex', size: Number(hexSized[1]) };
   if (rest.startsWith('HEX_')) return { raw, kind: 'hex', size: 32 };
 

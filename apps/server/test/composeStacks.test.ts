@@ -51,6 +51,33 @@ describe('magic token classification', () => {
     expect(parseMagicToken('SERVICE_PASSWORD_BASE64_JWT')).toMatchObject({ kind: 'password', size: 64 });
   });
 
+  it('honors bare trailing sizes like the sibling families', () => {
+    // Bare forms (no _TARGET suffix) must carry the named size — before the
+    // fix they silently fell through to the family default (HEX_→32,
+    // BASE64_→64), generating weaker secrets than the template authored.
+    expect(parseMagicToken('SERVICE_HEX_64')).toMatchObject({ kind: 'hex', size: 64 });
+    expect(parseMagicToken('SERVICE_HEX_128')).toMatchObject({ kind: 'hex', size: 128 });
+    expect(parseMagicToken('SERVICE_BASE64_32')).toMatchObject({ kind: 'randomLength', size: 32 });
+    expect(parseMagicToken('SERVICE_BASE64_128')).toMatchObject({ kind: 'randomLength', size: 128 });
+    // No-size tokens keep the family defaults.
+    expect(parseMagicToken('SERVICE_HEX_SECRET')).toMatchObject({ kind: 'hex', size: 32 });
+    expect(parseMagicToken('SERVICE_BASE64_SECRET')).toMatchObject({ kind: 'randomLength', size: 64 });
+  });
+
+  it('honors bare trailing sizes like the sibling families', () => {
+    // Bare sized tokens (no _TARGET suffix — the form upstream templates use)
+    // must carry the named size. Before the fix they silently fell through to
+    // the family default (HEX_→32, BASE64_→64), so a template authoring a
+    // 128-char hex secret got 32 chars.
+    expect(parseMagicToken('SERVICE_HEX_64')).toMatchObject({ kind: 'hex', size: 64 });
+    expect(parseMagicToken('SERVICE_HEX_128')).toMatchObject({ kind: 'hex', size: 128 });
+    expect(parseMagicToken('SERVICE_BASE64_32')).toMatchObject({ kind: 'randomLength', size: 32 });
+    expect(parseMagicToken('SERVICE_BASE64_128')).toMatchObject({ kind: 'randomLength', size: 128 });
+    // No-size tokens keep the family defaults; suffix forms are untouched.
+    expect(parseMagicToken('SERVICE_HEX_SECRET')).toMatchObject({ kind: 'hex', size: 32 });
+    expect(parseMagicToken('SERVICE_BASE64_SECRET')).toMatchObject({ kind: 'randomLength', size: 64 });
+  });
+
   it('splits URL_/FQDN_ targets into service and optional port', () => {
     expect(parseMagicToken('SERVICE_URL_N8N')).toMatchObject({ kind: 'url', target: { service: 'N8N', port: null } });
     expect(parseMagicToken('SERVICE_FQDN_APPWRITE')).toMatchObject({ kind: 'fqdn', target: { service: 'APPWRITE', port: null } });
