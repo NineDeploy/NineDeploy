@@ -580,20 +580,27 @@ describe('services CREATE — template validation + tag attachment', () => {
     expect(res.json()).toMatchObject({ id: existingId, name: 'Reused' });
   });
 
-  it.skip('replaces tag links when tagProjectIds/tagWorkspaceIds/tagLabelIds are supplied (POST path)', async () => {
+  it('replaces tag links when tagProjectIds/tagWorkspaceIds/tagLabelIds are supplied (POST path)', async () => {
     // `if (input.tagProjectIds || input.tagWorkspaceIds || input.tagLabelIds)`
     // — when any of the three tag arrays is set, the route
     // calls `replaceServiceTags` instead of the default
     // workspace-only auto-tagging. A regression that drops the
     // branch leaves the operator's explicit tag set unrecorded
     // (the service lands in no workspace).
+    //
+    // `replaceServiceTags` wraps its work in `db.transaction()` and
+    // does a single `.values([{serviceId, projectId}, …]).onConflictDoNothing()`
+    // per dimension. The fake db passes the values payload
+    // (an array) to the insert resolver verbatim, so we look up
+    // the row that mentions projectId=99 instead of asserting on
+    // `.serviceId` directly (which would be undefined on the array).
+    let capturedRow: { serviceId: number; projectId: number } | undefined;
     const app = await buildTestApp({
       db: createFakeDb({
         insert: {
           services: [svcRow({ id: 4, name: 'tagged', slug: 'tagged' })],
-          serviceProjects: (v: { serviceId: number; projectId: number }) => {
-            expect(v.serviceId).toBe(4);
-            expect(v.projectId).toBe(99);
+          serviceProjects: (v: Array<{ serviceId: number; projectId: number }>) => {
+            capturedRow = v.find((row) => row.projectId === 99);
             return [];
           },
         },
@@ -606,7 +613,15 @@ describe('services CREATE — template validation + tag attachment', () => {
       headers: asUser(),
       payload: { ...validCreate, tagProjectIds: [99] },
     });
+    // The body of a 500 from `app.inject` is dropped unless the
+    // underlying app is built with `logger: true`. Inspect both
+    // the status and the body so a regression in the route handler
+    // surfaces a useful message in the test output.
+    if (res.statusCode !== 200) {
+      throw new Error(`expected 200, got ${res.statusCode}: ${res.body}`);
+    }
     expect(res.statusCode).toBe(200);
+    expect(capturedRow).toEqual({ serviceId: 4, projectId: 99 });
   });
 
   it('passes workspaceIds and labelIds to replaceServiceTags (the ?? [] fallbacks)', async () => {
