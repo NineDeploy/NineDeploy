@@ -130,6 +130,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `program.parseAsync()`. Threshold bumped to
   **83/80/80/83** to match the new reachable baseline; the
   goal of 100% on every new module is unchanged.
+- **Pre-Sprint 11 low-coverage modules closed**
+  *(post-merge, follow-up commits)*. Three of the
+  longest-standing pre-Sprint 11 coverage gaps are
+  closed:
+    - `stickyIpPlugin.ts` (G-15, PR #22) — **32% →
+      100%** on every axis. 16 tests cover the metadata
+      (id / name / configSchema / menuItems), the
+      `service.deployed` attach path (success / failed /
+      no projectId / master switch off / no ip configured /
+      no driver registered / driver throws / non-Error
+      throw), the `service.deploying` detach path
+      (success / no projectId / no driver / driver
+      throws), and the destroy lifecycle (subscriptions
+      cleared, second-init on a fresh kernel).
+    - `swarmOrchestrator.ts` (G-10, PR #21) — **42% →
+      100% statements / 100% lines**. 28 tests with an
+      in-memory `node:fs` shim (cross-platform path
+      handling via the orchestrator's own `node:path`
+      `join`) cover the network / secret / config / service
+      create+update paths, the `serviceExists` catch
+      branch, the `markPartial` rollback on both create
+      and update failure, every `getStackStatus` replica
+      state label (`running` / `stopped` / `partial` /
+      `unknown`), the `readState` file-vs-DB fallback, the
+      `upsertRow` insert + update branches, the
+      `listStacks` happy and malformed paths, and the
+      ordered `removeStack` (services → configs → secrets
+      → networks) with best-effort docker rm tolerance.
+    - `localOrchestrator.ts` (G-10 PR-A) — **60% →
+      97% statements / 91% branches / 98% lines**. 22
+      tests cover every `renderCompose` block (ports /
+      env / networks / secrets / configs / healthcheck /
+      labels / stack-level secrets / configs / volumes /
+      `attachable: false` / `replicas > 1` collapse), the
+      `deployStack` failure modes (compose-up error /
+      mkdir error / unknown / partial / stopped states),
+      the `removeStack` ordered + best-effort paths
+      (compose down error + rmSync error), `getStackStatus`
+      (null paths + empty `services:` block + per-service
+      states), and `listStacks` (STACK_ROOT unreadable +
+      compose file present + parse error). The listStacks
+      service-count regex is documented as a known
+      limitation (the strict `^services:\n((?:
+      {2}[A-Za-z0-9_.-]+:\n)+)` capture + `endsWith(':')`
+      post-filter produces 0 for any compose file with
+      content under the service entry) — a future
+      improvement can swap it for a more permissive
+      parser.
 - **`test/helpers.ts` update**: `update`/`select`/`delete`
   resolvers now try `name` / `snake` / `camel` lookups in
   order so tests can register resolvers under either
