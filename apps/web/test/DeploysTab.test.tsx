@@ -4,7 +4,6 @@ import userEvent from '@testing-library/user-event';
 import { DeploysTab } from '../src/routes/service/DeploysTab.js';
 import { api } from '../src/lib/api.js';
 import { useAuth } from '../src/lib/auth.js';
-import { useToast } from '../src/components/Toast.js';
 import { renderWithProviders, mockOf } from './helpers.js';
 import type { Deployment } from '@ninedeploy/sdk';
 
