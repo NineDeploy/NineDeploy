@@ -62,6 +62,57 @@ export async function deploysList(client: NineDeployClient, svcIdStr: string): P
   });
 }
 
+/**
+ * `ninedeploy deploys queue`
+ *
+ * Global queue view: every in-flight (queued / building / deploying) deploy
+ * across every service the caller can see. The same data the web panel's
+ * `/deploys` page renders, so an operator can audit the build pipeline
+ * without leaving the terminal or opening a browser tab.
+ */
+export async function deploysQueue(client: NineDeployClient): Promise<void> {
+  header('Global deploy queue');
+  const data = await spinner('Fetching', () => client.deploys.queue());
+  const counts = data.byStatus ?? { queued: 0, building: 0, deploying: 0 };
+  const inFlight = data.items ?? [];
+  if (inFlight.length === 0) {
+    info('No in-flight deploys.');
+    kv('queued', counts.queued ?? 0);
+    kv('building', counts.building ?? 0);
+    kv('deploying', counts.deploying ?? 0);
+    return;
+  }
+  // The server returns items ordered claimed-first (building, then
+  // deploying, then queued). Per-service queue position is the 1-based
+  // index of this row among the `queued` siblings for the same
+  // service. In-flight rows (building / deploying) get a dash — the
+  // position number is only meaningful for rows waiting to start.
+  const queuedByService = new Map<number, number>();
+  table(
+    inFlight.map((row) => {
+      let pos: number;
+      if (row.status === 'queued') {
+        pos = (queuedByService.get(row.serviceId) ?? 0) + 1;
+        queuedByService.set(row.serviceId, pos);
+      } else {
+        pos = 0;
+      }
+      return {
+        service: row.serviceName || `service:${row.serviceId}`,
+        serviceId: row.serviceId,
+        deploy: row.id,
+        status: row.status,
+        pos: pos > 0 ? `${pos}` : '—',
+        time: fmtTime(row.createdAt),
+      };
+    }),
+    ['service', 'serviceId', 'deploy', 'status', 'pos', 'time'],
+  );
+  kv('queued', counts.queued ?? 0);
+  kv('building', counts.building ?? 0);
+  kv('deploying', counts.deploying ?? 0);
+}
+
 /** `ninedeploy deploys rollback <serviceId> <deployId>` */
 export async function deploysRollback(client: NineDeployClient, svcIdStr: string, depIdStr: string): Promise<void> {
   const svcId = Number(svcIdStr);

@@ -4,6 +4,7 @@ import {
   dbList,
   deploysCancel,
   deploysList,
+  deploysQueue,
   deploysRemove,
   deploysRollback,
   systemDashboard,
@@ -298,6 +299,81 @@ describe('deploysCancel', () => {
     const client = { deploys: { cancel: vi.fn().mockRejectedValue('boom') } };
     await deploysCancel(client as never, '21', '99');
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('boom'));
+  });
+});
+
+describe('deploysQueue', () => {
+  // Mirrors the response shape from GET /v1/services/queue. The CLI
+  // does not need every field — just serviceId / serviceName / status /
+  // id / createdAt — but the test exercises the full shape so a
+  // schema drift on the server shows up here first.
+  // Mirrors the response shape from GET /v1/services/queue. The CLI
+  // does not need every field — just serviceId / serviceName / status /
+  // id / createdAt — but the test exercises the full shape so a
+  // schema drift on the server shows up here first.
+  type QueueRow = {
+    id: number;
+    serviceId: number;
+    serviceName: string;
+    status: 'queued' | 'building' | 'deploying';
+    commitSha: string | null;
+    imageDigest: string | null;
+    message: string | null;
+    author: string | null;
+    trigger: string;
+    startedAt: string | null;
+    finishedAt: string | null;
+    createdAt: string;
+  };
+  function queueResponse(items: QueueRow[]) {
+    const byStatus: Record<'queued' | 'building' | 'deploying', number> = { queued: 0, building: 0, deploying: 0 };
+    for (const it of items) {
+      byStatus[it.status] = (byStatus[it.status] ?? 0) + 1;
+    }
+    return { items, count: items.length, byStatus };
+  }
+
+  it('prints a friendly message when the queue is empty', async () => {
+    const queue = vi.fn().mockResolvedValue(queueResponse([]));
+    await deploysQueue({ deploys: { queue } } as never);
+    expect(queue).toHaveBeenCalled();
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('No in-flight deploys'));
+    // The byStatus breakdown still renders as a k/v block so the
+    // operator can confirm the empty state at a glance.
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('queued'));
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('building'));
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('deploying'));
+  });
+
+  it('numbers queued positions per service, in row order', async () => {
+    const queue = vi.fn().mockResolvedValue(queueResponse([
+      { id: 101, serviceId: 7, serviceName: 'api', status: 'building', createdAt: '2026-08-31T10:00:00.000Z' },
+      { id: 102, serviceId: 7, serviceName: 'api', status: 'queued', createdAt: '2026-08-31T10:00:01.000Z' },
+      { id: 103, serviceId: 7, serviceName: 'api', status: 'queued', createdAt: '2026-08-31T10:00:02.000Z' },
+      { id: 104, serviceId: 9, serviceName: 'web', status: 'queued', createdAt: '2026-08-31T10:00:03.000Z' },
+    ]));
+    await deploysQueue({ deploys: { queue } } as never);
+    expect(queue).toHaveBeenCalled();
+    // The two `queued` rows for service 7 should be 1 and 2; the
+    // single `queued` row for service 9 resets the counter to 1.
+    // Strip ANSI color codes so the regex doesn't have to care about
+    // them — the table() helper colors the `status` column.
+    const stripAnsi = (s: string): string => s.replace(/\u001b\[[0-9;]*m/g, '');
+    const lines = logSpy.mock.calls.map((c) => String(c[0])).map(stripAnsi).join('\n');
+    expect(lines).toMatch(/api\s+7\s+102\s+queued\s+1/);
+    expect(lines).toMatch(/api\s+7\s+103\s+queued\s+2/);
+    expect(lines).toMatch(/web\s+9\s+104\s+queued\s+1/);
+    // The in-flight `building` row gets a dash, not a position number.
+    expect(lines).toMatch(/api\s+7\s+101\s+building\s+—/);
+  });
+
+  it('falls back to "service:<id>" when the server omits serviceName', async () => {
+    const queue = vi.fn().mockResolvedValue(queueResponse([
+      { id: 1, serviceId: 42, serviceName: '', status: 'queued', createdAt: '2026-08-31T10:00:00.000Z' },
+    ]));
+    await deploysQueue({ deploys: { queue } } as never);
+    const lines = logSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(lines).toMatch(/service:42/);
   });
 });
 

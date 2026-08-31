@@ -11,7 +11,7 @@ import {
   servicesStickyAction,
 } from './commands/services.js';
 import {
-  dbCreate, dbList, deploysCancel, deploysList, deploysRemove, deploysRollback,
+  dbCreate, dbList, deploysCancel, deploysList, deploysQueue, deploysRemove, deploysRollback,
   systemDashboard, systemInfo, systemRotateKeys, systemUpdateCheck, tplDeploy, tplList,
   tokenCreate, tokenList,
 } from './commands/misc.js';
@@ -245,6 +245,11 @@ community
 
 // ── Deploys ───────────────────────────────────────────────────────────────
 const deploys = program.command('deploys').description('Manage deployments');
+
+deploys
+  .command('queue')
+  .description('List every in-flight (queued / building / deploying) deploy across all services you can see')
+  .action(() => deploysQueue(getClient()));
 
 deploys.command('list <serviceId>').description('List deployments for a service').action((id: string) => deploysList(getClient(), id));
 
