@@ -22,24 +22,19 @@ export default defineConfig({
       // (the smoke test in test/index.test.ts registers the command, not
       // the function body). Statements / lines inside the body stay at 100%.
       ignoreComments: ['v8 ignore next'],
-      // The Sprint 11 PR set (PRs #56, #57) added two CLI
-      // modules (`certificates`, `communityTemplates`) and their
-      // tests sit at 100% on the new code. The 99.5% gate still
-      // holds for those new files. The overall drop from the
-      // pre-Sprint 11 baseline (99.5% → ~73% in this run) is
-      // because v8's report counts every commander command's
-      // `.action` body, including the ~30 commands that are
-      // tested via the integration smoke test rather than unit
-      // tests. The follow-up plan is to add focused unit tests
-      // for every `.action` (the same plan that got Sprint 10 to
-      // 100% on the modules it covered). The floor reflects the
-      // current reachable baseline; new code stays at 100% — see
-      // CHANGELOG for the per-PR coverage delta.
+      // Sprint 11 PR #58 + the post-merge index.test.ts restore
+      // moved the CLI baseline from ~73% to ~84% statements by
+      // re-enabling the integration smoke (the inline `.action`
+      // bodies are now exercised end-to-end). The floor tracks
+      // the new reachable baseline; new code still stays at 100%
+      // on the focused unit tests for every module, the
+      // integration smoke covers the rest. See CHANGELOG for the
+      // per-PR coverage delta.
       thresholds: {
-        statements: 72,
+        statements: 83,
         branches: 80,
-        functions: 63,
-        lines: 73,
+        functions: 80,
+        lines: 83,
       },
     },
   },
