@@ -161,11 +161,21 @@ export function Layout() {
       items: isSimple ? g.items.filter((item) => !item.advancedOnly) : g.items,
     }));
 
-    const extensionItems: NavItem[] = (menus.data ?? []).map((m) => ({
-      to: m.route,
-      label: m.label,
-      icon: m.icon && ICON_MAP[m.icon.toLowerCase()] ? ICON_MAP[m.icon.toLowerCase()]! : Globe,
-    }));
+    // Only the items the plugin authors want in the secondary sidebar
+    // end up here. `command:palette` items show in the Cmd+K palette
+    // only, `service:tabs` and `database:tabs` belong to their parent
+    // pages, `settings:nav` is rendered inside the settings shell, and
+    // `user:menu` is the avatar dropdown. Without this filter every
+    // `command:palette` entry would leak into the Extensions group
+    // and bloat the sidebar with items the user cannot reach in the
+    // rail anyway.
+    const extensionItems: NavItem[] = (menus.data ?? [])
+      .filter((m) => m.slot === 'sidebar:secondary')
+      .map((m) => ({
+        to: m.route,
+        label: m.label,
+        icon: m.icon && ICON_MAP[m.icon.toLowerCase()] ? ICON_MAP[m.icon.toLowerCase()]! : Globe,
+      }));
 
     if (extensionItems.length === 0) return rawGroups;
 

@@ -168,7 +168,7 @@ describe('Layout', () => {
         {
           id: 'plugin-foo',
           pluginId: 'plugin-foo',
-          slot: 'sidebar',
+          slot: 'sidebar:secondary',
           label: 'Plugin Foo',
           route: '/settings/extensions/plugin-foo',
           icon: 'globe',
@@ -188,6 +188,46 @@ describe('Layout', () => {
     // The built-in Settings link is NOT in the panel — the user is in
     // the Extensions group now, not the System group.
     expect(screen.queryByRole('link', { name: /^Settings$/ })).not.toBeInTheDocument();
+  });
+
+  it('does not leak command:palette items into the Extensions sidebar group', async () => {
+    // A plugin that ships only `command:palette` entries (the dominant
+    // shape for built-in plugins like Build Cache, Webhook Out, …)
+    // must NOT show those entries in the secondary sidebar. They
+    // belong in the Cmd+K palette only; putting them in the rail
+    // duplicates the entry point and clutters the activity bar.
+    apiMock.api.menus.list.mockResolvedValue({
+      items: [
+        {
+          id: 'build-cache-command',
+          pluginId: 'build-cache',
+          slot: 'command:palette',
+          label: 'Build Cache',
+          route: '/settings?section=plugins',
+          icon: 'layers',
+        },
+        {
+          id: 'webhook-out-command',
+          pluginId: 'webhook-out',
+          slot: 'command:palette',
+          label: 'Outbound Webhook',
+          route: '/settings?section=plugins',
+          icon: 'webhook',
+        },
+      ],
+    } as never);
+    renderLayout('/');
+    // Wait for the menus query to settle so the sidebar has had a
+    // chance to mount any extensions.
+    await waitFor(() => {
+      expect(apiMock.api.menus.list).toHaveBeenCalled();
+    });
+    // No `Extensions` group header is rendered — both items are
+    // command:palette only, so the filter drops them all.
+    expect(screen.queryByText('Extensions')).not.toBeInTheDocument();
+    // The palette entries do not appear in the rail either.
+    expect(screen.queryByRole('link', { name: /Build Cache/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Outbound Webhook/ })).not.toBeInTheDocument();
   });
 
   it('marks the Services link active on /services', () => {
@@ -478,8 +518,20 @@ describe('Layout', () => {
   it('renders dynamic extension items registered by plugins with custom and fallback icons', async () => {
     apiMock.api.menus.list.mockResolvedValue({
       items: [
-        { id: 'datadog-dash', label: 'Datadog APM', route: '/datadog', icon: 'activity' },
-        { id: 'custom-tool', label: 'Custom Tool', route: '/custom', icon: 'unknown_icon' },
+        {
+          id: 'datadog-dash',
+          label: 'Datadog APM',
+          route: '/datadog',
+          icon: 'activity',
+          slot: 'sidebar:secondary',
+        },
+        {
+          id: 'custom-tool',
+          label: 'Custom Tool',
+          route: '/custom',
+          icon: 'unknown_icon',
+          slot: 'sidebar:secondary',
+        },
       ],
     });
 
