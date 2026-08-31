@@ -15,6 +15,11 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to publish as (e.g. v0.4.0-hotfix1). Must already exist on the remote.'
+        required: true
+        type: string
 
 # L-14: least privilege at the workflow level; `packages: write` is granted
 # only to the job that actually pushes the image.
