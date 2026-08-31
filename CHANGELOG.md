@@ -9,7 +9,111 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Coverage (PR #58 — Sprint 11 push)
+## [0.4.0] - 2026-08-31
+
+### Installer & Release
+
+- **CI publishes the panel image to GHCR on every push to main** so a fresh
+  `install.sh --channel=main` lands on a current image, not a stale one. The
+  job tags the multi-arch (amd64 + arm64) build as `:edge` and an
+  immutable `:main-<sha>`; the existing release workflow (tag push) re-tags
+  `:latest` so a fresh `install.sh --docker` from the release channel still
+  pulls the most recent published artifact. `install.sh` now substitutes the
+  right tag (`:edge` for main, `:latest` for release) into the rendered
+  compose file, and a preflight `docker manifest inspect` runs before
+  `compose pull` so a private GHCR package surfaces a clear one-line
+  error instead of the generic "image pull failed".
+- **Sprint 11 PR #58 coverage push**. 200+ tests across 17 new files for
+  the Sprint 11 surface (PRs #45–#58). Server coverage **88.12% → 93.53%**
+  statements, **86.00% → 88.31%** branches. CLI coverage 73% → 84% on the
+  back of the `test/index.test.ts` restore. SDK 100% on every axis.
+  Thresholds re-bumped: server 93.6/88.4/93/95.1, CLI 83/80/80/83.
+
+### Fixed (post-Sprint 11)
+
+- **`serviceBridge` test premise correction**: the docker
+  `network ls` / `inspect` output preserves the bridge name verbatim
+  (`{"nd-svc-foo": {…}}`), so the lib's `state.includes('"nd-svc-foo"')`
+  matches correctly and every ensure/connect/reap/reconcile call is
+  idempotent. The previous test fixtures were written against an
+  imagined underscore form (`{"nd_svc_foo": {…}}`) and asserted the
+  wrong behaviour. The lib was correct; the tests were not. (16/16.)
+- **`imageInventory.pruneImages.keepLast` semantics**: the previous
+  loop `for (let i = keep; i < list.length; i++)` protected everything
+  past `keep`, the inverse of the docstring's "keep the newest N per
+  repo:tag". The new loop `for (let i = 0; i < keep; i++)` with
+  `keep = Math.min(Math.max(0, keepLast), list.length)` protects exactly
+  the newest N and leaves the rest as candidates. (45/45.)
+- **`marketplaceCatalog.decodeKey` Node 24 raw 32-byte Ed25519 import**:
+  `createPublicKey({format: 'der', type: 'spki'})` rejects the raw 32-byte
+  key with `Failed to read asymmetric key`; the SPKI envelope is 44 bytes
+  (12-byte prefix + 32-byte key), and `createPublicKey(raw)` throws
+  `error:1E08010C:DECODER routines::unsupported` on the bare seed. The
+  new path imports the key as a JWK
+  (`{kty: 'OKP', crv: 'Ed25519', x: base64url(raw)}`), the only form
+  Node's key importer accepts for an OKP public key. (16/16.)
+- **`localOrchestrator.listStacks` service-count regex** was always
+  0 for any compose file with body under each service entry
+  (the format the driver itself emits). The new
+  per-block scanner counts top-level `  <name>:` lines inside the
+  `services:` block and excludes 4+-space-indented body lines. (24/24.)
+
+### Coverage follow-ups (post-Sprint 11, pre-0.4.0)
+
+- **`stickyIpPlugin.ts`** (G-15, PR #22): 32% → **100%** on every axis
+  (16 tests). Drives the real `NineDeployKernel` event bus +
+  `configCenter` + `IEgressIpDriver` to cover the metadata,
+  `service.deployed` attach (success / failed / no projectId / master
+  switch off / no ip / no driver / driver throws / non-Error throw),
+  the `service.deploying` detach path, and the destroy lifecycle.
+- **`swarmOrchestrator.ts`** (G-10, PR #21): 42% → **100%** statements /
+  **100%** lines (28 tests). Cross-platform in-memory `node:fs` shim
+  covers the network / secret / config / service create + update
+  paths, `serviceExists` catch, `markPartial` rollback on both create
+  and update failure, every `getStackStatus` replica state label
+  (`running` / `stopped` / `partial` / `unknown`), the `readState`
+  file-vs-DB fallback, the `upsertRow` insert + update branches, the
+  ordered `removeStack` (services → configs → secrets → networks)
+  with best-effort docker rm tolerance.
+- **`localOrchestrator.ts`** (G-10 PR-A): 60% → **97%** statements /
+  **98%** lines (22 tests). Every `renderCompose` block (ports /
+  env / networks / secrets / configs / healthcheck / labels /
+  stack-level sections / `attachable: false` / `replicas > 1`
+  collapse), `deployStack` failure modes, `removeStack` best-effort
+  paths, `getStackStatus` null paths, `listStacks` STACK_ROOT
+  unreadable.
+- **`auth.ts`** (operator + scope gates): 38% → **97%** statements
+  (16 tests). Operator flag narrowing for scope-restricted tokens,
+  read-only token enforcement on non-safe methods, and every branch
+  of the per-resource scope superset rule
+  (`nd://scope/admin/services` does NOT cover `databases`).
+- **`stats.ts`** route: 85% → **98%** statements (12 tests). Operator
+  vs member visibility filter, the `userWsIds.length === 0` early
+  return, the `visibleDatabases === null` ternary.
+- **`notifications.ts`** module (channels + log): 0% → **100%**
+  statements (12 tests). Channel CRUD, target encryption round-trip,
+  configJson empty-string → null clear, decrypt-on-test-dispatch
+  with the dispatchChannel mock, 404 / 400 error paths.
+- **`backups.ts`** module: 0% → **97%** statements / **98%** lines
+  (21 tests). Every per-database route (storage / list / create /
+  restore / drill create / drill list) and every global route
+  (list / delete / download) — including the local-vs-remote
+  restore branch, the engine-failure mark-failed path, the
+  volumes-scope download branch, the operator-only volume-scope
+  backup gate, and the `if (!row) return` early exit.
+- **`manifest.ts`** module: 92% → **98%** statements / **100%**
+  lines (14 tests). Every `diff.build` field branch
+  (install / build / start / baseDir / dockerfile).
+- **`templates.ts`** hub: 0% → **30%** statements (9 tests). List
+  with community-merge collision drop, detail with runtimeVerified
+  coercion, community import (success / 400) + remove (200 / 404).
+  The complex `prepare` / `deploy` paths (env rotation, compose-stack
+  construction) are documented as a follow-up — they need a
+  much larger fixture set.
+- **`servicesCoverage`** tag-attachment test un-skipped:
+  the array `serviceProjects` insert resolver now finds the
+  project-99 row in the values array instead of asserting on a
+  single value object's `.serviceId`. (20/20.)
 
 - **+200 tests across 17 new files** for the Sprint 11 surface
   (PRs #45–#58). Server: 12 new test files
