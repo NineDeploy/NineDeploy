@@ -169,7 +169,7 @@ describe('pruneImages', () => {
     // nginx:1.25-alpine). keepLast=1 keeps the newest of each:
     // aaaa (1.27-alpine) and cccc (1.25-alpine). The older
     // 1.27-alpine (bbbb) is the only prune candidate.
-    expect(result.removed.sort()).toEqual(['sha256:aaaa', 'sha256:cccc']);
+    expect(result.removed.sort()).toEqual(['sha256:bbbb']);
     // No docker rm call on dryRun.
     expect(execState.rmCalls).toEqual([]);
   });
@@ -180,34 +180,43 @@ describe('pruneImages', () => {
       stdout: 'sha256:aaaa\n',
     });
     const result = await pruneImages({ keepLast: 1, dryRun: true });
-    // aaaa is in use → not in candidates. The other two non-dangling
-    // nginx images (bbbb, cccc) are.
+    // aaaa is the newest 1.27-alpine → protected, AND in use.
+    // bbbb is the older 1.27-alpine → only candidate. cccc
+    // is the only 1.25-alpine → protected (keepLast=1).
     expect(result.removed).not.toContain('sha256:aaaa');
-    expect(result.removed).toEqual(['sha256:cccc']);
+    expect(result.removed).toEqual(['sha256:bbbb']);
   });
 
   it('filters by olderThanHours on the candidate set', async () => {
     execState.byArgs.set('docker image ls --no-trunc --format {{json .}}', { stdout: IMG_LS_JSON });
     execState.byArgs.set('docker ps --no-trunc --format {{.Image}}', { stdout: '' });
-    // aaaa is 1h old, bbbb is 2h, cccc is 24h. olderThanHours=12 ? only cccc.
+    // With keepLast=1, the protected set is {aaaa, cccc}. The
+    // only non-protected non-dangling image is bbbb (age 2h).
+    // olderThanHours=12 → bbbb is too young, prune is empty.
     const result = await pruneImages({ keepLast: 1, olderThanHours: 12, dryRun: true });
-    expect(result.removed).toEqual(['sha256:cccc']);
+    expect(result.removed).toEqual([]);
   });
 
   it('performs the real delete via `docker image rm` in 50-id chunks', async () => {
-    // Build a 120-image set so we get 3 chunks (50 + 50 + 20).
+    // 60 distinct repo:tag groups, each with 3 images (newest,
+    // middle, oldest). keepLast=1 protects the newest of each
+    // → 2 candidates per group × 60 groups = 120 candidates.
+    // 120 ids / 50 per chunk = 3 chunks (50 + 50 + 20).
     const lines: string[] = [];
-    for (let i = 0; i < 120; i += 1) {
-      const id = `sha256:${i.toString().padStart(4, '0')}`;
-      lines.push(
-        JSON.stringify({
-          Repository: 'x',
-          Tag: `v${i}`,
-          ID: id,
-          Size: '1MB',
-          CreatedAt: new Date(Date.now() - 86_400_000).toISOString(),
-        }),
-      );
+    for (let i = 0; i < 60; i += 1) {
+      for (let v = 0; v < 3; v += 1) {
+        const id = `sha256:${(i * 3 + v).toString().padStart(4, '0')}`;
+        lines.push(
+          JSON.stringify({
+            Repository: `x${i}`,
+            Tag: 'v1',
+            ID: id,
+            Size: '1MB',
+            // v=0 newest (1h ago), v=1 middle (2h ago), v=2 oldest (3h ago).
+            CreatedAt: new Date(Date.now() - (v + 1) * 3_600_000).toISOString(),
+          }),
+        );
+      }
     }
     execState.byArgs.set('docker image ls --no-trunc --format {{json .}}', {
       stdout: lines.join('\n'),
@@ -220,18 +229,26 @@ describe('pruneImages', () => {
     expect(execState.rmCalls[2]?.args.length).toBe(22); // 20 ids + 2
   });
 
-  it('returns 0 freed bytes on a no-op prune', async () => {
+  it('treats keepLast=0 as "keep nothing" — every non-dangling image is a candidate', async () => {
     execState.byArgs.set('docker image ls --no-trunc --format {{json .}}', { stdout: IMG_LS_JSON });
     execState.byArgs.set('docker ps --no-trunc --format {{.Image}}', { stdout: '' });
-    // keepLast=0 puts every non-dangling entry in the protected
-    // set, so the candidate set is empty and the prune is a
-    // no-op. (The lib's `i < list.length` keep loop, with
-    // `keep=0`, runs over every entry — the inverse of what the
-    // public docstring claims, but the test below matches the
-    // observed behaviour.)
+    // The fixture has 3 non-dangling images (aaaa, bbbb, cccc)
+    // and 1 dangling (dddd). keepLast=0 protects none of the
+    // non-dangling images → all 3 are candidates.
     const result = await pruneImages({ keepLast: 0, dryRun: true });
+    expect(result.removed.sort()).toEqual(['sha256:aaaa', 'sha256:bbbb', 'sha256:cccc']);
+    // 142 + 150 + 130 = 422 MB.
+    expect(result.freedBytes).toBe((142 + 150 + 130) * 1024 * 1024);
+  });
+
+  it('clamps keepLast to the per-group size — never deletes the only image of a tag', async () => {
+    execState.byArgs.set('docker image ls --no-trunc --format {{json .}}', { stdout: IMG_LS_JSON });
+    execState.byArgs.set('docker ps --no-trunc --format {{.Image}}', { stdout: '' });
+    // nginx:1.25-alpine has only cccc; keepLast=10 should still
+    // protect it. The 1.27-alpine group has 2 images, so keep=2
+    // protects both. Nothing is removed.
+    const result = await pruneImages({ keepLast: 10, dryRun: true });
     expect(result.removed).toEqual([]);
-    expect(result.freedBytes).toBe(0);
   });
 });
 
@@ -317,20 +334,24 @@ describe('pruneImages error + edge branches', () => {
   });
 
   it('continues with the remaining chunks when one docker image rm fails', async () => {
-    // 60 images, split into 2 chunks of 50 and 10. The first
-    // chunk's rm throws; the second still goes through.
+    // 60 distinct repo:tag groups, each with 2 images. With
+    // keepLast=1: 1 protected per group, 1 candidate per group
+    // → 60 candidates → 2 chunks (50 + 10). The first chunk
+    // throws; the second still goes through.
     const lines: string[] = [];
     for (let i = 0; i < 60; i += 1) {
-      const id = `sha256:${i.toString().padStart(4, '0')}`;
-      lines.push(
-        JSON.stringify({
-          Repository: `x${i}`,
-          Tag: 'v1',
-          ID: id,
-          Size: '1MB',
-          CreatedAt: new Date(Date.now() - 86_400_000).toISOString(),
-        }),
-      );
+      for (let v = 0; v < 2; v += 1) {
+        const id = `sha256:${(i * 2 + v).toString().padStart(4, '0')}`;
+        lines.push(
+          JSON.stringify({
+            Repository: `x${i}`,
+            Tag: 'v1',
+            ID: id,
+            Size: '1MB',
+            CreatedAt: new Date(Date.now() - (v + 1) * 3_600_000).toISOString(),
+          }),
+        );
+      }
     }
     execState.byArgs.set('docker image ls --no-trunc --format {{json .}}', {
       stdout: lines.join('\n'),

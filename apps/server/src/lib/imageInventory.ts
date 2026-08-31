@@ -185,8 +185,10 @@ export async function pruneImages(opts: PruneOptions = {}): Promise<PruneResult>
       if (!Number.isNaN(ta) && !Number.isNaN(tb) && ta !== tb) return tb - ta;
       return b.id.localeCompare(a.id);
     });
-    const keep = Math.max(0, keepLast);
-    for (let i = keep; i < list.length; i += 1) protectedIds.add(list[i]!.id);
+    // Protect the newest N (list[0..keep-1]). Anything past
+    // that is fair game for the candidate filter below.
+    const keep = Math.min(Math.max(0, keepLast), list.length);
+    for (let i = 0; i < keep; i += 1) protectedIds.add(list[i]!.id);
   }
 
   // 3. Filter candidates: not in the keep window, not in use,
