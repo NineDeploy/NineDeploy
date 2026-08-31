@@ -355,7 +355,19 @@ describe('auth', () => {
     });
 
     it('apiTokenScope is the enforced vocabulary', () => {
-      expect(apiTokenScope.options).toEqual(['read', 'write', 'operator']);
+      // The schema is a z.union (legacy coarse scopes ∪ resource
+      // scopes); the only public contract worth pinning here is
+      // that the well-known values round-trip and unknowns are
+      // rejected. zod's internal layout shifts between minor
+      // versions, so we test through safeParse instead of
+      // introspecting `_def`.
+      const allowed = ['read', 'write', 'operator', 'nd://scope/admin/services', 'nd://scope/write/services', 'nd://scope/read/services'];
+      for (const v of allowed) {
+        expect(apiTokenScope.safeParse(v).success).toBe(true);
+      }
+      for (const bad of ['', 'admin', 'execute', '  ', 'unknown:something']) {
+        expect(apiTokenScope.safeParse(bad).success).toBe(false);
+      }
     });
 
     it('operatorGrant carries a single boolean', () => {
