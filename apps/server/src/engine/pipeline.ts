@@ -112,7 +112,17 @@ class DeploymentCancelled extends Error {
 /** Re-read the deployment row — a cancel route may have flipped it mid-flight. */
 async function isCancelled(db: DB, deploymentId: number): Promise<boolean> {
   const row = await db.query.deployments.findFirst({ where: eq(deployments.id, deploymentId) });
-  return row?.status === 'cancelled';
+  if (!row) {
+    // The remove route only deletes terminal rows, so a row that vanished under
+    // a RUNNING pipeline is a cancel-then-remove: the operator cancelled the
+    // deploy (flipping the row terminal) and deleted it before this pipeline
+    // reached its next checkpoint. Without treating absence as cancelled, the
+    // zombie pipeline runs to completion — holding its concurrency slot,
+    // stalling every queued deploy behind it, and overwriting the service row
+    // on finalize — with no way left to stop it.
+    return true;
+  }
+  return row.status === 'cancelled';
 }
 
 /** Collect runtime env vars: shared project env ← service env ← attached-database

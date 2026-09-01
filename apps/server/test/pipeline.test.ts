@@ -233,6 +233,31 @@ describe('runDeployment', () => {
     logBus.removeAllListeners();
   });
 
+  it('treats a deployment row deleted mid-flight as cancelled (stops the zombie pipeline)', async () => {
+    const { db, updates } = makeDb();
+    baseSetup(db, { image: 'nginx:latest', port: null, runtimeId: null });
+    // The entry lookup sees the row; every later read (the cancel checkpoints)
+    // sees NOTHING — the operator cancelled the deploy and removed the already
+    // terminal row while this pipeline was still running.
+    let reads = 0;
+    db.query.deployments.findFirst.mockImplementation(async () => (reads++ === 0 ? dep : undefined));
+    const lines = collectLogs(1);
+
+    await runDeployment(db as never, 1);
+
+    // The zombie must stop at the FIRST checkpoint, before any build starts —
+    // otherwise it holds its concurrency slot and the queued deploys behind it
+    // never proceed.
+    expect(h.builder.buildAndRun).not.toHaveBeenCalled();
+    expect(lines).toContain('⏹ Deployment cancelled');
+    expect(updates.map((u) => [u.table, u.values.status])).toEqual([
+      [deployments, 'building'],
+      [services, 'deploying'],
+      [services, 'idle'],
+      [deployments, 'cancelled'],
+    ]);
+  });
+
   it('returns early when the deployment row is missing', async () => {
     const { db, updates } = makeDb();
     db.query.deployments.findFirst.mockResolvedValue(undefined);
