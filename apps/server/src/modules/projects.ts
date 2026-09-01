@@ -3,7 +3,7 @@ import { databases, projects, serviceProjects, type Project, workspaces, type Wo
 import type { FastifyPluginAsync } from 'fastify';
 import { createProject, projectPatch } from '@ninedeploy/schemas';
 import { audit } from '../lib/audit.js';
-import { assertWorkspaceMember, loadProjectForUser, projectScopeFilter } from '../lib/resourceAccess.js';
+import { assertWorkspaceMember, assertWorkspaceRole, loadProjectForUser, projectScopeFilter } from '../lib/resourceAccess.js';
 import { badRequest, conflict, parseId } from '../lib/errors.js';
 import { iso } from '../lib/serialize.js';
 import { slugify } from '../lib/slug.js';
@@ -96,11 +96,22 @@ export const projectRoutes: FastifyPluginAsync = async (app) => {
   app.patch('/:id', async (req) => {
     const id = parseId((req.params as { id: string }).id);
     const input = projectPatch.parse(req.body);
-    await loadProjectForUser(app.db, id, req.user!);
+    const project = await loadProjectForUser(app.db, id, req.user!);
+    // Project names, membership, and deletion affect every linked service;
+    // viewers remain read-only even though they can discover the project.
+    if (!req.user!.isOperator && project.workspaceId != null) {
+      await assertWorkspaceRole(app.db, project.workspaceId, req.user!, 'admin');
+    }
     // Re-homing a project is a membership change on both ends: the caller must
     // belong to the destination too, or they could move a project they can see
     // into a workspace only they control.
-    if (input.workspaceId != null) await assertWorkspaceMember(app.db, input.workspaceId, req.user!);
+    if (input.workspaceId != null) {
+      if (req.user!.isOperator) {
+        await assertWorkspaceMember(app.db, input.workspaceId, req.user!);
+      } else {
+        await assertWorkspaceRole(app.db, input.workspaceId, req.user!, 'admin');
+      }
+    }
     // Detaching a project (workspaceId: null) makes it admin-only under the
     // access rules, so only an admin may do it.
     if (input.workspaceId === null && !req.user!.isOperator) {
@@ -123,6 +134,9 @@ export const projectRoutes: FastifyPluginAsync = async (app) => {
   app.delete('/:id', async (req) => {
     const id = parseId((req.params as { id: string }).id);
     const row = await loadProjectForUser(app.db, id, req.user!);
+    if (!req.user!.isOperator && row.workspaceId != null) {
+      await assertWorkspaceRole(app.db, row.workspaceId, req.user!, 'admin');
+    }
     await app.db.delete(projects).where(eq(projects.id, id));
     void audit(app.db, req.user!.id, 'project.delete', row.name);
     return { ok: true };

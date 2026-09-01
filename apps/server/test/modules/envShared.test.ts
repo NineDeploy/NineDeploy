@@ -51,6 +51,25 @@ describe('project env routes', () => {
     expect(res.json().key).toBe('NEW');
   });
 
+  it('forbids a viewer from modifying shared project env', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: {
+          projects: { id: 5, workspaceId: 1 },
+          workspaceMembers: { id: 2, workspaceId: 1, userId: 1, role: 'viewer' },
+        },
+      }),
+    });
+    await app.register(projectEnvRoutes);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/5/env',
+      headers: asUser({ isOperator: false }),
+      payload: { key: 'NODE_OPTIONS', value: '--require=payload' },
+    });
+    expect(res.statusCode).toBe(403);
+  });
+
   it('rejects a duplicate shared key (constraint rejection)', async () => {
     const db = createFakeDb({
       findFirst: { projects: { id: 5 } },

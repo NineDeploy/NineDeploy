@@ -151,6 +151,17 @@ describe('viewer seats are read-only over HTTP', () => {
     expect(res.statusCode).toBe(403);
   });
 
+  it('refuses a viewer from cloning a service with its secrets', async () => {
+    const app = await appAs('viewer', VIEWER);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/services/5/clone',
+      headers: asUser({ id: VIEWER, isOperator: false }),
+      payload: { name: 'copied-secrets' },
+    });
+    expect(res.statusCode).toBe(403);
+  });
+
   it('lets a member write the same environment variable', async () => {
     const app = await appAs('member', MEMBER);
     const res = await app.inject({

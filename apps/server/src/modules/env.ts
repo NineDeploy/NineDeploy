@@ -3,7 +3,7 @@ import { envVars, services } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { upsertEnvVar } from '@ninedeploy/schemas';
 import { decrypt, encrypt } from '../lib/crypto.js';
-import { assertServiceRole, loadProjectForUser, loadServiceForUser } from '../lib/resourceAccess.js';
+import { assertServiceRole, assertWorkspaceRole, loadProjectForUser, loadServiceForUser } from '../lib/resourceAccess.js';
 import { badRequest, notFound, parseId as num } from '../lib/errors.js';
 
 function serialize(e: typeof envVars.$inferSelect) {
@@ -109,7 +109,10 @@ export const projectEnvRoutes: FastifyPluginAsync = async (app) => {
 
   app.post('/:id/env', async (req) => {
     const id = num((req.params as { id: string }).id);
-    await loadProjectForUser(app.db, id, req.user!);
+    const project = await loadProjectForUser(app.db, id, req.user!);
+    if (!req.user!.isOperator && project.workspaceId != null) {
+      await assertWorkspaceRole(app.db, project.workspaceId, req.user!, 'member');
+    }
     const input = upsertEnvVar.parse(req.body);
     const [created] = await app.db
       .insert(envVars)
@@ -130,7 +133,10 @@ export const projectEnvRoutes: FastifyPluginAsync = async (app) => {
   app.patch('/:id/env/:varId', async (req) => {
     const id = num((req.params as { id: string }).id);
     const varId = num((req.params as { varId: string }).varId);
-    await loadProjectForUser(app.db, id, req.user!);
+    const project = await loadProjectForUser(app.db, id, req.user!);
+    if (!req.user!.isOperator && project.workspaceId != null) {
+      await assertWorkspaceRole(app.db, project.workspaceId, req.user!, 'member');
+    }
     const input = upsertEnvVar.parse(req.body);
     const [updated] = await app.db
       .update(envVars)
@@ -144,7 +150,10 @@ export const projectEnvRoutes: FastifyPluginAsync = async (app) => {
   app.delete('/:id/env/:varId', async (req) => {
     const id = num((req.params as { id: string }).id);
     const varId = num((req.params as { varId: string }).varId);
-    await loadProjectForUser(app.db, id, req.user!);
+    const project = await loadProjectForUser(app.db, id, req.user!);
+    if (!req.user!.isOperator && project.workspaceId != null) {
+      await assertWorkspaceRole(app.db, project.workspaceId, req.user!, 'member');
+    }
     await app.db
       .delete(envVars)
       .where(and(eq(envVars.id, varId), eq(envVars.scope, 'project'), eq(envVars.scopeKey, id)));

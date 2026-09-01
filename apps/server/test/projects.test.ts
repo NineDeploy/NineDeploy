@@ -62,7 +62,7 @@ describe('projects routes', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/projects',
-      headers: { ...asUser(), 'content-type': 'application/json' },
+      headers: { ...asUser({ isOperator: false }), 'content-type': 'application/json' },
       payload: { name: 'Acme' },
     });
     expect(res.statusCode).toBe(400);
@@ -148,6 +148,24 @@ describe('projects routes', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ name: 'Renamed', description: 'd' });
+  });
+
+  it('forbids a viewer from changing or deleting a workspace project', async () => {
+    const app = await appWith({
+      findFirst: {
+        projects: projectRow({ workspaceId: 5 }),
+        workspaceMembers: { id: 2, workspaceId: 5, userId: 1, role: 'viewer' },
+      },
+    });
+    const patch = await app.inject({
+      method: 'PATCH',
+      url: '/projects/1',
+      headers: { ...asUser({ isOperator: false }), 'content-type': 'application/json' },
+      payload: { name: 'Renamed' },
+    });
+    expect(patch.statusCode).toBe(403);
+    const del = await app.inject({ method: 'DELETE', url: '/projects/1', headers: asUser({ isOperator: false }) });
+    expect(del.statusCode).toBe(403);
   });
 
   it('rejects an empty patch with 400', async () => {

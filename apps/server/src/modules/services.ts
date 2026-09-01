@@ -645,6 +645,10 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
     const id = num((req.params as { id: string }).id);
     const body = (req.body as { name?: string; slug?: string } | undefined) ?? {};
     const svc = await loadServiceForUser(app.db, id, req.user!);
+    // A clone copies encrypted environment variables and the full build
+    // definition into a service the caller owns, so treat it as an admin-level
+    // duplication rather than a read operation.
+    await assertServiceRole(app.db, svc, req.user!, 'admin');
     // A clone inherits the source's type and build config — including its
     // lifecycle hooks — so it inherits its host privilege too.
     const sourceBuild = await app.db.query.buildConfigs.findFirst({ where: eq(buildConfigs.serviceId, id) });
