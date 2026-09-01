@@ -75,12 +75,18 @@ run_apt_step() {
   offset=1
   elapsed=0
   printed=0
-  sudo "$@" >"$log" 2>&1 &
+  # DEBIAN_FRONTEND=noninteractive: a conffile or debconf prompt would block
+  # forever on the piped installer's non-terminal stdin. </dev/null enforces
+  # the same guarantee for anything that reads stdin directly.
+  sudo env DEBIAN_FRONTEND=noninteractive "$@" </dev/null >"$log" 2>&1 &
   pid=$!
   while kill -0 "$pid" 2>/dev/null; do
     sleep 5
     elapsed=$((elapsed + 5))
-    new=$(tail -c +"$offset" "$log" | grep -E '^(Get|Hit|Fetched|Unpacking|Setting up|Selecting|Preparing|Need to get)' || true)
+    # "Waiting for cache lock" (unattended-upgrades holding dpkg on a fresh
+    # boot) and "Processing triggers" are real progress and belong on screen —
+    # hiding them is what made long apt phases look like a dead installer.
+    new=$(tail -c +"$offset" "$log" | grep -E '^(Get|Hit|Fetched|Unpacking|Setting up|Selecting|Preparing|Need to get|Waiting|Processing)' || true)
     if [ -n "$new" ]; then
       printf '%s\n' "$new"
       offset=$(( $(wc -c <"$log") + 1 ))
@@ -92,11 +98,40 @@ run_apt_step() {
   done
   wait "$pid"
   rc=$?
-  new=$(tail -c +"$offset" "$log" | grep -E '^(Get|Hit|Fetched|Unpacking|Setting up|Selecting|Preparing)' || true)
+  new=$(tail -c +"$offset" "$log" | grep -E '^(Get|Hit|Fetched|Unpacking|Setting up|Selecting|Preparing|Waiting|Processing)' || true)
   [ -z "$new" ] || printf '%s\n' "$new"
   if [ "$rc" -ne 0 ]; then
     warn "Command failed: sudo $*"
     tail -n 15 "$log" >&2
+  fi
+  rm -f "$log"
+  return "$rc"
+}
+
+# Heartbeat for the SILENT long steps that are not apt — pnpm install and the
+# monorepo build run many minutes with no output at all on a cold host (pnpm's
+# progress bars need a TTY the piped installer does not have), which reads as
+# a hung installer. Capture to a log, tick every 30s, and dump the log tail on
+# failure so a broken build explains itself instead of dying quietly.
+run_quiet_step() {
+  local label="$1" log elapsed rc pid
+  shift
+  log=$(mktemp) || return 1
+  "$@" >"$log" 2>&1 &
+  pid=$!
+  elapsed=0
+  while kill -0 "$pid" 2>/dev/null; do
+    sleep 5
+    elapsed=$((elapsed + 5))
+    if [ $((elapsed % 30)) -eq 0 ]; then
+      printf '  … %s — still working (%ss elapsed)\n' "$label" "$elapsed" >&2
+    fi
+  done
+  wait "$pid"
+  rc=$?
+  if [ "$rc" -ne 0 ]; then
+    warn "Step failed: $*"
+    tail -n 30 "$log" >&2
   fi
   rm -f "$log"
   return "$rc"
@@ -1161,12 +1196,22 @@ if [ "$FORCE_REFRESH" = "1" ] && [ "$SOURCE_MODE" = "git" ]; then
 fi
 
 # ── 3. Install + build ────────────────────────────────────────────────────
+#
+# pnpm prints nothing without a TTY — on a cold host `pnpm install` alone runs
+# 10-20 silent minutes, which every operator to date has read as a hung
+# installer (two documented kills mid-build). Both steps get heartbeats and a
+# failure log tail.
 
-info "Installing dependencies…"
-pnpm install --frozen-lockfile || pnpm install
+info "Installing dependencies… (silent — heartbeats every 30s; often 10-20 min on a cold host)"
+if ! run_quiet_step "pnpm install" pnpm install --frozen-lockfile; then
+  info "Frozen install failed — retrying with a regenerated lockfile…"
+  run_quiet_step "pnpm install (retry)" pnpm install \
+    || fail "pnpm install failed — see the log tail above"
+fi
 
-info "Building…"
-pnpm build
+info "Building the panel, API and CLI… (silent — often 5-10 min)"
+run_quiet_step "pnpm build" pnpm build \
+  || fail "pnpm build failed — see the log tail above"
 
 # Prove the tree that was just built is the one that was requested. A silent
 # mismatch here is the difference between "upgraded" and "still on the old
