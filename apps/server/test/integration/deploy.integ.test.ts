@@ -10,7 +10,8 @@ import { migrate } from 'drizzle-orm/libsql/migrator';
 import { eq } from 'drizzle-orm';
 import { fileURLToPath } from 'node:url';
 import { buildConfigs, createDb, deployments, services } from '@ninedeploy/db';
-import { ensureNetwork, NETWORK } from '../../src/engine/proxy.js';
+import { ensureNetwork } from '../../src/engine/proxy.js';
+import { serviceBridgeName } from '../../src/lib/serviceBridge.js';
 import { runDeployment } from '../../src/engine/pipeline.js';
 import { capture } from '../../src/lib/exec.js';
 
@@ -19,8 +20,10 @@ const migrationsFolder = fileURLToPath(new URL('../../../../packages/db/src/migr
 
 // The pipeline healthcheck probes the container's network IP directly from the
 // host. That only works where the Docker bridge is host-routable (Linux, incl.
-// CI); Docker Desktop on macOS cannot route container IPs, so the suite skips
-// itself there instead of failing on an environmental limit.
+// CI); elsewhere (Docker Desktop) the sibling probe covers it — the probe
+// container joins the runtime's per-slug bridge — but this suite still needs
+// host-routable IPs for its own assertions, so it skips itself there instead
+// of failing on an environmental limit.
 let HOST_CAN_REACH_CONTAINERS = false;
 if (ENABLED) {
   // The in-network probes `docker run` busybox:1.36. Pull it up front with
@@ -64,6 +67,7 @@ describe.skipIf(!ENABLED || !HOST_CAN_REACH_CONTAINERS)('deploy pipeline (real D
     for (const name of list.split('\n').map((n) => n.trim()).filter((n) => n.startsWith('nd-svc-integ-e2e'))) {
       await capture('docker', ['rm', '-f', name]).catch(() => '');
     }
+    await capture('docker', ['network', 'rm', serviceBridgeName('integ-e2e')]).catch(() => '');
   }, 120_000);
 
   const deploy = async () => {
@@ -74,8 +78,12 @@ describe.skipIf(!ENABLED || !HOST_CAN_REACH_CONTAINERS)('deploy pipeline (real D
     return { dep: row!, svc: svc! };
   };
 
+  // Model B: the runtime lives on its own `nd-svc-<slug>` bridge — the shared
+  // mesh neither resolves its name nor routes to it. Verify reachability the
+  // way platform infrastructure (Traefik, the probe container) does: from a
+  // container attached to the service's bridge, by name.
   const httpGet = (runtimeId: string) =>
-    capture('docker', ['run', '--rm', '--network', NETWORK, 'busybox:1.36', 'wget', '-qO-', `http://${runtimeId}/`]);
+    capture('docker', ['run', '--rm', '--network', serviceBridgeName('integ-e2e'), 'busybox:1.36', 'wget', '-qO-', `http://${runtimeId}/`]);
 
   it('deploys an image, health checks it, and reports running', async () => {
     const { dep, svc } = await deploy();
@@ -88,7 +96,9 @@ describe.skipIf(!ENABLED || !HOST_CAN_REACH_CONTAINERS)('deploy pipeline (real D
     const ports = await capture('docker', ['port', svc.runtimeId!]);
     expect(ports.trim()).toBe('');
     const inspect = await capture('docker', ['inspect', svc.runtimeId!, '--format', '{{json .NetworkSettings.Networks}}']);
-    expect(inspect).toContain(NETWORK);
+    // Model B: the runtime is a member of its per-slug bridge (where Traefik
+    // and the probe container are attached), not the shared mesh.
+    expect(inspect).toContain(serviceBridgeName('integ-e2e'));
   }, 300_000);
 
   it('rolls back to the first deployment', async () => {
