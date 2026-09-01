@@ -1,8 +1,29 @@
 const releases = [
   {
-    version: "0.4.5",
+    version: "0.4.6",
     date: "2026-09-01",
     status: "current",
+    notes: [
+      {
+        t: "Fixed — Lockfile Reflects the Dependency Patches",
+        items: [
+          "The drizzle-kit patch removes @esbuild-kit/esm-loader from its manifest and the archiver-utils patch moves glob to ^13 — but pnpm kept resolving those edges from the UNPATCHED manifests, so @esbuild-kit/core-utils, @esbuild-kit/esm-loader and the vulnerability-flagged glob@10.5.0 stayed in the lockfile and the installed store. Overrides now cut the edges at resolution level: 23 packages left the tree, and glob resolves into the maintained 13.x line fastify already carries",
+          "The deprecated-dependency guard strips the lockfile's overrides: metadata block before grepping — the block legitimately names the packages being removed, so the guard keeps guarding without false-failing on its own fix",
+        ],
+      },
+      {
+        t: "Fixed — Deploy E2E Tests Verify Model B Networking",
+        items: [
+          "The deploy integration suite still assumed the runtime container sits on the shared ninedeploy mesh and fetched it by name from a mesh container — but every runtime lives on its own nd-svc-<slug> bridge since v0.3.0, where the mesh neither resolves the name nor routes to it. The pipeline itself passed on CI; the test's own verification failed with 'bad address'",
+          "The suite now verifies reachability the way platform infrastructure (Traefik, the probe container) does — from a container attached to the service's bridge, by name — asserts bridge membership instead of mesh membership, and sweeps the bridge on teardown",
+        ],
+      },
+    ],
+  },
+  {
+    version: "0.4.5",
+    date: "2026-09-01",
+    status: "stable",
     notes: [
       {
         t: "Fixed — Healthcheck Probes Reach Per-Service Bridges",

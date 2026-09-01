@@ -1,4 +1,4 @@
-export const VERSION = '0.4.5';
+export const VERSION = '0.4.6';
 
 export interface ChangelogEntry {
   version: string;
@@ -8,6 +8,15 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.4.6',
+    date: '2026-09-01',
+    title: 'Lockfile Prune & Model B Test Coverage',
+    changes: [
+      'The lockfile now reflects what the dependency patches mean: the drizzle-kit patch removes @esbuild-kit/esm-loader from its manifest and the archiver-utils patch moves glob to ^13, but pnpm kept resolving those edges from the UNPATCHED manifests — @esbuild-kit/core-utils, @esbuild-kit/esm-loader and the vulnerability-flagged glob@10.5.0 stayed in the lockfile and the installed store. Overrides cut the edges at resolution level (23 packages left the tree; glob resolves into the maintained 13.x line fastify already carries), and the deprecated-dependency guard strips the lockfile\'s overrides: metadata block before grepping — the block legitimately names the packages being removed. Source installs stop pulling the deprecated packages; the guard keeps guarding',
+      'The deploy integration tests verify Model B networking instead of Model A: the end-to-end suite still asserted the runtime container sits on the shared ninedeploy mesh and fetched it by name from a throwaway mesh container, but every runtime lives on its own nd-svc-<slug> bridge since v0.3.0, where the mesh neither resolves the name nor routes to it — the pipeline itself passed, the test\'s own verification failed with "bad address". It now verifies reachability the way platform infrastructure (Traefik, the probe container) does — from a container attached to the service\'s bridge, by name — asserts bridge membership, and sweeps the bridge on teardown',
+    ],
+  },
   {
     version: '0.4.5',
     date: '2026-09-01',

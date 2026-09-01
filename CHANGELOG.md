@@ -9,6 +9,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.6] - 2026-09-01
+
+> Follow-up to 0.4.5's CI bring-up: the dependency patches existed to remove
+> a vulnerability-flagged glob and the deprecated @esbuild-kit toolchain, but
+> the lockfile kept resolving those edges from the UNPATCHED manifests — so
+> every install carried exactly the packages the patches exist to remove,
+> and the deprecated-dependency guard failed on every CI run. The edges are
+> now cut at resolution level, and the deploy pipeline's own end-to-end
+> integration tests verify reachability the way Model B actually works.
+
+### Fixed
+
+- **The lockfile now reflects what the patches mean.** The drizzle-kit
+  patch removes `@esbuild-kit/esm-loader` from its manifest and the
+  archiver-utils patch moves glob to `^13`, but pnpm kept resolving those
+  edges from the UNPATCHED manifests — `@esbuild-kit/core-utils`,
+  `@esbuild-kit/esm-loader` and the vulnerability-flagged `glob@10.5.0`
+  stayed in the lockfile and the installed store. Overrides now cut the
+  edges at resolution level (23 packages left the tree; glob resolves into
+  the maintained 13.x line fastify already carries), and the
+  deprecated-dependency guard strips the lockfile's `overrides:` metadata
+  block before grepping — the block legitimately names the packages being
+  removed. Source installs stop pulling the deprecated packages; the guard
+  keeps guarding.
+- **The deploy integration tests verify Model B networking, not Model A.**
+  The end-to-end suite still asserted the runtime container sits on the
+  shared `ninedeploy` mesh and fetched it by name from a throwaway mesh
+  container — but every runtime lives on its own `nd-svc-<slug>` bridge
+  since v0.3.0, where the mesh neither resolves the name nor routes to it.
+  The pipeline itself passed on CI; the test's own verification failed with
+  "bad address". It now verifies reachability the way platform
+  infrastructure (Traefik, the probe container) does — from a container
+  attached to the service's bridge, by name — asserts bridge membership
+  instead of mesh membership, and sweeps the bridge on teardown.
+
 ## [0.4.5] - 2026-09-01
 
 > v0.3.0's Model B moved every runtime onto its own per-service bridge but
