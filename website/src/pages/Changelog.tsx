@@ -1,8 +1,23 @@
 const releases = [
   {
-    version: "0.4.6",
+    version: "0.4.7",
     date: "2026-09-01",
     status: "current",
+    notes: [
+      {
+        t: "Fixed — Managed Postgres 18+ Databases Start Again",
+        items: [
+          "The official postgres 18+ images (and pgvector pg18) store data under /var/lib/postgresql/<major>/docker (pg_ctlcluster-compatible layout, docker-library/postgres#1259) and deliberately exit when they detect the classic /var/lib/postgresql/data mount — NineDeploy's standard volume mount since forever. The result was a database container in a restart loop: 'running and attached' at attach time, gone from DNS a moment later, and the attached app (Directus was the first hit) burning the whole healthcheck window on getaddrinfo EAI_AGAIN against the database hostname",
+          "Volumes for majors >= 18 now mount ONCE at /var/lib/postgresql with the data in the versioned subdirectory; majors <= 17 keep the classic layout, and rows already pinned to 17 see no change",
+          "The retained-volume re-key sidecar follows the volume label's own image instead of the row — the label records the image that initialized the data, which can be an older major than the row's configured version",
+        ],
+      },
+    ],
+  },
+  {
+    version: "0.4.6",
+    date: "2026-09-01",
+    status: "stable",
     notes: [
       {
         t: "Fixed — Lockfile Reflects the Dependency Patches",

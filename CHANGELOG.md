@@ -9,6 +9,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.7] - 2026-09-01
+
+> The postgres 18 support shipped in 0.4.5's dependency defaults was
+> broken on arrival: the official postgres 18+ images moved the data
+> directory to a major-version-specific path and deliberately refuse the
+> classic mount every managed database here used. The container
+> crash-looped, its DNS name never registered on the per-service bridge,
+> and the attached app — Directus was the first hit — burned the whole
+> healthcheck window on `getaddrinfo EAI_AGAIN` against the database
+> hostname. Fixed together with the 0.4.5 diagnostics that finally made
+> the real error visible.
+
+### Fixed
+
+- **Managed postgres 18+ databases start again.** The official postgres
+  18+ images (and pgvector pg18) store data under
+  `/var/lib/postgresql/<major>/docker` (pg_ctlcluster-compatible layout,
+  docker-library/postgres#1259) and deliberately exit when they detect
+  the classic `/var/lib/postgresql/data` mount — NineDeploy's standard
+  volume mount since forever. The result was a database container in a
+  restart loop: "running and attached" at attach time, gone from DNS a
+  moment later, and an app that could not even resolve the database
+  hostname. Volumes for majors ≥ 18 now mount ONCE at
+  `/var/lib/postgresql` with the data in the versioned subdirectory;
+  majors ≤ 17 keep the classic layout, and rows already pinned to 17
+  see no change.
+- **The retained-volume re-key sidecar follows the volume label's own
+  image.** The label records the image that initialized the data, which
+  can be an older major than the row's configured version — the sidecar
+  previously derived its paths from the row and would have mounted a
+  16-layout volume with 18 paths. It now matches the label's image.
+
 ## [0.4.6] - 2026-09-01
 
 > Follow-up to 0.4.5's CI bring-up: the dependency patches existed to remove
