@@ -107,7 +107,7 @@ const program = new Command();
 program
   .name('ninedeploy')
   .description('NineDeploy — self-hosted deployment platform CLI\n\n  Deploy apps from Git or Docker Hub in one click.')
-  .version('0.4.4')
+  .version('0.4.5')
   .helpOption('-h, --help', 'Display this help');
 
 // ── Auth ──────────────────────────────────────────────────────────────────

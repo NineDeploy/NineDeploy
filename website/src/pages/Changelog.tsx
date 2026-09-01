@@ -1,8 +1,33 @@
 const releases = [
   {
-    version: "0.4.4",
+    version: "0.4.5",
     date: "2026-09-01",
     status: "current",
+    notes: [
+      {
+        t: "Fixed — Healthcheck Probes Reach Per-Service Bridges",
+        items: [
+          "The v0.3.0 per-service bridge migration left the healthcheck's sibling probe stranded: ninedeploy-prober stayed on the shared ninedeploy mesh while every runtime moved to its own nd-svc-<slug> bridge, and Docker drops inter-bridge traffic by default. Any app that binds its port later than the 10-second direct-probe grace (first boot, DB migrations — Directus was the first app hit) burned the whole 5-minute healthcheck window on blind nc timeouts and failed deployment while perfectly healthy",
+          "The prober now joins the runtime's networks idempotently before the sibling probe, mirroring how Traefik is permanently attached to every bridge; networks it already sits on are skipped. The first sibling failure logs the probe topology — which networks the container and prober actually sit on — instead of a bare nc exit code",
+          "Container diagnostics no longer lose stderr: docker logs exits 0 and capture() returns stdout only, so a crashed boot's own explanation silently vanished from the 'Recent container logs' section — both streams are captured now",
+        ],
+      },
+      {
+        t: "Security Gates",
+        items: [
+          "Egress routes are operator-only via a preHandler role check — listing or mutating host-level SNAT/iptables state is not a project-member capability; the suite pins the 403 rejection before any driver method runs",
+          "The CORS allowlist excludes localhost origins in production — the panel is same-origin in prod; localhost:5173/3000 remain allowlisted in dev only",
+          "The workspace owner's membership role can no longer be changed in place (403): demoting the owner without transferring workspaces.ownerId could let an admin lock the owner out or leave an owner without owner access — ownership moves only through the transfer route",
+          "The 256 MB request-body allowance is scoped to the backup import route instead of global, so login, webhooks and ordinary JSON endpoints cannot allocate a quarter-gigabyte Buffer before authentication runs",
+          "Workspace projects require the workspace admin role to mutate — project rename/re-home/delete and shared env var edits now demand workspace admin; members keep discover-and-read access. Service cloning requires admin too, since it duplicates encrypted secrets and the full build definition into a caller-owned service",
+        ],
+      },
+    ],
+  },
+  {
+    version: "0.4.4",
+    date: "2026-09-01",
+    status: "stable",
     notes: [
       {
         t: "Fixed — Retained-Volume Adoption on Retry",

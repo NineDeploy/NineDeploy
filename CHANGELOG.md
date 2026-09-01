@@ -9,6 +9,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.5] - 2026-09-01
+
+> v0.3.0's Model B moved every runtime onto its own per-service bridge but
+> left the healthcheck's sibling probe on the shared mesh — and Docker drops
+> traffic between bridges by default. Any app that binds its port later than
+> the 10-second direct-probe grace (first boot, DB migrations — Directus is
+> the first app anyone hit it with) burned the full 5-minute window on blind
+> `nc` timeouts and failed its deployment while perfectly healthy. This
+> release closes that regression, makes the failure diagnostics honest about
+> container stderr, and carries the security-gates hardening.
+
+### Fixed
+
+- **The healthcheck probe reaches per-service bridges again.** Model B
+  (v0.3.0) puts every runtime on its own `nd-svc-<slug>` bridge, but
+  `ninedeploy-prober` kept living on the shared `ninedeploy` mesh — and
+  Docker's DOCKER-ISOLATION chains drop traffic BETWEEN bridges, so the
+  fallback `nc` probe timed out against every container IP no matter how
+  healthy the app was. Direct probes only cover the first 10 seconds
+  (`directGraceMs`) and don't work at all from the host on Docker Desktop,
+  so anything slower than that — Directus running first-boot DB migrations —
+  failed every deploy with "did not become ready in time" after ~45 blind
+  attempts (~3s `nc` + ~3s sleep per attempt ≈ the 300s deadline). The
+  prober now joins the runtime's networks idempotently before the sibling
+  probe (mirroring Traefik's permanent bridge membership; networks it
+  already sits on are skipped), and the first sibling failure logs the
+  probe topology — which networks the container and the prober actually
+  sit on — instead of a bare exit code.
+- **Container diagnostics no longer lose stderr.** `logContainerDiagnostic`
+  read `docker logs` through `capture()`, which returns stdout only — and
+  `docker logs` exits 0, so everything the app wrote to stderr (exactly the
+  output a crashed boot explains itself with) silently vanished from the
+  "Recent container logs" section. It now streams both streams through
+  `run()`'s sink.
+
+### Security
+
+- **Egress routes are operator-only.** Listing or mutating host-level
+  SNAT/iptables state is not a project-member capability; the routes are
+  gated behind a preHandler role check and the suite pins the 403 rejection
+  before any driver method runs.
+- **The CORS allowlist excludes localhost origins in production** — the
+  panel is same-origin in prod; `localhost:5173`/`3000` remain allowlisted
+  in dev only.
+- **The workspace owner's role can no longer be changed in place.** The
+  member-role update route refuses to demote the owner (`403`): changing
+  the owner's membership role without transferring `workspaces.ownerId`
+  could let an admin lock the owner out or leave an owner without owner
+  access — ownership moves only through the transfer route.
+- **The 256 MB request-body allowance is scoped to the backup import
+  route** instead of global, so login, webhooks and ordinary JSON
+  endpoints cannot allocate a quarter-gigabyte Buffer before
+  authentication runs.
+- **Workspace projects require the workspace admin role to mutate.**
+  Project PATCH/DELETE and shared environment variable mutations now
+  demand workspace admin when the project belongs to a workspace —
+  members can still discover and read workspace projects, but can no
+  longer rename, re-home or delete them, or edit shared env vars that
+  propagate to every linked service. Service cloning requires admin
+  too, since it duplicates encrypted secrets and the full build
+  definition into a caller-owned service.
+
 ## [0.4.4] - 2026-09-01
 
 > A review pass over 0.4.3's doctor mode and retained-volume work found

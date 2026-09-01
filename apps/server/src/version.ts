@@ -1,4 +1,4 @@
-export const VERSION = '0.4.4';
+export const VERSION = '0.4.5';
 
 export interface ChangelogEntry {
   version: string;
@@ -8,6 +8,20 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.4.5',
+    date: '2026-09-01',
+    title: 'Per-Bridge Probe Fix & Security Gates',
+    changes: [
+      'The healthcheck probe reaches per-service bridges again: Model B (v0.3.0) moved every runtime onto its own nd-svc-<slug> bridge but left ninedeploy-prober on the shared ninedeploy mesh, and Docker drops inter-bridge traffic by default — so any app that binds its port after the 10-second direct-probe grace (first-boot DB migrations; Directus was the first app hit) burned the whole 5-minute window on blind nc timeouts and failed deployment while perfectly healthy (~3s nc + ~3s sleep per attempt ≈ the 300s deadline at ~45 attempts). The prober now joins the runtime\'s networks idempotently before the sibling probe (mirroring Traefik\'s permanent bridge membership; networks it already sits on are skipped), and the first sibling failure logs the probe topology — which networks the container and prober actually sit on — instead of a bare exit code',
+      'Container diagnostics no longer lose stderr: logContainerDiagnostic read docker logs through capture(), which returns stdout only — and docker logs exits 0, so everything a crashed boot wrote to stderr (exactly the output that explains the crash) silently vanished from the "Recent container logs" section. It now streams both streams through run()\'s sink',
+      'Egress routes are operator-only via a preHandler role check — listing or mutating host-level SNAT/iptables state is not a project-member capability; the suite pins the 403 rejection before any driver method runs',
+      'The CORS allowlist excludes localhost origins when NODE_ENV=production — the panel is same-origin in prod; localhost:5173/3000 remain allowlisted in dev only',
+      'The workspace owner\'s membership role can no longer be changed in place (403): demoting the owner without transferring workspaces.ownerId could let an admin lock the owner out or leave an owner without owner access — ownership moves only through the transfer route',
+      'The 256 MB request-body allowance is scoped to the backup import route instead of global, so login, webhooks and ordinary JSON endpoints cannot allocate a quarter-gigabyte Buffer before authentication runs',
+      'Workspace projects require the workspace admin role to mutate: project PATCH/DELETE and shared env mutations demand workspace admin when the project belongs to a workspace — members can still discover and read workspace projects but can no longer rename, re-home or delete them, or edit shared env vars that propagate to every linked service; service cloning requires admin too, since it duplicates encrypted secrets and the full build definition into a caller-owned service',
+    ],
+  },
   {
     version: '0.4.4',
     date: '2026-09-01',
