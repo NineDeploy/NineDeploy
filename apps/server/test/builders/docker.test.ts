@@ -545,8 +545,15 @@ describe('dockerBuilder.isHealthy', () => {
       const format = args.at(-1);
       if (format === '{{.State.Status}}|{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}') return 'exited|';
       if (format === '{{json .State}}') return JSON.stringify({ Status: 'exited', ExitCode: 1, OOMKilled: false, Error: '' });
-      if (args[0] === 'logs') return 'database password=super-secret\nconnect ECONNREFUSED 3306';
       return '';
+    });
+    // `docker logs` runs through `run` with a sink so BOTH streams (an app
+    // crashing usually writes its reason to stderr) reach the diagnostic.
+    h.run.mockImplementation(async (_cmd: string, args: string[], _opts: unknown, sink?: (line: string) => void) => {
+      if (args[0] === 'logs') {
+        sink?.('database password=super-secret');
+        sink?.('connect ECONNREFUSED 3306');
+      }
     });
     const log = vi.fn();
 
@@ -590,6 +597,94 @@ describe('dockerBuilder.isHealthy', () => {
     expect(siblingCall).toBeDefined();
     // TCP probe by the inspected IP, not the (DNS-flaky) container name.
     expect(siblingCall![1].join(' ')).toContain('nc -w 3 172.17.0.2 3000');
+  });
+
+  it('joins the probe container to the runtime bridge before sibling probing (Model B isolation)', async () => {
+    fetchMock.mockRejectedValue(new Error('unreachable'));
+    h.run.mockReset();
+    h.run.mockImplementation(async () => undefined);
+    h.capture.mockImplementation(async (_cmd: string, args: string[]) => {
+      const argv = args as string[];
+      const format = argv.at(-1);
+      if (argv[0] === 'inspect' && argv[1] === 'ninedeploy-prober') {
+        return format === '{{json .NetworkSettings.Networks}}'
+          ? '{"ninedeploy":{}}'
+          : 'true|{"ninedeploy":{}}';
+      }
+      if (argv[0] === 'inspect' && argv[1] === 'web-3') {
+        return format === '{{json .NetworkSettings.Networks}}'
+          ? '{"nd-svc-web":{}}'
+          : 'running|172.19.0.2';
+      }
+      return 'running|172.19.0.2';
+    });
+
+    await expect(
+      dockerBuilder.isHealthy({ runtimeId: 'web-3', port: 8055, healthPath: '/' }, 5_000, 0, vi.fn()),
+    ).resolves.toBe(true);
+
+    // The prober sits on the shared mesh; the runtime is on its own bridge.
+    // Without `network connect` the nc probe is dropped by Docker's
+    // inter-bridge isolation and a healthy app never becomes "ready".
+    expect(h.run.mock.calls.some((c) => {
+      const a = c[1] as string[];
+      return a[0] === 'network' && a[1] === 'connect' && a[2] === 'nd-svc-web' && a[3] === 'ninedeploy-prober';
+    })).toBe(true);
+  });
+
+  it('skips joining networks the probe container is already on', async () => {
+    fetchMock.mockRejectedValue(new Error('unreachable'));
+    h.run.mockReset();
+    h.run.mockImplementation(async () => undefined);
+    h.capture.mockImplementation(async (_cmd: string, args: string[]) => {
+      const argv = args as string[];
+      const format = argv.at(-1);
+      if (argv[0] === 'inspect' && argv[1] === 'ninedeploy-prober') {
+        return format === '{{json .NetworkSettings.Networks}}'
+          ? '{"ninedeploy":{},"nd-svc-web":{}}'
+          : 'true|{"ninedeploy":{},"nd-svc-web":{}}';
+      }
+      if (argv[0] === 'inspect' && argv[1] === 'web-3') {
+        return format === '{{json .NetworkSettings.Networks}}'
+          ? '{"nd-svc-web":{}}'
+          : 'running|172.19.0.2';
+      }
+      return 'running|172.19.0.2';
+    });
+
+    await expect(
+      dockerBuilder.isHealthy({ runtimeId: 'web-3', port: 8055, healthPath: '/' }, 5_000, 0, vi.fn()),
+    ).resolves.toBe(true);
+
+    expect(h.run.mock.calls.some((c) => (c[1] as string[])[0] === 'network')).toBe(false);
+  });
+
+  it('logs the probe topology once when the sibling probe keeps failing', async () => {
+    fetchMock.mockRejectedValue(new Error('unreachable'));
+    h.run.mockReset();
+    h.run.mockImplementation(async (_cmd: string, args: string[]) => {
+      if ((args as string[])[0] === 'exec') throw new Error('nc: timeout');
+    });
+    const log = vi.fn();
+    h.capture.mockImplementation(async (_cmd: string, args: string[]) => {
+      const argv = args as string[];
+      const format = argv.at(-1);
+      if (argv[0] === 'inspect' && argv[1] === 'ninedeploy-prober') {
+        return format === '{{json .NetworkSettings.Networks}}' ? '{"ninedeploy":{}}' : 'true|{"ninedeploy":{}}';
+      }
+      if (argv[0] === 'inspect' && argv[1] === 'web-3') {
+        return format === '{{json .NetworkSettings.Networks}}' ? '{"nd-svc-web":{}}' : 'running|172.19.0.2';
+      }
+      return 'running|172.19.0.2';
+    });
+
+    await expect(
+      dockerBuilder.isHealthy({ runtimeId: 'web-3', port: 8055, healthPath: '/' }, 1_500, 0, log),
+    ).resolves.toBe(false);
+
+    const topologyLines = log.mock.calls.filter((c) => String(c[0]).includes('sibling probe: container'));
+    expect(topologyLines).toHaveLength(1);
+    expect(String(topologyLines[0]![0])).toContain('nd-svc-web');
   });
 
   it('repairs an incorrect configured port from image exposed-port metadata', async () => {

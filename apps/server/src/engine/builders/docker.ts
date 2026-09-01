@@ -121,6 +121,41 @@ async function ensureProbeContainer(log: (line: string) => void): Promise<void> 
   return probeContainerInit;
 }
 
+/** All user-defined networks a container is attached to (empty on inspect failure). */
+async function containerNetworks(name: string): Promise<string[]> {
+  try {
+    const raw = await capture('docker', ['inspect', name, '--format', '{{json .NetworkSettings.Networks}}']);
+    const parsed = JSON.parse(raw.trim()) as Record<string, unknown> | null;
+    return parsed ? Object.keys(parsed) : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Model B puts every runtime on its own `nd-svc-<slug>` bridge, and Docker
+ * drops traffic BETWEEN different bridges (DOCKER-ISOLATION chains). The probe
+ * container lives on the shared `ninedeploy` mesh, so without joining the
+ * runtime's bridge its `nc` times out against every container IP — and any app
+ * that binds its port after the direct-probe grace period (first boot, DB
+ * migrations) fails its healthcheck while perfectly healthy. Idempotent:
+ * networks the prober already sits on are skipped; membership persists across
+ * deploys, mirroring how Traefik is attached to every bridge.
+ */
+async function ensureProbeNetworks(runtimeId: string, log: (line: string) => void): Promise<void> {
+  const runtimeNets = await containerNetworks(runtimeId);
+  if (runtimeNets.length === 0) return;
+  const joined = new Set(await containerNetworks(PROBE_CONTAINER));
+  for (const network of runtimeNets) {
+    if (joined.has(network)) continue;
+    await run('docker', ['network', 'connect', network, PROBE_CONTAINER], {}, log).catch(
+      (err: unknown) => log(
+        `warning: could not attach ${PROBE_CONTAINER} to ${network}: ${err instanceof Error ? err.message : String(err)}`,
+      ),
+    );
+  }
+}
+
 /**
  * Write runtime env vars to a private temp file (mode 0600, inside a 0700
  * mkdtemp directory) which docker then loads via its env-file option. Keeping
@@ -190,8 +225,15 @@ async function logContainerDiagnostic(name: string, log: (line: string) => void)
     log(`container ${name} is ${state.Status ?? 'unavailable'} (exit ${state.ExitCode ?? 'unknown'}${state.OOMKilled ? ', OOM-killed' : ''})`);
     if (state.Error) log(`container runtime error: ${state.Error}`);
     try {
-      const tail = sanitiseRuntimeLogs(await capture('docker', ['logs', '--tail', '30', name]));
-      if (tail.trim()) log(`Recent container logs:\n${tail}`);
+      // `capture` returns stdout only and `docker logs` exits 0, so anything the
+      // app wrote to stderr used to vanish here — exactly the output a crashed
+      // boot explains itself with. Stream both streams through run's sink.
+      let tail = '';
+      await run('docker', ['logs', '--tail', '30', name], {}, (line) => {
+        tail += `${line}\n`;
+      });
+      const cleaned = sanitiseRuntimeLogs(tail);
+      if (cleaned.trim()) log(`Recent container logs:\n${cleaned}`);
     } catch {
       /* the state line is still actionable when logs cannot be read */
     }
@@ -540,9 +582,9 @@ export const dockerBuilder: Builder = {
     // to probing from a throwaway sibling container on the shared network —
     // name-based DNS works everywhere the app itself will be reached.
     const start = Date.now();
-    let usedSiblingProbe = false;
     let fallbackPorts: number[] | null = null;
     let restartDiagnosticWritten = false;
+    let siblingTopologyLogged = false;
     while (Date.now() < deadline) {
       // Resolve the container's network address fresh on every attempt: null
       // when it is not running (a process that exits right after `docker run -d`
@@ -604,13 +646,25 @@ export const dockerBuilder: Builder = {
         // the signal this fallback needs.
         try {
           await ensureProbeContainer(log);
+          // Without this the prober cannot route into the runtime's per-slug
+          // bridge at all (inter-bridge traffic is dropped by default), which
+          // turned every post-grace healthcheck into 5 minutes of blind nc
+          // timeouts against a perfectly healthy container.
+          await ensureProbeNetworks(runtime.runtimeId, log);
           await run('docker', [
             'exec', PROBE_CONTAINER, 'nc', '-w', '3', ip, String(runtime.port),
           ], {}, log);
           return true;
         } catch (probeErr) {
           probeContainerReady = false;
-          usedSiblingProbe = true;
+          // First failure: show where prober and container actually sit — a
+          // prober stranded on the wrong bridge fails as a bare nc exit code.
+          if (!siblingTopologyLogged) {
+            siblingTopologyLogged = true;
+            const runtimeNets = await containerNetworks(runtime.runtimeId);
+            const proberNets = await containerNetworks(PROBE_CONTAINER);
+            log(`sibling probe: container ${runtime.runtimeId} is on [${runtimeNets.join(', ')}], ${PROBE_CONTAINER} is on [${proberNets.join(', ')}]`);
+          }
           // Surface WHY the sibling probe failed — healthcheck debugging
           // otherwise degrades to a bare "did not become ready".
           log(`sibling probe failed: ${probeErr instanceof Error ? probeErr.message : String(probeErr)}`);
@@ -641,7 +695,6 @@ export const dockerBuilder: Builder = {
       }
     }
     await logContainerDiagnostic(runtime.runtimeId, log);
-    void usedSiblingProbe;
     return false;
   },
 
