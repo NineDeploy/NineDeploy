@@ -55,6 +55,7 @@ import {
   serviceVolumeAttachment as serviceVolumeAttachmentSchema,
   session,
   setLimits,
+  sameImageRepository,
   setup,
   slug,
   source,
@@ -812,13 +813,29 @@ describe('service', () => {
         healthPath: '/healthz', cpuShares: 512, memLimitMb: 1024,
         env: [{ key: 'APP_MODE', value: 'production', isSecret: false }],
         reuseExisting: true,
-        image: 'ignored/by/object-schema', port: 9999,
+        image: 'n8nio/n8n:1.100.0', port: 9999,
       });
-      expect(data).not.toHaveProperty('image');
+      // The image TAG override is first-class now (validated against the
+      // template's repository server-side); port stays registry-owned and is
+      // stripped as an unknown key.
+      expect(data.image).toBe('n8nio/n8n:1.100.0');
       expect(data).not.toHaveProperty('port');
       bad(deployTemplate, { publishedPort: 70000 });
       bad(deployTemplate, { healthPath: 'healthz' });
       bad(deployTemplate, { env: [{ key: 'INVALID-KEY', value: 'x' }] });
+    });
+
+    it('sameImageRepository pins tags within a repository and refuses digests/swaps', () => {
+      expect(sameImageRepository('directus/directus:latest', 'directus/directus:11.5')).toBe(true);
+      expect(sameImageRepository('n8nio/n8n', 'n8nio/n8n:1.100.0')).toBe(true);
+      expect(sameImageRepository('postgres:16-alpine', 'postgres:17.2')).toBe(true);
+      expect(sameImageRepository('ghcr.io/owner/img:1', 'ghcr.io/owner/img:2')).toBe(true);
+      expect(sameImageRepository('directus/directus:latest', 'evil/directus:latest')).toBe(false);
+      expect(sameImageRepository('directus/directus:latest', 'directus/directus@sha256:abc')).toBe(false);
+      expect(sameImageRepository('postgres:16', 'mongo:7')).toBe(false);
+      // The template side may itself be a digest reference — the repository
+      // extraction handles both sides of the comparison.
+      expect(sameImageRepository('directus/directus@sha256:abc', 'directus/directus:11.5')).toBe(true);
     });
   });
 

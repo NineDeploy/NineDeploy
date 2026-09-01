@@ -282,6 +282,66 @@ describe('template routes', () => {
     expect(deploymentUpdate).toBeUndefined();
   });
 
+  it('rejects a cross-repository image override for panel deploys', async () => {
+    const app = await buildTestApp({ db: createFakeDb({}) });
+    await app.register(templateRoutes);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/n8n/deploy',
+      headers: asUser(),
+      payload: { name: 'Automation', image: 'attacker/image' },
+    });
+
+    // The Hub tag override may only pin a version of the template's OWN
+    // repository — a different repository would run unverified bytes under a
+    // vetted template's name.
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.message).toMatch(/repository/);
+  });
+
+  it('pins a same-repository image tag while keeping port and volume authoritative', async () => {
+    let serviceInsert: Record<string, unknown> | undefined;
+    const envInserts: Array<Record<string, unknown>> = [];
+    const app = await buildTestApp({
+      db: createFakeDb({
+        insert: {
+          services: (value) => {
+            serviceInsert = value as Record<string, unknown>;
+            return [svcRow({ ...(value as Record<string, unknown>), id: 21 })];
+          },
+          env_vars: (value) => {
+            envInserts.push(value as Record<string, unknown>);
+            return [{ id: envInserts.length, ...(value as Record<string, unknown>) }];
+          },
+          deployments: [depRow({ id: 22, serviceId: 21, status: 'queued' })],
+        },
+      }),
+    });
+    await app.register(templateRoutes);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/n8n/deploy',
+      headers: asUser(),
+      payload: {
+        name: 'Automation',
+        image: 'n8nio/n8n:1.100.0',
+        port: 9999,
+        volumeMount: '/host',
+      },
+    });
+
+    expect(res.statusCode).toBe(200);
+    // The tag override survives; port and volume stay registry-controlled.
+    expect(serviceInsert).toMatchObject({
+      name: 'Automation',
+      image: 'n8nio/n8n:1.100.0',
+      port: 5678,
+      volumeMount: '/home/node/.n8n',
+    });
+  });
+
   it('keeps registry-controlled runtime fields authoritative for panel deploys', async () => {
     let serviceInsert: Record<string, unknown> | undefined;
     const envInserts: Array<Record<string, unknown>> = [];
@@ -314,7 +374,7 @@ describe('template routes', () => {
         cpuShares: 512,
         memLimitMb: 1024,
         env: [{ key: 'CUSTOM_SETTING', value: 'enabled', isSecret: false }],
-        image: 'attacker/image',
+        image: 'n8nio/n8n',
         port: 9999,
         volumeMount: '/host',
       },

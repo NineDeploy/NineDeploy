@@ -6,7 +6,7 @@ import {
   workspaceMembers,
   type Service,
 } from '@ninedeploy/db';
-import { deployTemplate, type DeployTemplate } from '@ninedeploy/schemas';
+import { deployTemplate, sameImageRepository, type DeployTemplate } from '@ninedeploy/schemas';
 import { and, desc, eq, inArray } from 'drizzle-orm';
 import { audit } from '../lib/audit.js';
 import type { FastifyInstance, FastifyPluginAsync, FastifyRequest } from 'fastify';
@@ -44,13 +44,15 @@ type ProvisionStage = {
 
 /**
  * A template-deployed service is "the same template" if every template-controlled
- * field matches. Project membership is no longer in the comparison (tags are
- * N-N now and an empty/refreshed set is a valid re-deploy).
+ * field matches. The image compares by REPOSITORY, not by exact reference: the
+ * Hub allows pinning a different tag of the template's own image at install
+ * time (`:latest` → `:11.5`). Project membership is no longer in the
+ * comparison (tags are N-N now and an empty/refreshed set is a valid re-deploy).
  */
 function sameTemplateService(service: Service, template: Template, ownerUserId: number): boolean {
   return service.ownerUserId === ownerUserId
     && service.type === 'docker'
-    && service.image === template.image
+    && sameImageRepository(template.image, service.image ?? '')
     && service.port === template.port
     && service.volumeMount === (template.volumeMount ?? null)
     && ['idle', 'error', 'stopped'].includes(service.status);
@@ -108,6 +110,14 @@ async function prepareTemplateService(
   user: AuthedUser,
 ): Promise<{ service: Service; generatedSecrets: Array<{ key: string; value: string }>; stages: ProvisionStage[] }> {
   const ownerUserId = user.id;
+  // The Hub may pin a different TAG of the template's own image (:latest →
+  // :11.5). Anything else — a different repository or a digest reference —
+  // would run unverified bytes under a vetted template's name, so it is
+  // rejected here, where the override enters the system.
+  const image = input.image ?? template.image;
+  if (!sameImageRepository(template.image, image)) {
+    throw badRequest(`Image override must keep the template's repository (${template.image})`);
+  }
   // The legacy `input.projectId` was the single FK on `services`. Templates
   // now use the N-N tag system; the request body still accepts `projectId`
   // (singular) for back-compat and we map it to the new join table.
@@ -157,7 +167,7 @@ async function prepareTemplateService(
       name,
       slug,
       type: 'docker',
-      image: template.image,
+      image,
       port: template.port,
       publishedPort: input.publishedPort ?? null,
       healthPath: input.healthPath ?? '/',

@@ -13,7 +13,7 @@ import {
   type DB,
   type Service,
 } from '@ninedeploy/db';
-import { createService, setLimits, updateService } from '@ninedeploy/schemas';
+import { createService, sameImageRepository, setLimits, updateService } from '@ninedeploy/schemas';
 import { getTemplates } from '../templates/registry.js';
 import { capture } from '../lib/exec.js';
 import { audit } from '../lib/audit.js';
@@ -199,12 +199,16 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
       ? (await getTemplates(app.db)).find((candidate) => candidate.id === input.templateId)
       : undefined;
     if (input.templateId && !template) throw badRequest('Template not found');
+    // The image may be pinned to a different TAG of the template's own
+    // repository (sameImageRepository); anything else — a different repo or a
+    // digest reference — runs unverified bytes under a vetted template's name
+    // and is refused. Port and volume stay registry-controlled outright.
     if (template && (
       input.type !== 'docker' ||
-      input.image !== template.image ||
+      (input.image !== undefined && !sameImageRepository(template.image, input.image)) ||
       input.port !== template.port ||
       (input.volumeMount ?? null) !== (template.volumeMount ?? null)
-    )) throw badRequest('Template image, port and volume are registry-controlled');
+    )) throw badRequest('Template image overrides must keep the same repository; port and volume are registry-controlled');
     // Host-privilege gate: PM2/compose services, lifecycle hooks and
     // docker-socket templates all give host-level execution, which is exactly
     // what the admin-only exec/volume/container routes exist to withhold.

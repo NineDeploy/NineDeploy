@@ -666,9 +666,9 @@ export const communityTemplateListResultSchema = z.object({
 export type CommunityTemplateListResult = z.infer<typeof communityTemplateListResultSchema>;
 
 /**
- * One canonical Hub installation request. Image, internal port, volume,
- * command, Docker socket and database mapping are intentionally absent: they
- * are privileged registry-owned fields resolved by the server.
+ * One canonical Hub installation request. Internal port, volume, command,
+ * Docker socket and database mapping are intentionally absent: they are
+ * privileged registry-owned fields resolved by the server.
  */
 export const deployTemplate = z.object({
   name: z.string().trim().min(1).max(100).optional(),
@@ -678,6 +678,11 @@ export const deployTemplate = z.object({
   healthPath: httpPath.optional(),
   cpuShares: z.number().int().min(0).max(262144).optional(),
   memLimitMb: z.number().int().min(0).optional(),
+  /** Optional tag override for the template's image — SAME repository only
+   *  (e.g. directus/directus:11.5 instead of :latest). Validated server-side
+   *  against the template image; digest references and cross-repository
+   *  swaps are rejected. */
+  image: z.string().trim().min(1).max(500).optional(),
   env: z.array(z.object({
     key: envVarName,
     value: z.string().max(32_768),
@@ -688,6 +693,23 @@ export const deployTemplate = z.object({
 });
 export type DeployTemplateInput = z.input<typeof deployTemplate>;
 export type DeployTemplate = z.infer<typeof deployTemplate>;
+
+/**
+ * Whether an image reference keeps the template's registry repository while
+ * changing only the tag (`directus/directus:latest` → `directus/directus:11.5`).
+ * Digest references and cross-repository swaps are refused: the Hub override
+ * exists to pin a version, not to run an arbitrary image under a template's name.
+ */
+export function sameImageRepository(templateImage: string, override: string): boolean {
+  if (override.includes('@')) return false;
+  const repo = (ref: string): string => {
+    const at = ref.lastIndexOf('@');
+    if (at > ref.lastIndexOf('/')) return ref.slice(0, at);
+    const colon = ref.lastIndexOf(':');
+    return colon > ref.lastIndexOf('/') ? ref.slice(0, colon) : ref;
+  };
+  return repo(templateImage) === repo(override);
+}
 
 // ── Domain routing index + volumes ─────────────────────────────────────────
 export const domainEntry = z.object({

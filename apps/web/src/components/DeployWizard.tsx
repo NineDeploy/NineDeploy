@@ -246,6 +246,9 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
       if (template) {
         const input = {
           name,
+          // Pin a different TAG of the template's own repository — the server
+          // rejects cross-repository overrides and digest references.
+          ...(image && image !== template.image ? { image } : {}),
           serverId: serverId ? toInt(serverId) : undefined,
           publishedPort: toInt(publishedPort),
           healthPath: healthPath || undefined,
@@ -892,7 +895,14 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
                   )}
                 </>
               ) : (
-                <L label={template ? 'Registry-managed image' : 'Image'}><Input value={image} disabled={!!template} onChange={(e) => setImage(e.target.value)} placeholder="n8nio/n8n" className="font-mono text-xs" /></L>
+                <L label={template ? 'Image — pin a version (same repository, e.g. :11.5)' : 'Image'}>
+                  <Input
+                    value={image}
+                    onChange={(e) => setImage(e.target.value)}
+                    placeholder={template?.image ?? 'n8nio/n8n'}
+                    className="font-mono text-xs"
+                  />
+                </L>
               )}
 
               {!isAdvanced && (
