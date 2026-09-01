@@ -9,6 +9,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Panel environment variables now reach Nixpacks builds.** The Environment
+  section was only injected at container start (`docker run --env-file`), so
+  `next build` never saw it: `NEXT_PUBLIC_*` values were inlined as
+  `undefined` into the client bundle, and version pins like
+  `NIXPACKS_NODE_VERSION` did nothing during the build. Source builds now
+  pass the resolved service environment to the Nixpacks CLI as repeatable
+  `--env` flags, which Nixpacks forwards into the build phases (and bakes
+  into the image as ENV — the runtime env-file already provided the same
+  values). Redeploy after editing env in the panel to pick up new
+  `NEXT_PUBLIC_*` values.
+
+## [0.4.9] - 2026-09-01
+
+> Hub installs always ran the template's pinned image reference —
+> `directus/directus:latest` and friends — with no way to choose a version.
+> The install request rejected any image override by design (the templates
+> are runtime-verified), and the wizard's image field was disabled. Now the
+> wizard lets you pin a different tag of the template's OWN repository
+> (`:latest` → `:11.5`), the server validates the override keeps the
+> repository, and the review step shows exactly what will run.
+
+### Added
+
+- **Pin a template image version at install time.** The Hub deploy wizard's
+  image field is live for templates: it comes pre-filled with the registry
+  reference, and typing e.g. `directus/directus:11.5` deploys that tag. The
+  server accepts only overrides that keep the template's registry repository
+  — digest references and cross-repository swaps are refused, because the
+  point is version pinning, not running arbitrary bytes under a vetted
+  template's name. Port and volume stay registry-controlled. Interrupted
+  installs reconcile cleanly across overrides (the same-template check
+  compares repositories, not exact references), and Service → Settings keeps
+  allowing image edits after install for redeploy.
+
 ## [0.4.8] - 2026-09-01
 
 > Cancelling a deployment and immediately removing it from the queue left

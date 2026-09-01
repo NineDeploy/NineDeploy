@@ -1,4 +1,4 @@
-export const VERSION = '0.4.8';
+export const VERSION = '0.4.9';
 
 export interface ChangelogEntry {
   version: string;
@@ -8,6 +8,14 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.4.9',
+    date: '2026-09-01',
+    title: 'Hub Image Version Pinning',
+    changes: [
+      'Pin a template image version at install time: the Hub deploy wizard\'s image field is live for templates (pre-filled with the registry reference) and typing e.g. directus/directus:11.5 deploys that tag. The server accepts only overrides that keep the template\'s registry repository — digest references and cross-repository swaps are refused, because the point is version pinning, not running arbitrary bytes under a vetted template\'s name. Port and volume stay registry-controlled; interrupted installs reconcile cleanly across overrides (the same-template check compares repositories, not exact references); Service → Settings keeps allowing image edits after install for redeploy',
+    ],
+  },
   {
     version: '0.4.8',
     date: '2026-09-01',

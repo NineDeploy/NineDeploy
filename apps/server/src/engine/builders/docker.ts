@@ -173,6 +173,21 @@ export function writeEnvFile(env: Record<string, string>): SecretFile | null {
   return writeSecretFile('nd-env', 'service.env', `${body}\n`);
 }
 
+/**
+ * Nixpacks' CLI has no env-file option: build-time variables travel as
+ * repeatable `--env KEY=VALUE` argv. Nixpacks parses on the FIRST `=`, so
+ * values may freely contain `=` (base64 secrets), and turns them into
+ * `--build-arg`s consumed by an `ARG`/`ENV` pair it emits before the build
+ * phases — which is what makes `NEXT_PUBLIC_*` inlining and NIXPACKS_*
+ * version pins work during `next build`. Values reuse the runtime env-file's
+ * literal `\n` escaping so a multi-line variable behaves identically at
+ * build and run time. Note Nixpacks bakes these into the image config as
+ * ENV; the runtime env-file overrides with the same values either way.
+ */
+export function nixpacksEnvArgs(env: Record<string, string>): string[] {
+  return Object.entries(env).flatMap(([k, v]) => ['--env', `${k}=${v.replace(/\r\n?|\n/g, '\\n')}`]);
+}
+
 /** Shared no-op sinks (EPIPE guards / best-effort log drains). */
 const swallowLine = (line: string): void => void line;
 const swallowErr = (): void => undefined;
@@ -269,7 +284,10 @@ export async function containerExposedTcpPorts(name: string): Promise<number[]> 
  * for repos that ship no Dockerfile (e.g. a plain Next.js app). install/build/
  * start commands from the build config override Nixpacks' own detection, so
  * `npm ci` / `npm run build` / `npm start` style customizations work the same
- * way they do on Dokploy/Coolify.
+ * way they do on Dokploy/Coolify. The service's resolved environment is
+ * injected into the build too (`nixpacksEnvArgs`) — without it, `NEXT_PUBLIC_*`
+ * and version pins like `NIXPACKS_NODE_VERSION` from the panel would only
+ * exist at runtime and never reach `next build`.
  */
 async function buildWithNixpacks(
   target: string,
@@ -278,6 +296,7 @@ async function buildWithNixpacks(
   workDir: string,
   log: (line: string) => void,
   manifest?: NinedeployManifest,
+  env: Record<string, string> = {},
 ): Promise<void> {
   // `runtime` and `phases` cannot be expressed as CLI flags — they become a
   // `nixpacks.toml` written next to the source. docs/NINEDEPLOY_MANIFEST.md
@@ -321,7 +340,11 @@ async function buildWithNixpacks(
   if (buildConfig?.startCmd) customArgs.push('--start-cmd', buildConfig.startCmd);
 
   if (hasCli) {
-    const args = ['build', baseDir, '--name', target, ...customArgs];
+    const envArgs = nixpacksEnvArgs(env);
+    if (envArgs.length > 0) {
+      log(`Injecting ${envArgs.length / 2} environment variable(s) into the Nixpacks build (values are never logged)`);
+    }
+    const args = ['build', baseDir, '--name', target, ...customArgs, ...envArgs];
     log(`⚡ nixpacks CLI build: ${baseDir} …`);
     await run(
       'nixpacks',
@@ -425,7 +448,7 @@ export const dockerBuilder: Builder = {
       log(`Building image ${target} …`);
       if (useNixpacks) {
         builtWithNixpacks = true;
-        await buildWithNixpacks(target, baseDir, buildConfig, workDir, log, ctx.manifest);
+        await buildWithNixpacks(target, baseDir, buildConfig, workDir, log, ctx.manifest, env);
       } else {
         // Sprint 4 G-01 PR-B: when the `engine.use_buildkit` config flag
         // is on (default off), route the Dockerfile build through the

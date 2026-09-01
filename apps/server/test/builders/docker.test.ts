@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { containerExposedTcpPorts, dockerBuilder, sanitiseRuntimeLogs, writeEnvFile } from '../../src/engine/builders/docker.js';
+import { containerExposedTcpPorts, dockerBuilder, nixpacksEnvArgs, sanitiseRuntimeLogs, writeEnvFile } from '../../src/engine/builders/docker.js';
 
 const h = vi.hoisted(() => {
   const run = vi.fn(async (_cmd: string, _args: unknown[], _opts: unknown, sink?: (line: string) => void) => {
@@ -452,7 +452,7 @@ describe('dockerBuilder.buildAndRun', () => {
 
     const nix = h.run.mock.calls.find((c) => c[0] === 'nixpacks');
     expect(nix).toBeDefined();
-    expect(nix![1]).toEqual(['build', '.', '--name', 'ninedeploy/web:abcdef1']);
+    expect(nix![1]).toEqual(['build', '.', '--name', 'ninedeploy/web:abcdef1', '--env', 'NODE_ENV=production']);
     expect(nix![2]).toEqual({
       cwd: '/work/web',
       heartbeatMs: 20_000,
@@ -460,6 +460,47 @@ describe('dockerBuilder.buildAndRun', () => {
     });
     // docker build was never invoked — nixpacks produced the image itself.
     expect(h.run.mock.calls.some((c) => c[0] === 'docker' && c[1][0] === 'build')).toBe(false);
+  });
+
+  it('injects panel env into the nixpacks build so NEXT_PUBLIC_* is inlined at build time', async () => {
+    h2.exists.mockReturnValue(false);
+    const ctx = makeCtx({
+      buildConfig: { buildPack: 'nixpacks', baseDir: '/' },
+      env: { NEXT_PUBLIC_API_URL: 'https://api.example.com', DATABASE_URL: 'postgres://u:secret@db:5432/app' },
+    });
+
+    await dockerBuilder.buildAndRun(ctx as never);
+
+    const nixArgs = h.run.mock.calls.find((c) => c[0] === 'nixpacks')![1] as unknown[];
+    // Repeatable --env KEY=VALUE pairs — nixpacks has no env-file option.
+    expect(nixArgs).toEqual(expect.arrayContaining([
+      '--env', 'NEXT_PUBLIC_API_URL=https://api.example.com',
+      '--env', 'DATABASE_URL=postgres://u:secret@db:5432/app',
+    ]));
+    // The deploy log announces the injection but never echoes a value.
+    expect(ctx.log).toHaveBeenCalledWith(expect.stringContaining('Injecting 2 environment variable(s)'));
+    for (const line of ctx.log.mock.calls.flat()) {
+      expect(line).not.toContain('secret');
+    }
+  });
+
+  it('adds no --env args to nixpacks when the service has no environment', async () => {
+    h2.exists.mockReturnValue(false);
+    const ctx = makeCtx({ buildConfig: { buildPack: 'nixpacks' }, env: {} });
+
+    await dockerBuilder.buildAndRun(ctx as never);
+
+    const nixArgs = h.run.mock.calls.find((c) => c[0] === 'nixpacks')![1] as unknown[];
+    expect(nixArgs).not.toContain('--env');
+  });
+
+  it('nixpacksEnvArgs escapes newlines like the runtime env-file and survives values containing =', () => {
+    expect(nixpacksEnvArgs({ MULTI: 'line-1\nline-2', B64: 'YQ==', CRLF: 'a\r\nb' })).toEqual([
+      '--env', 'MULTI=line-1\\nline-2',
+      '--env', 'B64=YQ==',
+      '--env', 'CRLF=a\\nb',
+    ]);
+    expect(nixpacksEnvArgs({})).toEqual([]);
   });
 
   it('explicit nixpacks buildPack wins even when a Dockerfile exists', async () => {
@@ -482,7 +523,8 @@ describe('dockerBuilder.buildAndRun', () => {
     const nix = h.run.mock.calls.find((c) => c[0] === 'nixpacks');
     expect(nix![1].join(' ')).toBe(
       // baseDir '/app' is re-anchored to 'app' (repo-root convention, L-13).
-      'build app --name ninedeploy/web:abcdef1 --install-cmd pnpm install --frozen-lockfile --build-cmd pnpm build --start-cmd pnpm start',
+      // The service env rides along as repeatable --env pairs.
+      'build app --name ninedeploy/web:abcdef1 --install-cmd pnpm install --frozen-lockfile --build-cmd pnpm build --start-cmd pnpm start --env NODE_ENV=production',
     );
   });
 

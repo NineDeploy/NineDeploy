@@ -1,8 +1,23 @@
 const releases = [
   {
-    version: "0.4.8",
+    version: "0.4.9",
     date: "2026-09-01",
     status: "current",
+    notes: [
+      {
+        t: "Added — Pin a Template Image Version at Install Time",
+        items: [
+          "Hub installs always ran the template's pinned image reference (directus/directus:latest and friends) with no way to choose a version — the install request rejected any image override by design, and the wizard's image field was disabled",
+          "The deploy wizard's image field is now live for templates: it comes pre-filled with the registry reference, and typing e.g. directus/directus:11.5 deploys that tag",
+          "The server accepts only overrides that keep the template's registry repository — digest references and cross-repository swaps are refused, because the point is version pinning, not running arbitrary bytes under a vetted template's name. Port and volume stay registry-controlled, interrupted installs reconcile cleanly across overrides, and Service → Settings keeps allowing image edits after install",
+        ],
+      },
+    ],
+  },
+  {
+    version: "0.4.8",
+    date: "2026-09-01",
+    status: "stable",
     notes: [
       {
         t: "Fixed — Cancel + Remove No Longer Strands the Deploy Queue",
