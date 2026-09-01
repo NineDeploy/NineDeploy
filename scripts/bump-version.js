@@ -68,6 +68,8 @@ replaceInFile('apps/web/src/routes/About.tsx', /--version v\d+\.\d+\.\d+/g, `--v
 replaceInFile('docs/QUICKSTART.md', /--version v\d+\.\d+\.\d+/g, `--version v${newVersion}`);
 replaceInFile('website/src/pages/Home.tsx', /<span className="tag font-bold">v\d+\.\d+\.\d+<\/span>/, `<span className="tag font-bold">v${newVersion}</span>`);
 replaceInFile('website/src/components/Layout.tsx', /v\d+\.\d+\.\d+ GA/g, `v${newVersion} GA`);
-replaceInFile('README.md', /Version-\d+\.\d+\.\d+-blue/, `Version-${newVersion}-blue`);
+replaceInFile('README.md', /Release-\d+\.\d+\.\d+-blue/, `Release-${newVersion}-blue`);
+replaceInFile('README.md', /--version v\d+\.\d+\.\d+/, `--version v${newVersion}`);
+replaceInFile('README.md', /newest release tag \(\*\*\d+\.\d+\.\d+\*\*\)/, `newest release tag (**${newVersion}**)`);
 
 console.log(`\n🎉 Successfully bumped all monorepo packages and code to v${newVersion}\n`);

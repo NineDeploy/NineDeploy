@@ -315,7 +315,11 @@ export async function containerRunning(name: string): Promise<boolean> {
 }
 
 /** Run a managed database container on the shared network with a persistent volume. */
-export async function startDatabase(d: Database, log: (line: string) => void): Promise<void> {
+export async function startDatabase(
+  d: Database,
+  log: (line: string) => void,
+  opts: { labels?: Record<string, string> } = {},
+): Promise<void> {
   const cfg = ENGINES[d.engine];
   if (!cfg) throw new Error(`Unknown engine: ${d.engine}`);
   if (!d.containerName || !d.volumeName) throw new Error('database has no container/volume name');
@@ -334,10 +338,14 @@ export async function startDatabase(d: Database, log: (line: string) => void): P
   log(`Pulling database image ${image} …`);
   await pullDockerImage(image, log);
 
-  // Detect a retained volume from a previous deployment of the same name → its
-  // data will be reused automatically by Docker (the volume bind is idempotent).
+  // Ensure the volume exists BEFORE `docker run` so it can be stamped with its
+  // provenance labels at creation: a volume implicitly created by `-v` would
+  // come up anonymous of origin, and a retained volume must stay traceable to
+  // the database that made it even after its row is deleted.
   if (await volumeExists(d.volumeName)) {
     log(`Reusing retained volume ${d.volumeName} (previous data restored)`);
+  } else {
+    await createDockerVolume(d.volumeName, log, databaseVolumeLabels(d, opts.labels));
   }
 
   // Remove any stale (stopped) container of the same name so `docker run` does
@@ -419,6 +427,155 @@ export async function volumeExists(name: string): Promise<boolean> {
   }
 }
 
+// ── retained-volume provenance + adoption ──────────────────────────────────
+//
+// A database volume intentionally outlives its Hub row (deleting a database
+// keeps the data). That retention has a sharp edge: engines that store
+// credentials INSIDE the data directory (postgres, mysql, mongo, …) only honor
+// POSTGRES_PASSWORD-style env vars during FIRST initialization, so a new row
+// remounting a retained volume boots a server whose real password belongs to
+// the deleted installation. The app then crash-loops on auth failures and the
+// deploy dies at its healthcheck with no hint why. These helpers make the
+// retained volume traceable (labels) and re-keyable (per-engine reset) so a
+// redeploy over old data either works or explains itself.
+
+/** Label namespace stamped on managed database volumes at creation. */
+const MANAGED_VOLUME_LABEL = 'ninedeploy.managed';
+
+/** Labels describing the database that created a volume. `extra` carries
+ *  caller-specific provenance (e.g. the provisioning template id). */
+function databaseVolumeLabels(d: Database, extra: Record<string, string> = {}): Record<string, string> {
+  const cfg = ENGINES[d.engine];
+  if (!cfg) throw new Error(`Unknown engine: ${d.engine}`);
+  return {
+    [MANAGED_VOLUME_LABEL]: 'database',
+    'ninedeploy.database.slug': d.slug,
+    'ninedeploy.database.name': d.name,
+    'ninedeploy.database.engine': d.engine,
+    // The exact image that initialized the cluster: maintenance sidecars must
+    // match the data directory's major version, not today's default.
+    'ninedeploy.database.image': cfg.image(d.version ?? undefined),
+    'ninedeploy.database.container': d.containerName ?? '',
+    'ninedeploy.owner': String(d.ownerUserId ?? ''),
+    ...extra,
+  };
+}
+
+/** Read a volume's labels; `{}` when the volume is absent or unlabeled. */
+export async function volumeLabels(name: string): Promise<Record<string, string>> {
+  try {
+    const out = await capture('docker', ['volume', 'inspect', '--format', '{{json .Labels}}', name]);
+    const parsed = JSON.parse(out.trim()) as Record<string, string> | null;
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+/** Engines whose credentials live outside the data directory: the volume can
+ *  be remounted under a new row with no re-key step at all. */
+const CREDENTIALS_OUTSIDE_VOLUME = new Set(['redis', 'valkey']);
+/** Engines with an implemented automatic credential re-key (see below). */
+const REKEYABLE = new Set(['postgres']);
+
+/** Human-readable origin of a retained volume for error messages. */
+function volumeProvenance(labels: Record<string, string>): string {
+  if (labels[MANAGED_VOLUME_LABEL] !== 'database') return '';
+  const name = labels['ninedeploy.database.name'] ?? labels['ninedeploy.database.slug'];
+  const engine = labels['ninedeploy.database.engine'];
+  return ` (previously ${name ? `"${name}"` : 'a NineDeploy database'}${engine ? `, ${engine}` : ''})`;
+}
+
+/**
+ * Re-key a retained postgres data directory to `password` WITHOUT knowing the
+ * old credentials: a throwaway sidecar running the cluster's own image opens
+ * the data directory in single-user mode and rewrites the role's password.
+ * Single-user mode bypasses pg_hba authentication entirely, which is the point
+ * — the old password is exactly what nobody has anymore. The session ends at
+ * EOF, so success is verified by a follow-up catalog probe keyed to the ALTER
+ * itself (single-user mode reports statement errors without failing the
+ * process, so an unverified exit code would silently succeed).
+ */
+async function resetPostgresVolumePassword(
+  d: Database,
+  image: string,
+  log: (line: string) => void,
+): Promise<void> {
+  const cfg = ENGINES.postgres;
+  if (!cfg) throw new Error('postgres engine config missing');
+  const password = decrypt(d.passwordEncrypted);
+  const user = cfg.username()!;
+  // Two single quotes escape one inside a SQL string literal; the passwords
+  // this Hub generates are base64url anyway, so this is belt-and-braces.
+  const sqlPassword = password.replace(/'/g, "''");
+  const sql = [
+    `ALTER ROLE ${user} WITH PASSWORD '${sqlPassword}' VALID UNTIL 'infinity';`,
+    `SELECT 'NINEDEPLOY_REKEY_OK' FROM pg_roles WHERE rolname = '${user}' AND rolvaliduntil = 'infinity'::timestamptz;`,
+    '\\q',
+  ].join('\n');
+  await ensureDockerImage(image, log);
+  log(`Re-keying retained volume ${d.volumeName} (${user} @ ${image}) …`);
+  const out = await capture(
+    'docker',
+    ['run', '--rm', '-i', '-v', `${d.volumeName}:${cfg.volumePath}`, image, 'postgres', '--single', '-D', cfg.volumePath, 'postgres'],
+    { timeoutMs: 300_000, heartbeatMs: 20_000, heartbeatLabel: `Re-keying retained volume ${d.volumeName}` },
+    Buffer.from(`${sql}\n`),
+  );
+  if (!out.includes('NINEDEPLOY_REKEY_OK')) {
+    throw new Error(`the verification probe did not confirm the new password (sidecar output: ${out.trim().slice(-400) || 'empty'})`);
+  }
+}
+
+export type RetainedVolumeAdoption = { action: 'fresh' | 'rekeyed' | 'no-rekey-needed' };
+
+/**
+ * Prepare a retained volume under `d.volumeName` for a BRAND-NEW database row.
+ * Callers must invoke this right after inserting the fresh row (whose password
+ * is what the app will receive) and before `startDatabase`. Without it, the
+ * reinstall-over-old-data case boots a server re-keyed to a password the
+ * deleted installation owned and the deployment dies at its healthcheck.
+ *
+ * Refuses — with the volume's provenance — what cannot be made consistent:
+ * another engine's data directory, or engines with no re-key implementation.
+ */
+export async function adoptRetainedVolume(
+  d: Database,
+  log: (line: string) => void,
+): Promise<RetainedVolumeAdoption> {
+  if (!d.volumeName || !(await volumeExists(d.volumeName))) return { action: 'fresh' };
+
+  const labels = await volumeLabels(d.volumeName);
+  const provenance = volumeProvenance(labels);
+  const labeledEngine = labels['ninedeploy.database.engine'];
+  if (labeledEngine && labeledEngine !== d.engine) {
+    throw new Error(
+      `Retained volume "${d.volumeName}" holds ${labeledEngine} data${provenance}, not ${d.engine} — pick a different database name or delete the volume`,
+    );
+  }
+
+  if (CREDENTIALS_OUTSIDE_VOLUME.has(d.engine)) {
+    log(`Retained volume ${d.volumeName} reused — ${d.engine} credentials live on the container, nothing to re-key`);
+    return { action: 'no-rekey-needed' };
+  }
+
+  if (!REKEYABLE.has(d.engine)) {
+    throw new Error(
+      `Retained volume "${d.volumeName}" still holds ${d.engine} data${provenance} whose credentials NineDeploy cannot re-key automatically. Starting it would boot a server no app can authenticate to. Delete the volume to start fresh (Volumes panel, or \`docker volume rm ${d.volumeName}\`), or point this database at a different volume`,
+    );
+  }
+
+  const clusterImage = labels['ninedeploy.database.image'] ?? ENGINES.postgres?.image(d.version ?? undefined) ?? 'postgres';
+  try {
+    await resetPostgresVolumePassword(d, clusterImage, log);
+  } catch (err) {
+    throw new Error(
+      `Retained volume "${d.volumeName}" holds postgres data${provenance} but re-keying it failed: ${err instanceof Error ? err.message : err}. The data directory may come from an incompatible postgres major (the attempt used ${clusterImage}). Delete the volume to start fresh (Volumes panel, or \`docker volume rm ${d.volumeName}\`)`,
+    );
+  }
+  return { action: 'rekeyed' };
+}
+
+
 /** Stop + remove the database container, but KEEP its volume so data survives. */
 export async function stopDatabase(d: Database, log: (line: string) => void): Promise<void> {
   if (d.containerName) {
@@ -450,13 +607,20 @@ const VOLUME_TAR_IMAGE = 'alpine:latest';
 const VOLUME_TMP_ARCHIVE = '/tmp/ninedeploy-volume.tar.gz';
 
 /** Create a named Docker volume. Idempotent: `docker volume create` returns the
- *  existing volume unchanged when the name is already taken. */
+ *  existing volume unchanged when the name is already taken (labels are only
+ *  applied at creation — Docker has no post-hoc volume label update). */
 export async function createDockerVolume(
   name: string,
   log: (line: string) => void = swallow,
+  labels: Record<string, string> = {},
 ): Promise<void> {
   log(`Creating volume ${name} …`);
-  await run('docker', ['volume', 'create', name], {}, log);
+  const args = ['volume', 'create'];
+  for (const [key, value] of Object.entries(labels)) {
+    if (value !== '') args.push('--label', `${key}=${value}`);
+  }
+  args.push(name);
+  await run('docker', args, {}, log);
 }
 
 /** Snapshot a named volume into a gzipped tarball on the host. */

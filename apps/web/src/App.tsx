@@ -37,6 +37,7 @@ import { Activity } from './routes/Activity.js';
 import { Projects } from './routes/Projects.js';
 import { Labels } from './routes/Labels.js';
 import { Deploys } from './routes/Deploys.js';
+import { Doctor } from './routes/Doctor.js';
 
 function RequireAuth({ children }: { children: ReactNode }) {
   const { user } = useAuth();
@@ -94,6 +95,7 @@ export default function App() {
         <Route path="hub" element={<Hub />} />
         <Route path="manifest-creator" element={<ManifestCreator />} />
         <Route path="deploys" element={<Deploys />} />
+        <Route path="doctor" element={<Doctor />} />
         <Route path="databases" element={<Databases />} />
         <Route path="domains" element={<Domains />} />
         <Route path="tunnels" element={<Tunnels />} />

@@ -54,6 +54,7 @@ import { containerRoutes } from './containers.js';
 import { logDrainRoutes } from './logDrains.js';
 import { housekeepingRoutes } from './housekeeping.js';
 import { housekeepingImageRoutes } from './images.js';
+import { doctorRoutes } from './doctor.js';
 import { workspaceRoutes } from './workspaces.js';
 import { emailTemplateRoutes } from './emailTemplates.js';
 import { firewallRoutes } from './firewall.js';
@@ -159,6 +160,9 @@ export const apiRoutes: FastifyPluginAsync = async (app) => {
   // route itself is member-only.
   await app.register(logSearchRoutes, { prefix: '/log-drains' });
   await app.register(housekeepingRoutes, { prefix: '/housekeeping' });
+  // Doctor — system-wide analysis + guarded repairs. Sits next to
+  // housekeeping as the other admin "clean up my host" surface.
+  await app.register(doctorRoutes, { prefix: '/doctor' });
   // Image inventory + retention — sibling routes to auto-prune
   // (both live under /housekeeping). Mounted after
   // housekeepingRoutes so the existing `/prune` literal path

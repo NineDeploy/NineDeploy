@@ -15,6 +15,7 @@ const engineMocks = vi.hoisted(() => ({
   defaultPort: vi.fn((_engine: string) => 5432),
   startDatabaseStudio: vi.fn(async (_d: unknown, _port: number, log: (l: string) => void) => { log('studio starting'); }),
   stopDatabaseStudio: vi.fn(async (_d: unknown, log: (l: string) => void) => { log('studio stopping'); }),
+  adoptRetainedVolume: vi.fn(async () => ({ action: 'fresh' as const })),
 }));
 
 // Partial ENGINES: `mysql` is a valid schema enum value but intentionally
@@ -32,6 +33,7 @@ vi.mock('../src/engine/database.js', () => ({
   defaultPort: engineMocks.defaultPort,
   startDatabaseStudio: engineMocks.startDatabaseStudio,
   stopDatabaseStudio: engineMocks.stopDatabaseStudio,
+  adoptRetainedVolume: engineMocks.adoptRetainedVolume,
 }));
 
 beforeEach(() => {
@@ -98,6 +100,44 @@ describe('databases routes', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ id: 8 });
+    // A fresh row over a retained volume must go through adoption: the volume
+    // may hold credentials from the deleted database that created it.
+    expect(engineMocks.adoptRetainedVolume).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a volume already owned by another database row', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        select: { databases: [dbRow({ id: 77, name: 'Other DB', volumeName: 'nd-db-old-data' })] },
+      }),
+    });
+    await app.register(databasesRoutes);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/',
+      headers: asUser(),
+      payload: { name: 'thief-db', engine: 'postgres', existingVolume: 'nd-db-old-data' },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toMatchObject({ error: { message: expect.stringContaining('already belongs to database "Other DB"') } });
+    expect(engineMocks.startDatabase).not.toHaveBeenCalled();
+  });
+
+  it('surfaces adoption refusal as a failed create (volume kept, row marked error)', async () => {
+    engineMocks.adoptRetainedVolume.mockRejectedValueOnce(
+      new Error('Retained volume "nd-db-mysql-data" still holds mysql data whose credentials NineDeploy cannot re-key automatically'),
+    );
+    const app = await buildTestApp({ db: createFakeDb() });
+    await app.register(databasesRoutes);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/',
+      headers: asUser(),
+      payload: { name: 'mysql-db', engine: 'redis' },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toMatchObject({ error: { message: expect.stringContaining('cannot re-key') } });
+    expect(engineMocks.startDatabase).not.toHaveBeenCalled();
   });
 
   it('resumes a matching caller-owned database for retryable Hub provisioning', async () => {

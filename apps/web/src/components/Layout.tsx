@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   Activity, Building2, ChevronLeft, ChevronRight, Clock, Cloud, Container, Database, FolderKanban, Globe, HardDrive,
-  FileCode, Info, KeyRound, Layers, LayoutDashboard, ListOrdered, Moon, Network, Shield, Tag, type LucideIcon,
+  FileCode, Info, KeyRound, Layers, LayoutDashboard, ListOrdered, Moon, Network, Shield, Stethoscope, Tag, type LucideIcon,
   Rocket, Search, Server, Settings as SettingsIcon, Sparkles, Sun, Users, X,
 } from 'lucide-react';
 import { Link, Outlet, useLocation } from 'react-router';
@@ -91,6 +91,9 @@ const GROUPS: NavGroup[] = [
     id: 'system', label: 'System', icon: SettingsIcon, items: [
       { to: '/activity', label: 'Activity', icon: Clock },
       { to: '/monitoring', label: 'Monitoring', icon: Activity },
+      // Host-wide analysis + guarded cleanup (dead containers, orphan volumes,
+      // row/runtime desync, reclaimable bloat). Operator-gated server-side.
+      { to: '/doctor', label: 'Doctor', icon: Stethoscope },
       { to: '/docker', label: 'Docker', icon: Container, advancedOnly: true },
       { to: '/sources', label: 'Sources', icon: KeyRound },
       { to: '/servers', label: 'Servers', icon: HardDrive, advancedOnly: true },

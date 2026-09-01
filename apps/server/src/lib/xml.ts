@@ -76,9 +76,11 @@ export function parseXml(input: string): XmlElement {
       break;
     }
     if (m[0].startsWith('<!--')) {
-      // Comment — skip without disturbing the text buffer. Crucially we
-      // also advance `textStart` so the next `appendText` call does
-      // not pick the comment back up as if it were element text.
+      // Comment — first flush any text that accumulated BEFORE it (it
+      // belongs to the current element), then skip past the comment.
+      // Advancing `textStart` to the comment's end keeps the comment
+      // itself out of the text buffer.
+      appendText(stack, input.slice(textStart, m.index));
       cursor = TAG_RE.lastIndex;
       textStart = cursor;
       continue;

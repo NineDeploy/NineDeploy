@@ -107,5 +107,22 @@ describe('lib/xml', () => {
       );
       expect(root.text).toBe('actual text');
     });
+
+    it('preserves text that precedes a comment (regression: dropped text)', () => {
+      // The comment branch must flush accumulated text before advancing
+      // the text cursor — otherwise "hello" silently vanished.
+      const root = parseXml('<a>hello<!-- c --></a>');
+      expect(root.text).toBe('hello');
+    });
+
+    it('concatenates text on both sides of a comment', () => {
+      const root = parseXml('<a>hello<!-- c -->world</a>');
+      expect(root.text).toBe('helloworld');
+    });
+
+    it('keeps comment-only elements empty (comment never leaks into text)', () => {
+      const root = parseXml('<a><!-- just a comment --></a>');
+      expect(root.text).toBe('');
+    });
   });
 });

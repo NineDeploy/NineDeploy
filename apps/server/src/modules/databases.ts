@@ -5,6 +5,7 @@ import { backups, databaseAttachments, databases, projects, type Database } from
 import type { FastifyPluginAsync } from 'fastify';
 import { createAttachment, createDatabase, setLimits } from '@ninedeploy/schemas';
 import {
+  adoptRetainedVolume,
   connectionString,
   databaseLogs,
   defaultPort,
@@ -125,6 +126,12 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
     const volumeName = existingVolume || `nd-db-${slug}-data`;
     const version = input.extensions?.includes('pgvector') && input.engine === 'postgres' ? 'vector' : (input.version ?? null);
 
+    // A volume name can only belong to one database row: two rows mounting the
+    // same data directory would fight over the engine's lock and (worse) a new
+    // row would re-key the other database's credentials out from under it.
+    const [volumeClash] = await app.db.select().from(databases).where(eq(databases.volumeName, volumeName));
+    if (volumeClash) throw badRequest(`Volume "${volumeName}" already belongs to database "${volumeClash.name}"`);
+
     if (input.reuseExisting) {
       const existing = await app.db.query.databases.findFirst({ where: eq(databases.slug, slug) });
       if (existing) {
@@ -179,6 +186,11 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
     if (!created) throw badRequest('Could not create database');
 
     try {
+      // The fresh row's password is what apps will receive; a retained volume
+      // under this name holds credentials from the database that created it.
+      // Re-key (postgres) or refuse loudly (engines without a re-key) so a
+      // remount never boots a server the credentials cannot reach.
+      await adoptRetainedVolume(created, (line) => app.log.info({ component: 'database' }, line));
       await startDatabase(created, (line) => app.log.info({ component: 'database' }, line));
       await app.db
         .update(databases)

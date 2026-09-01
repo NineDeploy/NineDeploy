@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { databases, services, serviceVolumeAttachments } from '@ninedeploy/db';
 import { volumeFileWrite, volumePathCreate } from '@ninedeploy/schemas';
 import { audit } from '../lib/audit.js';
-import { removeVolume } from '../engine/database.js';
+import { removeVolume, volumeLabels } from '../engine/database.js';
 import { capture } from '../lib/exec.js';
 import { ensureDockerImage } from '../lib/dockerPull.js';
 import { containerRunning, resolveVolumeOwner } from '../lib/inventory.js';
@@ -55,6 +55,26 @@ async function volumeSize(name: string): Promise<number> {
   }
 }
 
+/** Creation labels of an ownerless managed volume, as the API's `retainedFrom`
+ *  shape; omitted entirely when the volume carries no provenance (created
+ *  before labeling, or by hand). */
+async function retainedProvenance(
+  name: string,
+): Promise<{ retainedFrom?: { name: string | null; engine: string | null } }> {
+  try {
+    const labels = await volumeLabels(name);
+    if (labels['ninedeploy.managed'] !== 'database') return {};
+    return {
+      retainedFrom: {
+        name: labels['ninedeploy.database.name'] ?? labels['ninedeploy.database.slug'] ?? null,
+        engine: labels['ninedeploy.database.engine'] ?? null,
+      },
+    };
+  } catch {
+    return {};
+  }
+}
+
 /** Inventory of NineDeploy-managed persistent volumes. Mounted under /volumes. */
 export const volumeRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('onRequest', app.authenticate);
@@ -75,7 +95,7 @@ export const volumeRoutes: FastifyPluginAsync = async (app) => {
       .map((n) => n.trim())
       .filter((n) => n.startsWith('nd-svc-') || n.startsWith('nd-db-'));
 
-    const out: Array<{ name: string; sizeBytes: number; owner: { kind: 'service' | 'database'; id: number; name: string; engine?: string } | null; inUse: boolean }> = [];
+    const out: Array<{ name: string; sizeBytes: number; owner: { kind: 'service' | 'database'; id: number; name: string; engine?: string } | null; inUse: boolean; retainedFrom?: { name: string | null; engine: string | null } }> = [];
     for (const name of names) {
       const owner = await volumeOwner(app.db, name);
       const inUse = owner ? await containerRunning(owner.containerName) : false;
@@ -84,6 +104,9 @@ export const volumeRoutes: FastifyPluginAsync = async (app) => {
         sizeBytes: await volumeSize(name),
         owner: owner ? { kind: owner.kind, id: owner.id, name: owner.name, engine: owner.engine } : null,
         inUse,
+        // Ownerless managed volumes keep their data on purpose; their creation
+        // labels say WHAT was deleted even though the row is long gone.
+        ...(owner ? {} : await retainedProvenance(name)),
       });
     }
     return out;

@@ -5,6 +5,7 @@ import { asUser, buildTestApp, createFakeDb, dbRow, svcRow } from './helpers.js'
 const execMocks = vi.hoisted(() => ({ capture: vi.fn() }));
 const dbEngineMocks = vi.hoisted(() => ({
   removeVolume: vi.fn(async (_n: string, log: (l: string) => void) => { log('deleting'); }),
+  volumeLabels: vi.fn(async (_n: string) => ({}) as Record<string, string>),
 }));
 
 vi.mock('../src/lib/exec.js', () => execMocks);
@@ -140,6 +141,32 @@ describe('volume routes', () => {
       { name: 'nd-db-pg', sizeBytes: 2048, owner: { id: 2, kind: 'database', name: 'PG', engine: 'postgres' }, inUse: false },
       { name: 'nd-svc-orphan', sizeBytes: 2048, owner: null, inUse: false },
       { name: 'nd-db-lonely', sizeBytes: 2048, owner: null, inUse: false },
+    ]);
+  });
+
+  it('surfaces the deleted origin of an ownerless labeled volume', async () => {
+    execMocks.capture.mockImplementation((_cmd: string, args: string[]) => {
+      if (args[0] === 'volume') return Promise.resolve('nd-db-lonely\n');
+      if (args[0] === 'ps') return Promise.resolve('');
+      return Promise.resolve('2048 /v\n');
+    });
+    dbEngineMocks.volumeLabels.mockImplementation(async (name: string) =>
+      name === 'nd-db-lonely'
+        ? { 'ninedeploy.managed': 'database', 'ninedeploy.database.name': 'Directus DB', 'ninedeploy.database.engine': 'postgres' }
+        : {},
+    );
+    const app = await buildTestApp({ db: createFakeDb() });
+    await app.register(volumeRoutes);
+    const res = await app.inject({ method: 'GET', url: '/', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual([
+      {
+        name: 'nd-db-lonely',
+        sizeBytes: 2048,
+        owner: null,
+        inUse: false,
+        retainedFrom: { name: 'Directus DB', engine: 'postgres' },
+      },
     ]);
   });
 

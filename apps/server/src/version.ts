@@ -1,4 +1,4 @@
-export const VERSION = '0.4.2';
+export const VERSION = '0.4.3';
 
 export interface ChangelogEntry {
   version: string;
@@ -8,6 +8,20 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.4.3',
+    date: '2026-09-01',
+    title: 'Retained-Volume Re-Keying & Doctor Mode',
+    changes: [
+      'Redeploying a template over a deleted database no longer dies silently at the healthcheck — the retained volume was initialized under the old row\'s credentials, so the fresh row (new password) crash-looped the app on auth failures forever. Callers creating a new database row now run adoptRetainedVolume before starting it: postgres is re-keyed via a throwaway single-user sidecar (cluster\'s own image, catalog probe verified in the same session), redis/valkey need nothing (credentials live on the container), and the engines without a re-key path (mysql/mariadb/mongo/clickhouse/rabbitmq/meilisearch) fail up front with the volume\'s provenance and the exact remediation instead of an opaque healthcheck timeout',
+      'A labeled retained volume belonging to a different engine is refused outright instead of being mounted as garbage, and creating a database with an existingVolume that already belongs to another database row is refused with a 400 instead of silently sharing (and re-keying) another database\'s data directory',
+      'Doctor mode — GET /v1/doctor scans the whole host for what is dead, stale or bloated: exited Hub containers nobody claims, orphaned managed volumes and leftover bridge/compose networks (with ninedeploy.* provenance), services marked running whose runtime container is gone, databases marked running with a dead container or stuck in creating, deploys frozen in queued/building, dangling image layers, oversized builder cache and disk pressure — each with severity, reclaimable size and a one-click repair',
+      'POST /v1/doctor/fix re-scans and re-locates the finding against FRESH state before executing, so a stale panel can never delete a volume that gained an owner or kill a container that came back (409 instead); destructive targets are name-family-guarded (nd-* / ninedeploy-* / ndcmp-* only), volume deletion refuses anything whose owner row reappeared, and repairs reuse existing safe paths (managed startDatabase, audited volume removal, age-filtered builder prune, auto-prune) instead of raw prunes',
+      'New Doctor page in the System group (operator-gated) with severity-grouped findings, host facts and per-finding fixes with confirmation for the destructive ones; SDK ships the same surface as client.doctor.scan/fix, pinned by client tests',
+      'Volume provenance labels: every managed database volume is created with ninedeploy.managed=database plus slug, display name, engine, the exact initializing image, owning user, container name and — for template provisioning — the template id; the Volumes panel shows retainedFrom (name + engine) for ownerless volumes so a retained volume can always be traced back even after the row is gone',
+      'Template-generated secrets (secret: true) are now 32 bytes (43 base64url chars) instead of 18, so variables like Directus SECRET or n8n N8N_ENCRYPTION_KEY can never fall under ecosystem 32-character minimums; existing installs keep their stored values — generation only happens on first install',
+    ],
+  },
   {
     version: '0.4.2',
     date: '2026-08-31',

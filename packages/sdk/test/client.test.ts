@@ -1448,6 +1448,20 @@ describe('createClient', () => {
     });
   });
 
+  describe('doctor', () => {
+    it('exercises scan and fix', async () => {
+      const { fetchMock, calls } = makeFetch(() => ok({}));
+      const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
+
+      await client.doctor.scan();
+      expect(last(calls)).toMatchObject({ url: '/v1/doctor', init: { method: 'GET' } });
+
+      await client.doctor.fix({ findingId: 'orphan_volume:nd-db-ghost' });
+      expect(last(calls)).toMatchObject({ url: '/v1/doctor/fix', init: { method: 'POST' } });
+      expect(JSON.parse(last(calls).init.body ?? '{}')).toEqual({ findingId: 'orphan_volume:nd-db-ghost' });
+    });
+  });
+
   describe('auth.oidc', () => {
     it('exercises publicProviders, listProviders, createProvider, updateProvider, deleteProvider, and callback', async () => {
       const { fetchMock, calls } = makeFetch(() => ok({}));

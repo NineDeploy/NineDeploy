@@ -10,7 +10,7 @@ import {
 import { eq } from 'drizzle-orm';
 import { encrypt, randomToken } from '../lib/crypto.js';
 import { getTemplates } from '../templates/registry.js';
-import { attachDatabaseToServiceBridges, defaultPort, ENGINES, startDatabase } from './database.js';
+import { adoptRetainedVolume, attachDatabaseToServiceBridges, defaultPort, ENGINES, startDatabase } from './database.js';
 
 export type TemplateDependencyResult = { database: Database; alreadyAttached: boolean } | null;
 
@@ -103,7 +103,13 @@ export async function reconcileTemplateDependencies(
 
   log(`Ensuring ${template.dbEngine} dependency ${database.slug} is running …`);
   try {
-    await startDatabase(database, log);
+    // A fresh row mounting a retained volume must never inherit the deleted
+    // installation's credentials — re-key what can be re-keyed, refuse the
+    // rest with provenance (this is the "reinstall then healthcheck never
+    // passes" trap). Retained ROWS reused above keep their working password
+    // and skip this entirely.
+    if (database.status === 'creating') await adoptRetainedVolume(database, log);
+    await startDatabase(database, log, { labels: { 'ninedeploy.template': template.id } });
     // Model B: the DB must also live on the service's per-slug bridge so the
     // app can reach it by name without being able to reach other services.
     await attachDatabaseToServiceBridges(database, [service.slug], log);

@@ -9,6 +9,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-09-01
+
+> Two long-standing operator pain points close out this release.
+> The retained-volume trap: deleting a database intentionally kept
+> its Docker volume, but a redeploy over that volume booted with a
+> fresh row's credentials against data initialized under the old
+> ones — an unexplained crash-loop at the healthcheck, every retry,
+> forever. Postgres is now re-keyed automatically on adoption, and
+> the engines that cannot be re-keyed fail up front with the
+> volume's provenance and the exact remediation instead of an
+> opaque timeout. And the missing host-level janitor: the new
+> Doctor page scans for dead containers, orphan volumes/networks,
+> row-vs-runtime desyncs, stuck deploys, dangling images and disk
+> pressure, and repairs findings through re-validated,
+> name-family-guarded actions — a stale panel can no longer delete
+> a volume that gained an owner in between. Volume provenance
+> labels, a 400 for `existingVolume` claims that collide with
+> another row, and 32-byte template-generated secrets round it out.
+
+### Fixed
+
+- **Redeploying a template over a deleted database no longer dies silently at
+  the healthcheck.** Deleting a database intentionally keeps its Docker volume,
+  but the postgres/mysql family only reads `*_PASSWORD`-style env vars during
+  FIRST initialization of an empty volume — so a fresh database row (with a
+  freshly generated password) remounting a retained volume booted a server
+  whose real credentials belonged to the deleted installation. The app then
+  crash-looped on auth failures and the deploy failed at its healthcheck with
+  no explanation, every retry, forever. Callers that create a new database row
+  now run `adoptRetainedVolume` before starting it:
+
+  - **postgres** is re-keyed automatically: a throwaway sidecar running the
+    cluster's own image (`ninedeploy.database.image` volume label, falling
+    back to the row's configured version) opens the data directory in
+    single-user mode and rewrites the role's password to the new row's value.
+    Success is verified by a catalog probe inside the same session, since
+    single-user mode does not fail the process on statement errors.
+  - **redis/valkey** need nothing — their credentials live on the container,
+    not in the volume.
+  - **mysql/mariadb/mongo/clickhouse/rabbitmq/meilisearch** have no automatic
+    re-key: the deploy now fails up front with the volume's provenance and the
+    exact remediation (`docker volume rm <name>` / Volumes panel) instead of
+    an opaque healthcheck timeout.
+  - A labeled volume belonging to a different engine is refused outright
+    instead of being mounted as garbage.
+
+### Added
+
+- **Doctor mode — host-wide analysis + guarded cleanup.** A new `GET /v1/doctor`
+  scan answers "what is dead, stale or bloated on this host": exited Hub
+  containers nobody claims, orphaned managed volumes and leftover
+  bridge/compose networks (with their `ninedeploy.*` provenance), services
+  marked *running* whose runtime container is gone, databases marked running
+  with a dead container or stuck in `creating`, deployments frozen in
+  queued/building, dangling image layers, oversized builder cache and disk
+  pressure — each with severity, reclaimable size where applicable, and a
+  one-click repair. `POST /v1/doctor/fix { findingId }` re-scans and
+  re-locates the finding against FRESH state before executing, so a stale
+  panel can never delete a volume that gained an owner or kill a container
+  that came back (it gets a 409 instead); destructive targets are additionally
+  name-family-guarded (`nd-*` / `ninedeploy-*` / `ndcmp-*` only) and volume
+  deletion refuses anything whose owner row reappeared. Panel: new
+  **Doctor** page in the System group (operator-gated) with severity-grouped
+  findings, host facts and per-finding fixes with confirmation for the
+  destructive ones. SDK ships the same surface (`client.doctor.scan/fix`).
+  Repairs reuse existing safe paths (managed `startDatabase`, audited volume
+  removal, age-filtered builder prune, auto-prune) instead of raw prunes.
+- **Volume provenance labels.** Every managed database volume is created with
+  `ninedeploy.managed=database` plus its slug, display name, engine, the exact
+  initializing image, owning user, container name and — for template
+  provisioning — the template id. The Volumes panel now shows `retainedFrom`
+  (name + engine) for ownerless volumes, so a retained volume can always be
+  traced back to the database that created it even after the row is gone.
+- Creating a database with `existingVolume` that already belongs to another
+  database row is refused with a 400 instead of silently sharing (and
+  re-keying) another database's data directory.
+- Template-generated secrets (`secret: true`) are now 32 bytes (43
+  base64url chars) instead of 18, so variables like Directus `SECRET` or
+  n8n `N8N_ENCRYPTION_KEY` can never fall under ecosystem 32-character
+  minimums. Existing installs keep their stored values — generation only
+  happens on first install.
+
 ## [0.4.2] - 2026-08-31
 
 > The post-0.4.1 plugin audit found five real bugs across the

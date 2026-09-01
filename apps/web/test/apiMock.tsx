@@ -206,6 +206,10 @@ export function createFakeApiModule() {
       updateAutoPrune: vi.fn(),
       runPrune: vi.fn(),
     },
+    doctor: {
+      scan: vi.fn(),
+      fix: vi.fn(),
+    },
     demo: { seed: vi.fn() },
     health: vi.fn(),
     firewall: {

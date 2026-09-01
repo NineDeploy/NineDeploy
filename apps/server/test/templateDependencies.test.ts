@@ -4,6 +4,7 @@ import { createFakeDb, dbRow, svcRow } from './helpers.js';
 const mocks = vi.hoisted(() => ({
   templates: [] as Array<Record<string, unknown>>,
   startDatabase: vi.fn(async () => undefined),
+  adoptRetainedVolume: vi.fn(async () => ({ action: 'fresh' as const })),
 }));
 
 vi.mock('../src/templates/registry.js', () => ({
@@ -11,6 +12,7 @@ vi.mock('../src/templates/registry.js', () => ({
 }));
 vi.mock('../src/engine/database.js', () => ({
   startDatabase: mocks.startDatabase,
+  adoptRetainedVolume: mocks.adoptRetainedVolume,
   attachDatabaseToServiceBridges: vi.fn(async () => undefined),
   defaultPort: vi.fn((engine: string) => engine === 'redis' ? 6379 : 3306),
   ENGINES: {
@@ -115,6 +117,8 @@ describe('template dependency recovery', () => {
     expect(updates).toContainEqual(expect.objectContaining({ status: 'running', internalPort: 3306 }));
     expect(result).toMatchObject({ database: { id: 9, status: 'running' }, alreadyAttached: false });
     expect(log).toHaveBeenCalledWith(expect.stringContaining('wordpress-db'));
+    // A brand-new row must pass through retained-volume adoption before start.
+    expect(mocks.adoptRetainedVolume).toHaveBeenCalledWith(expect.objectContaining({ id: 9 }), log);
   });
 
   it('restarts an owned attached database without duplicating its attachment', async () => {
@@ -125,7 +129,7 @@ describe('template dependency recovery', () => {
       insert: { database_attachments: () => { throw new Error('must not duplicate'); } },
     });
     await expect(reconcileTemplateDependencies(db, service(), vi.fn())).resolves.toMatchObject({ alreadyAttached: true });
-    expect(mocks.startDatabase).toHaveBeenCalledWith(existing, expect.any(Function));
+    expect(mocks.startDatabase).toHaveBeenCalledWith(existing, expect.any(Function), { labels: { 'ninedeploy.template': 'wordpress' } });
   });
 
   it('rejects a cross-resource attachment', async () => {
@@ -147,6 +151,8 @@ describe('template dependency recovery', () => {
       database: { id: 12 },
       alreadyAttached: false,
     });
+    // The retained row already owns its volume and password — never re-key it.
+    expect(mocks.adoptRetainedVolume).not.toHaveBeenCalled();
   });
 
   it('rejects a retained slug owned by another resource', async () => {

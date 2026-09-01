@@ -12,4 +12,5 @@ export * from './workspaces.js';
 export * from './labels.js';
 export * from './secretScan.js';
 export * from './runtimeVersions.js';
+export * from './doctor.js';
 

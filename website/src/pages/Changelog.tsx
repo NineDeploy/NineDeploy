@@ -1,8 +1,39 @@
 const releases = [
   {
+    version: "0.4.3",
+    date: "2026-09-01",
+    status: "current",
+    notes: [
+      {
+        t: "Fixed — Retained Database Volumes",
+        items: [
+          "Redeploying a template over a deleted database no longer dies silently at the healthcheck. Deleting a database intentionally keeps its Docker volume, but the postgres/mysql family only reads *_PASSWORD-style env vars during FIRST initialization of an empty volume — so a fresh database row (with a freshly generated password) remounting a retained volume booted a server whose real credentials belonged to the deleted installation, then crash-looped on auth failures with no explanation, every retry, forever",
+          "Callers that create a new database row now run adoptRetainedVolume before starting it: postgres is re-keyed automatically — a throwaway sidecar running the cluster's own image (ninedeploy.database.image volume label, falling back to the row's configured version) opens the data directory in single-user mode and rewrites the role's password, with success verified by a catalog probe inside the same session",
+          "redis/valkey need nothing — their credentials live on the container, not in the volume. mysql/mariadb/mongo/clickhouse/rabbitmq/meilisearch have no automatic re-key: the deploy fails up front with the volume's provenance and the exact remediation (docker volume rm <name> / Volumes panel) instead of an opaque healthcheck timeout",
+          "A labeled retained volume belonging to a different engine is refused outright instead of being mounted as garbage, and creating a database with an existingVolume that already belongs to another database row is refused with a 400 instead of silently sharing (and re-keying) another database's data directory",
+        ],
+      },
+      {
+        t: "Doctor Mode — Host-Wide Analysis + Guarded Cleanup",
+        items: [
+          "A new GET /v1/doctor scan answers 'what is dead, stale or bloated on this host': exited Hub containers nobody claims, orphaned managed volumes and leftover bridge/compose networks (with their ninedeploy.* provenance), services marked running whose runtime container is gone, databases marked running with a dead container or stuck in creating, deployments frozen in queued/building, dangling image layers, oversized builder cache and disk pressure — each with severity, reclaimable size where applicable, and a one-click repair",
+          "POST /v1/doctor/fix re-scans and re-locates the finding against FRESH state before executing, so a stale panel can never delete a volume that gained an owner or kill a container that came back (it gets a 409 instead); destructive targets are additionally name-family-guarded (nd-* / ninedeploy-* / ndcmp-* only) and volume deletion refuses anything whose owner row reappeared",
+          "Repairs reuse existing safe paths (managed startDatabase, audited volume removal, age-filtered builder prune, auto-prune) instead of raw prunes. Panel: a new Doctor page in the System group (operator-gated) with severity-grouped findings, host facts and per-finding fixes with confirmation for the destructive ones; SDK ships the same surface as client.doctor.scan/fix",
+        ],
+      },
+      {
+        t: "Volume Provenance & Hardening",
+        items: [
+          "Every managed database volume is created with ninedeploy.managed=database plus its slug, display name, engine, the exact initializing image, owning user, container name and — for template provisioning — the template id. The Volumes panel shows retainedFrom (name + engine) for ownerless volumes, so a retained volume can always be traced back to the database that created it even after the row is gone",
+          "Template-generated secrets (secret: true) are now 32 bytes (43 base64url chars) instead of 18, so variables like Directus SECRET or n8n N8N_ENCRYPTION_KEY can never fall under ecosystem 32-character minimums. Existing installs keep their stored values — generation only happens on first install",
+        ],
+      },
+    ],
+  },
+  {
     version: "0.4.2",
     date: "2026-08-31",
-    status: "current",
+    status: "stable",
     notes: [
       {
         t: "Plugin Audit & Fixes",

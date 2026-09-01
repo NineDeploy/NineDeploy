@@ -23,6 +23,7 @@ const engineMocks = vi.hoisted(() => ({
   defaultPort: vi.fn(() => 5432),
   startDatabaseStudio: vi.fn(async () => undefined),
   stopDatabaseStudio: vi.fn(async () => undefined),
+  adoptRetainedVolume: vi.fn(async () => ({ action: 'fresh' as const })),
 }));
 vi.mock('../src/engine/database.js', () => ({
   ENGINES: { postgres: { username: () => 'nine', dbName: () => 'app' } },

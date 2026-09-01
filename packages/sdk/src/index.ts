@@ -26,6 +26,9 @@ import type {
   ConfigItem,
   ConfigListResponse,
   SetConfigInput,
+  DoctorFixRequestInput,
+  DoctorFixResponse,
+  DoctorReport,
   PluginListResponse,
   PluginInspectResponse,
   InstallPluginInput,
@@ -1223,6 +1226,11 @@ export interface NineDeployClient {
      */
     pruneImages: (input: PruneImagesInput) => Promise<PruneImagesResult>;
   };
+  /** Host-wide analysis + guarded cleanup. */
+  doctor: {
+    scan: () => Promise<DoctorReport>;
+    fix: (input: DoctorFixRequestInput) => Promise<DoctorFixResponse>;
+  };
   health: () => Promise<HealthStatus>;
 }
 
@@ -2006,5 +2014,13 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
         send<PruneImagesResult>('POST', '/v1/housekeeping/images/prune', input),
     },
     health: () => get<HealthStatus>('/health'),
+    doctor: {
+      /** Full host scan: dead containers, orphan volumes/networks, row-vs-runtime
+       *  desyncs, dangling images, disk pressure — with guarded repair actions. */
+      scan: () => get<DoctorReport>('/v1/doctor'),
+      /** Execute one finding's repair. The server re-scans and re-locates the
+       *  finding first; a stale finding answers 409 instead of acting. */
+      fix: (input: DoctorFixRequestInput) => send<DoctorFixResponse>('POST', '/v1/doctor/fix', input),
+    },
   };
 }

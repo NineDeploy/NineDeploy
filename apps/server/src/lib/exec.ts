@@ -207,8 +207,11 @@ export function run(cmd: string, args: string[], opts: ExecOptions, sink: (line:
 
 export const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-/** Run a command and return its captured stdout (rejects on non-zero exit). */
-export function capture(cmd: string, args: string[], opts: ExecOptions = {}): Promise<string> {
+/** Run a command and return its captured stdout (rejects on non-zero exit).
+ *  `input` is written to stdin before the handle closes (EPIPE-tolerant, same
+ *  as {@link run}) — commands that consume a script from stdin (`docker run -i …
+ *  postgres --single`) need it, and their stdout is the verification channel. */
+export function capture(cmd: string, args: string[], opts: ExecOptions = {}, input?: Buffer): Promise<string> {
   const label = [cmd, ...args].join(' ');
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   return new Promise((resolve, reject) => {
@@ -216,8 +219,12 @@ export function capture(cmd: string, args: string[], opts: ExecOptions = {}): Pr
       cwd: opts.cwd,
       env: buildEnv(opts.env),
       detached: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: [input ? 'pipe' : 'ignore', 'pipe', 'pipe'],
     });
+    if (input && child.stdin) {
+      child.stdin.on('error', () => { /* EPIPE when the child exits early */ });
+      child.stdin.end(input);
+    }
 
     let out = '';
     let errOut = '';
@@ -229,8 +236,8 @@ export function capture(cmd: string, args: string[], opts: ExecOptions = {}): Pr
       reject(new ExecTimeoutError(label, timeoutMs));
     });
 
-    child.stdout.on('data', (d) => (out += d.toString()));
-    child.stderr.on('data', (d) => (errOut += d.toString()));
+    child.stdout?.on('data', (d) => (out += d.toString()));
+    child.stderr?.on('data', (d) => (errOut += d.toString()));
     child.on('error', (err) => {
       if (settled) return;
       settled = true;

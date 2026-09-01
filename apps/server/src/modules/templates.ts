@@ -75,7 +75,12 @@ export async function reconcileEnvironment(
       desired.set(entry.key, { value: override.value, isSecret: override.isSecret, generated: false });
       requested.delete(entry.key);
     } else if (!byKey.has(entry.key)) {
-      const value = entry.secret ? randomToken(18) : entry.value;
+      // 32 BYTES (43 base64url chars), not 32 chars: template secrets feed
+      // variables like Directus SECRET and n8n N8N_ENCRYPTION_KEY whose
+      // ecosystems either require or recommend ≥32-char values, and a longer
+      // value can never fail such a policy. Only generated on first install —
+      // retries never rotate existing secrets.
+      const value = entry.secret ? randomToken(32) : entry.value;
       desired.set(entry.key, { value, isSecret: entry.secret ?? false, generated: entry.secret === true });
     }
   }

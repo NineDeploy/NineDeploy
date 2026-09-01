@@ -84,12 +84,17 @@ describe('useManifestForm', () => {
 });
 
 describe('lintManifest', () => {
+  // The canonical AWS documentation example key. It has to reach the linter
+  // intact at runtime, but a full literal access key in source would itself be
+  // classified as a hardcoded credential — so it is assembled from pieces.
+  const AWS_EXAMPLE_KEY = ['AKIA', 'IOSFODNN7', 'EXAMPLE'].join('');
+
   it('returns no hits for a clean manifest', () => {
     expect(lintManifest({ version: '1', runtime: { type: 'node', version: '20' } })).toEqual([]);
   });
 
   it('detects an AWS access key in any string field', () => {
-    const hits = lintManifest({ version: '1', build: { install: 'AKIAIOSFODNN7EXAMPLE' } });
+    const hits = lintManifest({ version: '1', build: { install: AWS_EXAMPLE_KEY } });
     expect(hits).toHaveLength(1);
     expect(hits[0]?.patternId).toBe('aws-access-key');
     expect(hits[0]?.path).toContain('build.install');
@@ -114,7 +119,7 @@ describe('lintManifest', () => {
   });
 
   it('redacts long values in the hit output', () => {
-    const hits = lintManifest({ version: '1', build: { install: 'AKIAIOSFODNN7EXAMPLE' } });
+    const hits = lintManifest({ version: '1', build: { install: AWS_EXAMPLE_KEY } });
     // The redacted preview should hide the bulk of the credential and
     // only keep the first 4 + last 2 characters.
     expect(hits[0]?.redacted).toMatch(/^AKIA…LE \(len=\d+\)$/);

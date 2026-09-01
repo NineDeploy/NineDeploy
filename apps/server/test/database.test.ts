@@ -3,9 +3,11 @@ import { existsSync as existsSyncMock, mkdtempSync, readFileSync, rmSync, writeF
 import os from 'node:os';
 import path from 'node:path';
 import {
+  adoptRetainedVolume,
   backupDatabase,
   connectionString,
   createBackupReadStream,
+  createDockerVolume,
   databaseLogs,
   readBackupBytes,
   databaseSize,
@@ -317,6 +319,170 @@ describe('volumeExists', () => {
     await expect(volumeExists('v')).resolves.toBe(false);
   });
 });
+
+describe('retained volume provenance + adoption', () => {
+  const labels = (over: Record<string, string> = {}): Record<string, string> => ({
+    'ninedeploy.managed': 'database',
+    'ninedeploy.database.slug': 'db',
+    'ninedeploy.database.name': 'Old DB',
+    'ninedeploy.database.engine': 'postgres',
+    'ninedeploy.database.image': 'postgres:16',
+    ...over,
+  });
+  /** Route capture calls by shape: volumeExists (no --format) vs volumeLabels (--format). */
+  const captureVolume = (exists: boolean, volumeLabelsJson: Record<string, string> = {}) => {
+    h.capture.mockImplementation(async (_cmd: string, args: string[]) => {
+      if (args.includes('--format')) return JSON.stringify(volumeLabelsJson);
+      return exists ? '[{"Name":"v"}]' : 'No such volume';
+    });
+  };
+
+  it('stamps provenance labels when startDatabase creates a fresh volume', async () => {
+    h.capture.mockResolvedValue('No such volume');
+    const log = vi.fn();
+
+    await startDatabase(dbRow({ engine: 'postgres', version: '16', ownerUserId: 7 }), log);
+
+    expect(h.run).toHaveBeenCalledWith(
+      'docker',
+      expect.arrayContaining([
+        'volume', 'create',
+        '--label', 'ninedeploy.managed=database',
+        '--label', 'ninedeploy.database.slug=db',
+        '--label', 'ninedeploy.database.name=db',
+        '--label', 'ninedeploy.database.engine=postgres',
+        '--label', 'ninedeploy.database.image=postgres:16',
+        '--label', 'ninedeploy.owner=7',
+        'v',
+      ]),
+      {},
+      log,
+    );
+  });
+
+  it('passes caller labels (e.g. the provisioning template) through to the volume', async () => {
+    h.capture.mockResolvedValue('No such volume');
+
+    await startDatabase(dbRow({ engine: 'redis' }), vi.fn(), { labels: { 'ninedeploy.template': 'directus' } });
+
+    const createCall = h.run.mock.calls.find((call) => (call[1] as string[])[0] === 'volume');
+    expect(createCall).toBeDefined();
+    const args = createCall![1] as string[];
+    expect(args).toContain('ninedeploy.template=directus');
+  });
+
+  it('adoptRetainedVolume is a no-op when the volume does not exist', async () => {
+    captureVolume(false);
+    await expect(adoptRetainedVolume(dbRow(), vi.fn())).resolves.toEqual({ action: 'fresh' });
+  });
+
+  it('skips re-keying for engines that keep credentials outside the volume', async () => {
+    captureVolume(true, labels({ 'ninedeploy.database.engine': 'redis' }));
+    const log = vi.fn();
+
+    await expect(adoptRetainedVolume(dbRow({ engine: 'redis' }), log)).resolves.toEqual({ action: 'no-rekey-needed' });
+    expect(h.run).not.toHaveBeenCalled();
+  });
+
+  it('re-keys a retained postgres volume with the cluster\'s own image and verifies the new password', async () => {
+    captureVolume(true, labels());
+    h.capture.mockImplementation(async (_cmd: string, args: string[], _opts: unknown, input?: Buffer) => {
+      if (args.includes('--single')) {
+        expect(args).toEqual([
+          'run', '--rm', '-i', '-v', 'v:/var/lib/postgresql/data', 'postgres:16',
+          'postgres', '--single', '-D', '/var/lib/postgresql/data', 'postgres',
+        ]);
+        const sql = (input as Buffer).toString();
+        expect(sql).toContain("ALTER ROLE nine WITH PASSWORD 'secret' VALID UNTIL 'infinity';");
+        return 'NINEDEPLOY_REKEY_OK';
+      }
+      if (args.includes('--format')) return JSON.stringify(labels());
+      return '[{"Name":"v"}]';
+    });
+
+    await expect(adoptRetainedVolume(dbRow({ passwordEncrypted: 'v0:secret' }), vi.fn())).resolves.toEqual({ action: 'rekeyed' });
+    expect(h.ensureDockerImage).toHaveBeenCalledWith('postgres:16', expect.any(Function));
+  });
+
+  it('escapes single quotes in the generated password', async () => {
+    captureVolume(true, labels());
+    let sql = '';
+    h.capture.mockImplementation(async (_cmd: string, args: string[], _opts: unknown, input?: Buffer) => {
+      if (args.includes('--single')) {
+        sql = (input as Buffer).toString();
+        return 'NINEDEPLOY_REKEY_OK';
+      }
+      if (args.includes('--format')) return JSON.stringify(labels());
+      return '[{"Name":"v"}]';
+    });
+
+    await adoptRetainedVolume(dbRow({ passwordEncrypted: "v0:it's" }), vi.fn());
+    expect(sql).toContain("ALTER ROLE nine WITH PASSWORD 'it''s' VALID UNTIL 'infinity';");
+  });
+
+  it('refuses a re-key that the sidecar did not verify', async () => {
+    captureVolume(true, labels());
+    h.capture.mockImplementation(async (_cmd: string, args: string[]) => {
+      if (args.includes('--single')) return 'FATAL: database files are incompatible with server';
+      if (args.includes('--format')) return JSON.stringify(labels());
+      return '[{"Name":"v"}]';
+    });
+
+    await expect(adoptRetainedVolume(dbRow(), vi.fn())).rejects.toThrow(
+      /Retained volume "v" holds postgres data \(previously "Old DB", postgres\) but re-keying it failed/,
+    );
+  });
+
+  it('refuses engines it cannot re-key, naming the volume and its origin', async () => {
+    captureVolume(true, labels({ 'ninedeploy.database.engine': 'mysql' }));
+
+    await expect(adoptRetainedVolume(dbRow({ engine: 'mysql' }), vi.fn())).rejects.toThrow(
+      /Retained volume "v" still holds mysql data \(previously "Old DB", mysql\) whose credentials NineDeploy cannot re-key.*docker volume rm v/,
+    );
+  });
+
+  it('refuses to mount another engine\'s labeled data directory', async () => {
+    captureVolume(true, labels({ 'ninedeploy.database.engine': 'mysql' }));
+
+    await expect(adoptRetainedVolume(dbRow({ engine: 'postgres' }), vi.fn())).rejects.toThrow(
+      /holds mysql data \(previously "Old DB", mysql\), not postgres/,
+    );
+  });
+
+  it('treats an unlabeled retained volume as managed postgres data and still re-keys it', async () => {
+    captureVolume(true, {});
+    h.capture.mockImplementation(async (_cmd: string, args: string[], _opts: unknown, input?: Buffer) => {
+      if (args.includes('--single')) {
+        // No label → the row's own default image builds the sidecar.
+        expect((args as string[])[5]).toBe('postgres:18');
+        expect((input as Buffer).toString()).toContain("ALTER ROLE nine");
+        return 'NINEDEPLOY_REKEY_OK';
+      }
+      if (args.includes('--format')) return '{}';
+      return '[{"Name":"v"}]';
+    });
+
+    await expect(adoptRetainedVolume(dbRow(), vi.fn())).resolves.toEqual({ action: 'rekeyed' });
+  });
+});
+
+describe('createDockerVolume', () => {
+  it('applies labels at creation', async () => {
+    await createDockerVolume('nd-db-x-data', vi.fn(), { 'ninedeploy.managed': 'database', 'ninedeploy.database.engine': 'redis' });
+    expect(h.run).toHaveBeenCalledWith(
+      'docker',
+      ['volume', 'create', '--label', 'ninedeploy.managed=database', '--label', 'ninedeploy.database.engine=redis', 'nd-db-x-data'],
+      {},
+      expect.any(Function),
+    );
+  });
+
+  it('creates plain volumes when no labels are given', async () => {
+    await createDockerVolume('nd-svc-x-data');
+    expect(h.run).toHaveBeenCalledWith('docker', ['volume', 'create', 'nd-svc-x-data'], {}, expect.any(Function));
+  });
+});
+
 
 describe('stopDatabase', () => {
   it('stops and removes the container but keeps the volume', async () => {
