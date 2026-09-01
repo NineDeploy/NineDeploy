@@ -100,8 +100,7 @@ describe('databases routes', () => {
       // 'creating' with no marker yet, so the adoption gate fires.
       insert: { databases: [dbRow({ id: 8, volumeName: 'nd-db-old-data', status: 'creating' })] },
       findFirst: { databases: dbRow({ id: 8, volumeName: 'nd-db-old-data', status: 'running' }) },
-    });
-    const app = await buildTestApp({ db: fakeDb });
+    });    const app = await buildTestApp({ db: fakeDb });
     await app.register(databasesRoutes);
     const res = await app.inject({
       method: 'POST',
@@ -114,6 +113,60 @@ describe('databases routes', () => {
     // A fresh row over a retained volume must go through adoption: the volume
     // may hold credentials from the deleted database that created it.
     expect(engineMocks.adoptRetainedVolume).toHaveBeenCalledTimes(1);
+  });
+
+  it('serializes concurrent creates on the same existingVolume (only one wins)', async () => {
+    // The volume-clash check and the row insert are separated by awaits: two
+    // concurrent creates with the SAME `existingVolume` could both pass the
+    // check, both insert, and both mount one data directory — the loser's
+    // stored password would no longer match the volume's real credentials.
+    // Stateful fake that models a REAL async DB: the SELECT captures its
+    // snapshot at EXECUTION time, but the result only resolves 25ms later —
+    // after the OTHER request's insert has committed. That is exactly the
+    // check-then-act window a naive implementation loses.
+    const rows: Array<Record<string, unknown>> = [];
+    let checks = 0;
+    let releaseChecks: (() => void) | undefined;
+    const bothExecuted = new Promise<void>((resolve) => { releaseChecks = resolve; });
+    const fakeDb = createFakeDb({
+      select: {
+        databases: () => {
+          const snapshot = rows.slice(); // read at execution time
+          checks += 1;
+          if (checks === 2) releaseChecks?.();
+          return new Promise((resolve) => setTimeout(() => resolve(snapshot), 25));
+        },
+      },
+      insert: {
+        databases: ((values: Record<string, unknown>) => {
+          const row = { ...values, id: rows.length + 1 };
+          rows.push(row);
+          return [row];
+        }) as never,
+      },
+      findFirst: { databases: dbRow({ id: 1, status: 'running' }) },
+    });
+    const app = await buildTestApp({ db: fakeDb });
+    await app.register(databasesRoutes);
+
+    const [a, b] = await Promise.all([
+      app.inject({
+        method: 'POST',
+        url: '/',
+        headers: asUser(),
+        payload: { name: 'DB A', engine: 'postgres', existingVolume: 'nd-shared-data' },
+      }),
+      app.inject({
+        method: 'POST',
+        url: '/',
+        headers: asUser(),
+        payload: { name: 'DB B', engine: 'postgres', existingVolume: 'nd-shared-data' },
+      }),
+    ]);
+
+    const statuses = [a.statusCode, b.statusCode].sort();
+    expect(statuses).toEqual([200, 400]);
+    expect(rows).toHaveLength(1);
   });
 
   it('refuses a volume already owned by another database row', async () => {

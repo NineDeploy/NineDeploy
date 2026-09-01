@@ -5,6 +5,7 @@ interface HookHandlerEntry {
   priority: number;
   timeoutMs: number;
   handler: (payload: any, ctx: KernelContext) => Promise<any | undefined>;
+  rollback?: (payload: any, ctx: KernelContext, error?: Error) => Promise<void> | void;
 }
 
 export class HookPipeline implements IHookPipeline {
@@ -18,7 +19,12 @@ export class HookPipeline implements IHookPipeline {
   tap<K extends keyof HookDefinitions>(
     hook: K,
     handler: (payload: HookDefinitions[K], ctx: KernelContext) => Promise<undefined | HookDefinitions[K]>,
-    opts?: { priority?: number; id?: string; timeoutMs?: number },
+    opts?: {
+      priority?: number;
+      id?: string;
+      timeoutMs?: number;
+      rollback?: (payload: HookDefinitions[K], ctx: KernelContext, error?: Error) => Promise<void> | void;
+    },
   ): () => void {
     const hookName = hook as string;
     const entry: HookHandlerEntry = {
@@ -26,6 +32,7 @@ export class HookPipeline implements IHookPipeline {
       priority: opts?.priority ?? 100,
       timeoutMs: opts?.timeoutMs ?? 5000,
       handler,
+      rollback: opts?.rollback,
     };
 
     let list = this.hooks.get(hookName);
@@ -60,6 +67,20 @@ export class HookPipeline implements IHookPipeline {
 
     let currentPayload = initialPayload;
     const ctx = this.contextGetter();
+    const executedEntries: HookHandlerEntry[] = [];
+
+    const executeRollback = async (triggerError?: Error) => {
+      const reverseExecuted = [...executedEntries].reverse();
+      for (const entry of reverseExecuted) {
+        if (entry.rollback) {
+          try {
+            await entry.rollback(currentPayload, ctx, triggerError);
+          } catch (rbErr) {
+            console.error(`[HookPipeline] Error executing rollback for hook "${hookName}" ${entry.id ? `(${entry.id})` : ''}:`, rbErr);
+          }
+        }
+      }
+    };
 
     for (const entry of Array.from(list)) {
       try {
@@ -76,15 +97,22 @@ export class HookPipeline implements IHookPipeline {
             timeoutPromise,
           ]);
 
+          executedEntries.push(entry);
+
           if (result && typeof result === 'object') {
             currentPayload = result;
+            // Check if handler vetoed / aborted the operation
+            if ('allowOrAbort' in result && result.allowOrAbort === false) {
+              await executeRollback(new Error(`Operation vetoed by hook "${hookName}" handler ${entry.id ?? ''}`));
+              break;
+            }
           }
         } finally {
           clearTimeout(timer);
         }
       } catch (err) {
         console.error(`[HookPipeline] Error executing hook "${hookName}":`, err);
-        // If the payload has an abort/allowOrAbort mechanism, handler error can be reflected or logged
+        await executeRollback(err instanceof Error ? err : new Error(String(err)));
       }
     }
 

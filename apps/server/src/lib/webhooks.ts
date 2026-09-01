@@ -10,6 +10,10 @@ export interface PushEvent {
   repoUrl?: string;
   /** Paths added/modified/removed across the push (drives watch-path filtering). */
   changedFiles: string[];
+  /** How many commits the payload listed. GitHub caps this at ~20 for big
+   *  pushes, so `>= COMMIT_LIST_CAP` means the file list may be INCOMPLETE —
+   *  watch-path filtering must fail open rather than silently skip. */
+  commitsListed: number;
 }
 
 /** Constant-time comparison of two hex/base64 strings. */
@@ -105,6 +109,7 @@ export function parsePush(body: unknown, provider: Provider): PushEvent | null {
       author: String(author ?? ''),
       repoUrl: typeof project?.['git_http_url'] === 'string' ? (project['git_http_url'] as string) : undefined,
       changedFiles: changedFilesFrom(commits),
+      commitsListed: commits.length,
     };
   }
 
@@ -121,6 +126,7 @@ export function parsePush(body: unknown, provider: Provider): PushEvent | null {
     author: String(author?.['username'] ?? ''),
     repoUrl: typeof repo?.['clone_url'] === 'string' ? (repo['clone_url'] as string) : undefined,
     changedFiles: changedFilesFrom(withHead),
+    commitsListed: withHead.length,
   };
 }
 

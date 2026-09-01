@@ -75,11 +75,26 @@ export async function spinner<T>(msg: string, fn: () => Promise<T>): Promise<T> 
   }
 }
 
+/** ANSI SGR escape sequence (built via RegExp so no literal control char). */
+const ANSI_SGR = new RegExp('\\x1b\\[[0-9;]*m', 'g');
+
+/** Visible length: ANSI SGR escapes render as zero width, so they must not
+ *  count toward column widths or padding budgets. */
+function visibleLength(s: string): number {
+  return s.replace(ANSI_SGR, '').length;
+}
+
+/** Pad a (possibly colored) cell to `width` VISIBLE characters — padding is
+ *  appended after any reset escape, so escape bytes never consume the budget. */
+function padVisible(s: string, width: number): string {
+  return s + ' '.repeat(Math.max(0, width - visibleLength(s)));
+}
+
 /** Print a formatted table from an array of objects. */
 export function table(rows: Record<string, unknown>[], columns?: string[]): void {
   if (rows.length === 0) { console.log(c.gray('  (empty)')); return; }
   const cols = columns ?? Object.keys(rows[0] ?? {});
-  const widths = cols.map((col) => Math.max(col.length, ...rows.map((r) => String(r[col] ?? '').length)));
+  const widths = cols.map((col) => Math.max(col.length, ...rows.map((r) => visibleLength(String(r[col] ?? '')))));
 
   // Header
   const header = cols.map((col, i) => col.padEnd(widths[i]!)).join('  ');
@@ -90,8 +105,11 @@ export function table(rows: Record<string, unknown>[], columns?: string[]): void
   for (const row of rows) {
     const cells = cols.map((col, i) => {
       const val = String(row[col] ?? '');
-      if (col === 'status' || col === 'health') return statusColor(val).padEnd(widths[i]!);
-      return val.padEnd(widths[i]!);
+      // statusColor AFTER padding would shift shorter cells; padVisible works
+      // for BOTH colored and pre-colored-by-the-caller values (call sites
+      // pass c.dim('—') / c.gray('never') straight into table()).
+      if (col === 'status' || col === 'health') return padVisible(statusColor(val), widths[i]!);
+      return padVisible(val, widths[i]!);
     });
     console.log(`  ${cells.join('  ')}`);
   }

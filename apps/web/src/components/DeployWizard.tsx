@@ -165,11 +165,16 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
   // Monorepo flow: the same repo deployed N times, once per sub-app directory.
   const [baseDir, setBaseDir] = useState('');
   const lastAnalyzedRef = useRef('');
+  // Sequence guard: analysis can take many seconds (it clones the repo), and
+  // an in-flight request for a PREVIOUS repo/branch must never overwrite the
+  // state of a newer one (stale-response race → wrong framework preset).
+  const analyzeSeqRef = useRef(0);
 
   const trimmedBaseDir = baseDir.trim();
   const isRootScope = trimmedBaseDir === '' || trimmedBaseDir === '/';
 
   const runAnalyze = useCallback(async () => {
+    const seq = ++analyzeSeqRef.current;
     setAnalyzing(true);
     setAnalyzeError(null);
     try {
@@ -182,15 +187,18 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
         /* v8 ignore next 1 */
         ...(sourceId && Number(sourceId) > 0 ? { sourceId: Number(sourceId) } : {}),
       });
+      // A newer analyze started while this one was in flight — discard.
+      if (seq !== analyzeSeqRef.current) return;
       setInsights(result);
       if (isRootScope) setRootInsights(result);
       lastAnalyzedRef.current = `${repoUrl}|${branch}|${trimmedBaseDir}`;
       setSuggestionsApplied(false);
     } catch (err) {
+      if (seq !== analyzeSeqRef.current) return;
       setInsights(null);
       setAnalyzeError(err instanceof Error ? err.message : 'Could not analyze the repository');
     } finally {
-      setAnalyzing(false);
+      if (seq === analyzeSeqRef.current) setAnalyzing(false);
     }
   }, [repoUrl, branch, sourceId, trimmedBaseDir, isRootScope]);
 

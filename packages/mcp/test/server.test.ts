@@ -12,7 +12,10 @@ vi.mock('@modelcontextprotocol/sdk/server/stdio.js', () => ({
 }));
 
 /** End-to-end over an in-memory MCP transport with a fake SDK client. */
-async function connected(client: NineDeployClient, options: { readOnly?: boolean } = {}) {
+async function connected(
+  client: NineDeployClient,
+  options: { readOnly?: boolean; tokenScopes?: string[] | null } = {},
+) {
   const server = buildServer(client, () => undefined, options);
   const mcp = new Client({ name: 'test', version: '0' });
   const [cs, ss] = InMemoryTransport.createLinkedPair();
@@ -60,6 +63,25 @@ describe('buildServer', () => {
     const mcp = await connected(c);
     const res = await mcp.callTool({ name: 'list_services', arguments: {} });
     expect(res.content).toEqual([{ type: 'text', text: JSON.stringify([{ id: 1, name: 'api', status: 'running' }], null, 2) }]);
+  });
+
+  it('treats empty scope lists and session markers as unrestricted, like the server does', async () => {
+    // The server normalizes an EMPTY scope array to null ("unrestricted
+    // legacy token", lib/auth.ts) and reports `['session']` for interactive
+    // JWTs (introspection endpoint). Both must keep every tool registered —
+    // a shared pending-scope filter would silently drop all scoped tools.
+    for (const tokenScopes of [[], ['session']]) {
+      const mcp = await connected(fake(), { tokenScopes });
+      expect((await mcp.listTools()).tools).toHaveLength(38);
+    }
+  });
+
+  it('narrows tools to a scoped token and keeps unscoped tools available', async () => {
+    const mcp = await connected(fake(), { tokenScopes: ['nd://scope/read/services'] });
+    const names = (await mcp.listTools()).tools.map((tool) => tool.name);
+    expect(names).toContain('list_services');
+    expect(names).not.toContain('deploy_service');
+    expect(names).not.toContain('inspect_container');
   });
 
   it('uses a fail-closed allowlist in read-only mode', async () => {

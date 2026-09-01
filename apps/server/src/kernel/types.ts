@@ -90,7 +90,12 @@ export interface IHookPipeline {
   tap<K extends keyof HookDefinitions>(
     hook: K,
     handler: (payload: HookDefinitions[K], ctx: KernelContext) => Promise<undefined | HookDefinitions[K]>,
-    opts?: { priority?: number; id?: string; timeoutMs?: number },
+    opts?: {
+      priority?: number;
+      id?: string;
+      timeoutMs?: number;
+      rollback?: (payload: HookDefinitions[K], ctx: KernelContext, error?: Error) => Promise<void> | void;
+    },
   ): () => void;
   call<K extends keyof HookDefinitions>(hook: K, payload: HookDefinitions[K]): Promise<HookDefinitions[K]>;
   hasListeners(hook: string): boolean;
@@ -176,7 +181,10 @@ export type MenuSlot =
   | 'database:tabs'
   | 'settings:nav'
   | 'command:palette'
-  | 'user:menu';
+  | 'user:menu'
+  | 'dashboard:overview'
+  | 'service:overview:widget'
+  | 'monitoring:widgets';
 
 export interface MenuItemDefinition {
   id: string;
@@ -186,6 +194,10 @@ export interface MenuItemDefinition {
   route: string;
   icon?: string;
   order?: number;
+  title?: string;
+  description?: string;
+  component?: string;
+  props?: Record<string, unknown>;
   badge?: {
     text: string;
     variant?: 'default' | 'success' | 'warning' | 'info';

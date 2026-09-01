@@ -76,6 +76,7 @@ import {
   workspaceUpdate,
   workspaceMemberAdd,
   workspaceMemberRoleUpdate,
+  workspaceInvitationCreate,
   oidcProviderCreate,
   oidcProviderUpdate,
   labelPatch,
@@ -1082,6 +1083,16 @@ describe('service', () => {
       expect(workspaceRoleEnum.safeParse('member').success).toBe(true);
       expect(workspaceRoleEnum.safeParse('viewer').success).toBe(true);
       expect(workspaceRoleEnum.safeParse('invalid').success).toBe(false);
+    });
+
+    it('member-add and invitation schemas reject the owner role', () => {
+      // Only the PATCH member route performs the full ownership transfer
+      // (demote current owner, re-key workspaces.ownerId) — minting an
+      // owner-rank row through add/invite would skip that bookkeeping.
+      bad(workspaceMemberAdd, { email: 'x@example.com', role: 'owner' });
+      ok(workspaceMemberAdd, { email: 'x@example.com', role: 'admin' });
+      bad(workspaceInvitationCreate, { email: 'x@example.com', role: 'owner' });
+      ok(workspaceInvitationCreate, { email: 'x@example.com', role: 'member' });
     });
 
     it('workspaceCreate accepts valid input and rejects invalid', () => {

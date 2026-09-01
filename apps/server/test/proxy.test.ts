@@ -165,6 +165,22 @@ describe('writeDynamicConfig', () => {
     expect(db.select).toHaveBeenCalledTimes(2);
   });
 
+  it('routes PM2 services through the host gateway (a process name is not DNS-resolvable)', async () => {
+    // A PM2 runtimeId is a PM2 PROCESS NAME on the host — inside the Traefik
+    // container it resolves to NXDOMAIN, so every domain attached to a PM2
+    // service would 502 forever with a container-style upstream.
+    const db = makeDb(
+      [{ id: 1, serviceId: 1, hostname: 'legacy.example.com', path: '/', ssl: false, status: 'active' }],
+      [{ id: 1, slug: 'legacy', port: 3000, runtimeId: 'legacy-42', type: 'pm2' }],
+    );
+
+    await writeDynamicConfig(db as never);
+
+    const yaml = readFileSync(path.join(traefikDir, 'dynamic.yml'), 'utf8');
+    expect(yaml).toContain('url: "http://host.docker.internal:3000"');
+    expect(yaml).not.toContain('http://legacy-42:3000');
+  });
+
   it('H-2: never routes a domain still awaiting DNS ownership proof', async () => {
     const db = makeDb(
       [

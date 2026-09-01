@@ -173,6 +173,10 @@ export const serverRoutes: FastifyPluginAsync = async (app) => {
       }
       await authed.db.update(servers).set({ status: 'online', lastSeenAt: new Date() }).where(eq(servers.id, id));
       void audit(authed.db, req.user!.id, 'server.approve', row.name);
+      authed.kernel?.events.emit('server.approved', {
+        serverId: row.id,
+        approvedByUserId: req.user!.id,
+      });
       return { ok: true, status: 'online' };
     });
 
@@ -183,6 +187,9 @@ export const serverRoutes: FastifyPluginAsync = async (app) => {
       if (!row) throw notFound('Server not found');
       await authed.db.delete(servers).where(eq(servers.id, id));
       void audit(authed.db, req.user!.id, 'server.reject', row.name);
+      authed.kernel?.events.emit('server.rejected', {
+        serverId: row.id,
+      });
       return { ok: true };
     });
 

@@ -42,7 +42,10 @@ export const TOOLS: ToolDef[] = [
     requiredScopes: ['nd://scope/read/services'],
     handler: (c, input) => {
       const { projectId } = input as { projectId?: number };
-      return c.services.list(projectId != null ? `?projectId=${projectId}` : '');
+      // The server dropped the legacy `?projectId=` query — it only reads
+      // tagProjectIds/tagWorkspaceIds/tagLabelIds, so the old query silently
+      // returned ALL services instead of the project's.
+      return c.services.list(projectId != null ? `?tagProjectIds=${projectId}` : '');
     },
   },
   {

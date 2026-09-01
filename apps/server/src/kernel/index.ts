@@ -8,3 +8,4 @@ export * from './kernel.js';
 export * from './drivers/docker.js';
 export * from './drivers/traefik.js';
 export * from './drivers/s3.js';
+export * from './sandbox/index.js';

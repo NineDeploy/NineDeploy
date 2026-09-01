@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { mkdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { and, eq, inArray, ne } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, lt, ne } from 'drizzle-orm';
 import { buildConfigs, databaseAttachments, databases, type DB, deployments, domains, envVars, services, serviceProjects, serviceVolumeAttachments, sources } from '@ninedeploy/db';
 import { config } from '../config.js';
 import { decrypt } from '../lib/crypto.js';
@@ -662,9 +662,17 @@ export async function runDeployment(db: DB, deploymentId: number, kernelCtx?: { 
   // successful deployment (config-once images break silently in that case).
   let finalizeSnapshot: string | undefined;
   if (Object.keys(managedFp).length > 0) {
+    // `dep` was loaded BEFORE this run wrote its own snapshot, and deployment
+    // rows are created without one — dep.configSnapshot is always null here.
+    // The comparison target is the previous deployment that CARRIES a
+    // snapshot (same resolution rule the /diff endpoint uses).
+    const prevRow = await db.query.deployments.findFirst({
+      where: and(eq(deployments.serviceId, service.id), lt(deployments.id, deploymentId), isNotNull(deployments.configSnapshot)),
+      orderBy: [desc(deployments.id)],
+    });
     let prev: { managedEnv?: Record<string, string> } | null = null;
     try {
-      prev = JSON.parse(dep.configSnapshot ?? 'null') as { managedEnv?: Record<string, string> } | null;
+      prev = JSON.parse(prevRow?.configSnapshot ?? 'null') as { managedEnv?: Record<string, string> } | null;
     } catch {
       prev = null;
     }
@@ -681,11 +689,14 @@ export async function runDeployment(db: DB, deploymentId: number, kernelCtx?: { 
         }
       }
     }
+    // Merge the fingerprint ON TOP of THIS deployment's own snapshot. Starting
+    // from an empty base would clobber buildPack/envKeys and blind the /diff
+    // endpoint for every template- or database-attached service.
     let base: Record<string, unknown> = {};
     try {
-      base = JSON.parse(dep.configSnapshot ?? '{}') as Record<string, unknown>;
+      base = JSON.parse(configSnapshot) as Record<string, unknown>;
     } catch {
-      /* old/corrupt snapshot — start fresh */
+      /* no snapshot available — fingerprint-only */
     }
     base['managedEnv'] = managedFp;
     finalizeSnapshot = JSON.stringify(base);
@@ -781,8 +792,16 @@ export async function runDeployment(db: DB, deploymentId: number, kernelCtx?: { 
       log('##[stage:CLEANUP:running] Graceful shutdown of old container instance');
       if (buildConfig?.preStopCmd) {
         log(`▶ Running Pre-Stop Hook: ${buildConfig.preStopCmd} …`);
-        const currentEnvironment = await loadRuntimeEnv(db, service);
-        await runHook(buildConfig.preStopCmd, workDir, currentEnvironment.values, log).catch((err) =>
+        // Isolated on purpose: a post-success hiccup (corrupt ciphertext, DB
+        // hiccup) must not abort the finalize — the old container would leak
+        // forever with the service row already pointing at the new one.
+        let currentEnvironment: Awaited<ReturnType<typeof loadRuntimeEnv>> | null = null;
+        try {
+          currentEnvironment = await loadRuntimeEnv(db, service);
+        } catch (err) {
+          log(`pre-stop warning: could not load the runtime environment (${msg(err)}) — running the hook without it`);
+        }
+        await runHook(buildConfig.preStopCmd, workDir, currentEnvironment?.values ?? {}, log).catch((err) =>
           log(`pre-stop warning: ${msg(err)}`),
         );
       }

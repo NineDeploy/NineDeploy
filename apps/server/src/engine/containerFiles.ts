@@ -284,14 +284,19 @@ export async function getContainerComposeManifest(container: string): Promise<{
   if (Object.keys(inspect.labels).length > 0) {
     lines.push(`    labels:`);
     for (const [k, v] of Object.entries(inspect.labels)) {
-      lines.push(`      - "${k}=${v}"`);
+      // JSON double-quote escaping = valid YAML double-quoted scalar: label
+      // values may contain quotes/backslashes that break hand-written quoting.
+      lines.push(`      - ${JSON.stringify(`${k}=${v}`)}`);
     }
   }
 
   if (inspect.env.length > 0) {
     lines.push(`    environment:`);
     for (const e of inspect.env) {
-      lines.push(`      - ${e}`);
+      // Env comes from `docker inspect` verbatim — plain scalars like
+      // `CONFIG={"a":1}` or `TOKEN=abc: def` are YAML syntax errors or get
+      // re-typed. Quote every entry; JSON escapes are YAML-compatible.
+      lines.push(`      - ${JSON.stringify(e)}`);
     }
   }
 

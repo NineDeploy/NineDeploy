@@ -247,7 +247,10 @@ describe('checkoutCommit — existing checkout', () => {
     ).rejects.toThrow('config failed');
   });
 
-  it('tolerates remote set-url failure', async () => {
+  it('surfaces a remote set-url failure (a rotated token must not silently miss)', async () => {
+    // Same rule as core.sshCommand: if the origin URL never updates, the
+    // fetch below runs with the STALE stored credential and fails far from
+    // the real cause.
     const dir = existingCheckout('existing-remote-fail');
     const git = makeGit();
     git.remote = vi.fn(async () => {
@@ -257,7 +260,7 @@ describe('checkoutCommit — existing checkout', () => {
 
     await expect(
       checkoutCommit('https://github.com/org/repo.git', 'main', undefined, dir, vi.fn(), { token: 't' }),
-    ).resolves.toBe('0123456789abcdef');
+    ).rejects.toThrow('remote failed');
   });
 });
 

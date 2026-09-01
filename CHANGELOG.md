@@ -7,20 +7,152 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
+## [0.5.0] - 2026-09-02
+
+> A plugin sandboxing release with a deep security and correctness sweep.
+> NineDeploy now features an isolated Worker Thread plugin sandboxing engine
+> with V8 memory bounds, asynchronous JSON-RPC protocol bridging, LIFO Saga
+> rollback execution for lifecycle hooks, direct CRUD domain event emissions,
+> and dynamic React UI slot widgets for the Web Dashboard and detail views —
+> alongside fixes for a SAML sign-in bypass, a template path traversal, and
+> several authorization gaps. Some deliberate behavior changes (listed under
+> Changed) are worth reading before upgrading.
+
+### Added
+
+- **Isolated Worker Thread Plugin Sandboxing.** Community and third-party extensions
+  run inside dedicated `node:worker_threads` isolates with memory limits (`16MB/64MB`)
+  and an asynchronous RPC bridge, preventing host process crashes on plugin errors.
+- **LIFO Hook Rollback (Saga pattern).** Intercepting pipeline hooks now support
+  sequential rollback handlers that automatically clean up provisioned resources
+  if a downstream handler aborts or vetoes (`allowOrAbort: false`).
+- **Direct Domain Event Emissions.** Services, Databases, and Edge Servers emit
+  typed domain events directly across the kernel event bus.
+- **Dynamic React UI Extension Slots.** Live overview widgets and tab panels are
+  rendered across Dashboard, Service, and Database detail views via `<PluginSlot />`.
+
+### Security
+
+- **SAML: bind the signature to the assertion (sign-in bypass).** Signature
+  verification only proved that SOME `SignedInfo` was signed by the IdP — a
+  legitimately signed response could be rewritten to name any local user and
+  sign in as them. The callback now verifies the assertion digest against the
+  signed `DigestValue` and enforces the `NotOnOrAfter` replay window; OIDC
+  login `state`/`nonce` values now come from the CSPRNG instead of
+  `Math.random`.
+- **SAML/OIDC login CSRF.** The OIDC login flow's signed `state` was not bound
+  to the browser: an attacker could deliver their own callback URL and sign a
+  victim into the attacker's account. The login route now sets an HttpOnly
+  state cookie the callback must match.
+- **Community template path traversal.** A template `id` became a file name
+  unvalidated, so `../`-style ids could write or delete `.json` files outside
+  the community-templates directory. Ids are now filename-safe slugs
+  (create/delete routes answer 400).
+- **Managed git sources are operator-only.** Any member could attach a guessed
+  `sourceId` to a service or repo analysis and have the pipeline clone the
+  operator's private repos with the operator's decrypted credentials into a
+  container they own. Setting or using a `sourceId` now requires the operator.
+- **Database attachments require the `member` role.** A workspace `viewer`
+  could attach (and detach) databases on a shared service — attaching injects
+  the database's decrypted connection string into the service's runtime env.
+- **Operator-gated maintenance routes.** `POST /v1/domain-presets/apply`
+  (spends the operator's DNS token), `POST /v1/build-cache/store` (other
+  builds chain from these digests) and `POST /v1/metric-history/flush`
+  (instance-wide retention deletion) were available to every authenticated
+  account; all three now require the operator.
+- **No private-workspace id oracle.** Workspace routes answered 403 for
+  existing-but-foreign workspaces vs 404 for missing ones, letting any
+  authenticated user enumerate private workspace ids. Non-members now get the
+  same 404; members with insufficient rank still get 403.
+
+### Changed
+
+- **Host-port services deploy sequentially.** Blue-green kept failing on
+  "port is already allocated" for every redeploy after the first of a
+  `publishedPort` service, stranding it on its first version. The previous
+  runtime is now retired before the new container starts (a short, deliberate
+  gap); Traefik-routed services keep full blue-green.
+- **Compose deployments wait for healthchecks.** A container that boots but
+  fails its own healthcheck forever used to deploy green on the first poll;
+  the builder now waits for Docker's health status and fails fast on a
+  failing streak.
+- **Compose `.env` values are escaped.** Secrets containing ` #` were
+  silently truncated by compose's dotenv parser and `$VAR`-shaped values
+  were expanded from the panel's own environment; values now round-trip
+  byte-exact (verified against compose-go).
+- **PgBouncer sidecars no longer publish the default host port.** Every
+  sidecar bound 6432, so enabling a second database failed on "port is
+  already allocated". Clients connect over the docker network; set an
+  explicit `pgbouncerPort` to publish. Sidecar config is also copied into the
+  container instead of bind-mounted, so the credential-bearing temp files no
+  longer sit in the host's tmp dir.
+- **PM2 domains route through the host gateway.** The Traefik upstream for
+  PM2 services was the PM2 process name — unresolvable inside the Traefik
+  container, so every attached domain 502'd. Upstreams now use
+  `host.docker.internal`.
+- **OIDC id-token checks follow the spec.** Multi-valued `aud` now requires a
+  matching `azp` (§3.1.3.7); an unknown `kid` forces one JWKS refresh before
+  failing (IdP key rotation); trailing-slash issuers compare equal. Tokens
+  that used to pass on lax providers may now be rejected.
+- **Managed `sourceId` on services is operator-only** (see Security).
+- **Foreign workspace routes answer 404 instead of 403** (see Security).
+- **Watch-path webhooks fail open at the commit-list cap.** GitHub truncates
+  the `commits` array at ~20 entries; a push whose watched change sat in an
+  omitted commit was silently skipped. A list at the cap now deploys.
+- **Stricter manifest validation.** `env.aliases` keys must now be env-var
+  names, and the generated YAML quotes scalars so special characters survive
+  a round-trip.
+- **Dev checkouts anchor the default data dir to the monorepo root.** The
+  old cwd-dependent default provisioned a fresh `.data` (and a NEW master
+  key) when restarted from a different working directory, making every stored
+  secret undecryptable. Docker/systemd installs are unaffected.
 
 ### Fixed
 
-- **Panel environment variables now reach Nixpacks builds.** The Environment
-  section was only injected at container start (`docker run --env-file`), so
-  `next build` never saw it: `NEXT_PUBLIC_*` values were inlined as
-  `undefined` into the client bundle, and version pins like
-  `NIXPACKS_NODE_VERSION` did nothing during the build. Source builds now
-  pass the resolved service environment to the Nixpacks CLI as repeatable
-  `--env` flags, which Nixpacks forwards into the build phases (and bakes
-  into the image as ENV — the runtime env-file already provided the same
-  values). Redeploy after editing env in the panel to pick up new
-  `NEXT_PUBLIC_*` values.
+- **Runtime output across chunk boundaries.** stdout/stderr no longer merge
+  interleaved partial lines, multi-byte UTF-8 split across chunks survives
+  intact, and trailing partial lines are flushed.
+- **SAML/OIDC edge cases.** OIDC JWKS no longer verifies arbitrary `kid`
+  tokens against whichever key is listed first; signature verification of
+  remote source credentials surfaces failures instead of silently fetching
+  with stale tokens.
+- **Database volume TOCTOU.** Two concurrent creates with the same
+  `existingVolume` could both pass the clash check and mount one data
+  directory; creation is now serialized per volume.
+- **Deploy finalize isolation.** A corrupted env row no longer aborts
+  finalize and leaks the previous container; the managed-env fingerprint
+  merges into the config snapshot instead of replacing it (the `/diff`
+  endpoint keeps its build-config view), and the drift warning actually
+  fires.
+- **Generated artifacts.** The container compose manifest quotes env/label
+  scalars (values like `{"a":1}` no longer produce invalid YAML); Traefik
+  routes PM2 services via the host gateway (attached domains no longer 502);
+  compose `stop` ignores recorded config files that no longer exist, so
+  volume-attached stacks stop for real.
+- **CLI output.** `table()` counts visible width (pre-colored cells no
+  longer shift columns), colored `status`/`health` cells stay aligned.
+- **SDK client.** `threshold: 0` / `days: 0` / `serverId: 0` reach the server
+  instead of silently becoming the default; volume names and template ids are
+  URL-encoded.
+- **MCP server.** Legacy unrestricted tokens (`[]`) and interactive sessions
+  (`session`) keep every tool instead of silently losing the scoped ones;
+  `list_services({ projectId })` uses the supported `tagProjectIds` query —
+  the retired `?projectId=` filter returned ALL services.
+- **Secret scanner.** Detects the current `sk-proj-` OpenAI key format and
+  reports every occurrence of a pattern, not only the first.
+- **Certificate inventory.** Certificates expired less than a day ago are
+  reported `expired`, not `expiring-soon`.
+- **Web dashboard.** A stale repo analysis no longer deploys the wrong
+  framework preset; a dead session now returns the app to `/login` instead of
+  a wall of failed queries; the service page follows `?tab=` deep links and
+  no longer streams a foreign deployment's logs; topology live stats actually
+  update; the activity drawer reconnects with backoff and says so; QR codes
+  for regenerated TOTP secrets always show the current value.
+- **Misc.** PgBouncer's `pgbouncer.ini` and userlist are removed from the
+  host tmp dir right after the sidecar starts (previously leaked forever);
+  pgbouncer temp files carry the caller's tmpdir, not a hardcoded `/tmp`;
+  community template removal reports 400 for unsafe ids; `config.ts` locates
+  the monorepo root instead of silently following the process cwd.
 
 ## [0.4.9] - 2026-09-01
 

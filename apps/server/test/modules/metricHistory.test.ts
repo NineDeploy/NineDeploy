@@ -177,6 +177,20 @@ describe('POST /v1/metric-history/flush', () => {
     expect(res.statusCode).toBe(401);
   });
 
+  it('is operator-gated — a member cannot trigger instance-wide retention deletion', async () => {
+    // The sweep destroys history other tenants rely on; a destructive global
+    // action must not be invokable by any authenticated account.
+    const { app, plugin } = await newApp();
+    vi.spyOn(plugin, 'runRetention').mockResolvedValue(7);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/flush',
+      headers: asUser({ id: 7, isOperator: false }),
+    });
+    expect(res.statusCode).toBe(403);
+    expect(plugin.runRetention).not.toHaveBeenCalled();
+  });
+
   it('returns deleted=0 when the metric-history plugin is not registered', async () => {
     // Re-create the app WITHOUT the plugin to exercise the `p ? ... : 0`
     // fallback in the flush route.

@@ -358,6 +358,43 @@ describe('dockerBuilder.buildAndRun', () => {
     expect(runArgs).toContain('6379:6379');
   });
 
+  it('retires the previous runtime BEFORE start when a host port is published', async () => {
+    // Docker cannot bind the same host port twice: with blue-green the second
+    // deploy would die on "port is already allocated" and the service would be
+    // stuck on its first version forever. Host-port services deploy
+    // sequentially — the previous container goes first.
+    const ctx = makeCtx({
+      deploymentId: 4,
+      service: { slug: 'x', image: 'nginx', port: 80, publishedPort: 8080, cpuShares: 0, memLimitMb: 0, volumeMount: null, healthPath: '/' },
+      env: {},
+      commitSha: 'abc',
+    });
+
+    await dockerBuilder.buildAndRun(ctx as never, { runtimeId: 'x-3', port: 80, healthPath: '/' } as never);
+
+    const argvs = h.run.mock.calls.map((c) => c[1] as unknown as string[]);
+    const rmPrevIdx = argvs.findIndex((a) => a[0] === 'rm' && a[1] === '-f' && a[2] === 'x-3');
+    const runIdx = argvs.findIndex((a) => a[0] === 'run');
+    expect(rmPrevIdx).toBeGreaterThanOrEqual(0);
+    expect(runIdx).toBeGreaterThan(rmPrevIdx);
+    expect(argvs[runIdx]!).toContain('-p');
+  });
+
+  it('does NOT retire the previous runtime for non-host-port (Traefik-routed) services', async () => {
+    // Blue-green must keep working for the normal Traefik-routed path.
+    const ctx = makeCtx({
+      deploymentId: 4,
+      service: { slug: 'x', image: 'nginx', port: 80, publishedPort: null, cpuShares: 0, memLimitMb: 0, volumeMount: null, healthPath: '/' },
+      env: {},
+      commitSha: 'abc',
+    });
+
+    await dockerBuilder.buildAndRun(ctx as never, { runtimeId: 'x-3', port: 80, healthPath: '/' } as never);
+
+    const argvs = h.run.mock.calls.map((c) => c[1] as unknown as string[]);
+    expect(argvs.some((a) => a[0] === 'rm' && a[1] === '-f' && a[2] === 'x-3')).toBe(false);
+  });
+
   it('defaults the returned healthPath to / when the service has none', async () => {
     const ctx = makeCtx({
       service: { slug: 'y', image: 'busybox', port: null, cpuShares: 0, memLimitMb: 0, volumeMount: null, healthPath: null },

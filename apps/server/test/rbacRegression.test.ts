@@ -303,3 +303,73 @@ describe('K6: database credentials are admin-only', () => {
     expect(allowed.json()).toMatchObject({ password: 'pw' });
   });
 });
+
+describe('database attachments: a workspace viewer is read-only', () => {
+  /** Service 3 owned by OWNER, tagged into workspace 1; MEMBER holds a
+   *  `viewer` seat there. Attaching injects the database's decrypted
+   *  connection string into the service env at deploy time, so a viewer
+   *  must not be able to do it. */
+  const viewerDb = (extra: Record<string, unknown> = {}) =>
+    createFakeDb({
+      findFirst: {
+        services: svcRow({ id: 3, ownerUserId: OWNER, runtimeId: 'nd-svc-web' }),
+        databases: dbRow({ id: 1, ownerUserId: OWNER, projectId: 5, status: 'running', passwordEncrypted: encrypt('pw') }),
+        projects: { id: 5, workspaceId: 1, name: 'P', slug: 'p' },
+        workspaceMembers: { id: 1, workspaceId: 1, userId: MEMBER, role: 'viewer' },
+      },
+      findMany: {
+        serviceWorkspaces: [{ id: 1, serviceId: 3, workspaceId: 1 }],
+        workspaceMembers: [{ id: 1, workspaceId: 1, userId: MEMBER, role: 'viewer' }],
+      },
+      ...extra,
+    });
+
+  it('POST /services/:id/attachments is denied for a viewer (403)', async () => {
+    const app = await buildTestApp({ db: viewerDb() });
+    await app.register(attachmentRoutes, { prefix: '/services' });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/services/3/attachments',
+      headers: asUser({ id: MEMBER, isOperator: false }),
+      payload: { databaseId: 1 },
+    });
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('DELETE /services/:id/attachments/:attId is denied for a viewer (403)', async () => {
+    const app = await buildTestApp({ db: viewerDb() });
+    await app.register(attachmentRoutes, { prefix: '/services' });
+    const res = await app.inject({
+      method: 'DELETE',
+      url: '/services/3/attachments/9',
+      headers: asUser({ id: MEMBER, isOperator: false }),
+    });
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('a plain member can still attach (the floor is member, not admin)', async () => {
+    const db = createFakeDb({
+      findFirst: {
+        services: svcRow({ id: 3, ownerUserId: OWNER, runtimeId: 'nd-svc-web' }),
+        databases: dbRow({ id: 1, ownerUserId: OWNER, projectId: 5, status: 'running', passwordEncrypted: encrypt('pw') }),
+        projects: { id: 5, workspaceId: 1, name: 'P', slug: 'p' },
+        workspaceMembers: { id: 1, workspaceId: 1, userId: MEMBER, role: 'member' },
+      },
+      findMany: {
+        serviceWorkspaces: [{ id: 1, serviceId: 3, workspaceId: 1 }],
+        workspaceMembers: [{ id: 1, workspaceId: 1, userId: MEMBER, role: 'member' }],
+      },
+      insert: { database_attachments: [{ id: 9, serviceId: 3, databaseId: 1, envAlias: 'DATABASE_URL' }] },
+    });
+    const app = await buildTestApp({ db });
+    await app.register(attachmentRoutes, { prefix: '/services' });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/services/3/attachments',
+      headers: asUser({ id: MEMBER, isOperator: false }),
+      payload: { databaseId: 1 },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ id: 9, databaseId: 1 });
+  });
+});

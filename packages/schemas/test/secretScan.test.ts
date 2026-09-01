@@ -85,6 +85,21 @@ describe('scanForSecrets', () => {
     expect(hits[0]?.patternId).toBe('openai-secret');
   });
 
+  it('detects the current sk-proj- OpenAI key format', () => {
+    const key = `sk-proj-${'a1'.repeat(30)}`;
+    const hits = scanForSecrets(`OPENAI_API_KEY: ${key}`);
+    expect(hits).toHaveLength(1);
+    expect(hits[0]?.patternId).toBe('openai-secret');
+  });
+
+  it('reports every occurrence of a pattern, not just the first', () => {
+    // Two distinct AWS keys in one manifest: both must be reported so the
+    // operator sees the full redacted list, not only the first hit.
+    const hits = scanForSecrets('a: AKIAIOSFODNN7EXAMPLE\nb: AKIAI44QH8DHBEXAMPLE');
+    expect(hits).toHaveLength(2);
+    expect(hits.every((h) => h.patternId === 'aws-access-key')).toBe(true);
+  });
+
   it('detects an Anthropic API key', () => {
     const key = `sk-ant-${'a'.repeat(40)}`;
     const hits = scanForSecrets(`anthropic: ${key}`);

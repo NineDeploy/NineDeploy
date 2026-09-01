@@ -175,6 +175,14 @@ describe('ninedeployManifest', () => {
     it('rejects aliases with non-env-var values', () => {
       bad(env, { aliases: { DATABASE_URL: 'no-dash' } });
     });
+    it('rejects aliases with non-env-var keys', () => {
+      // The key side feeds the same generated-env plumbing as the value side
+      // ('MY VAR' / '' can never be referenced by an attachment), and keys
+      // with YAML-special characters corrupt the emitted .ninedeploy file.
+      bad(env, { aliases: { 'MY VAR': 'DB_URL' } });
+      bad(env, { aliases: { '': 'DB_URL' } });
+      bad(env, { aliases: { 'a: b': 'DB_URL' } });
+    });
     it('rejects more than 100 required keys', () => {
       const many = Array.from({ length: 101 }, (_, i) => `KEY_${i}`);
       bad(env, { required: many });

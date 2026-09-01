@@ -120,6 +120,70 @@ describe('table', () => {
     expect(text).toContain('web');
   });
 
+  it('keeps colored status cells aligned when a value is shorter than the column', () => {
+    // Regression: cells were padded AFTER coloring, so the 9 invisible ANSI
+    // bytes consumed the pad budget and short colored values ('ok' vs
+    // 'running') shifted every later column in the row.
+    table([
+      { name: 'web', status: 'running', region: 'eu' },
+      { name: 'api', status: 'ok', region: 'us' },
+    ]);
+    const ESC = String.fromCharCode(0x1b);
+    const stripAnsi = (s: string): string => s.replace(new RegExp(`${ESC}\\[[0-9;]*m`, 'g'), '');
+    // No-arg console.log() calls (table's trailing blank line) become '' so
+    // the trim filter drops them, matching real console output.
+    const lines = logSpy.mock.calls
+      .map((call) => (call.length > 0 ? String(call[0]) : ''))
+      .map(stripAnsi)
+      .filter((l) => l.trim().length > 0);
+    // Header + ruler + two data rows, every line visibly identical in width.
+    expect(lines).toHaveLength(4);
+    const headerWidth = lines[0]!.length;
+    for (const line of lines) expect(line.length).toBe(headerWidth);
+    // And the region column starts at the same visible offset everywhere.
+    const regionStart = lines[0]!.indexOf('region');
+    expect(lines[2]!.indexOf('eu')).toBe(regionStart);
+    expect(lines[3]!.indexOf('us')).toBe(regionStart);
+  });
+
+  it('keeps colored health cells aligned when a value is shorter than the column', () => {
+    table([
+      { name: 'web', health: 'healthy', region: 'eu' },
+      { name: 'api', health: 'ok', region: 'us' },
+    ]);
+    const ESC = String.fromCharCode(0x1b);
+    const stripAnsi = (s: string): string => s.replace(new RegExp(`${ESC}\\[[0-9;]*m`, 'g'), '');
+    const lines = logSpy.mock.calls
+      .map((call) => (call.length > 0 ? String(call[0]) : ''))
+      .map(stripAnsi)
+      .filter((l) => l.trim().length > 0);
+    expect(lines).toHaveLength(4);
+    const headerWidth = lines[0]!.length;
+    for (const line of lines) expect(line.length).toBe(headerWidth);
+  });
+
+  it('aligns columns when a caller passes pre-colored cell values', () => {
+    // Call sites pass values like c.dim('—') / c.gray('never') straight into
+    // table(); the width budget must count VISIBLE characters, so raw ANSI
+    // bytes can neither inflate the column nor consume the padding.
+    table([
+      { name: 'web', days: '30', note: 'plain' },
+      { name: 'api', days: c.dim('—'), note: 'plain2' },
+    ]);
+    const ESC = String.fromCharCode(0x1b);
+    const stripAnsi = (s: string): string => s.replace(new RegExp(`${ESC}\\[[0-9;]*m`, 'g'), '');
+    const lines = logSpy.mock.calls
+      .map((call) => (call.length > 0 ? String(call[0]) : ''))
+      .map(stripAnsi)
+      .filter((l) => l.trim().length > 0);
+    expect(lines).toHaveLength(4);
+    const headerWidth = lines[0]!.length;
+    for (const line of lines) expect(line.length).toBe(headerWidth);
+    const noteStart = lines[0]!.indexOf('note');
+    expect(lines[2]!.indexOf('plain')).toBe(noteStart);
+    expect(lines[3]!.indexOf('plain2')).toBe(noteStart);
+  });
+
   it('infers columns from the first row when none are given', () => {
     table([{ a: 1, b: 'x' }]);
     expect(logSpy.mock.calls[0]![0]).toContain('a');

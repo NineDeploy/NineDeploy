@@ -176,9 +176,11 @@ function ConfigDiffCard({ serviceId, deploymentId }: { serviceId: number; deploy
               </p>
             ) : (
               <pre className="overflow-x-auto rounded-lg bg-black/40 p-3 font-mono text-[11px] leading-relaxed">
-                {diff.data.diff.split('\n').map((line) => (
+                {diff.data.diff.split('\n').map((line, i) => (
                   <span
-                    key={line}
+                    // Line content repeats in real diffs (blank lines, `}`,
+                    // shared context) — keying by content duplicates React keys.
+                    key={`${i}-${line}`}
                     className={cn(
                       'block whitespace-pre',
                       line.startsWith('+ ') ? 'text-emerald-300' : line.startsWith('- ') ? 'text-rose-300' : 'text-slate-500',

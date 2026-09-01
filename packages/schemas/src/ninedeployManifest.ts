@@ -104,8 +104,10 @@ export const env = z
   .object({
     /** Required env var names. Values stay in the panel's env vault. */
     required: z.array(envVarName.max(100)).max(100).default([]),
-    /** Managed-DB attach alias: env-key → attachment-env-key. */
-    aliases: z.record(z.string(), envVarName).optional(),
+    /** Managed-DB attach alias: env-key → attachment-env-key. The KEY side is
+     *  validated too: free-form keys (`'MY VAR'`, `''`) could never be
+     *  referenced by an attachment and corrupt the emitted YAML. */
+    aliases: z.record(envVarName, envVarName).optional(),
   })
   .strict();
 export type Env = z.infer<typeof env>;

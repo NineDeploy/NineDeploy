@@ -83,7 +83,10 @@ describe('MCP tools', () => {
     await byName('list_services').handler(c, {});
     await byName('list_services').handler(c, { projectId: 3 });
     expect(c.services.list).toHaveBeenNthCalledWith(1, '');
-    expect(c.services.list).toHaveBeenNthCalledWith(2, '?projectId=3');
+    // The server dropped the legacy `?projectId=` query (it reads only
+    // tagProjectIds/tagWorkspaceIds/tagLabelIds) — the old query made the
+    // project filter a silent no-op returning ALL services.
+    expect(c.services.list).toHaveBeenNthCalledWith(2, '?tagProjectIds=3');
   });
 
   it('id-based tools forward the parsed service id', async () => {

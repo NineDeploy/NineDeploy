@@ -47,7 +47,11 @@ export const domainPresetsRoutes: FastifyPluginAsync = async (app) => {
     return { providers: providers.map((p) => p.name) };
   });
 
-  app.post('/apply', async (req) => {
+  // Operator-gated: the DNS provider token is configured admin-only
+  // (settings PUT /dns is requireAdmin) and this route spends it. Any
+  // authenticated member could otherwise create records in every zone the
+  // operator's token can write.
+  app.post('/apply', { preHandler: app.requireAdmin }, async (req) => {
     const input = applySchema.parse(req.body);
     const providerName = await getSettingString(app.db, 'dns_records_provider', '');
     if (!providerName) {

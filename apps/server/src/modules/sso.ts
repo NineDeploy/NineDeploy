@@ -1,4 +1,5 @@
 import type { FastifyPluginAsync } from 'fastify';
+import { randomBytes } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { ssoProviders, type DB } from '@ninedeploy/db';
 import {
@@ -8,9 +9,11 @@ import {
   verifyIdToken as oidcVerifyIdToken,
 } from '../lib/oidc.js';
 import {
+  checkAssertionConditions,
   decodeSamlResponse,
   extractSamlSubject,
   parseIdpMetadata,
+  verifyAssertionDigest,
   verifySignedInfo,
 } from '../lib/saml.js';
 import { issueSessionTokens } from '../lib/sessions.js';
@@ -124,8 +127,10 @@ export const ssoRoutes: FastifyPluginAsync = async (app) => {
     // cookies instead of being echoed to the client. The IdP only
     // sees `state` (it has no use for `nonce`); the callback
     // reads both cookies back and verifies the round-trip.
-    const state = `state-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const nonce = `nonce-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    // Both come from the CSPRNG: the nonce is the OIDC replay
+    // defense, and a predictable nonce is worth nothing.
+    const state = `state-${randomBytes(16).toString('hex')}`;
+    const nonce = `nonce-${randomBytes(16).toString('hex')}`;
     setSsoCookies({
       reply,
       provider: provider.name,
@@ -293,6 +298,17 @@ export const ssoRoutes: FastifyPluginAsync = async (app) => {
       }
       if (!valid) {
         return { ok: false, error: 'SAML response: signature verification failed' };
+      }
+      // Bind the verified signature to THIS response's assertion (digest
+      // check) and enforce the IdP's validity window — without these, a
+      // legitimately signed response could be rewritten to name a different
+      // user (assertion substitution) or replayed forever.
+      try {
+        verifyAssertionDigest({ decodedXml: decoded, signedInfo });
+        const assertionBlock = decoded.match(/<(?:[A-Za-z0-9]+:)?Assertion\b[^>]*>[\s\S]*?<\/(?:[A-Za-z0-9]+:)?Assertion>/)?.[0];
+        if (assertionBlock) checkAssertionConditions(assertionBlock);
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
       }
       // Map the federated identity to a local user. The IdP's
       // `email` attribute is the canonical join key; if the IdP

@@ -49,11 +49,20 @@ export function ServiceDetail() {
   const { toast } = useToast();
   const [activeDeploy, setActiveDeploy] = useState<number | null>(null);
   const [searchParams] = useSearchParams();
-  // Deep links like /services/1?tab=deploys select the starting tab.
-  const [tab, setTab] = useState<TabId>(() => {
-    const q = searchParams.get('tab');
-    return (SERVICE_TABS.some((t) => t.id === q) ? q : 'overview') as TabId;
-  });
+  // The tab is OWNED by `?tab=` on every render of this route, not read
+  // once: React Router keeps this component mounted across param changes,
+  // so a `useState` initializer ignores later `?tab=` deep links (e.g.
+  // "View Live Logs →" linking to /services/5?tab=deploys from Overview).
+  const tabParam = searchParams.get('tab');
+  const tab: TabId = SERVICE_TABS.some((t) => t.id === tabParam)
+    ? (tabParam as TabId)
+    : 'overview';
+  const switchTab = (next: TabId) => {
+    const sp = new URLSearchParams(searchParams);
+    if (next === 'overview') sp.delete('tab');
+    else sp.set('tab', next);
+    navigate({ search: sp.toString() });
+  };
   const navigate = useNavigate();
 
   // A non-numeric :id (e.g. /services/abc) must not leak NaN into every
@@ -73,6 +82,18 @@ export function ServiceDetail() {
     refetchInterval: (q) => (q.state.data?.some((d) => IN_FLIGHT.includes(d.status)) ? 2000 : false),
   });
 
+  // A new service id must not inherit the previous service's selected
+  // deployment: the route element is reused, so state keyed to the old id
+  // would open a deploy-logs stream for a deployment that does not belong
+  // to this service. React's recommended "adjust state on prop change"
+  // pattern. Object.is, not !==: /services/abc yields id=NaN and NaN !== NaN
+  // would loop re-renders forever.
+  const [prevId, setPrevId] = useState(id);
+  if (!Object.is(prevId, id)) {
+    setPrevId(id);
+    setActiveDeploy(null);
+  }
+
   useEffect(() => {
     if (activeDeploy != null) return;
     const latest = deploys.data?.[0];
@@ -83,7 +104,7 @@ export function ServiceDetail() {
     mutationFn: () => api.deploys.trigger(id),
     onSuccess: (res) => {
       setActiveDeploy(res.deploymentId);
-      setTab('deploys');
+      switchTab('deploys');
       qc.invalidateQueries({ queryKey: ['deploys', id] });
       qc.invalidateQueries({ queryKey: ['service', id] });
     },
@@ -295,7 +316,7 @@ export function ServiceDetail() {
                   role="tab"
                   aria-selected={isActive}
                   aria-controls="service-tab-panel"
-                  onClick={() => setTab(t.id)}
+                  onClick={() => switchTab(t.id)}
                   className={cn(
                     'w-full flex items-center gap-3 rounded-xl px-3 py-2 text-xs font-medium transition-all text-left',
                     isActive

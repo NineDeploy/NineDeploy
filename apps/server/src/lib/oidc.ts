@@ -134,9 +134,9 @@ interface Jwks {
 const jwksCache = new Map<string, { fetchedAt: number; keys: Jwk[] }>();
 const JWKS_TTL_MS = 5 * 60 * 1000;
 
-async function fetchJwks(jwksUri: string): Promise<Jwk[]> {
+async function fetchJwks(jwksUri: string, force = false): Promise<Jwk[]> {
   const cached = jwksCache.get(jwksUri);
-  if (cached && Date.now() - cached.fetchedAt < JWKS_TTL_MS) return cached.keys;
+  if (!force && cached && Date.now() - cached.fetchedAt < JWKS_TTL_MS) return cached.keys;
   const res = await fetch(jwksUri, { signal: AbortSignal.timeout(10_000) });
   if (!res.ok) throw new Error(`JWKS fetch failed (${res.status}) for ${jwksUri}`);
   const jwks = (await res.json()) as Jwks;
@@ -148,9 +148,13 @@ function findKey(keys: Jwk[], kid: string | undefined): Jwk {
   if (kid) {
     const found = keys.find((k) => k.kid === kid);
     if (found) return found;
+    // Never fall back to an arbitrary key when the token NAMES its key:
+    // with a multi-key JWKS (rotation overlap) that could verify the token
+    // against whichever key is listed first.
+    throw new Error(`No JWK with kid "${kid}" in JWKS response`);
   }
-  // Fall back to the first RSA key — most OIDC providers ship only
-  // one signing key and never include a `kid` claim.
+  // Token without a `kid`: fall back to the first RSA key — most OIDC
+  // providers ship only one signing key and never include the claim.
   const rsa = keys.find((k) => k.kty === 'RSA');
   if (rsa) return rsa;
   throw new Error('No usable JWK in JWKS response');
@@ -197,7 +201,13 @@ export async function verifyIdToken(
   if (header.alg !== 'RS256') {
     throw new Error(`Unsupported ID token alg "${header.alg ?? 'missing'}"`);
   }
-  const keys = await fetchJwks(discovery.jwks_uri);
+  let keys = await fetchJwks(discovery.jwks_uri);
+  // After an IdP key rotation the cached JWKS no longer lists the new kid —
+  // force one refresh before failing, so logins don't break for up to the
+  // cache TTL after an operator rotates signing keys.
+  if (header.kid && !keys.some((k) => k.kid === header.kid)) {
+    keys = await fetchJwks(discovery.jwks_uri, true);
+  }
   const key = findKey(keys, header.kid);
   const input = `${headerB64}.${payloadB64}`;
   if (!verifyRs256(input, signatureB64, key)) {
@@ -205,13 +215,26 @@ export async function verifyIdToken(
   }
   const claims = JSON.parse(base64UrlDecode(payloadB64).toString('utf8')) as OidcClaims;
 
-  // Mandatory claim checks
-  if (claims.iss !== config.issuer) {
+  // Mandatory claim checks. Slash-normalize both sides: providers commonly
+  // emit `iss` with a trailing slash even when discovery was fetched without
+  // one (the discovery URL itself strips it, so slash equivalence is the
+  // expected contract).
+  const normalizeIssuer = (u: string) => u.replace(/\/+$/, '');
+  if (typeof claims.iss !== 'string' || normalizeIssuer(claims.iss) !== normalizeIssuer(config.issuer)) {
     throw new Error(`ID token issuer "${claims.iss}" does not match configured issuer`);
   }
   const aud = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
   if (!aud.includes(config.clientId)) {
     throw new Error(`ID token audience does not include client id "${config.clientId}"`);
+  }
+  // OIDC Core §3.1.3.7: when the audience is multi-valued the token MUST
+  // carry azp and it must equal this client — otherwise a token minted for
+  // another client that merely lists us as a secondary audience verifies.
+  if (Array.isArray(claims.aud)) {
+    const azp = (claims as unknown as { azp?: unknown }).azp;
+    if (typeof azp !== 'string' || azp !== config.clientId) {
+      throw new Error('ID token azp claim must equal the client id when aud is multi-valued');
+    }
   }
   const nowSec = Math.floor(Date.now() / 1000);
   if (typeof claims.exp !== 'number' || claims.exp <= nowSec) {

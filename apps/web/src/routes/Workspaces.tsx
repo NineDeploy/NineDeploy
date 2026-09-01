@@ -41,7 +41,7 @@ export function Workspaces() {
   const [showRoleMatrix, setShowRoleMatrix] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
-  const [inviteRole, setInviteRole] = useState<WorkspaceRole>('member');
+  const [inviteRole, setInviteRole] = useState<'admin' | 'member' | 'viewer'>('member');
   const [lastInvite, setLastInvite] = useState<WorkspaceMemberInviteEntry | null>(null);
   const [editOpen, setEditOpen] = useState(false);
   const [editName, setEditName] = useState('');
@@ -607,7 +607,7 @@ export function Workspaces() {
               <Field label="Workspace Role">
                 <Select
                   value={inviteRole}
-                  onChange={(e) => setInviteRole(e.target.value as WorkspaceRole)}
+                  onChange={(e) => setInviteRole(e.target.value as 'admin' | 'member' | 'viewer')}
                 >
                   <option value="admin">Admin — Full control over workspace &amp; members</option>
                   <option value="member">Member — Can manage and deploy applications</option>

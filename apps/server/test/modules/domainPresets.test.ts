@@ -174,6 +174,30 @@ describe('Domain Presets routes (G-07 PR-D)', () => {
     expect(res.json().error.message).toMatch(/No DNS provider configured/);
   });
 
+  it('POST /apply is operator-gated — a member cannot write DNS with the operator token', async () => {
+    // The provider token is configured operator-only (settings PUT /dns is
+    // requireAdmin); this route spends it. A plain member (or a write-scoped
+    // CI token) must not be able to create records in the operator's zones.
+    const provider = fakeProvider('cloudflare-zone', {
+      createRecord: vi.fn().mockResolvedValue({ recordId: 'rec-1', hostname: 'app.example.com', type: 'A' }),
+    });
+    const kernel = {
+      registry: {
+        listDomainProviders: () => [provider],
+        getDomainProvider: (name: string) => (name === 'cloudflare-zone' ? provider : undefined),
+      },
+    };
+    const db = settingsDb({ dns_records_provider: 'cloudflare-zone', dns_records_content: '203.0.113.9' });
+    const res = await (await appWith(kernel, db)).inject({
+      method: 'POST',
+      url: '/apply',
+      headers: asUser({ id: 7, isOperator: false }),
+      payload: { hostname: 'app.example.com' },
+    });
+    expect(res.statusCode).toBe(403);
+    expect(provider.createRecord).not.toHaveBeenCalled();
+  });
+
   it('POST /apply returns 400 when the named provider is not registered on the kernel', async () => {
     const kernel = {
       registry: {

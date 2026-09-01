@@ -6,6 +6,7 @@ import { api } from '../../lib/api.js';
 import { Sparkline } from '../../components/Sparkline.js';
 import { useToast } from '../../components/Toast.js';
 import { Button, Card, CardBody, StatusBadge } from '../../components/ui.js';
+import { PluginSlot } from '../../components/PluginSlot.js';
 
 /** Health, metrics and runtime metadata for one service. */
 export function OverviewTab({ serviceId, svc }: { serviceId: number; svc: Service }) {
@@ -16,6 +17,9 @@ export function OverviewTab({ serviceId, svc }: { serviceId: number; svc: Servic
         <MetricsCard serviceId={serviceId} svc={svc} />
         <RuntimeInfoCard svc={svc} />
       </div>
+
+      {/* Dynamic Plugin Overview Widgets */}
+      <PluginSlot slot="service:overview:widget" className="grid grid-cols-1 gap-4 sm:grid-cols-2" />
 
       {/* What's inside the repository (framework analysis) */}
       {svc.repoUrl && <RepoInsightsCard serviceId={serviceId} />}

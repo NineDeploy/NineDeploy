@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
+import { makeLineSplitter } from './exec.js';
 
 /**
  * Single choke-point for spawning the two agent executables. The argv arrays
@@ -19,13 +20,20 @@ export function spawnValidated(
     executable === 'docker' ? spawn('docker', argv, {}) : spawn('git', argv, {});
   return new Promise<number>((resolve) => {
     child.stdin?.on('error', () => { /* child gone */ });
+    const outSplitter = makeLineSplitter();
+    const errSplitter = makeLineSplitter();
     child.stdout?.on('data', (d: Buffer) => {
-      for (const l of d.toString('utf8').split('\n')) if (l) onLine(l);
+      for (const l of outSplitter.feed(d)) onLine(l);
     });
     child.stderr?.on('data', (d: Buffer) => {
-      for (const l of d.toString('utf8').split('\n')) if (l) onLine(l);
+      for (const l of errSplitter.feed(d)) onLine(l);
     });
     child.on('error', () => resolve(127));
-    child.on('exit', (code) => resolve(code ?? 0));
+    child.on('close', (code) => {
+      for (const tail of [outSplitter.flush(), errSplitter.flush()]) {
+        if (tail) onLine(tail);
+      }
+      resolve(code ?? 0);
+    });
   });
 }

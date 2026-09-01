@@ -1,4 +1,4 @@
-export const VERSION = '0.4.9';
+export const VERSION = '0.5.0';
 
 export interface ChangelogEntry {
   version: string;
@@ -8,6 +8,19 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.5.0',
+    date: '2026-09-02',
+    title: 'Plugin Sandboxing, Saga Rollback Hooks & Security Sweep',
+    changes: [
+      'Isolated Worker Thread plugin runner: third-party and community extensions run inside dedicated node:worker_threads with V8 memory boundaries and an asynchronous RPC bridge, preventing host process blocking or fatal server crashes on plugin exceptions',
+      'LIFO Hook Rollback (Saga pattern): pipeline hooks support sequential rollbacks if a downstream interceptor errors or returns a veto (allowOrAbort: false), guaranteeing cleanup of provisioned sidecars and resources',
+      'Direct domain events for CRUD operations: services, databases and edge servers now emit typed domain events directly through the kernel event bus alongside the existing audit bridge',
+      'Dynamic React UI extension slots: Web Dashboard, Service Overview, and Database Detail views render plugin widgets through the new <PluginSlot /> component',
+      'Security sweep: a SAML sign-in bypass (signatures not bound to the assertion) is closed with digest verification and a replay window; community-template ids can no longer traverse out of the data directory; managed git sources are operator-only; database attachments require the member role; domain-preset, build-cache and metric-history mutations are operator-gated; OIDC logins are CSRF-bound with CSPRNG state; private workspaces answer 404 to outsiders instead of confirming their existence',
+      'Deploy correctness: compose waits for Docker healthchecks and escapes .env values byte-exact, host-port services deploy sequentially instead of failing on "port already allocated" forever, PM2 domains route through the host gateway instead of 502ing, concurrent database creation on one volume is serialized, and the deploy finalize no longer leaks the previous container when env decryption fails',
+    ],
+  },
   {
     version: '0.4.9',
     date: '2026-09-01',

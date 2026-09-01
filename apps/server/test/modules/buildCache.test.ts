@@ -113,4 +113,22 @@ describe('POST /v1/build-cache/store', () => {
     });
     expect(res.statusCode).toBe(401);
   });
+
+  it('is operator-gated — a member cannot plant digests other builds chain from', async () => {
+    // The deploy pipeline resolves the next build's cache from these keys;
+    // letting any authenticated member write them poisons shared entries.
+    const { app } = await newApp();
+    const fakeCache = { name: 'inline', store: vi.fn().mockResolvedValue({
+      digest: 'sha256:abc', sizeBytes: 8, storedAt: '2026-08-29T00:00:00.000Z',
+    }) };
+    app.kernel.registry.registerBuildCache(fakeCache as never);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/store',
+      headers: asUser({ id: 7, isOperator: false }),
+      payload: { key: 'svc:1', digest: 'sha256:' + '0'.repeat(64) },
+    });
+    expect(res.statusCode).toBe(403);
+    expect(fakeCache.store).not.toHaveBeenCalled();
+  });
 });

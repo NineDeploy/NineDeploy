@@ -4,7 +4,7 @@ import { apiTokens, type DB, oidcProviders, type OidcProvider, sessions as sessi
 import type { PublicUser, Register } from '@ninedeploy/schemas';
 import { createApiToken, forgotPassword, login, oidcProviderCreate, oidcProviderUpdate, type OidcProviderEntry, type OidcPublicProvider, passkeyLoginVerify, passkeyRegisterVerify, passwordChange, passwordResetWithToken, refresh, register, twoFactorCode, twoFactorDisable, twoFactorSetup } from '@ninedeploy/schemas';
 import { config } from '../config.js';
-import { decrypt, encrypt, hashPassword, randomToken, sha256, verifyPassword } from '../lib/crypto.js';
+import { decrypt, encrypt, hashPassword, randomToken, secretEquals, sha256, verifyPassword } from '../lib/crypto.js';
 import { badRequest, conflict, forbidden, notFound, parseId, unauthorized } from '../lib/errors.js';
 import { verifyJwt, type AppJwtPayload } from '../lib/jwt.js';
 import { isLocked, recordFailure, recordSuccess } from '../lib/loginLockout.js';
@@ -66,6 +66,52 @@ function serializeOidc(p: OidcProvider): OidcProviderEntry {
  */
 function oidcRedirectUri(slug: string): string {
   return `${config.publicUrl}/v1/auth/oidc/${slug}/callback`;
+}
+
+// ── OIDC state cookie (login-CSRF defense) ─────────────────────────────────
+// The signed state is a self-contained blob, so the callback alone cannot
+// tell WHO started the flow: an attacker can run the login themselves, collect
+// a callback URL, and hand it to a victim — the victim's browser then gets
+// signed in to the ATTACKER's account (session swap). Binding the state to an
+// HttpOnly cookie set by the login route makes the callback reject any flow
+// that was not started in the same browser.
+const OIDC_STATE_COOKIE_MAX_AGE_S = 600;
+
+function oidcStateCookieName(slug: string): string {
+  return `ninedeploy_oidc_${slug.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+}
+
+function oidcStateCookie(name: string, value: string, maxAgeS: number, isHttps: boolean): string {
+  // SameSite=None (+Secure) so cross-site IdP form_post callbacks still carry
+  // it; plain-HTTP dev servers fall back to Lax, which is enough for the
+  // redirect flow they exercise.
+  const sameSite = isHttps ? 'SameSite=None; Secure' : 'SameSite=Lax';
+  return `${name}=${value}; Path=/v1/auth; Max-Age=${maxAgeS}; HttpOnly; ${sameSite}`;
+}
+
+/** Set or clear the browser-bound state cookie. */
+function writeOidcStateCookie(req: { protocol?: string }, reply: { header: (k: string, v: string) => void }, slug: string, state: string | null): void {
+  const name = oidcStateCookieName(slug);
+  const isHttps = req.protocol === 'https';
+  reply.header('Set-Cookie', oidcStateCookie(name, state ? sha256(state) : '', state ? OIDC_STATE_COOKIE_MAX_AGE_S : 0, isHttps));
+}
+
+/** Read + verify the state cookie; throws when the browser that delivered the
+ *  callback is not the browser that started the flow. */
+function verifyOidcStateCookie(req: { protocol?: string; headers: Record<string, unknown> }, reply: { header: (k: string, v: string) => void }, slug: string, state: string): void {
+  const name = oidcStateCookieName(slug);
+  const cookieHeader = (req.headers.cookie as string | undefined) ?? '';
+  const expected = sha256(state);
+  const carried = cookieHeader
+    .split(';')
+    .map((part) => part.trim())
+    .find((part) => part.startsWith(`${name}=`))
+    ?.slice(name.length + 1);
+  // Clear whichever (missing/stale) cookie is on the browser now.
+  writeOidcStateCookie(req, reply, slug, null);
+  if (!carried || !secretEquals(carried, expected)) {
+    throw unauthorized('OAuth state cookie mismatch — restart the sign-in flow from this browser');
+  }
 }
 
 /** Count existing users (used to decide first-user-is-admin). */
@@ -689,6 +735,8 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     if (!provider) throw notFound(`OAuth2/OIDC provider "${slug}" not found or disabled`);
 
     const state = generateOAuthState(slug, returnTo);
+    // Bind this flow to the browser that started it (see the cookie helpers).
+    writeOidcStateCookie(req, reply, slug, state);
     const redirectUri = oidcRedirectUri(slug);
 
     let authUrl: string;
@@ -740,6 +788,10 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       where: and(eq(oidcProviders.slug, slug), eq(oidcProviders.enabled, true)),
     });
     if (!provider) throw notFound(`OAuth2/OIDC provider "${slug}" not found or disabled`);
+    // The signature proves the state is authentic; the cookie proves THIS
+    // browser is the one that started the flow (login-CSRF defense). Runs
+    // after the provider lookup so a deleted provider still answers 404.
+    verifyOidcStateCookie(req, reply, slug, query.state);
 
     const clientSecret = decrypt(provider.clientSecretEncrypted);
     const redirectUri = oidcRedirectUri(slug);

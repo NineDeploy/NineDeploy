@@ -57,36 +57,43 @@ export default definePlugin({
     ctx.on('deployment.status_changed', (payload) => {
       console.log(`Deployment ${payload.deploymentId} -> ${payload.status}`);
     });
-    const untap = ctx.tapHook('deploy:before', () => {
-      // return a rejection context for hooks that support it
-    });
+    const untap = ctx.tapHook(
+      'deploy:before',
+      async (payload) => {
+        // Inspect or amend deployment payload
+        return payload;
+      },
+      {
+        priority: 150,
+        rollback: async (payload, error) => {
+          // Saga Rollback: cleanup provisioned sidecar or resources if a downstream hook fails
+          console.log(`Rolling back deployment hook due to: ${error?.message}`);
+        },
+      },
+    );
     void untap;
   },
 });
 ```
 
 The official plugins shipped in-tree are the reference implementations for the
-event and hook APIs. Read them for shape, not for behaviour: the notifications
-dispatcher re-emits `notification.queued` as an extension point rather than
-delivering anything (`lib/notifier` owns delivery), and the Cloudflare Tunnels
-plugin observes proxy hooks.
+event and hook APIs.
 
-### Installing plugins
+### 🛡️ 2. Isolated Worker Thread Sandboxing
 
-**NineDeploy does not load third-party plugin code.** There is no `import()` of
-an external package anywhere in the loader, so `npm`, `git` and `local` installs
-are refused rather than creating a row that reports itself active while doing
-nothing. The marketplace catalog in Settings → Plugins is a roadmap index:
-every entry carries `implemented` (all of them are `false` today) and, where the
-capability already ships under another name, a pointer to it — S3 replication is
-Backups → Storage destinations, Slack/Discord/Telegram are Settings →
-Notifications, Cloudflare DNS is Settings → System, and so on.
+NineDeploy executes third-party community extensions in dedicated `node:worker_threads` isolates with memory limits and an asynchronous RPC bridge:
 
-Real plugin loading needs fetching, integrity verification, sandboxing and an
-upgrade story. Until that exists, the honest answer is a refusal with a pointer,
-not a green "Installed" badge.
-## 🗂️ 2. Dynamic UI Menus & Driver Registries
+- **Memory Limits**: Isolated workers are constrained by V8 generation size bounds (`maxYoungGenerationSizeMb: 16`, `maxOldGenerationSizeMb: 64`).
+- **Crash Isolation**: If an external plugin throws a fatal exception or crashes its worker, the NineDeploy core API and database remain unaffected. The kernel flags the plugin state as `errored` and continues running.
+- **Secure RPC Bridge**: Sandboxed plugins interact strictly via `PluginContext` APIs (`events.on`, `tapHook`, `scopedConfig.get/set`). Direct host process tampering is prevented.
 
-- **MenuRegistry**: Inject custom navigation tabs, submenus, and action buttons into the Web Dashboard.
-- **ServiceRegistry**: Interchange core storage and deploy drivers dynamically at runtime.
+### 🗂️ 3. Dynamic UI Menus, Widgets & Driver Registries
+
+- **Menu & Widget Slots**: Inject custom navigation tabs and live dashboard widgets:
+  - `sidebar:main`, `sidebar:secondary`: Sidebar navigation
+  - `dashboard:overview`: Live dashboard telemetry & overview cards
+  - `service:tabs`, `service:overview:widget`: Service-level inspection panels
+  - `command:palette`: Global command search items
+- **ServiceRegistry**: Interchange core storage, DNS (Cloudflare, DNSimple, Namecheap), orchestrator, and deploy drivers dynamically at runtime.
 - **ConfigCenter Integration**: Read and persist encrypted plugin configurations in the central key-value store.
+

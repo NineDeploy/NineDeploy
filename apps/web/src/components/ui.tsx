@@ -786,11 +786,21 @@ export function KeyValueEditor({
     onChange(next);
   };
   const addRow = () => {
-    const next = { ...value, '': '' };
-    onChange(next);
+    // `Record<string, string>` can hold only ONE empty-key row, so a second
+    // "Add" would silently do nothing and the button would look broken.
+    // Focus the existing empty row's key input instead — the user clearly
+    // wants another row, and the nearest edit point is that one.
+    const hadEmpty = '' in value;
+    onChange({ ...value, '': '' });
+    if (hadEmpty) {
+      requestAnimationFrame(() => {
+        rootRef.current?.querySelector<HTMLInputElement>('input[aria-label="key (empty)"]')?.focus();
+      });
+    }
   };
+  const rootRef = useRef<HTMLDivElement>(null);
   return (
-    <div className="space-y-1.5">
+    <div ref={rootRef} className="space-y-1.5">
       {entries.map(([k, v], i) => (
         // Row index is part of the key so reordering is stable; the value
         // input is identified by `kv-row-{i}-value` for test stability.

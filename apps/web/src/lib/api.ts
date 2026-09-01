@@ -87,6 +87,10 @@ async function doRefresh(): Promise<boolean> {
     return true;
   } catch {
     clearTokens(); // refresh rejected — the session is gone server-side
+    // Announce the death of the session: the auth provider gates the
+    // authenticated layout on its `user` state, so without this event the
+    // SPA keeps rendering as logged-in behind a wall of 401 error cards.
+    window.dispatchEvent(new Event('ninedeploy:session-expired'));
     return false;
   }
 }

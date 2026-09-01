@@ -56,7 +56,7 @@ export const pluginListSchema = z.object({
 export type PluginListResponse = z.infer<typeof pluginListSchema>;
 
 export const installPluginSchema = z.object({
-  source: z.enum(['marketplace', 'npm', 'git', 'local']).default('marketplace'),
+  source: z.enum(['marketplace', 'npm', 'git', 'local', 'sandbox']).default('marketplace'),
   target: z.string().min(1),
   name: z.string().optional(),
   version: z.string().optional(),

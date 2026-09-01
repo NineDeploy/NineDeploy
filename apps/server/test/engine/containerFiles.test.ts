@@ -1,4 +1,5 @@
-﻿import { describe, expect, it, vi } from 'vitest';
+﻿import { load as yamlLoad } from 'js-yaml';
+import { describe, expect, it, vi } from 'vitest';
 import {
   deleteContainerPath,
   getContainerComposeManifest,
@@ -265,6 +266,37 @@ describe('containerFiles operations (docker exec)', () => {
     expect(yaml).toContain('traefik.http.routers.web.rule=Host(`app.dev`)');
     expect(yaml).toContain('networks:');
     expect(yaml).toContain('ninedeploy:');
+  });
+
+  it('emits env/label scalars so the manifest round-trips through a YAML parser', async () => {
+    // Env values come from `docker inspect` verbatim: an app configured via
+    // JSON (`CONFIG={"a":1}`) or any `: `-bearing value is a YAML syntax
+    // error / re-typing hazard when emitted as a plain scalar, and a label
+    // value containing `"` breaks the hand-written double-quoting.
+    const fakeInspect = [
+      {
+        Id: 'cid555',
+        Name: '/nd-svc-app-1',
+        Config: {
+          Image: 'alpine',
+          Env: ['CONFIG={"a":1}', 'TOKEN=abc: def', 'PLAIN=yes'],
+          Labels: { note: 'say "hi"' },
+        },
+        State: { Status: 'running', Running: true },
+        NetworkSettings: { Networks: { ninedeploy: {} } },
+        Mounts: [],
+        HostConfig: { RestartPolicy: { Name: 'unless-stopped' } },
+      },
+    ];
+
+    execMocks.capture.mockResolvedValueOnce(JSON.stringify(fakeInspect));
+    const { yaml } = await getContainerComposeManifest('nd-svc-app-1');
+    const parsed = yamlLoad(yaml) as {
+      services: { 'nd-svc-app-1': { environment: string[]; labels: string[] } };
+    };
+    const svc = parsed.services['nd-svc-app-1'];
+    expect(svc.environment).toEqual(['CONFIG={"a":1}', 'TOKEN=abc: def', 'PLAIN=yes']);
+    expect(svc.labels).toEqual(['note=say "hi"']);
   });
 
   it('handles empty inspect output with error', async () => {

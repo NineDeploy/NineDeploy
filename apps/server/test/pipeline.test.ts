@@ -406,6 +406,47 @@ describe('runDeployment', () => {
     expect(snap2.managedEnv.WORDPRESS_DB_PASSWORD).not.toBe(snap1.managedEnv.WORDPRESS_DB_PASSWORD);
   });
 
+  it('keeps the full config snapshot when persisting the managed-env fingerprint', async () => {
+    // The finalize update used to REPLACE the claim-time snapshot with
+    // `{managedEnv}` alone — the /diff endpoint then lost the build-config
+    // diff for every template- or database-attached service.
+    const wpMapping = {
+      WORDPRESS_DB_HOST: 'host',
+      WORDPRESS_DB_USER: 'username',
+      WORDPRESS_DB_PASSWORD: 'password',
+      WORDPRESS_DB_NAME: 'database',
+    };
+    const fake = makeDb();
+    baseSetup(fake.db, {
+      image: 'nginx:latest',
+      templateId: 'wordpress',
+      templateDatabaseEnv: wpMapping,
+    });
+    fake.db.query.databaseAttachments.findMany.mockResolvedValue([{ serviceId: 5, databaseId: 2, envAlias: 'DATABASE_URL' }]);
+    fake.db.query.databases.findFirst.mockResolvedValue({
+      id: 2,
+      engine: 'mysql',
+      status: 'running',
+      containerName: 'nd-db-web-db',
+      internalHost: 'nd-db-web-db',
+      internalPort: 3306,
+      username: 'nine',
+      dbName: 'app',
+      passwordEncrypted: 'enc:secret-one',
+    });
+    h.builder.buildAndRun.mockResolvedValue({ runtimeId: 'c-1', port: 3000, healthPath: '/' });
+
+    await runDeployment(fake.db as never, 1);
+
+    const snapUpdate = fake.updates.find((u) => u.table === deployments && u.values.status === 'running');
+    const snap = JSON.parse(snapUpdate!.values.configSnapshot as string) as Record<string, unknown>;
+    expect(snap.managedEnv).toBeDefined();
+    // The claim-time snapshot fields must survive the merge.
+    expect(snap.buildPack).toBe('auto');
+    expect(Array.isArray(snap.envKeys)).toBe(true);
+    expect(snap.image).toBe('nginx:latest');
+  });
+
   it('persists a runtime port repaired during the healthcheck', async () => {
     const { db, updates } = makeDb();
     baseSetup(db, { image: 'n8nio/n8n', port: 80 });

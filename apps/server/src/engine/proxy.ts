@@ -544,11 +544,16 @@ export async function writeDynamicConfig(db: DB): Promise<void> {
     );
     if (!seen.has(`svc_${key}`)) {
       seen.add(`svc_${key}`);
+      // PM2 processes run on the HOST: their runtimeId is a PM2 process name,
+      // which no DNS server inside the Traefik container can resolve (every
+      // request would 502 forever). Route them through the host gateway,
+      // same as the panel router below.
+      const upstreamHost = svc.type === 'pm2' ? 'host.docker.internal' : svc.runtimeId;
       svcBlocks.push(
         `    svc_${key}:\n` +
           `      loadBalancer:\n` +
           `        servers:\n` +
-          `          - url: "http://${svc.runtimeId}:${svc.port}"`,
+          `          - url: "http://${upstreamHost}:${svc.port}"`,
       );
     }
   }

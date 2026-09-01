@@ -416,7 +416,9 @@ describe('invitationRoutes', () => {
     expect(list[0].invitedByName).toBe('Alice');
   });
 
-  it('forbids non-members from listing invitations', async () => {
+  it('answers non-members with 404, not 403 — no workspace-id oracle', async () => {
+    // A 403 on an EXISTING workspace vs a 404 on a missing one lets any
+    // authenticated user enumerate private workspace ids instance-wide.
     const app = await buildTestApp({
       db: createFakeDb({
         findFirst: {
@@ -428,7 +430,28 @@ describe('invitationRoutes', () => {
     await app.register(invitationRoutes, { prefix: '/workspaces' });
 
     const res = await app.inject({ method: 'GET', url: '/workspaces/1/invitations', headers: asUser({ id: 9, role: 'member' }) });
-    expect(res.statusCode).toBe(403);
+    expect(res.statusCode).toBe(404);
+    expect(res.json().error.message).toBe('Workspace not found');
+  });
+
+  it('answers non-members with 404 on invitation create, too', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: {
+          workspaces: workspaceRow({ id: 1 }),
+          workspaceMembers: undefined,
+        },
+      }),
+    });
+    await app.register(invitationRoutes, { prefix: '/workspaces' });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/workspaces/1/invitations',
+      headers: { ...asUser({ id: 9, role: 'member' }), 'content-type': 'application/json' },
+      payload: { email: 'someone@example.com' },
+    });
+    expect(res.statusCode).toBe(404);
   });
 
   it('revokes a pending invitation', async () => {

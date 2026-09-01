@@ -291,6 +291,13 @@ export const invitationRoutes: FastifyPluginAsync = async (app) => {
       const ws = await app.db.query.workspaces.findFirst({ where: eq(workspaces.id, workspaceId) });
       if (!ws) throw notFound('Workspace not found');
 
+      // Same rule for an EXISTING workspace: a non-member must not be able to
+      // tell "private workspace" (would be 403) apart from "no workspace" (404).
+      const seat = await app.db.query.workspaceMembers.findFirst({
+        where: and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, req.user!.id)),
+      });
+      if (!seat && !req.user!.isOperator) throw notFound('Workspace not found');
+
       const authority = await resolveInviteAuthority(app.db, workspaceId, req.user!.id, req.user!.isOperator);
       if (!authority) throw forbidden('Admin or Owner role required to invite workspace members');
 
@@ -335,6 +342,14 @@ export const invitationRoutes: FastifyPluginAsync = async (app) => {
   /** List invitations for a workspace (pending + recent history). */
   app.get('/:id/invitations', async (req) => {
     const workspaceId = parseId((req.params as { id: string }).id);
+    // Non-members get the same 404 a missing workspace gets — no id oracle.
+    const ws = await app.db.query.workspaces.findFirst({ where: eq(workspaces.id, workspaceId) });
+    if (!ws) throw notFound('Workspace not found');
+    const seat = await app.db.query.workspaceMembers.findFirst({
+      where: and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, req.user!.id)),
+    });
+    if (!seat && !req.user!.isOperator) throw notFound('Workspace not found');
+
     const authority = await resolveInviteAuthority(app.db, workspaceId, req.user!.id, req.user!.isOperator);
     if (!authority) throw forbidden('Only workspace members can view invitations');
 
@@ -362,6 +377,14 @@ export const invitationRoutes: FastifyPluginAsync = async (app) => {
   app.delete('/:id/invitations/:inviteId', async (req) => {
     const workspaceId = parseId((req.params as { id: string }).id);
     const inviteId = parseId((req.params as { inviteId: string }).inviteId);
+    // Non-members get the same 404 a missing workspace gets — no id oracle.
+    const ws = await app.db.query.workspaces.findFirst({ where: eq(workspaces.id, workspaceId) });
+    if (!ws) throw notFound('Workspace not found');
+    const seat = await app.db.query.workspaceMembers.findFirst({
+      where: and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, req.user!.id)),
+    });
+    if (!seat && !req.user!.isOperator) throw notFound('Workspace not found');
+
     const authority = await resolveInviteAuthority(app.db, workspaceId, req.user!.id, req.user!.isOperator);
     if (!authority) throw forbidden('Admin or Owner role required to revoke invitations');
 

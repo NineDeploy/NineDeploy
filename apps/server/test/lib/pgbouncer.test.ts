@@ -49,6 +49,8 @@ const {
   const secretState = {
     /** id → written path. */
     written: new Map<string, string>(),
+    /** Paths whose cleanup() ran. */
+    cleaned: [] as string[],
     nextId: 0,
   };
   const fsState = {
@@ -84,7 +86,7 @@ vi.mock('../../src/lib/secretFile.js', () => ({
     const id = secretState.nextId++;
     const path = `/tmp/nd-pgb-test-${id}.${suffix}`;
     secretState.written.set(suffix, path);
-    return { path };
+    return { path, cleanup: () => { secretState.cleaned.push(path); } };
   }),
 }));
 
@@ -172,6 +174,7 @@ beforeEach(() => {
   cryptoState.decrypted.set('cipher::pw', 'plainpw');
   secretState.written.clear();
   secretState.nextId = 0;
+  secretState.cleaned.length = 0;
   fsState.unlinkCalls.length = 0;
   dbState.updates.length = 0;
   dbState.database = { id: 1 } as DbRow;
@@ -286,8 +289,8 @@ describe('enablePgbouncer', () => {
       buildDb({ pgbouncerEnabled: true, pgbouncerContainerName: 'nd-pgb-mydb' }),
       () => undefined,
     );
-    // A run happened (we re-created the container) and a row update followed.
-    expect(execState.runs.some((r) => r.args.includes('run'))).toBe(true);
+    // A create happened (we re-created the container) and a row update followed.
+    expect(execState.runs.some((r) => r.args[0] === 'create')).toBe(true);
     expect(dbState.updates.length).toBeGreaterThan(0);
   });
 
@@ -298,18 +301,27 @@ describe('enablePgbouncer', () => {
     ).rejects.toThrow(/Postgres container.*is not running/);
   });
 
-  it('pulls the image, writes config, launches the sidecar, and stamps the row', async () => {
+  it('pulls the image, copies config into the sidecar, starts it, and stamps the row', async () => {
     execState.toolResults.set('docker inspect --format {{.State.Running}} nd-pg-mydb', { stdout: 'true\n' });
     const log = vi.fn();
     await enablePgbouncer(db, buildDb(), log);
 
-    // Pull + run happened.
+    // Pull + create/cp/start happened.
     expect(execState.captures.some((r) => r.tool === 'docker' && r.args[0] === 'pull')).toBe(true);
-    const run = execState.runs.find((r) => r.tool === 'docker' && r.args[0] === 'run');
-    expect(run).toBeDefined();
-    expect(run!.args).toContain('--network');
-    expect(run!.args).toContain('nd-net');
-    expect(run!.args[run!.args.indexOf('--name') + 1]).toBe('nd-pgb-mydb');
+    const create = execState.runs.find((r) => r.args[0] === 'create');
+    expect(create).toBeDefined();
+    expect(create!.args).toContain('--network');
+    expect(create!.args).toContain('nd-net');
+    expect(create!.args[create!.args.indexOf('--name') + 1]).toBe('nd-pgb-mydb');
+    // The secret config is COPIED in (not bind-mounted), so the host-side
+    // copies could be deleted at the end of the sequence.
+    const cps = execState.runs.filter((r) => r.args[0] === 'cp');
+    expect(cps).toHaveLength(2);
+    expect(cps[0]!.args[2]).toBe('nd-pgb-mydb:/etc/pgbouncer/pgbouncer.ini');
+    expect(cps[1]!.args[2]).toBe('nd-pgb-mydb:/etc/pgbouncer/userlist.txt');
+    expect(execState.runs.some((r) => r.args[0] === 'start' && r.args[1] === 'nd-pgb-mydb')).toBe(true);
+    // No secret file bind mounts on the host.
+    expect(create!.args.join(' ')).not.toContain('-v');
 
     // Ini + userlist were written via the secretFile helper.
     expect(secretState.written.get('pgbouncer.ini')).toMatch(/\.pgbouncer\.ini$/);
@@ -323,17 +335,37 @@ describe('enablePgbouncer', () => {
 
     // Log lines were emitted.
     expect(log).toHaveBeenCalledWith(expect.stringMatching(/Pulling PgBouncer image/));
-    expect(log).toHaveBeenCalledWith(expect.stringMatching(/Starting PgBouncer sidecar/));
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(/Creating PgBouncer sidecar/));
   });
 
   it('honors a custom port from the row', async () => {
     execState.toolResults.set('docker inspect --format {{.State.Running}} nd-pg-mydb', { stdout: 'true\n' });
     await enablePgbouncer(db, buildDb({ pgbouncerPort: 7000 }), () => undefined);
-    const run = execState.runs.find((r) => r.args[0] === 'run');
-    expect(run).toBeDefined();
-    expect(run!.args).toContain('7000:7000');
+    const create = execState.runs.find((r) => r.args[0] === 'create');
+    expect(create).toBeDefined();
+    expect(create!.args).toContain('7000:7000');
     const last = dbState.updates.at(-1);
     expect(last?.set.pgbouncerPort).toBe(7000);
+  });
+
+  it('does not publish a host port for the default (network-internal) sidecar', async () => {
+    // Every sidecar binds the same default port (6432); the second enabled
+    // database would fail `docker run` with "port is already allocated".
+    // Connections go over the shared docker network by container name, so
+    // the host publish is only for an operator-chosen explicit port.
+    execState.toolResults.set('docker inspect --format {{.State.Running}} nd-pg-mydb', { stdout: 'true\n' });
+    await enablePgbouncer(db, buildDb(), () => undefined);
+    const create = execState.runs.find((r) => r.args[0] === 'create');
+    expect(create).toBeDefined();
+    expect(create!.args).not.toContain('-p');
+  });
+
+  it('removes the temp config files once the container has consumed them', async () => {
+    // The temp files carry the DB password (mode 0600 but still at rest in
+    // the shared tmp dir); they must not outlive the enable sequence.
+    execState.toolResults.set('docker inspect --format {{.State.Running}} nd-pg-mydb', { stdout: 'true\n' });
+    await enablePgbouncer(db, buildDb(), () => undefined);
+    expect(secretState.cleaned.length).toBe(2);
   });
 
   it('swallows a failing pull (network flakes, but the rest still runs)', async () => {
@@ -342,7 +374,7 @@ describe('enablePgbouncer', () => {
     });
     execState.toolResults.set('docker inspect --format {{.State.Running}} nd-pg-mydb', { stdout: 'true\n' });
     await expect(enablePgbouncer(db, buildDb(), () => undefined)).resolves.toBeUndefined();
-    expect(execState.runs.some((r) => r.args[0] === 'run')).toBe(true);
+    expect(execState.runs.some((r) => r.args[0] === 'create')).toBe(true);
   });
 
   it('uses a row-supplied pgbouncer container name verbatim', async () => {
@@ -352,9 +384,9 @@ describe('enablePgbouncer', () => {
       buildDb({ pgbouncerContainerName: 'nd-pgb-custom' }),
       () => undefined,
     );
-    const run = execState.runs.find((r) => r.args[0] === 'run');
-    expect(run).toBeDefined();
-    expect(run!.args[run!.args.indexOf('--name') + 1]).toBe('nd-pgb-custom');
+    const create = execState.runs.find((r) => r.args[0] === 'create');
+    expect(create).toBeDefined();
+    expect(create!.args[create!.args.indexOf('--name') + 1]).toBe('nd-pgb-custom');
   });
 });
 
@@ -366,7 +398,7 @@ describe('disablePgbouncer', () => {
     expect(fsState.unlinkCalls).toEqual([]);
   });
 
-  it('stops the container, clears the row, and reaps the temp files', async () => {
+  it('stops the container and clears the row (no host files to reap)', async () => {
     await disablePgbouncer(
       db,
       buildDb({ pgbouncerEnabled: true, pgbouncerContainerName: 'nd-pgb-mydb' }),
@@ -377,10 +409,9 @@ describe('disablePgbouncer', () => {
     const upd = dbState.updates.at(-1);
     expect(upd?.set.pgbouncerEnabled).toBe(false);
     expect(upd?.set.pgbouncerContainerName).toBeNull();
-    expect(fsState.unlinkCalls).toEqual([
-      '/tmp/nd-pgb-mydb.pgbouncer.ini',
-      '/tmp/nd-pgb-mydb.userlist.txt',
-    ]);
+    // Enable copies the config INTO the container and reaps its own temp
+    // files — disable has no host filesystem cleanup to do.
+    expect(fsState.unlinkCalls).toEqual([]);
   });
 
   it('falls back to the slug-derived container name when the column is null', async () => {
@@ -390,10 +421,7 @@ describe('disablePgbouncer', () => {
       () => undefined,
     );
     expect(execState.runs[0]?.args).toEqual(['rm', '-f', 'nd-pgb-orders']);
-    expect(fsState.unlinkCalls).toEqual([
-      '/tmp/nd-pgb-orders.pgbouncer.ini',
-      '/tmp/nd-pgb-orders.userlist.txt',
-    ]);
+    expect(fsState.unlinkCalls).toEqual([]);
   });
 
   it('swallows a docker rm failure (best-effort teardown)', async () => {

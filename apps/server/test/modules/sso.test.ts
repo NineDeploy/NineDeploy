@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createHash } from 'node:crypto';
 import { ssoRoutes } from '../../src/modules/sso.js';
 import { buildTestApp, asUser } from '../helpers.js';
 
@@ -958,14 +959,32 @@ describe('POST /v1/sso/:name/saml-callback', () => {
 </EntityDescriptor>`;
   }
 
-  function samlResponse(email: string): string {
+  function samlResponse(email: string, opts: { digestOverride?: string; omitDigest?: boolean; notOnOrAfter?: string } = {}): string {
+    // The DigestValue must be the sha256 (base64) of the FULL assertion
+    // element — the route now binds the signature to the assertion bytes,
+    // so a response whose assertion was swapped after signing must fail.
+    const assertion = assertionXml(email, opts.notOnOrAfter);
+    const digestValue = opts.omitDigest ? '' : opts.digestOverride ?? sha256b64(assertion);
+    const digestBlock = opts.omitDigest
+      ? '<ds:Reference />'
+      : `<ds:Reference><ds:DigestValue>${digestValue}</ds:DigestValue></ds:Reference>`;
     return `<samlp:Response>
   <ds:Signature>
-    <ds:SignedInfo>canonicalized</ds:SignedInfo>
+    <ds:SignedInfo>${digestBlock}</ds:SignedInfo>
     <ds:SignatureValue>AAAA</ds:SignatureValue>
   </ds:Signature>
-  <saml:Assertion>
-    <saml:Subject>
+  ${assertion}
+</samlp:Response>`;
+  }
+
+  function assertionXml(email: string, notOnOrAfter?: string): string {
+    // <Conditions> lives INSIDE the assertion per the SAML schema, and its
+    // NotOnOrAfter attribute defines the replay window.
+    const conditions = notOnOrAfter
+      ? `  <saml:Conditions NotBefore="2020-01-01T00:00:00Z" NotOnOrAfter="${notOnOrAfter}"></saml:Conditions>\n`
+      : '';
+    return `<saml:Assertion>
+    ${conditions}<saml:Subject>
       <saml:NameID>${email}</saml:NameID>
     </saml:Subject>
     <saml:AttributeStatement>
@@ -973,8 +992,11 @@ describe('POST /v1/sso/:name/saml-callback', () => {
         <saml:AttributeValue>${email}</saml:AttributeValue>
       </saml:Attribute>
     </saml:AttributeStatement>
-  </saml:Assertion>
-</samlp:Response>`;
+  </saml:Assertion>`;
+  }
+
+  function sha256b64(s: string): string {
+    return createHash('sha256').update(s, 'utf8').digest('base64');
   }
 
   function b64(s: string) {
@@ -1168,16 +1190,17 @@ describe('POST /v1/sso/:name/saml-callback', () => {
     // Build a SAML response with NO <AttributeStatement> — the
     // route should still locate the user by the NameID, since it
     // is itself an email address.
-    const xml = `<samlp:Response>
-  <ds:Signature>
-    <ds:SignedInfo>canonicalized</ds:SignedInfo>
-    <ds:SignatureValue>AAAA</ds:SignatureValue>
-  </ds:Signature>
-  <saml:Assertion>
+    const assertion = `<saml:Assertion>
     <saml:Subject>
       <saml:NameID>operator@example.com</saml:NameID>
     </saml:Subject>
-  </saml:Assertion>
+  </saml:Assertion>`;
+    const xml = `<samlp:Response>
+  <ds:Signature>
+    <ds:SignedInfo><ds:Reference><ds:DigestValue>${sha256b64(assertion)}</ds:DigestValue></ds:Reference></ds:SignedInfo>
+    <ds:SignatureValue>AAAA</ds:SignatureValue>
+  </ds:Signature>
+  ${assertion}
 </samlp:Response>`;
     const res = await app.inject({
       method: 'POST',
@@ -1201,7 +1224,11 @@ describe('POST /v1/sso/:name/saml-callback', () => {
     await app.register(ssoRoutes);
     const xml = `<samlp:Response>
   <ds:Signature>
-    <ds:SignedInfo>canonicalized</ds:SignedInfo>
+    <ds:SignedInfo><ds:Reference><ds:DigestValue>${sha256b64(`<saml:Assertion>
+    <saml:Subject>
+      <saml:NameID>opaque-transient-id-12345</saml:NameID>
+    </saml:Subject>
+  </saml:Assertion>`)}</ds:DigestValue></ds:Reference></ds:SignedInfo>
     <ds:SignatureValue>AAAA</ds:SignatureValue>
   </ds:Signature>
   <saml:Assertion>
@@ -1219,6 +1246,95 @@ describe('POST /v1/sso/:name/saml-callback', () => {
     const body = res.json() as { ok: boolean; error?: string };
     expect(body.ok).toBe(false);
     expect(body.error).toMatch(/no email attribute/);
+    await app.close();
+  });
+
+  it('binds the signature to the assertion — a swapped NameID fails the digest check', async () => {
+    // Attacker model: the attacker holds ANY legitimately signed response
+    // (their own low-priv login) and rewrites the NameID/email to a victim.
+    // verifySignedInfo alone still passes (SignedInfo/SignatureValue are
+    // untouched), so the DigestValue MUST be checked against the assertion
+    // bytes or this is an auth bypass.
+    verifyResult = true;
+    const meta = idpMetadata();
+    const { db, seedProvider, insert } = wiredDb('alice@example.com', meta);
+    seedProvider('corp-saml', 'saml', { idpMetadata: meta });
+    const app = await buildTestApp({ db });
+    await app.register(ssoRoutes);
+    // Digest is computed over ALICE's assertion, but the carried assertion
+    // names the ATTACKER — the signed digest no longer matches.
+    const forged = samlResponse('attacker@example.com', { digestOverride: sha256b64(assertionXml('alice@example.com')) });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/corp-saml/saml-callback',
+      headers: asUser(),
+      payload: { SAMLResponse: b64(forged) },
+    });
+    const body = res.json() as { ok: boolean; error?: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toMatch(/digest/i);
+    expect(insert).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('rejects a response whose SignedInfo carries no DigestValue', async () => {
+    verifyResult = true;
+    const meta = idpMetadata();
+    const { db, seedProvider } = wiredDb('alice@example.com', meta);
+    seedProvider('corp-saml', 'saml', { idpMetadata: meta });
+    const app = await buildTestApp({ db });
+    await app.register(ssoRoutes);
+    const xml = samlResponse('alice@example.com', { omitDigest: true });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/corp-saml/saml-callback',
+      headers: asUser(),
+      payload: { SAMLResponse: b64(xml) },
+    });
+    const body = res.json() as { ok: boolean; error?: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toMatch(/digest/i);
+    await app.close();
+  });
+
+  it('rejects an assertion whose NotOnOrAfter has passed (replay window)', async () => {
+    verifyResult = true;
+    const meta = idpMetadata();
+    const { db, seedProvider } = wiredDb('alice@example.com', meta);
+    seedProvider('corp-saml', 'saml', { idpMetadata: meta });
+    const app = await buildTestApp({ db });
+    await app.register(ssoRoutes);
+    const xml = samlResponse('alice@example.com', { notOnOrAfter: '2020-01-01T00:00:00Z' });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/corp-saml/saml-callback',
+      headers: asUser(),
+      payload: { SAMLResponse: b64(xml) },
+    });
+    const body = res.json() as { ok: boolean; error?: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toMatch(/expired/i);
+    await app.close();
+  });
+
+  it('accepts an assertion whose NotOnOrAfter is still in the future', async () => {
+    verifyResult = true;
+    const meta = idpMetadata();
+    const { db, seedProvider, insert } = wiredDb('alice@example.com', meta);
+    seedProvider('corp-saml', 'saml', { idpMetadata: meta });
+    const app = await buildTestApp({ db });
+    await app.register(ssoRoutes);
+    const future = new Date(Date.now() + 5 * 60_000).toISOString().replace(/\.\d{3}Z$/, 'Z');
+    const xml = samlResponse('alice@example.com', { notOnOrAfter: future });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/corp-saml/saml-callback',
+      headers: asUser(),
+      payload: { SAMLResponse: b64(xml) },
+    });
+    const body = res.json() as { ok: boolean };
+    expect(body.ok).toBe(true);
+    expect(insert).toHaveBeenCalledTimes(1);
     await app.close();
   });
 });

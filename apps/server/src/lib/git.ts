@@ -92,7 +92,10 @@ export async function checkoutCommit(
         // as a confusing "repository not found".
         await git.addConfig('core.sshCommand', sshCommand);
       } else if (creds?.token) {
-        await git.remote(['set-url', 'origin', injectToken(repoUrl, creds.token, creds.type)]).catch(() => undefined);
+        // NOT swallowed (same rule as core.sshCommand above): if the origin
+        // URL never updates, the fetch below runs with the STALE stored
+        // credential and fails far from the real cause.
+        await git.remote(['set-url', 'origin', injectToken(repoUrl, creds.token, creds.type)]);
       }
       sink('Fetching latest…');
       await git.fetch(['--all']);

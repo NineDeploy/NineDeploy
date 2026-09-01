@@ -62,8 +62,11 @@ export const SECRET_PATTERNS: ReadonlyArray<SecretPattern> = [
   },
   {
     id: 'openai-secret',
-    description: 'OpenAI API key (sk-…)',
-    regex: /\bsk-[A-Za-z0-9]{48,}\b/,
+    description: 'OpenAI API key (sk-… / sk-proj-…)',
+    // `(?!ant-)` keeps Anthropic keys single-matched under the anthropic-key
+    // rule; `proj-` is the current project-key prefix whose character set
+    // includes `-`/`_`.
+    regex: /\bsk-(?!ant-)(?:proj-)?[A-Za-z0-9_-]{40,}\b/,
   },
   {
     id: 'anthropic-key',
@@ -104,6 +107,16 @@ export interface SecretHit {
   redacted: string;
 }
 
+// The scan appends the `g` flag to every pattern — a pattern that already
+// declared it would produce `gg` and throw Invalid flag at scan time. Fail
+// at import instead, where a developer sees it immediately.
+for (const p of SECRET_PATTERNS) {
+  /* v8 ignore next 3 — developer-error guard, not reachable via valid patterns */
+  if (p.regex.flags.includes('g')) {
+    throw new Error(`secret pattern "${p.id}" must not declare the g flag (the scanner adds it)`);
+  }
+}
+
 /**
  * Run every secret pattern across `text` and return every hit.
  *
@@ -113,19 +126,21 @@ export interface SecretHit {
 export function scanForSecrets(text: string): SecretHit[] {
   const hits: SecretHit[] = [];
   for (const pattern of SECRET_PATTERNS) {
-    // Reset stateful `g` regexes (defensive — none of ours use `g` today).
-    pattern.regex.lastIndex = 0;
-    const match = pattern.regex.exec(text);
-    if (!match || match.index === undefined) continue;
-    const start = match.index;
-    const end = start + match[0].length;
-    hits.push({
-      patternId: pattern.id,
-      description: pattern.description,
-      start,
-      end,
-      redacted: redact(match[0]),
-    });
+    // matchAll requires the `g` flag; build a per-call global copy so the
+    // module-level regexes never carry stateful lastIndex between scans,
+    // and so EVERY occurrence is reported (the contract says "every hit").
+    const global = new RegExp(pattern.regex.source, `${pattern.regex.flags}g`);
+    for (const match of text.matchAll(global)) {
+      const start = match.index;
+      const end = start + match[0].length;
+      hits.push({
+        patternId: pattern.id,
+        description: pattern.description,
+        start,
+        end,
+        redacted: redact(match[0]),
+      });
+    }
   }
   // Sort by start position so the redacted-log line reads in document order.
   return hits.sort((a, b) => a.start - b.start);

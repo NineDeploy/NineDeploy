@@ -4,6 +4,14 @@ import { slug } from './common.js';
 export const workspaceRoleEnum = z.enum(['owner', 'admin', 'member', 'viewer']);
 export type WorkspaceRole = z.infer<typeof workspaceRoleEnum>;
 
+/** Roles that may be GRANTED directly when adding a member or creating an
+ *  invitation. 'owner' is deliberately excluded: the PATCH member route is
+ *  the only place that performs the full ownership transfer (demote the
+ *  current owner, re-key `workspaces.ownerId`) — an owner-rank row inserted
+ *  through add/invite would mint owner authority without that bookkeeping. */
+export const assignableWorkspaceRoleEnum = z.enum(['admin', 'member', 'viewer']);
+export type AssignableWorkspaceRole = z.infer<typeof assignableWorkspaceRoleEnum>;
+
 export const workspaceCreate = z.object({
   name: z.string().trim().min(2).max(63),
   slug: slug.optional(),
@@ -23,7 +31,7 @@ export type WorkspaceUpdateInput = WorkspaceUpdate;
 
 export const workspaceMemberAdd = z.object({
   email: z.string().email(),
-  role: workspaceRoleEnum.default('member'),
+  role: assignableWorkspaceRoleEnum.default('member'),
 });
 export type WorkspaceMemberAdd = z.infer<typeof workspaceMemberAdd>;
 export type WorkspaceMemberAddInput = WorkspaceMemberAdd;
@@ -85,7 +93,7 @@ export interface WorkspaceDetail extends WorkspaceEntry {
 // being promoted by an auto-accept hook on first login / OIDC).
 export const workspaceInvitationCreate = z.object({
   email: z.string().email().max(254),
-  role: workspaceRoleEnum.default('member'),
+  role: assignableWorkspaceRoleEnum.default('member'),
 });
 export type WorkspaceInvitationCreate = z.infer<typeof workspaceInvitationCreate>;
 export type WorkspaceInvitationCreateInput = WorkspaceInvitationCreate;

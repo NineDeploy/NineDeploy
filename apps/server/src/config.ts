@@ -5,8 +5,12 @@ import { env } from './env.js';
 
 /* v8 ignore start */
 const here = path.dirname(fileURLToPath(import.meta.url));
-// Locate monorepo root (two levels up from apps/server/src or apps/server/dist)
-const repoRoot = existsSync(path.resolve(here, '../../package.json')) ? path.resolve(here, '../..') : process.cwd();
+// Locate monorepo root: THREE levels up from apps/server/{src,dist} (src →
+// server → apps → root). Two levels pointed at `apps/`, whose package.json
+// never exists — the branch was dead and the data dir silently followed the
+// process cwd (a restart from a different cwd provisioned a fresh .data with
+// a NEW master key, making every stored secret undecryptable).
+const repoRoot = existsSync(path.resolve(here, '../../../package.json')) ? path.resolve(here, '../../..') : process.cwd();
 
 /** Resolve a possibly-relative path against the repoRoot if not absolute. */
 const resolve = (p: string) => (p.startsWith('file:') ? p : path.isAbsolute(p) ? p : path.resolve(repoRoot, p));

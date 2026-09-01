@@ -99,7 +99,9 @@ function classify(
   expiringThresholdDays: number,
 ): CertificateInventoryEntry['status'] {
   if (!expiresAt || days === null) return 'unknown';
-  if (days < 0) return 'expired';
+  // `<= 0`, not `< 0`: daysUntil uses Math.ceil, so anything expired within
+  // the last 24h is -0, and `-0 < 0` is false in JS.
+  if (days <= 0) return 'expired';
   if (days <= expiringThresholdDays) return 'expiring-soon';
   return 'valid';
 }

@@ -92,7 +92,39 @@ export async function finishRegistration(
 }
 
 // ── authentication ─────────────────────────────────────────────────────────
-const LOGIN_KEY = 'login';
+// Login challenges are stored under their OWN value (`login:<challenge>`),
+// not in one global slot: a single slot let any later beginAuthentication()
+// break every still-pending login, and since the begin endpoint is
+// unauthenticated, one anonymous request could reset all in-flight
+// ceremonies. Registration stays per-user (`reg:<userId>`).
+
+function rememberLogin(challenge: string): void {
+  remember(`login:${challenge}`, challenge);
+}
+
+/** Single-use: consumes the stored challenge so it cannot verify twice. */
+function consumeLogin(challenge: string | null): string | null {
+  if (!challenge) return null;
+  return consume(`login:${challenge}`);
+}
+
+/**
+ * The claimed challenge comes from the assertion's clientDataJSON. At this
+ * point that payload is not yet trusted — verifyAuthenticationResponse still
+ * enforces that the SIGNED clientDataJSON carries the expectedChallenge we
+ * hand it — so the extraction only picks WHICH stored challenge must match.
+ */
+function claimedLoginChallenge(response: unknown): string | null {
+  try {
+    const r = response as { response?: { clientDataJSON?: unknown } };
+    const json = r?.response?.clientDataJSON;
+    if (typeof json !== 'string') return null;
+    const parsed = JSON.parse(Buffer.from(json, 'base64url').toString('utf8')) as { challenge?: unknown };
+    return typeof parsed.challenge === 'string' ? parsed.challenge : null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * L-5: `allowCredentials` is deliberately EMPTY.
@@ -115,7 +147,7 @@ export async function beginAuthentication(): Promise<string> {
     userVerification: 'preferred',
     allowCredentials: [],
   });
-  remember(LOGIN_KEY, options.challenge);
+  rememberLogin(options.challenge);
   return JSON.stringify(options);
 }
 
@@ -123,7 +155,7 @@ export async function finishAuthentication(
   credential: Pick<WebauthnCredential, 'credentialId' | 'publicKey' | 'counter'>,
   response: unknown,
 ): Promise<number> {
-  const expectedChallenge = consume(LOGIN_KEY);
+  const expectedChallenge = consumeLogin(claimedLoginChallenge(response));
   if (!expectedChallenge) throw new Error('No pending login challenge — start again');
   const { rpID, origin } = rpIdentity();
   const verification = await verifyAuthenticationResponse({

@@ -135,6 +135,41 @@ describe('services routes', () => {
     expect(res.json()).toMatchObject({ id: 4, slug: 'my-app' });
   });
 
+  it('refuses a member-supplied sourceId on create (operator-managed credentials)', async () => {
+    // Sources hold operator-managed deploy keys/tokens; a member guessing id 1
+    // could otherwise clone the operator's PRIVATE repos into their own
+    // container and read the source.
+    const app = await buildTestApp({
+      db: createFakeDb({
+        insert: { services: [svcRow({ id: 4, name: 'My App', slug: 'my-app' })] },
+      }),
+    });
+    await app.register(servicesRoutes);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/',
+      headers: asUser({ id: 7, isOperator: false }),
+      payload: { ...validCreate, sourceId: 1 },
+    });
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('refuses a member-supplied sourceId on patch (operator-managed credentials)', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { services: svcRow({ id: 1, ownerUserId: 7, runtimeId: 'nd-svc-web' }) },
+      }),
+    });
+    await app.register(servicesRoutes);
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/1',
+      headers: asUser({ id: 7, isOperator: false }),
+      payload: { sourceId: 1 },
+    });
+    expect(res.statusCode).toBe(403);
+  });
+
   it('persists trusted command, socket and database mappings from a Hub template', async () => {
     let inserted: Record<string, unknown> | undefined;
     const app = await buildTestApp({
@@ -551,14 +586,20 @@ describe('services routes', () => {
       }),
     });
     // The compose stop path resolves the project from the container's own
-    // compose labels (project + config file, tab-separated).
-    execMocks.capture.mockResolvedValueOnce('ndcmp-stack\t/app/compose.yaml');
+    // compose labels (project + config file, tab-separated). The stop path
+    // passes only config files that still EXIST — the label records the
+    // deploy-time override too, which the pipeline deletes afterwards — so
+    // the recorded file here must be a real one on disk.
+    const composeFile = path.join(mkdtempSync(path.join(os.tmpdir(), 'nd-svc-stop-')), 'compose.yaml');
+    writeFileSync(composeFile, 'services: {}\n');
+    execMocks.capture.mockResolvedValueOnce(`ndcmp-stack\t${composeFile}`);
     await app.register(servicesRoutes);
     const res = await app.inject({ method: 'DELETE', url: '/1', headers: asUser() });
     expect(res.statusCode).toBe(204);
     const composeCall = execMocks.run.mock.calls.find((c) => (c[1] as string[])[0] === 'compose');
     expect(composeCall).toBeTruthy();
-    expect((composeCall![1] as string[])).toEqual(['compose', '-p', 'ndcmp-stack', '-f', '/app/compose.yaml', 'down', '--remove-orphans']);
+    expect((composeCall![1] as string[])).toEqual(['compose', '-p', 'ndcmp-stack', '-f', composeFile, 'down', '--remove-orphans']);
+    rmSync(path.dirname(composeFile), { recursive: true, force: true });
   });
 
   it('stops and removes the docker container and rewrites traefik config on delete', async () => {

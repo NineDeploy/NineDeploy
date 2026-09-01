@@ -22,6 +22,12 @@ vi.mock('../../src/config.js', () => ({ config: { publicUrl: 'https://panel.exam
 
 const user = { id: 1, email: 'admin@example.com', name: 'Admin' };
 
+/** Assertion fixture carrying its challenge in clientDataJSON (as browsers do). */
+const authResponse = (challenge: string): unknown => ({
+  id: 'cred-id',
+  response: { clientDataJSON: Buffer.from(JSON.stringify({ challenge })).toString('base64url') },
+});
+
 describe('lib/webauthn', () => {
   it('begins a registration ceremony with exclude credentials', async () => {
     const options = await beginRegistration(user, [{ credentialId: 'existing', transports: ['internal'] }]);
@@ -62,7 +68,7 @@ describe('lib/webauthn', () => {
   it('round-trips an authentication ceremony', async () => {
     const options = await beginAuthentication([{ credentialId: 'cred-id', transports: [] }]);
     expect(JSON.parse(options).challenge).toBe('auth-challenge');
-    const counter = await finishAuthentication({ credentialId: 'cred-id', publicKey: 'AQID', counter: 0 }, { id: 'cred-id' });
+    const counter = await finishAuthentication({ credentialId: 'cred-id', publicKey: 'AQID', counter: 0 }, authResponse('auth-challenge'));
     expect(counter).toBe(8);
     const call = swaMocks.verifyAuthenticationResponse.mock.calls.at(-1)![0] as Record<string, unknown>;
     expect(call.expectedRPID).toBe('panel.example.com');
@@ -77,7 +83,25 @@ describe('lib/webauthn', () => {
   it('propagates authentication verification failures', async () => {
     await beginAuthentication([]);
     swaMocks.verifyAuthenticationResponse.mockResolvedValueOnce({ verified: false, authenticationInfo: undefined });
-    await expect(finishAuthentication({ credentialId: 'c', publicKey: 'AQID', counter: 0 }, {})).rejects.toThrow(/verification failed/);
+    await expect(finishAuthentication({ credentialId: 'c', publicKey: 'AQID', counter: 0 }, authResponse('auth-challenge'))).rejects.toThrow(/verification failed/);
+  });
+
+  it('keeps concurrent login ceremonies isolated (no global challenge slot)', async () => {
+    // Distinct challenges per begin — a single global slot would clobber the first.
+    swaMocks.generateAuthenticationOptions
+      .mockResolvedValueOnce({ challenge: 'ch-1' })
+      .mockResolvedValueOnce({ challenge: 'ch-2' });
+    await beginAuthentication([]);
+    await beginAuthentication([]);
+    // Ceremony 1 finishes with ITS challenge after ceremony 2 began.
+    const counter = await finishAuthentication({ credentialId: 'c', publicKey: 'AQID', counter: 0 }, authResponse('ch-1'));
+    expect(counter).toBe(8);
+    const call = swaMocks.verifyAuthenticationResponse.mock.calls.at(-1)![0] as Record<string, unknown>;
+    expect(call.expectedChallenge).toBe('ch-1');
+    // Ceremony 2 still verifies with its own challenge afterwards.
+    await expect(
+      finishAuthentication({ credentialId: 'c', publicKey: 'AQID', counter: 8 }, authResponse('ch-2')),
+    ).resolves.toBe(8);
   });
 
   it('falls back to the email as display name', async () => {

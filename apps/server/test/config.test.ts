@@ -26,15 +26,20 @@ describe('config', () => {
     }
 
     const config = await loadConfig();
-    const cwd = process.cwd();
+    // The default data dir anchors to the MONOREPO ROOT (three levels up from
+    // apps/server/{src,dist}), NOT the process cwd: a restart from a different
+    // working directory must not provision a fresh .data with a new master key
+    // (that would make every stored secret undecryptable).
+    const moduleDir = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'));
+    const repoRoot = path.resolve(moduleDir, '..', '..', '..');
 
     expect(config.env).toBe('development');
     expect(config.isProd).toBe(false);
     expect(config.host).toBe('0.0.0.0');
     expect(config.port).toBe(3000);
-    expect(config.paths.dataDir).toBe(path.resolve(cwd, './.data'));
-    expect(config.paths.dbFile).toBe(path.resolve(cwd, './.data/ninedeploy.db'));
-    expect(config.dbUrl).toBe(`file:${path.resolve(cwd, './.data/ninedeploy.db')}`);
+    expect(config.paths.dataDir).toBe(path.resolve(repoRoot, './.data'));
+    expect(config.paths.dbFile).toBe(path.resolve(repoRoot, './.data/ninedeploy.db'));
+    expect(config.dbUrl).toBe(`file:${path.resolve(repoRoot, './.data/ninedeploy.db')}`);
     expect(config.jwt.secret).toBe('dev-insecure-secret-change-me');
     expect(config.wildcardDomain).toBe('');
 

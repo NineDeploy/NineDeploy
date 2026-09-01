@@ -62,9 +62,13 @@ export const buildCacheRoutes: FastifyPluginAsync = async (app) => {
    * `deploy:after` hook calls this in addition to the in-process
    * `IBuildCache.store()` so an external operator (e.g. a CI runner
    * that already produced the image) can also publish a digest.
+   *
+   * Operator-gated: any authenticated member writing shared keys would
+   * poison digests that other services' builds chain from.
    */
   app.post<{ Body: { cacheName?: string; key: string; digest: string; sizeBytes?: number } }>(
     '/store',
+    { preHandler: app.requireOperator },
     async (req) => {
       const { cacheName, key, digest, sizeBytes } = req.body ?? ({} as Record<string, unknown>);
       if (typeof key !== 'string' || key.length === 0) {

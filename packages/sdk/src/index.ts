@@ -1639,7 +1639,7 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
       list: () => get<{ networks: Array<{ name: string; driver: string; members: string[] }>; remote: number | null }>('/v1/networks'),
       create: (input) => send<{ ok: boolean; name: string }>('POST', '/v1/networks', { driver: 'bridge', ...input }),
       remove: (name, serverId) =>
-        send<{ ok: boolean }>('DELETE', `/v1/networks/${encodeURIComponent(name)}${serverId ? `?serverId=${serverId}` : ''}`),
+        send<{ ok: boolean }>('DELETE', `/v1/networks/${encodeURIComponent(name)}${serverId != null ? `?serverId=${serverId}` : ''}`),
       attach: (input) => send<{ ok: boolean }>('POST', '/v1/networks/attach', input),
       detach: (input) => send<{ ok: boolean }>('POST', '/v1/networks/detach', input),
     },
@@ -1821,12 +1821,15 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
         send<{ ok: boolean; deploymentId: number }>('POST', `/v1/services/${serviceId}/volumes/config-repair`, input),
     },
     volumeBackups: {
-      list: (volumeName) => get<Backup[]>(`/v1/volumes/${volumeName}/backups`),
+      // Path segments are user-visible names: encode them like the rest of
+      // the client does, or '?'/'#'/'%' in a volume name rewrite the URL.
+      list: (volumeName) => get<Backup[]>(`/v1/volumes/${encodeURIComponent(volumeName)}/backups`),
       create: (volumeName, input) =>
-        send<Backup>('POST', `/v1/volumes/${volumeName}/backups`, input),
+        send<Backup>('POST', `/v1/volumes/${encodeURIComponent(volumeName)}/backups`, input),
       restore: (volumeName, backupId) =>
-        send<{ ok: boolean }>('POST', `/v1/volumes/${volumeName}/backups/${backupId}/restore`),
-      downloadUrl: (volumeName, backupId) => `/v1/volumes/${volumeName}/backups/${backupId}/download`,
+        send<{ ok: boolean }>('POST', `/v1/volumes/${encodeURIComponent(volumeName)}/backups/${backupId}/restore`),
+      downloadUrl: (volumeName, backupId) =>
+        `/v1/volumes/${encodeURIComponent(volumeName)}/backups/${backupId}/download`,
     },
     env: {
       list: (serviceId) => get<EnvVar[]>(`/v1/services/${serviceId}/env`),
@@ -1863,9 +1866,9 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
     },
     templates: {
       list: () => get<TemplateSummary[]>('/v1/templates'),
-      get: (id) => get<Template>(`/v1/templates/${id}`),
-      prepare: (id, input) => send<TemplatePrepareResult>('POST', `/v1/templates/${id}/prepare`, input ?? {}),
-      deploy: (id, input) => send<TemplateDeployResult>('POST', `/v1/templates/${id}/deploy`, input ?? {}),
+      get: (id) => get<Template>(`/v1/templates/${encodeURIComponent(id)}`),
+      prepare: (id, input) => send<TemplatePrepareResult>('POST', `/v1/templates/${encodeURIComponent(id)}/prepare`, input ?? {}),
+      deploy: (id, input) => send<TemplateDeployResult>('POST', `/v1/templates/${encodeURIComponent(id)}/deploy`, input ?? {}),
       community: {
         list: () => get<CommunityTemplateListResult>('/v1/templates/community'),
         import: (content, opts) =>
@@ -1875,7 +1878,7 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
             { content, ...(opts ?? {}) },
           ),
         remove: (id) =>
-          send<{ ok: boolean; id: string; removed: boolean }>('DELETE', `/v1/templates/community/${id}`),
+          send<{ ok: boolean; id: string; removed: boolean }>('DELETE', `/v1/templates/community/${encodeURIComponent(id)}`),
       },
     },
     backups: {
@@ -1927,11 +1930,14 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
       certificates: () => get<TraefikCertificate[]>('/v1/traefik/certificates'),
       certificateInventory: (opts) =>
         get<CertificateInventoryReport>(
-          `/v1/traefik/certificates/inventory${opts?.threshold ? `?threshold=${opts.threshold}` : ''}`,
+          // `!= null` (not truthiness): 0 ("only already-expired") is a real
+          // threshold and must reach the server, not silently become the
+          // server-side default of 30.
+          `/v1/traefik/certificates/inventory${opts?.threshold != null ? `?threshold=${opts.threshold}` : ''}`,
         ),
       expiringCertificates: (opts) =>
         get<{ threshold: number; count: number; certificates: CertificateInventoryEntry[] }>(
-          `/v1/traefik/certificates/expiring${opts?.days ? `?days=${opts.days}` : ''}`,
+          `/v1/traefik/certificates/expiring${opts?.days != null ? `?days=${opts.days}` : ''}`,
         ),
       logs: (lines = 50) => get<{ logs: string[] }>(`/v1/traefik/logs?lines=${lines}`),
       restart: () => send<{ ok: boolean; message: string }>('POST', '/v1/traefik/restart'),

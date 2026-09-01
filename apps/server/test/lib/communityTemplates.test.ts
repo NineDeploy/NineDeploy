@@ -206,5 +206,27 @@ describe('lib/communityTemplates', () => {
       const result = await removeCommunityTemplate('nope');
       expect(result).toEqual({ id: 'nope', removed: false });
     });
+
+    it('rejects an import whose id would traverse out of the community dir', async () => {
+      // The id becomes the FILE NAME (`<id>.json`); a crafted id must never
+      // escape `<dataDir>/community-templates/`.
+      await expect(
+        importCommunityTemplate(JSON.stringify(validTemplate('../traversal-victim')), {}),
+      ).rejects.toThrow(/filename-safe|Invalid template id/i);
+      expect(existsSync(join(ROOT, 'traversal-victim.json'))).toBe(false);
+
+      await expect(
+        importCommunityTemplate(JSON.stringify(validTemplate('sub/dir')), {}),
+      ).rejects.toThrow(/filename-safe|Invalid template id/i);
+      expect(existsSync(join(ROOT, 'sub'))).toBe(false);
+    });
+
+    it('rejects a remove whose id would traverse out of the community dir', async () => {
+      // Plant a victim file OUTSIDE the community dir, then try to unlink it
+      // through the remove path. The guard throws before any FS access.
+      writeFileSync(join(ROOT, 'victim.json'), '{}', 'utf8');
+      await expect(removeCommunityTemplate('../victim')).rejects.toThrow(/Invalid template id/);
+      expect(existsSync(join(ROOT, 'victim.json'))).toBe(true);
+    });
   });
 });

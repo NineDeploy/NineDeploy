@@ -9,7 +9,7 @@ import { analyzeRepo } from '../lib/frameworks.js';
 import { checkoutCommit, type CloneCreds } from '../lib/git.js';
 import { decrypt } from '../lib/crypto.js';
 import { config } from '../config.js';
-import { badRequest, notFound, parseId } from '../lib/errors.js';
+import { badRequest, forbidden, notFound, parseId } from '../lib/errors.js';
 import { loadServiceForUser } from '../lib/serviceAccess.js';
 import { EgressBlockedError } from '../lib/egressGuard.js';
 import { serializeInsights, upsertInsights } from '../engine/repoInsights.js';
@@ -47,6 +47,14 @@ export const insightsRoutes: FastifyPluginAsync = async (app) => {
     { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } },
     async (req) => {
       const input = analyzeRepoInput.parse(req.body);
+      // Sources are system-wide operator credentials (sourcesRoutes is
+      // requireAdmin). A member attaching a guessed sourceId here would get
+      // the operator's decrypted token attached to a clone of ANY repoUrl —
+      // a cheap private-repo existence/stack probe, or full exfiltration via
+      // a later service create.
+      if (input.sourceId != null && !req.user!.isOperator) {
+        throw forbidden('Only operators may analyze a repository with a managed source');
+      }
       const creds = await resolveCreds(app.db, input.sourceId);
       const dir = path.join(config.paths.reposDir, '_inspections', randomUUID());
       try {

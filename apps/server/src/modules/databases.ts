@@ -1,4 +1,4 @@
-﻿import { existsSync, unlinkSync } from 'node:fs';
+import { existsSync, unlinkSync } from 'node:fs';
 import { and, eq } from 'drizzle-orm';
 import { audit } from '../lib/audit.js';
 import { backups, databaseAttachments, databases, projects, type Database } from '@ninedeploy/db';
@@ -19,6 +19,7 @@ import {
 } from '../engine/database.js';
 import { decrypt, encrypt, randomToken } from '../lib/crypto.js';
 import {
+  assertServiceRole,
   assertWorkspaceMember,
   assertDatabaseRole,
   loadDatabaseForUser,
@@ -31,6 +32,28 @@ import { slugify } from '../lib/slug.js';
 /** Docker volume names only: prevents `existingVolume` from becoming a bind
  *  mount operand (`/etc`, `/:/x`) in `docker run -v <name>:<path>`. */
 const DOCKER_VOLUME_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
+
+/**
+ * Per-volume creation lock. The volume-clash check and the row insert are
+ * separated by awaits: two concurrent creates with the same `existingVolume`
+ * could both pass the check and both mount one data directory — the loser's
+ * re-key would leave the winner's stored credentials unable to reach the
+ * volume at all. SQLite serializes the WRITES, not the check-then-act window;
+ * this in-process chain closes it. The panel runs as a single Node process,
+ * so a module-level chain is a complete guard.
+ */
+const volumeClaims = new Map<string, Promise<unknown>>();
+
+async function serializeOnVolume<T>(volumeName: string, fn: () => Promise<T>): Promise<T> {
+  const prev = volumeClaims.get(volumeName) ?? Promise.resolve();
+  const next = prev.then(fn, fn);
+  volumeClaims.set(volumeName, next);
+  try {
+    return await next;
+  } finally {
+    if (volumeClaims.get(volumeName) === next) volumeClaims.delete(volumeName);
+  }
+}
 
 function serialize(
   d: Database & {
@@ -130,72 +153,79 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
     // A volume name can only belong to one database row: two rows mounting the
     // same data directory would fight over the engine's lock and (worse) a new
     // row would re-key the other database's credentials out from under it.
-    const [volumeClash] = await app.db.select().from(databases).where(eq(databases.volumeName, volumeName));
-    if (volumeClash) throw badRequest(`Volume "${volumeName}" already belongs to database "${volumeClash.name}"`);
+    // Check + insert run under the per-volume lock: awaits between them would
+    // otherwise let two concurrent creates both pass the check.
+    const claimed = await serializeOnVolume(volumeName, async () => {
+      const [volumeClash] = await app.db.select().from(databases).where(eq(databases.volumeName, volumeName));
+      if (volumeClash) throw badRequest(`Volume "${volumeName}" already belongs to database "${volumeClash.name}"`);
 
-    if (input.reuseExisting) {
-      const existing = await app.db.query.databases.findFirst({ where: eq(databases.slug, slug) });
-      if (existing) {
-        const sameRequest =
-          existing.ownerUserId === req.user!.id &&
-          existing.engine === input.engine &&
-          existing.projectId === (input.projectId ?? null) &&
-          existing.version === version;
-        if (!sameRequest) throw badRequest('A different database already uses this name');
+      if (input.reuseExisting) {
+        const existing = await app.db.query.databases.findFirst({ where: eq(databases.slug, slug) });
+        if (existing) {
+          const sameRequest =
+            existing.ownerUserId === req.user!.id &&
+            existing.engine === input.engine &&
+            existing.projectId === (input.projectId ?? null) &&
+            existing.version === version;
+          if (!sameRequest) throw badRequest('A different database already uses this name');
 
-        try {
-          // A reused row whose adoption never completed (failed first attempt
-          // left it 'error' with a NULL marker) must not boot the retained
-          // volume's stale credentials — same gate the fresh-create path runs.
-          if (needsVolumeAdoption(existing)) {
-            await adoptRetainedVolume(existing, (line) => app.log.info({ component: 'database' }, line));
+          try {
+            // A reused row whose adoption never completed (failed first attempt
+            // left it 'error' with a NULL marker) must not boot the retained
+            // volume's stale credentials — same gate the fresh-create path runs.
+            if (needsVolumeAdoption(existing)) {
+              await adoptRetainedVolume(existing, (line) => app.log.info({ component: 'database' }, line));
+            }
+            await startDatabase(existing, (line) => app.log.info({ component: 'database' }, line));
+            const resumed = {
+              ...existing,
+              status: 'running' as const,
+              internalHost: existing.containerName,
+              internalPort: defaultPort(existing.engine),
+            };
+            await app.db
+              .update(databases)
+              .set({
+                status: resumed.status,
+                internalHost: resumed.internalHost,
+                internalPort: resumed.internalPort,
+                initializedAt: existing.initializedAt ?? new Date(),
+              })
+              .where(eq(databases.id, existing.id));
+            void audit(app.db, req.user!.id, 'database.reuse', existing.name);
+            return { kind: 'reused' as const, payload: serialize(resumed, { isAdmin: req.user?.isOperator === true }) };
+          } catch (err) {
+            await app.db.update(databases).set({ status: 'error' }).where(eq(databases.id, existing.id));
+            throw badRequest(`Failed to start database: ${err instanceof Error ? err.message : err}`);
           }
-          await startDatabase(existing, (line) => app.log.info({ component: 'database' }, line));
-          const resumed = {
-            ...existing,
-            status: 'running' as const,
-            internalHost: existing.containerName,
-            internalPort: defaultPort(existing.engine),
-          };
-          await app.db
-            .update(databases)
-            .set({
-              status: resumed.status,
-              internalHost: resumed.internalHost,
-              internalPort: resumed.internalPort,
-              initializedAt: existing.initializedAt ?? new Date(),
-            })
-            .where(eq(databases.id, existing.id));
-          void audit(app.db, req.user!.id, 'database.reuse', existing.name);
-          return serialize(resumed, { isAdmin: req.user?.isOperator === true });
-        } catch (err) {
-          await app.db.update(databases).set({ status: 'error' }).where(eq(databases.id, existing.id));
-          throw badRequest(`Failed to start database: ${err instanceof Error ? err.message : err}`);
         }
       }
-    }
 
-    const [created] = await app.db
-      .insert(databases)
-      .values({
-        projectId: input.projectId ?? null,
-        // Stamped so the creator keeps access even for a project-less database.
-        ownerUserId: req.user!.id,
-        name: input.name,
-        slug,
-        engine: input.engine,
-        version,
-        status: 'creating',
-        containerName,
-        volumeName,
-        username: cfg.username() ?? null,
-        passwordEncrypted: encrypt(password),
-        dbName: cfg.dbName() ?? null,
-        extensions: input.extensions ?? [],
-        webGuiEnabled: input.webGuiEnabled ?? false,
-      })
-      .returning();
-    if (!created) throw badRequest('Could not create database');
+      const [created] = await app.db
+        .insert(databases)
+        .values({
+          projectId: input.projectId ?? null,
+          // Stamped so the creator keeps access even for a project-less database.
+          ownerUserId: req.user!.id,
+          name: input.name,
+          slug,
+          engine: input.engine,
+          version,
+          status: 'creating',
+          containerName,
+          volumeName,
+          username: cfg.username() ?? null,
+          passwordEncrypted: encrypt(password),
+          dbName: cfg.dbName() ?? null,
+          extensions: input.extensions ?? [],
+          webGuiEnabled: input.webGuiEnabled ?? false,
+        })
+        .returning();
+      if (!created) throw badRequest('Could not create database');
+      return { kind: 'created' as const, created };
+    });
+    if (claimed.kind === 'reused') return claimed.payload;
+    const created = claimed.created;
 
     try {
       // The fresh row's password is what apps will receive; a retained volume
@@ -220,6 +250,13 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
       with: { attachments: { with: { service: true } } },
     });
     void audit(app.db, req.user!.id, 'database.create', input.name);
+    app.kernel?.events.emit('database.created', {
+      databaseId: created.id,
+      // The column is nullable (unlinked legacy rows); the event contract wants a number.
+      projectId: created.projectId ?? 0,
+      name: created.name,
+      engine: created.engine,
+    });
     return serialize(updated!, { isAdmin: req.user?.isOperator === true });
   });
 
@@ -313,6 +350,11 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
       }
     }
     void audit(app.db, req.user!.id, 'database.delete', d.name);
+    app.kernel?.events.emit('database.deleted', {
+      databaseId: d.id,
+      name: d.name,
+      volumeRetained: true,
+    });
     return { ok: true };
   });
 
@@ -353,6 +395,9 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
     await stopDatabase(d, (line) => app.log.info({ component: 'database' }, line));
     await app.db.update(databases).set({ status: 'stopped' }).where(eq(databases.id, d.id));
     void audit(app.db, req.user!.id, 'database.stop', d.name);
+    app.kernel?.events.emit('database.stopped', {
+      databaseId: d.id,
+    });
     return { ok: true };
   });
 
@@ -371,6 +416,9 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
       .set({ status: 'running', initializedAt: d.initializedAt ?? new Date() })
       .where(eq(databases.id, d.id));
     void audit(app.db, req.user!.id, 'database.start', d.name);
+    app.kernel?.events.emit('database.started', {
+      databaseId: d.id,
+    });
     return { ok: true };
   });
 
@@ -454,7 +502,11 @@ export const attachmentRoutes: FastifyPluginAsync = async (app) => {
     // like `MY ALIAS` would otherwise be injected verbatim into the service's
     // runtime env and break `docker run --env-file` at deploy time.
     const input = createAttachment.parse(req.body ?? {});
-    await loadServiceForUser(app.db, id, req.user!);
+    const svc = await loadServiceForUser(app.db, id, req.user!);
+    // Write route → `member` floor (docs/WORKSPACES_RBAC.md): a viewer is
+    // read-only. Attaching injects the database's decrypted connection string
+    // into the service's runtime env at deploy time.
+    await assertServiceRole(app.db, svc, req.user!, 'member');
     // BOTH sides need an access decision. Checking only the service let a
     // member attach ANY database id to a service they own — the deploy
     // pipeline then injects that database's decrypted password and connection
@@ -480,7 +532,10 @@ export const attachmentRoutes: FastifyPluginAsync = async (app) => {
   app.delete('/:id/attachments/:attId', async (req) => {
     const id = num((req.params as { id: string }).id);
     const attId = num((req.params as { attId: string }).attId);
-    await loadServiceForUser(app.db, id, req.user!);
+    const svc = await loadServiceForUser(app.db, id, req.user!);
+    // Detaching breaks the runtime env of a (possibly shared) service — a
+    // write, not a read.
+    await assertServiceRole(app.db, svc, req.user!, 'member');
     const deleted = await app.db
       .delete(databaseAttachments)
       .where(and(eq(databaseAttachments.id, attId), eq(databaseAttachments.serviceId, id)))

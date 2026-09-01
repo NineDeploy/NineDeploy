@@ -17,6 +17,10 @@ export function QrCode({ value, size = 180, className = '', alt = 'QR Code' }: Q
       return;
     }
 
+    // Generation is async; a slow run for the PREVIOUS value must never
+    // overwrite the current one (e.g. a regenerated TOTP secret rendering
+    // the old QR).
+    let cancelled = false;
     QRCode.toDataURL(value, {
       margin: 1,
       width: size * 2, // Hi-DPI
@@ -26,8 +30,15 @@ export function QrCode({ value, size = 180, className = '', alt = 'QR Code' }: Q
         light: '#ffffff',
       },
     })
-      .then((url) => setDataUrl(url))
-      .catch(() => setDataUrl(null));
+      .then((url) => {
+        if (!cancelled) setDataUrl(url);
+      })
+      .catch(() => {
+        if (!cancelled) setDataUrl(null);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [value, size]);
 
   if (!dataUrl) {

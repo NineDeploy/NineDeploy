@@ -14,7 +14,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { createClient } from '@ninedeploy/sdk';
 import { deploysRoutes } from '../src/modules/deploys.js';
-import { asUser, buildTestApp, createFakeDb, depRow, svcRow } from './helpers.js';
+import { buildTestApp, createFakeDb, depRow, svcRow } from './helpers.js';
 
 const authMocks = vi.hoisted(() => ({
   resolveUser: vi.fn(async () => ({ id: 1, isOperator: true as const })),

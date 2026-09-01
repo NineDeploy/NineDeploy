@@ -404,22 +404,54 @@ interface AppEvent { id: number; action: string; entity: string | null; ts: stri
 function ActivityDrawer({ onClose }: { onClose: () => void }) {
   const [events, setEvents] = useState<AppEvent[]>([]);
   const [filter, setFilter] = useState('all');
+  // Socket state drives the "live" badge: a dead socket must never advertise
+  // itself as live, or the operator trusts a feed that stopped feeding.
+  const [connected, setConnected] = useState(false);
 
   useEffect(() => {
     const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    const token = getToken();
-    const ws = new WebSocket(
-      `${proto}://${window.location.host}/v1/events`,
-      token ? [`ninedeploy.bearer.${token}`] : ['ninedeploy'],
-    );
-    ws.onmessage = (e) => {
-      try {
-        const lines = String(e.data).split('\n').filter(Boolean);
-        const parsed = lines.map((l) => JSON.parse(l) as AppEvent);
-        setEvents((prev) => [...parsed, ...prev].slice(0, 100));
-      } catch { /* ignore */ }
+    let ws: WebSocket | null = null;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let attempts = 0;
+    let disposed = false;
+
+    const connect = () => {
+      if (disposed) return;
+      const token = getToken();
+      ws = new WebSocket(
+        `${proto}://${window.location.host}/v1/events`,
+        token ? [`ninedeploy.bearer.${token}`] : ['ninedeploy'],
+      );
+      ws.onopen = () => {
+        attempts = 0;
+        setConnected(true);
+      };
+      ws.onmessage = (e) => {
+        try {
+          const lines = String(e.data).split('\n').filter(Boolean);
+          const parsed = lines.map((l) => JSON.parse(l) as AppEvent);
+          setEvents((prev) => [...parsed, ...prev].slice(0, 100));
+        } catch { /* ignore */ }
+      };
+      ws.onclose = () => {
+        setConnected(false);
+        if (disposed) return;
+        // Reconnect with capped exponential backoff (2s → 30s). Without this,
+        // a transient drop (sleep/resume, proxy idle timeout) silently freezes
+        // the feed forever.
+        const delay = Math.min(30_000, 2000 * 2 ** attempts);
+        attempts += 1;
+        retryTimer = setTimeout(connect, delay);
+      };
+      ws.onerror = () => ws?.close();
     };
-    return () => ws.close();
+    connect();
+
+    return () => {
+      disposed = true;
+      if (retryTimer) clearTimeout(retryTimer);
+      ws?.close();
+    };
   }, []);
 
   const filtered = filter === 'all' ? events : events.filter((e) => e.action.startsWith(filter));
@@ -461,7 +493,11 @@ function ActivityDrawer({ onClose }: { onClose: () => void }) {
         <div className="flex items-center justify-between border-b border-white/5 px-4 py-3">
           <h2 className="flex items-center gap-2 text-sm font-semibold">
             <Activity size={15} className="text-indigo-400" /> Events
-            <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-medium text-emerald-300">● live</span>
+            {connected ? (
+              <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-medium text-emerald-300">● live</span>
+            ) : (
+              <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-medium text-amber-300">● reconnecting</span>
+            )}
           </h2>
           <button type="button" onClick={onClose} className="rounded-lg p-1 text-slate-500 hover:bg-white/5 hover:text-slate-300">
             <X size={16} />

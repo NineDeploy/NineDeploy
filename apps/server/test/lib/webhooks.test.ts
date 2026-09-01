@@ -98,7 +98,26 @@ describe('parsePush', () => {
       author: 'ada',
       repoUrl: 'https://github.com/ada/repo.git',
       changedFiles: [],
+      commitsListed: 1,
     });
+  });
+
+  it('reports the listed commit count so watch-path gating can detect truncation', () => {
+    // GitHub caps `commits` at ~20 for big pushes — the receiver uses the
+    // count to fail open instead of silently skipping a watched change that
+    // happened in an omitted commit.
+    const commits = Array.from({ length: 20 }, (_, i) => ({
+      id: `c${i}`,
+      added: [`f${i}.txt`],
+      modified: [],
+      removed: [],
+    }));
+    const body = {
+      ref: 'refs/heads/main',
+      head_commit: { id: 'head', message: 'big push', author: { username: 'ada' } },
+      commits,
+    };
+    expect(parsePush(body, 'github')?.commitsListed).toBe(21);
   });
 
   it('parses a GitHub payload with a bare ref (not refs/heads/)', () => {
@@ -131,6 +150,7 @@ describe('parsePush', () => {
       author: 'Bob',
       repoUrl: 'https://gitlab.com/bob/repo.git',
       changedFiles: [],
+      commitsListed: 1,
     });
   });
 

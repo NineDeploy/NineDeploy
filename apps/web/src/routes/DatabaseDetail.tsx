@@ -37,6 +37,7 @@ import {
   Tabs,
   cn,
 } from '../components/ui.js';
+import { PluginSlot } from '../components/PluginSlot.js';
 import { downloadBlob, formatBytes, formatDateTime, useCopy } from '../lib/format.js';
 import { ContainerFileBrowser } from '../components/ContainerFileBrowser.js';
 import { DatabaseTopologyTab } from './database/DatabaseTopologyTab.js';
@@ -329,6 +330,9 @@ function OverviewPanel({
 
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+      {/* Dynamic Database Plugin Extensions */}
+      <PluginSlot slot="database:tabs" className="lg:col-span-2 grid grid-cols-1 gap-3 sm:grid-cols-2" />
+
       {/* Connection info */}
       <div className="space-y-6">
         <Card className="p-5 space-y-4">

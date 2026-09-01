@@ -211,7 +211,9 @@ describe('workspaces routes', () => {
       expect(res.json().myRole).toBe('admin');
     });
 
-    it('forbids non-members (403)', async () => {
+    it('answers non-members with 404 — no private-workspace id oracle', async () => {
+      // 403 on an EXISTING workspace vs 404 on a missing one would let any
+      // authenticated user enumerate private workspace ids instance-wide.
       const app = await buildTestApp({
         db: createFakeDb({
           findFirst: {
@@ -223,7 +225,8 @@ describe('workspaces routes', () => {
       await app.register(workspaceRoutes, { prefix: '/workspaces' });
 
       const res = await app.inject({ method: 'GET', url: '/workspaces/1', headers: asUser({ id: 9, role: 'member' }) });
-      expect(res.statusCode).toBe(403);
+      expect(res.statusCode).toBe(404);
+      expect(res.json().error.message).toBe('Workspace not found');
     });
   });
 
@@ -350,13 +353,31 @@ describe('workspaces routes', () => {
     it('forbids non-owner from deleting (403)', async () => {
       const app = await buildTestApp({
         db: createFakeDb({
-          findFirst: { workspaces: workspaceRow({ id: 1, ownerId: 2 }) },
+          findFirst: {
+            workspaces: workspaceRow({ id: 1, ownerId: 2 }),
+            // A rank-and-file MEMBER of the workspace: still not allowed to
+            // delete (403), but unlike a non-member they DO learn the
+            // workspace exists — they are inside it.
+            workspaceMembers: { id: 1, workspaceId: 1, userId: 3, role: 'member' },
+          },
         }),
       });
       await app.register(workspaceRoutes, { prefix: '/workspaces' });
 
       const res = await app.inject({ method: 'DELETE', url: '/workspaces/1', headers: asUser({ id: 3, role: 'member' }) });
       expect(res.statusCode).toBe(403);
+    });
+
+    it('answers a NON-MEMBER delete with 404 (no id oracle)', async () => {
+      const app = await buildTestApp({
+        db: createFakeDb({
+          findFirst: { workspaces: workspaceRow({ id: 1, ownerId: 2 }) },
+        }),
+      });
+      await app.register(workspaceRoutes, { prefix: '/workspaces' });
+
+      const res = await app.inject({ method: 'DELETE', url: '/workspaces/1', headers: asUser({ id: 3, role: 'member' }) });
+      expect(res.statusCode).toBe(404);
     });
 
     it('returns 404 for missing workspace', async () => {

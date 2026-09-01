@@ -88,6 +88,16 @@ describe('lib/certificateInventory', () => {
       expect(report.summary.expired).toBe(1);
     });
 
+    it('classifies a cert expired less than a day ago as `expired`, not `expiring-soon`', async () => {
+      // Math.ceil of a small negative yields -0 and `-0 < 0` is false — the
+      // classification must still report these as expired.
+      proxyState.certs = [{ domain: 'just-old.example.com', expiresAt: new Date(now - 3_600_000) }];
+      const report = await buildCertificateInventory();
+      expect(report.certificates[0]?.status).toBe('expired');
+      expect(report.summary.expired).toBe(1);
+      expect(report.summary.expiringSoon).toBe(0);
+    });
+
     it('classifies a cert with no expiry as `unknown` and reports null days', async () => {
       proxyState.certs = [{ domain: 'wild.example.com', expiresAt: null }];
       const report = await buildCertificateInventory();

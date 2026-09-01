@@ -225,6 +225,39 @@ describe('webhook receiver', () => {
     expect(res.json()).toEqual({ ok: 'skipped', reason: 'watch_paths', patterns: 2 });
   });
 
+  it('fails OPEN when the commits list is at the GitHub cap (possible truncation)', async () => {
+    // GitHub caps `commits` at ~20 entries: a 30-commit push whose ONLY
+    // watched-file change sits in an omitted commit would be silently
+    // skipped forever. A list AT the cap must deploy instead.
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { webhooks: hook({ watchPaths: 'services/api/**\npackages/**' }), services: svcRow() },
+        insert: { deployments: [depRow({ id: 7, trigger: 'webhook' })] },
+      }),
+      rawBody: true,
+    });
+    await app.register(hookReceiveRoutes);
+    const bigPush = {
+      ref: 'refs/heads/main',
+      head_commit: { id: 'head', message: 'big push, nothing watched in the listed commits' },
+      commits: Array.from({ length: 20 }, (_, i) => ({
+        id: `c${i}`,
+        added: [`docs/file-${i}.md`],
+        modified: [],
+        removed: [],
+      })),
+    };
+    const body = JSON.stringify(bigPush);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/1',
+      headers: { 'content-type': 'application/json', 'x-github-event': 'push', 'x-hub-signature-256': sig(body) },
+      payload: body,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: true, provider: 'github', deploymentId: 7 });
+  });
+
   it('skips deploys for [skip ci] / [skip cd] commit markers', async () => {
     const app = await buildTestApp({
       db: createFakeDb({ findFirst: { webhooks: hook() } }),

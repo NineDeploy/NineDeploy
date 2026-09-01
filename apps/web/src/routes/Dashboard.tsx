@@ -7,6 +7,7 @@ import { useToast } from '../components/Toast.js';
 import { Button, Card, CardBody, ErrorCard, Skeleton, cn } from '../components/ui.js';
 import { formatBytes, formatDateTime } from '../lib/format.js';
 import { ServiceDomainLauncher } from '../components/ServiceDomainLauncher.js';
+import { PluginSlot } from '../components/PluginSlot.js';
 
 export function Dashboard() {
   const navigate = useNavigate();
@@ -255,6 +256,9 @@ export function Dashboard() {
           </Card>
         </Link>
       </div>
+
+      {/* Dynamic Plugin Extensions & Widgets */}
+      <PluginSlot slot="dashboard:overview" className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3" />
 
       {/* Service health grid */}
       <div>

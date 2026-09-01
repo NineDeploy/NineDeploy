@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
+import { StringDecoder } from 'node:string_decoder';
 
 export interface ExecOptions {
   cwd?: string;
@@ -106,18 +107,27 @@ function killTree(child: ChildProcess, signal: NodeJS.Signals): void {
   }
 }
 
-/** Split a buffer stream into complete lines, buffering any trailing partial line. */
-function makeLineSplitter() {
+/** Split a buffer stream into complete lines, buffering any trailing partial line.
+ *  Shared by exec.ts and lib/spawnValidated.ts so the chunk-boundary rules
+ *  (StringDecoder + pending buffer + `\r?\n`) live in exactly one place. */
+export function makeLineSplitter() {
+  // StringDecoder (not chunk.toString()): a multi-byte UTF-8 sequence split
+  // across two data chunks must be decoded once it is complete, not into
+  // U+FFFD replacement characters.
+  const decoder = new StringDecoder('utf8');
   let pending = '';
   return {
     feed(chunk: Buffer): string[] {
-      pending += chunk.toString();
+      pending += decoder.write(chunk);
       const parts = pending.split(/\r?\n/);
       // split() always yields a non-empty array, so pop() is always a string.
       pending = parts.pop() as string;
       return parts.filter((line) => line.length > 0);
     },
     flush(): string {
+      // Terminal bytes can no longer be completed by a later chunk; end()
+      // decodes any remainder (a truncated sequence becomes U+FFFD).
+      pending += decoder.end();
       const rest = pending;
       pending = '';
       return rest;
@@ -166,13 +176,19 @@ export function run(cmd: string, args: string[], opts: ExecOptions, sink: (line:
       child.stdin.end(input);
     }
 
-    const splitter = makeLineSplitter();
-    const onData = (chunk: Buffer) => {
+    // One splitter PER stream: sharing one pending buffer would let a partial
+    // stdout line absorb stderr bytes arriving before the newline completes,
+    // merging interleaved output into garbage lines.
+    const outSplitter = makeLineSplitter();
+    const errSplitter = makeLineSplitter();
+    child.stdout?.on('data', (chunk: Buffer) => {
       lastActivityAt = Date.now();
-      for (const line of splitter.feed(chunk)) sink(line);
-    };
-    child.stdout?.on('data', onData);
-    child.stderr?.on('data', onData);
+      for (const line of outSplitter.feed(chunk)) sink(line);
+    });
+    child.stderr?.on('data', (chunk: Buffer) => {
+      lastActivityAt = Date.now();
+      for (const line of errSplitter.feed(chunk)) sink(line);
+    });
 
     let settled = false;
     const cancelHeartbeat = armHeartbeat(
@@ -202,8 +218,9 @@ export function run(cmd: string, args: string[], opts: ExecOptions, sink: (line:
       settled = true;
       cancelTimeout();
       cancelHeartbeat();
-      const tail = splitter.flush();
-      if (tail.length) sink(tail);
+      for (const tail of [outSplitter.flush(), errSplitter.flush()]) {
+        if (tail.length) sink(tail);
+      }
       if (code === 0) resolve();
       else reject(new Error(`\`${label}\` exited with code ${code}`));
     });
@@ -231,6 +248,10 @@ export function capture(cmd: string, args: string[], opts: ExecOptions = {}, inp
       child.stdin.end(input);
     }
 
+    // Same rule as makeLineSplitter: decode bytes across chunks, not per chunk.
+    const outDecoder = new StringDecoder('utf8');
+    const errDecoder = new StringDecoder('utf8');
+
     let out = '';
     let errOut = '';
     let settled = false;
@@ -253,11 +274,11 @@ export function capture(cmd: string, args: string[], opts: ExecOptions = {}, inp
 
     child.stdout?.on('data', (d) => {
       lastActivityAt = Date.now();
-      out += d.toString();
+      out += outDecoder.write(d);
     });
     child.stderr?.on('data', (d) => {
       lastActivityAt = Date.now();
-      errOut += d.toString();
+      errOut += errDecoder.write(d);
     });
     child.on('error', (err) => {
       if (settled) return;
@@ -271,6 +292,10 @@ export function capture(cmd: string, args: string[], opts: ExecOptions = {}, inp
       settled = true;
       cancelHeartbeat();
       cancelTimeout();
+      // close fires after stdio has drained, so end() flushes any final
+      // partial sequence (truncated bytes decode as U+FFFD, never throw).
+      out += outDecoder.end();
+      errOut += errDecoder.end();
       if (code === 0) resolve(out);
       else reject(new Error(`\`${label}\` exited ${code}${errOut ? `: ${errOut.trim()}` : ''}`));
     });

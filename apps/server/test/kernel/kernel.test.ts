@@ -1,4 +1,4 @@
-﻿import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { NineDeployKernel } from '../../src/kernel/index.js';
 import type { KernelPlugin } from '../../src/kernel/types.js';
 import { createFakeDb } from '../helpers.js';
@@ -234,5 +234,98 @@ describe('NineDeployKernel', () => {
     expect(resThrow).toBe(true);
     expect(errSpy).toHaveBeenCalled();
     errSpy.mockRestore();
+  });
+
+  it('triggers rollback in reverse order when a subsequent hook handler errors or vetos', async () => {
+    const kernel = new NineDeployKernel(createFakeDb(), mockConfig);
+    const rollbackTrace: string[] = [];
+
+    // Step 1: creates side-effect resource
+    kernel.hooks.tap(
+      'deploy:before',
+      async (payload) => {
+        return payload;
+      },
+      {
+        id: 'step-1',
+        priority: 200,
+        rollback: async (_payload, _ctx, error) => {
+          rollbackTrace.push(`rollback-1:${error?.message}`);
+        },
+      },
+    );
+
+    // Step 2: creates another resource
+    kernel.hooks.tap(
+      'deploy:before',
+      async (payload) => {
+        return payload;
+      },
+      {
+        id: 'step-2',
+        priority: 150,
+        rollback: async () => {
+          rollbackTrace.push('rollback-2');
+        },
+      },
+    );
+
+    // Step 3: fails with an exception
+    kernel.hooks.tap(
+      'deploy:before',
+      async () => {
+        throw new Error('Pipeline exploded at step 3');
+      },
+      {
+        id: 'step-3',
+        priority: 100,
+      },
+    );
+
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await kernel.hooks.call('deploy:before', { service: { id: 42 } as any });
+
+    // Rollback should run in reverse (LIFO): step 2 first, then step 1
+    expect(rollbackTrace).toEqual(['rollback-2', 'rollback-1:Pipeline exploded at step 3']);
+    errSpy.mockRestore();
+  });
+
+  it('triggers rollback when a hook handler aborts via allowOrAbort veto', async () => {
+    const kernel = new NineDeployKernel(createFakeDb(), mockConfig);
+    const rollbackTrace: string[] = [];
+
+    kernel.hooks.tap(
+      'database:before_delete',
+      async (payload) => {
+        return payload;
+      },
+      {
+        priority: 200,
+        rollback: async (_payload, _ctx, error) => {
+          rollbackTrace.push(`rb-db-1:${error?.message}`);
+        },
+      },
+    );
+
+    // Handler that vetoes the deletion
+    kernel.hooks.tap(
+      'database:before_delete',
+      async (payload) => {
+        return { ...payload, allowOrAbort: false, reason: 'Production protected' };
+      },
+      {
+        priority: 100,
+      },
+    );
+
+    const result = await kernel.hooks.call('database:before_delete', {
+      database: { id: 1 } as any,
+      allowOrAbort: true,
+    });
+
+    expect(result.allowOrAbort).toBe(false);
+    expect(result.reason).toBe('Production protected');
+    expect(rollbackTrace).toHaveLength(1);
+    expect(rollbackTrace[0]).toContain('Operation vetoed');
   });
 });

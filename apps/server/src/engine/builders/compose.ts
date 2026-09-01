@@ -1,4 +1,4 @@
-import { unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { Builder, DeployRuntime } from '../types.js';
 import { capture, run } from '../../lib/exec.js';
@@ -6,6 +6,27 @@ import { repoRelative } from '../../lib/repoPath.js';
 import { connectTraefikToComposeNetwork } from '../../lib/serviceBridge.js';
 
 const DEPLOY_HEARTBEAT_MS = 20_000;
+
+/**
+ * Render one .env VALUE for compose's dotenv parser, verified against
+ * docker compose v5 (compose-go). Unquoted values are truncated at the
+ * first ` #` (inline-comment strip), so a secret like `abc #def` would
+ * reach the container as `abc` while the panel stores the full value.
+ * Double-quoting fixes that, but double-quoted values then undergo
+ * `$VAR` expansion from the panel's own environment (a secret containing
+ * `$HOME` would leak host state), so `$` is escaped as `\$`. Escapes
+ * verified byte-exact with `docker compose config --format json`:
+ * `\\`, `\"`, `\$`, `\n`, `\r`, `\t`.
+ */
+function dotenvValue(value: string): string {
+  return `"${value
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/\$/g, () => '\\$')
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '\\r')
+    .replace(/\t/g, '\\t')}"`;
+}
 
 /**
  * Docker Compose builder: `docker compose up -d --build` for multi-container
@@ -146,7 +167,7 @@ export const composeBuilder: Builder = {
     // resolved runtime secrets. Deleted again in `finally`.
     const dotEnv = path.join(workDir, '.env');
     if (Object.keys(env).length > 0) {
-      writeFileSync(dotEnv, `${Object.entries(env).map(([k, v]) => `${k}=${v.replace(/\n/g, '\\n')}`).join('\n')}\n`, { mode: 0o600 });
+      writeFileSync(dotEnv, `${Object.entries(env).map(([k, v]) => `${k}=${dotenvValue(v)}`).join('\n')}\n`, { mode: 0o600 });
     }
 
     try {
@@ -247,21 +268,28 @@ export const composeBuilder: Builder = {
     while (Date.now() < deadline) {
       try {
         // Compose stacks author their own healthchecks; when present wait for
-        // Docker's Health.Status instead of a bare `running` process state.
-        // FailingStreak + RestartCount ride along so a crash-looping app fails
-        // EARLY instead of burning the whole window.
+        // Docker's Health.Status instead of a bare `running` process state —
+        // an app that boots, stays `running`, and fails its own healthcheck
+        // forever must NOT deploy green. FailingStreak + RestartCount ride
+        // along so a crash-looping app fails EARLY instead of burning the
+        // whole window.
         const out = await capture('docker', [
           'inspect',
           runtime.runtimeId,
           '--format',
-          '{{.State.Status}}|{{if .State.Health}}{{.State.Health.FailingStreak}}{{else}}0{{end}}|{{.RestartCount}}',
+          '{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}|{{.State.Health.FailingStreak}}{{else}}none|0{{end}}|{{.RestartCount}}',
         ]);
-        const [status, failingStreak, restartCount] = out.trim().split('|');
-        if (status === 'running' || status === 'healthy') return true;
+        const [status, health, failingStreak, restartCount] = out.trim().split('|');
+        if (status === 'running' && health === 'none') return true; // no healthcheck defined
+        if (status === 'running' && health === 'healthy') return true;
+        if (status === 'healthy') return true; // defensive: alternate inspect shapes
         if (status === 'exited') {
           log?.(`${runtime.runtimeId} exited before becoming healthy`);
           return false;
         }
+        // `running` with health `starting`/`unhealthy` keeps polling; the
+        // failing-streak check below fails fast instead of waiting out the
+        // full deadline on a healthcheck that will never pass.
         const restarts = Number(restartCount);
         if (Number.isFinite(restarts)) {
           baselineRestarts ??= restarts;
@@ -298,7 +326,16 @@ export const composeBuilder: Builder = {
       const [project, configFiles] = labels.trim().split('\t');
       if (!project) throw new Error('no compose project label');
       const args = ['compose', '-p', project];
-      if (configFiles) for (const f of configFiles.split(',')) args.push('-f', f.trim());
+      // Only pass config files that still exist: the deploy path deletes its
+      // per-deploy override in `finally`, and a `down` referencing the dead
+      // path exits nonzero without stopping anything — the stack would keep
+      // running while stop() reports success.
+      if (configFiles) {
+        for (const f of configFiles.split(',')) {
+          const candidate = f.trim();
+          if (candidate && existsSync(candidate)) args.push('-f', candidate);
+        }
+      }
       args.push('down', '--remove-orphans');
       await run('docker', args, {}, () => {});
     } catch {

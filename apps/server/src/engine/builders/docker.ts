@@ -527,6 +527,19 @@ export const dockerBuilder: Builder = {
     // (finalize) only after success; on failure it stops the NEW container,
     // leaving the old one running — a zero-downtime rollback.
 
+    // EXCEPTION — host-published ports cannot run blue-green: Docker refuses to
+    // bind the same host port twice, so EVERY redeploy after the first would
+    // die on "port is already allocated" and the service would be stuck on its
+    // first version forever. Retire the previous runtime FIRST and deploy
+    // sequentially — a short, deliberate gap beats a permanently failing
+    // redeploy.
+    if (service.publishedPort && previous?.runtimeId && previous.runtimeId !== name) {
+      log(
+        `Host port ${service.publishedPort} is published — retiring previous runtime ${previous.runtimeId} before start (sequential deploy, no blue-green)`,
+      );
+      await run('docker', ['rm', '-f', previous.runtimeId], {}, swallowLine);
+    }
+
     // A worker/host crash can leave this deployment's candidate container
     // behind before DB finalization. The deployment ID makes the name exact;
     // remove only that retry candidate, never the previous live runtime.

@@ -1,4 +1,4 @@
-﻿import { mkdtempSync, readFileSync, rmSync, existsSync } from 'node:fs';
+﻿import { mkdtempSync, readFileSync, rmSync, existsSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -72,8 +72,42 @@ describe('composeBuilder.buildAndRun', () => {
       }
     });
     await expect(composeBuilder.buildAndRun(makeCtx() as never)).rejects.toThrow('build failed');
-    expect(seen).toContain('TOKEN=secret-value');
+    expect(seen).toContain('TOKEN="secret-value"');
     expect(existsSync(dotEnvPath)).toBe(false);
+  });
+
+  it('escapes .env values so compose cannot truncate or expand them', async () => {
+    // Verified against docker compose v5 (compose-go dotenv): unquoted values
+    // are truncated at the first ` #`, and double-quoted values undergo
+    // `$VAR` expansion from the panel's own environment. The escape recipe
+    // here round-trips byte-exact through `docker compose config`.
+    const dotEnvPath = path.join(tmp, '.env');
+    let seen: string | null = null;
+    h.run.mockImplementation(async (_c, a, _o, sink) => {
+      sink?.('');
+      if ((a as string[])[5] === 'up') {
+        seen = readFileSync(dotEnvPath, 'utf8');
+        throw new Error('stop');
+      }
+    });
+    await expect(
+      composeBuilder.buildAndRun(
+        makeCtx({
+          env: {
+            TOKEN: 'abc #def',
+            FORMULA: 'pa$$word',
+            JSONISH: '{"a": 1}',
+            MULTI: 'line1\nline2',
+          },
+        }) as never,
+      ),
+    ).rejects.toThrow('stop');
+    expect(seen).toBe(
+      'TOKEN="abc #def"\n' +
+      'FORMULA="pa\\$\\$word"\n' +
+      'JSONISH="{\\"a\\": 1}"\n' +
+      'MULTI="line1\\nline2"\n',
+    );
   });
 
   it('defaults the compose file and main service from the slug', async () => {
@@ -158,13 +192,28 @@ describe('composeBuilder.buildAndRun', () => {
 describe('composeBuilder.isHealthy', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    h.capture.mockResolvedValue('running');
+    h.capture.mockResolvedValue('running|none|0|0');
   });
 
-  it('returns true when the main container is running', async () => {
+  it('returns true when the main container is running without a healthcheck', async () => {
     const ok = await composeBuilder.isHealthy({ runtimeId: 'ndcmp-stack-api-1', port: 3000, healthPath: '/' }, 5000);
     expect(ok).toBe(true);
-    expect(h.capture).toHaveBeenCalledWith('docker', ['inspect', 'ndcmp-stack-api-1', '--format', '{{.State.Status}}|{{if .State.Health}}{{.State.Health.FailingStreak}}{{else}}0{{end}}|{{.RestartCount}}']);
+    expect(h.capture).toHaveBeenCalledWith('docker', ['inspect', 'ndcmp-stack-api-1', '--format', '{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}|{{.State.Health.FailingStreak}}{{else}}none|0{{end}}|{{.RestartCount}}']);
+  });
+
+  it('returns true when the container is running AND its healthcheck passes', async () => {
+    h.capture.mockResolvedValue('running|healthy|0|0');
+    const ok = await composeBuilder.isHealthy({ runtimeId: 'x', port: null, healthPath: '/' }, 5000);
+    expect(ok).toBe(true);
+  });
+
+  it('does NOT deploy green while a healthcheck is failing (running but unhealthy)', async () => {
+    // The old contract returned true on the first `running` poll even with a
+    // healthcheck failing forever — the app below boots but never passes its
+    // own check, so health must stay false.
+    h.capture.mockResolvedValue('running|unhealthy|15|0');
+    const ok = await composeBuilder.isHealthy({ runtimeId: 'x', port: null, healthPath: '/' }, 60_000);
+    expect(ok).toBe(false);
   });
 
   it('returns false when the container never comes up', async () => {
@@ -175,8 +224,8 @@ describe('composeBuilder.isHealthy', () => {
 
   it('retries until a non-running status becomes running', async () => {
     h.capture
-      .mockResolvedValueOnce('created')
-      .mockResolvedValueOnce('running');
+      .mockResolvedValueOnce('created|none|0|0')
+      .mockResolvedValueOnce('running|none|0|0');
     const ok = await composeBuilder.isHealthy({ runtimeId: 'x', port: null, healthPath: '/' }, 5000);
     expect(ok).toBe(true);
     expect(h.capture.mock.calls.length).toBeGreaterThanOrEqual(2);
@@ -235,13 +284,13 @@ describe('composeBuilder redeploy safety gates', () => {
     let poll = 0;
     // First poll sets the restart baseline, the next one jumps past the
     // crash-loop threshold (delta >= 3) so the test exits after one sleep.
-    h.capture.mockImplementation(async () => (poll++ === 0 ? 'restarting|0|0' : 'restarting|0|9'));
+    h.capture.mockImplementation(async () => (poll++ === 0 ? 'restarting|none|0|0' : 'restarting|none|0|9'));
     const ok = await composeBuilder.isHealthy({ runtimeId: 'x', port: null, healthPath: '/' }, 60_000);
     expect(ok).toBe(false);
   });
 
   it('fails fast when healthcheck failing streak keeps growing', async () => {
-    h.capture.mockResolvedValue('starting|15|0');
+    h.capture.mockResolvedValue('running|unhealthy|15|0');
     const ok = await composeBuilder.isHealthy({ runtimeId: 'x', port: null, healthPath: '/' }, 60_000);
     expect(ok).toBe(false);
   });
@@ -250,22 +299,26 @@ describe('composeBuilder redeploy safety gates', () => {
 describe('composeBuilder.stop', () => {
   it('tears the project down using the container\'s own compose labels', async () => {
     h.run.mockClear();
+    const live = path.join(tmp, 'compose.yaml');
+    if (!existsSync(live)) writeFileSync(live, 'services: {}\n');
     // The label inspect yields project + config file(s), tab-separated.
-    h.capture.mockResolvedValueOnce('ndcmp-stack\t/opt/app/compose.yaml');
+    h.capture.mockResolvedValueOnce(`ndcmp-stack\t${live}`);
     await composeBuilder.stop('ndcmp-stack-api-1');
     const downCall = h.run.mock.calls[0];
     expect(h.capture).toHaveBeenCalledWith(
       'docker',
       ['inspect', 'ndcmp-stack-api-1', '--format', expect.stringContaining('com.docker.compose.project')],
     );
-    expect((downCall![1] as string[])).toEqual(['compose', '-p', 'ndcmp-stack', '-f', '/opt/app/compose.yaml', 'down', '--remove-orphans']);
+    expect((downCall![1] as string[])).toEqual(['compose', '-p', 'ndcmp-stack', '-f', live, 'down', '--remove-orphans']);
   });
 
   it('works for hyphenated project/service names (no string surgery)', async () => {
     h.run.mockClear();
-    h.capture.mockResolvedValueOnce('ndcmp-my-app\t/app/docker-compose.yml');
+    const live = path.join(tmp, 'docker-compose.yml');
+    if (!existsSync(live)) writeFileSync(live, 'services: {}\n');
+    h.capture.mockResolvedValueOnce(`ndcmp-my-app\t${live}`);
     await composeBuilder.stop('ndcmp-my-app-web-api-1');
-    expect((h.run.mock.calls[0]![1] as string[])).toEqual(['compose', '-p', 'ndcmp-my-app', '-f', '/app/docker-compose.yml', 'down', '--remove-orphans']);
+    expect((h.run.mock.calls[0]![1] as string[])).toEqual(['compose', '-p', 'ndcmp-my-app', '-f', live, 'down', '--remove-orphans']);
   });
 
   it('does nothing when the container (and its labels) are already gone', async () => {
@@ -291,10 +344,32 @@ describe('composeBuilder.stop', () => {
 
   it('passes every comma-separated config file', async () => {
     h.run.mockClear();
-    h.capture.mockResolvedValueOnce('p\t/base.yml, /override.yml');
+    const base = path.join(tmp, 'base.yml');
+    const override = path.join(tmp, 'override.yml');
+    for (const f of [base, override]) {
+      if (!existsSync(f)) writeFileSync(f, 'services: {}\n');
+    }
+    h.capture.mockResolvedValueOnce(`p\t${base}, ${override}`);
     await composeBuilder.stop('p-api-1');
     expect((h.run.mock.calls[0]![1] as string[])).toEqual([
-      'compose', '-p', 'p', '-f', '/base.yml', '-f', '/override.yml', 'down', '--remove-orphans',
+      'compose', '-p', 'p', '-f', base, '-f', override, 'down', '--remove-orphans',
+    ]);
+  });
+
+  it('skips a recorded config file that no longer exists (deleted per-deploy override)', async () => {
+    // The deploy path deletes its override file in `finally`; a `down` that
+    // still references the dead path exits nonzero WITHOUT stopping the
+    // stack — stop() would report success while every container keeps
+    // running. Only surviving files may be handed to compose.
+    h.run.mockClear();
+    const live = path.join(tmp, 'live-compose.yml');
+    if (!existsSync(live)) writeFileSync(live, 'services: {}\n');
+    const dead = path.join(tmp, 'deleted-override.yml');
+    rmSync(dead, { force: true });
+    h.capture.mockResolvedValueOnce(`p\t${live}, ${dead}`);
+    await composeBuilder.stop('p-api-1');
+    expect((h.run.mock.calls[0]![1] as string[])).toEqual([
+      'compose', '-p', 'p', '-f', live, 'down', '--remove-orphans',
     ]);
   });
 

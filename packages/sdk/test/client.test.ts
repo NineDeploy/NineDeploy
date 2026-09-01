@@ -1699,3 +1699,46 @@ describe('createClient', () => {
     });
   });
 });
+
+describe('query/param edge cases', () => {
+  it('sends threshold=0 and days=0 instead of silently dropping them', async () => {
+    const { fetchMock, calls } = makeFetch(() => ok({}));
+    const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
+
+    // 0 means "already-expired only" — dropping the param would make the
+    // server apply its default (30 days), the opposite of the request.
+    await client.traefik.certificateInventory({ threshold: 0 });
+    expect(last(calls).url).toBe('/v1/traefik/certificates/inventory?threshold=0');
+
+    await client.traefik.expiringCertificates({ days: 0 });
+    expect(last(calls).url).toBe('/v1/traefik/certificates/expiring?days=0');
+  });
+
+  it('still omits the query when the option is absent', async () => {
+    const { fetchMock, calls } = makeFetch(() => ok({}));
+    const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
+    await client.traefik.certificateInventory();
+    expect(last(calls).url).toBe('/v1/traefik/certificates/inventory');
+  });
+
+  it('encodes volume names and template ids into the URL path', async () => {
+    const { fetchMock, calls } = makeFetch(() => ok({}));
+    const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
+
+    await client.volumeBackups.list('nd web/data');
+    expect(last(calls).url).toBe('/v1/volumes/nd%20web%2Fdata/backups');
+
+    await client.templates.get('a?b=1');
+    expect(last(calls).url).toBe('/v1/templates/a%3Fb%3D1');
+
+    await client.templates.community.remove('x y');
+    expect(last(calls).url).toBe('/v1/templates/community/x%20y');
+  });
+
+  it('keeps serverId=0 on networks.remove and encodes the network name', async () => {
+    const { fetchMock, calls } = makeFetch(() => ok({}));
+    const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
+    await client.networks.remove('a b', 0);
+    expect(last(calls).url).toBe('/v1/networks/a%20b?serverId=0');
+  });
+});

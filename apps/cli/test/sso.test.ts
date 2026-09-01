@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ssoAdd, ssoAddAction, ssoList, ssoListAction, ssoRemove, ssoRemoveAction } from '../src/commands/sso.js';
+import { ssoAdd, ssoAddAction, ssoListAction, ssoRemove, ssoRemoveAction } from '../src/commands/sso.js';
 
 const h = vi.hoisted(() => ({
   errorSpy: vi.fn(),

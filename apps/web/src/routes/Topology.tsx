@@ -1034,9 +1034,19 @@ function TopologyCanvasWithClick(props: {
 
   // Layout key derived from the props we received — re-apply positions
   // when upstream data changes; preserve user-dragged positions otherwise.
+  // Node DATA is part of the key: the live poll refreshes cpuPct/memMb in
+  // place, and a key of only ids+positions would freeze the badges at the
+  // first layout forever.
   const layoutKey = useMemo(
     () =>
-      props.nodes.map((n) => `${n.id}:${n.position.x.toFixed(0)},${n.position.y.toFixed(0)}`).join('|') +
+      props.nodes
+        .map(
+          (n) =>
+            `${n.id}:${n.position.x.toFixed(0)},${n.position.y.toFixed(0)}:${JSON.stringify(
+              (n.data as { cpuPct?: unknown; memMb?: unknown; status?: unknown }) ?? {},
+            )}`,
+        )
+        .join('|') +
       '|' +
       props.edges.length.toString(),
     [props.nodes, props.edges],

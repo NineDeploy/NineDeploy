@@ -23,6 +23,10 @@ const F = {
   googleAccessToken: ['google', 'access', 'token'].join('-'),
 };
 
+/** The browser-bound state cookie the login route sets (login-CSRF defense):
+ *  a successful callback must carry it, hashed over the exact state. */
+const stateCookieFor = (state: string, slug = 'google') => `ninedeploy_oidc_${slug}=${sha256(state)}`;
+
 describe('OIDC and OAuth2 SSO endpoints', () => {
   let app: FastifyInstance;
   let adminToken: string;
@@ -360,6 +364,32 @@ describe('OIDC and OAuth2 SSO endpoints', () => {
       expect(res.statusCode).toBe(400);
     });
 
+    it('rejects a valid-state callback that carries NO state cookie (login CSRF defense)', async () => {
+      // Attack: the attacker completes the IdP login in THEIR browser, then
+      // hands the resulting callback URL to a victim. The signed state still
+      // verifies — but the victim's browser cannot hold the attacker's state
+      // cookie, so the flow must be refused instead of silently signing the
+      // victim in to the attacker's account.
+      const state = generateOAuthState('google', '/');
+      const res = await app.inject({
+        method: 'POST',
+        url: '/v1/auth/oidc/google/callback',
+        payload: { code: 'attacker_code', state },
+      });
+      expect(res.statusCode).toBe(401);
+    });
+
+    it('rejects a callback whose state cookie belongs to a DIFFERENT flow', async () => {
+      const state = generateOAuthState('google', '/');
+      const res = await app.inject({
+        method: 'POST',
+        url: '/v1/auth/oidc/google/callback',
+        headers: { cookie: stateCookieFor(generateOAuthState('google', '/other')) },
+        payload: { code: 'attacker_code', state },
+      });
+      expect(res.statusCode).toBe(401);
+    });
+
     it('handles invalid or expired state (401)', async () => {
       const res = await app.inject({
         method: 'GET',
@@ -405,6 +435,7 @@ describe('OIDC and OAuth2 SSO endpoints', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/v1/auth/oidc/google/callback',
+        headers: { cookie: stateCookieFor(state) },
         payload: {
           code: 'valid_code',
           state,
@@ -467,6 +498,7 @@ describe('OIDC and OAuth2 SSO endpoints', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/v1/auth/oidc/google/callback',
+        headers: { cookie: stateCookieFor(state) },
         payload: { code: 'attacker_code', state },
       });
 
@@ -509,6 +541,7 @@ describe('OIDC and OAuth2 SSO endpoints', () => {
       const res = await app.inject({
         method: 'GET',
         url: `/v1/auth/oidc/google/callback?code=valid_code&state=${encodeURIComponent(state)}`,
+        headers: { cookie: stateCookieFor(state) },
       });
 
       expect(res.statusCode).toBe(302);
@@ -542,6 +575,7 @@ describe('OIDC and OAuth2 SSO endpoints', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/v1/auth/oidc/google/callback',
+        headers: { cookie: stateCookieFor(state) },
         payload: { code: 'valid_code', state },
       });
       expect(res.statusCode).toBeGreaterThanOrEqual(400);
@@ -576,6 +610,7 @@ describe('OIDC and OAuth2 SSO endpoints', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/v1/auth/oidc/google/callback',
+        headers: { cookie: stateCookieFor(state) },
         payload: { code: 'valid_code', state },
       });
       // Rejected — either by the userinfo fetch (IdP says unverified) or by the
@@ -610,6 +645,7 @@ describe('OIDC and OAuth2 SSO endpoints', () => {
       const res = await app.inject({
         method: 'GET',
         url: `/v1/auth/oidc/google/callback?code=valid_code&state=${encodeURIComponent(state)}`,
+        headers: { cookie: stateCookieFor(state) },
       });
       expect(res.statusCode).toBe(302);
       const location = res.headers.location as string;
@@ -644,6 +680,7 @@ describe('OIDC and OAuth2 SSO endpoints', () => {
       const res = await app.inject({
         method: 'GET',
         url: `/v1/auth/oidc/google/callback?code=valid_code&state=${encodeURIComponent(state)}`,
+        headers: { cookie: stateCookieFor(state) },
       });
       expect(res.statusCode).toBe(302);
       const location = res.headers.location as string;
@@ -679,6 +716,7 @@ describe('OIDC and OAuth2 SSO endpoints', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/v1/auth/oidc/google/callback',
+        headers: { cookie: stateCookieFor(state) },
         payload: { code: 'code', state },
       });
 
@@ -705,6 +743,7 @@ describe('OIDC and OAuth2 SSO endpoints', () => {
       const res = await app.inject({
         method: 'GET',
         url: `/v1/auth/oidc/github/callback?code=gh_code&state=${encodeURIComponent(state)}`,
+        headers: { cookie: stateCookieFor(state, 'github') },
       });
 
       expect(res.statusCode).toBe(302);
@@ -733,6 +772,7 @@ describe('OIDC and OAuth2 SSO endpoints', () => {
       const resCb = await app.inject({
         method: 'POST',
         url: '/v1/auth/oidc/bad-oidc/callback',
+        headers: { cookie: stateCookieFor(state, 'bad-oidc') },
         payload: { code: 'code', state },
       });
       expect(resCb.statusCode).toBe(400);
@@ -783,6 +823,7 @@ describe('OIDC and OAuth2 SSO endpoints', () => {
         const res = await app.inject({
           method: 'POST',
           url: '/v1/auth/oidc/closed/callback',
+          headers: { cookie: stateCookieFor(state, 'closed') },
           payload: {
             code: 'closed_code',
             state,

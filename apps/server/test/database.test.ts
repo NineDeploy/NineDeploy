@@ -436,7 +436,7 @@ describe('retained volume provenance + adoption', () => {
 
   it('re-keys a postgres 18+ labeled volume with the 18 cluster layout (single mount at /var/lib/postgresql)', async () => {
     captureVolume(true, labels({ 'ninedeploy.database.image': 'pgvector/pgvector:pg18' }));
-    h.capture.mockImplementation(async (_cmd: string, args: string[], _opts: unknown, input?: Buffer) => {
+    h.capture.mockImplementation(async (_cmd: string, args: string[], _opts: unknown, _input?: Buffer) => {
       if (args.includes('--single')) {
         expect(args).toEqual([
           'run', '--rm', '-i', '-v', 'v:/var/lib/postgresql', 'pgvector/pgvector:pg18',

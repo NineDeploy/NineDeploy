@@ -141,6 +141,26 @@ describe('insights routes', () => {
     expect(call[5]).toBeUndefined();
     await app.close();
   });
+
+  it('refuses a member-supplied sourceId (operator-managed credentials)', async () => {
+    // Sources are system-wide operator credentials (sourcesRoutes is
+    // requireAdmin). A member probing /insights with a guessed id must not
+    // get operator-held tokens attached to their clone of any repoUrl.
+    fakeState.sourcesById[7] = { type: 'github', tokenEncrypted: 'v0:ghs_token' };
+    const app = await buildTestApp({
+      db: createFakeDb({ findFirst: { services: baseService, sources: fakeState.sourcesById[7] } }),
+    });
+    await app.register(insightsRoutes);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/',
+      headers: asUser({ id: 7, isOperator: false }),
+      payload: { repoUrl: 'https://github.com/private/repo.git', branch: 'main', sourceId: 7 },
+    });
+    expect(res.statusCode).toBe(403);
+    expect(gitMocks.checkoutCommit).not.toHaveBeenCalled();
+    await app.close();
+  });
 });
 
 describe('service insights routes', () => {

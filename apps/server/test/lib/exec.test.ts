@@ -133,6 +133,46 @@ describe('run', () => {
     expect(sink).not.toHaveBeenCalledWith('');
   });
 
+  it('keeps multi-byte UTF-8 intact when a character straddles a chunk boundary', async () => {
+    const child = makeChild();
+    mockSpawn.mockReturnValue(child);
+    const sink = vi.fn();
+    const promise = run('cmd', [], {}, sink);
+
+    // 'a\r\n日\n' with the split inside the 3-byte 日 (E6 97 | A5). The first
+    // chunk ends on an incomplete sequence: decoding must wait for the next
+    // chunk instead of emitting U+FFFD.
+    const full = Buffer.from('a\r\n日\n', 'utf8');
+    child.stdout.emit('data', full.subarray(0, 4));
+    child.stdout.emit('data', full.subarray(4));
+    emitClose(child, 0);
+
+    await promise;
+    expect(sink).toHaveBeenCalledWith('a');
+    expect(sink).toHaveBeenCalledWith('日');
+  });
+
+  it('keeps stdout and stderr line discipline separate when partial lines interleave', async () => {
+    const child = makeChild();
+    mockSpawn.mockReturnValue(child);
+    const sink = vi.fn();
+    const promise = run('cmd', [], {}, sink);
+
+    // stdout's partial line must not absorb stderr bytes that arrive before
+    // the newline completes the stdout line — each stream keeps its own
+    // pending buffer, or interleaved output (docker build progress, git
+    // fetch) renders as merged garbage lines.
+    child.stdout.emit('data', Buffer.from('Step 1/2'));
+    child.stderr.emit('data', Buffer.from('#10 extracting\n'));
+    child.stdout.emit('data', Buffer.from(' done\n'));
+    emitClose(child, 0);
+
+    await promise;
+    expect(sink).toHaveBeenCalledWith('#10 extracting');
+    expect(sink).toHaveBeenCalledWith('Step 1/2 done');
+    expect(sink).not.toHaveBeenCalledWith('Step 1/2#10 extracting');
+  });
+
   it('passes a whitelisted env (not the full process.env) to spawn', async () => {
     process.env['NINEDEPLOY_MASTER_KEY'] = 'leak';
     const child = makeChild();
@@ -315,6 +355,46 @@ describe('capture', () => {
     emitClose(child, 0);
 
     await expect(promise).resolves.toBe('Filesystem\n/dev/disk 123');
+  });
+
+  it('reassembles a multi-byte UTF-8 sequence split across stdout chunks', async () => {
+    const child = makeChild();
+    mockSpawn.mockReturnValue(child);
+    const promise = capture('node', ['-e', '']);
+
+    // 日 is E6 97 A5 — the first chunk ends mid-sequence.
+    const cjk = Buffer.from('日', 'utf8');
+    child.stdout.emit('data', cjk.subarray(0, 2));
+    child.stdout.emit('data', cjk.subarray(2));
+    emitClose(child, 0);
+
+    await expect(promise).resolves.toBe('日');
+  });
+
+  it('reassembles a multi-byte UTF-8 sequence split across stderr chunks in the rejection message', async () => {
+    const child = makeChild();
+    mockSpawn.mockReturnValue(child);
+    const promise = capture('docker', ['stats']);
+
+    // é is C3 A9 — split after the lead byte.
+    const msg = Buffer.from('échec', 'utf8');
+    child.stderr.emit('data', msg.subarray(0, 1));
+    child.stderr.emit('data', msg.subarray(1));
+    emitClose(child, 2);
+
+    await expect(promise).rejects.toThrow('`docker stats` exited 2: échec');
+  });
+
+  it('decodes a truncated trailing multi-byte sequence as U+FFFD instead of throwing', async () => {
+    const child = makeChild();
+    mockSpawn.mockReturnValue(child);
+    const promise = capture('node', ['-e', '']);
+
+    child.stdout.emit('data', Buffer.from('ok', 'utf8'));
+    child.stdout.emit('data', Buffer.from('日', 'utf8').subarray(0, 2)); // never completed
+    emitClose(child, 0);
+
+    await expect(promise).resolves.toBe('ok\uFFFD');
   });
 
   it('includes stderr in the rejection message on non-zero exit', async () => {

@@ -3,6 +3,7 @@ import { installedPlugins } from '@ninedeploy/db';
 import { eq } from 'drizzle-orm';
 import type { InstallPluginInput, MarketplacePluginItem } from '@ninedeploy/schemas';
 import type { KernelContext, KernelPlugin } from './types.js';
+import { SandboxPlugin } from './sandbox/sandboxPlugin.js';
 
 /**
  * The roadmap index the Plugins page renders. `builtIn.path` is a PANEL route,
@@ -532,7 +533,7 @@ export function getMarketplaceCatalog(installedIds: Set<string>): MarketplacePlu
  * requirements — fetch, integrity verification, sandboxing, an upgrade story —
  * not something to fake.
  */
-const LOADABLE_SOURCES = new Set(['marketplace']);
+const LOADABLE_SOURCES = new Set(['marketplace', 'sandbox']);
 
 /** True when this build can actually run a plugin from `source`. */
 export function isLoadableSource(source: string): boolean {
@@ -548,8 +549,8 @@ export class UnsupportedPluginSourceError extends Error {
   readonly statusCode = 400;
   constructor(readonly source: string) {
     super(
-      `Installing plugins from "${source}" is not supported: NineDeploy does not load third-party plugin code. ` +
-        'Only the official marketplace catalog can be installed.',
+      `Installing plugins from "${source}" is not supported: NineDeploy does not load third-party plugin code without sandbox. ` +
+        'Only the official marketplace catalog and verified sandbox extensions can be installed.',
     );
     this.name = 'UnsupportedPluginSourceError';
   }
@@ -574,6 +575,19 @@ export class UnimplementedPluginError extends Error {
 export type Catalog = ReadonlyArray<Omit<MarketplacePluginItem, 'isInstalled'>>;
 
 export function createDynamicPlugin(input: InstallPluginInput, catalog: Catalog = MARKETPLACE_CATALOG): KernelPlugin {
+  if (input.source === 'sandbox' || (input as any).source === 'sandbox') {
+    return new SandboxPlugin({
+      id: input.target,
+      name: input.name || input.target,
+      version: input.version || '1.0.0',
+      description: input.description,
+      author: input.author,
+      icon: input.icon,
+      code: (input as any).code,
+      manifest: (input as any).manifest,
+    });
+  }
+
   let id = input.target;
   let name = input.name || input.target;
   let version = input.version || '1.0.0';

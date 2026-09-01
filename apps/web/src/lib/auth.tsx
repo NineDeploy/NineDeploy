@@ -42,6 +42,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .finally(() => setLoading(false));
   }, []);
 
+  useEffect(() => {
+    // The API layer fires this when a token refresh is rejected (revoked or
+    // expired refresh token). Dropping `user` sends every RequireAuth route
+    // back to /login instead of leaving the SPA "logged in" but broken.
+    const onSessionExpired = () => setUser(null);
+    window.addEventListener('ninedeploy:session-expired', onSessionExpired);
+    return () => window.removeEventListener('ninedeploy:session-expired', onSessionExpired);
+  }, []);
+
   const value: AuthContextValue = {
     user,
     loading,

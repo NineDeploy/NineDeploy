@@ -105,12 +105,12 @@ export function formatManifestYaml(manifest: NinedeployManifest): string {
     lines.push('env:');
     if (manifest.env.required.length > 0) {
       lines.push('  required:');
-      for (const k of manifest.env.required) lines.push(`    - ${k}`);
+      for (const k of manifest.env.required) lines.push(`    - ${quote(k)}`);
     }
     if (manifest.env.aliases) {
       lines.push('  aliases:');
       for (const [from, to] of Object.entries(manifest.env.aliases)) {
-        lines.push(`    ${from}: ${to}`);
+        lines.push(`    ${quote(from)}: ${quote(to)}`);
       }
     }
   }
@@ -157,11 +157,11 @@ export function formatManifestYaml(manifest: NinedeployManifest): string {
       if (r.redirectWww) lines.push(`    redirectWww: ${r.redirectWww}`);
       if (r.headers) {
         lines.push('    headers:');
-        for (const [k, v] of Object.entries(r.headers)) lines.push(`      ${k}: ${quote(v)}`);
+        for (const [k, v] of Object.entries(r.headers)) lines.push(`      ${quote(k)}: ${quote(v)}`);
       }
       if (r.ipAllowlist) {
         lines.push('    ipAllowlist:');
-        for (const cidr of r.ipAllowlist) lines.push(`      - ${cidr}`);
+        for (const cidr of r.ipAllowlist) lines.push(`      - ${quote(cidr)}`);
       }
       if (r.rateLimit) {
         lines.push('    rateLimit:');
@@ -200,7 +200,7 @@ export function formatManifestYaml(manifest: NinedeployManifest): string {
     if (manifest.network.publishPort != null) lines.push(`  publishPort: ${manifest.network.publishPort}`);
     if (manifest.network.aliases.length > 0) {
       lines.push('  aliases:');
-      for (const a of manifest.network.aliases) lines.push(`    - ${a}`);
+      for (const a of manifest.network.aliases) lines.push(`    - ${quote(a)}`);
     }
   }
 
@@ -208,15 +208,15 @@ export function formatManifestYaml(manifest: NinedeployManifest): string {
     lines.push('notifications:');
     if (manifest.notifications.onDeploy.length > 0) {
       lines.push('  onDeploy:');
-      for (const c of manifest.notifications.onDeploy) lines.push(`    - ${c}`);
+      for (const c of manifest.notifications.onDeploy) lines.push(`    - ${quote(c)}`);
     }
     if (manifest.notifications.onFailure.length > 0) {
       lines.push('  onFailure:');
-      for (const c of manifest.notifications.onFailure) lines.push(`    - ${c}`);
+      for (const c of manifest.notifications.onFailure) lines.push(`    - ${quote(c)}`);
     }
     if (manifest.notifications.onAlert.length > 0) {
       lines.push('  onAlert:');
-      for (const c of manifest.notifications.onAlert) lines.push(`    - ${c}`);
+      for (const c of manifest.notifications.onAlert) lines.push(`    - ${quote(c)}`);
     }
   }
 
@@ -224,7 +224,7 @@ export function formatManifestYaml(manifest: NinedeployManifest): string {
     lines.push('alerts:');
     for (const a of manifest.alerts) {
       lines.push(`  - when: ${a.when}`);
-      lines.push(`    channel: ${a.channel}`);
+      lines.push(`    channel: ${quote(a.channel)}`);
       if (a.thresholdPct != null) lines.push(`    thresholdPct: ${a.thresholdPct}`);
     }
   }
@@ -233,11 +233,13 @@ export function formatManifestYaml(manifest: NinedeployManifest): string {
 }
 
 function quote(value: string): string {
-  // Single-line strings without shell-special chars stay unquoted. Anything
-  // containing a colon, hash, bracket, quote, or backslash gets wrapped in
-  // double quotes with internal double-quote escaping.
+  // Plain when unambiguously safe; otherwise a double-quoted YAML scalar via
+  // JSON escaping. JSON's escapes (\" \\ \n \t \uXXXX) are a subset of YAML's
+  // double-quote escapes, so embedded newlines survive a round-trip instead
+  // of folding into spaces, and ` #` sequences stay inside the scalar instead
+  // of truncating it as a comment.
   if (/^[A-Za-z0-9._/-]+$/.test(value)) return value;
-  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+  return JSON.stringify(value);
 }
 
 // ── Project-type detection for `init` ────────────────────────────────────

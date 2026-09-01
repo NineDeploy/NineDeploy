@@ -153,6 +153,66 @@ export function canonicalDigest(input: string): string {
   return createHash('sha256').update(input, 'utf8').digest('hex');
 }
 
+/**
+ * Bind the verified `<SignedInfo>` to the assertion it covers.
+ *
+ * `verifySignedInfo` alone proves that SOME SignedInfo blob was signed by
+ * the IdP — not that it describes THE assertion in this response. Without
+ * this check, anyone holding any legitimately signed response (e.g. from
+ * their own low-privilege login) can rewrite the NameID/email to a victim's
+ * address and sign in as them: the Signature still verifies, because the
+ * digest inside the signed SignedInfo was never compared to the carried
+ * assertion.
+ *
+ * The digest is computed over the FULL `<…Assertion>` element as it appears
+ * in the response, matching `<ds:DigestValue>` inside the SignedInfo
+ * (base64 sha256, per XMLDSig). This is byte-exact rather than a full
+ * c14n implementation: IdPs that emit the assertion inline with its
+ * namespace declarations (the common enveloped-signature shape) match;
+ * a provider whose canonical form differs will fail CLOSED — an SSO
+ * outage the operator can see, not a silent bypass.
+ */
+export function verifyAssertionDigest(opts: { decodedXml: string; signedInfo: string }): void {
+  const digestMatch = opts.signedInfo.match(/<ds:DigestValue[^>]*>([\s\S]*?)<\/ds:DigestValue>/)
+    ?? opts.signedInfo.match(/<DigestValue[^>]*>([\s\S]*?)<\/DigestValue>/);
+  if (!digestMatch) {
+    throw new Error('SAML response: SignedInfo carries no <ds:DigestValue> — refusing unbound signature');
+  }
+  const assertionMatch = opts.decodedXml.match(/<(?:[A-Za-z0-9]+:)?Assertion\b[^>]*>[\s\S]*?<\/(?:[A-Za-z0-9]+:)?Assertion>/);
+  if (!assertionMatch) {
+    throw new Error('SAML response: missing <Assertion>');
+  }
+  const expected = Buffer.from(digestMatch[1]!.replace(/\s+/g, ''), 'base64');
+  const actual = createHash('sha256').update(assertionMatch[0], 'utf8').digest();
+  if (expected.length !== actual.length || !timingSafeBuffers(expected, actual)) {
+    throw new Error('SAML response: assertion digest does not match the signed DigestValue');
+  }
+}
+
+function timingSafeBuffers(a: Buffer, b: Buffer): boolean {
+  let mismatch = 0;
+  for (let i = 0; i < a.length; i++) mismatch |= a[i]! ^ b[i]!;
+  return mismatch === 0;
+}
+
+/**
+ * Enforce the assertion's validity window when the IdP published one
+ * (`<saml:Conditions NotBefore NotOnOrAfter>`). Without it, a captured
+ * response can be replayed forever.
+ */
+export function checkAssertionConditions(assertionXml: string, now: Date = new Date()): void {
+  const conditions = assertionXml.match(/<(?:[A-Za-z0-9]+:)?Conditions\b[^>]*>/)?.[0];
+  if (!conditions) return;
+  const notBefore = conditions.match(/NotBefore="([^"]+)"/)?.[1];
+  const notOnOrAfter = conditions.match(/NotOnOrAfter="([^"]+)"/)?.[1];
+  if (notBefore && !Number.isNaN(Date.parse(notBefore)) && Date.parse(notBefore) > now.getTime()) {
+    throw new Error('SAML response: assertion is not yet valid (NotBefore)');
+  }
+  if (notOnOrAfter && Date.parse(notOnOrAfter) <= now.getTime()) {
+    throw new Error('SAML response: assertion has expired (NotOnOrAfter)');
+  }
+}
+
 /** Helper: decode a SAML response base64 blob (IdPs POST
  *  base64-encoded SAMLResponse parameter). */
 export function decodeSamlResponse(b64: string): string {

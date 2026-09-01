@@ -20,7 +20,7 @@ import { audit } from '../lib/audit.js';
 import { config } from '../config.js';
 import { getStickyEnabledForService } from '../engine/proxy.js';
 import { setSettingString } from '../lib/settings.js';
-import { badRequest, conflict, HttpError, notFound, parseId as num } from '../lib/errors.js';
+import { badRequest, conflict, forbidden, HttpError, notFound, parseId as num } from '../lib/errors.js';
 import { loadServiceForUser } from '../lib/serviceAccess.js';
 import { assertServiceRole, visibleServiceIdSet } from '../lib/resourceAccess.js';
 import { assertMayUseHostPrivilege } from '../lib/hostPrivilege.js';
@@ -218,6 +218,13 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
       build: input.build,
     });
     assertMayPublishPort(req.user!, input.publishedPort);
+    // Sources hold OPERATOR-managed git credentials (sourcesRoutes is
+    // requireAdmin). A member attaching a guessed sourceId here would have
+    // the pipeline clone the operator's private repos with the decrypted
+    // token into a container they own — full source exfiltration.
+    if (input.sourceId != null && !req.user!.isOperator) {
+      throw forbidden('Only operators may attach a managed source to a service');
+    }
     const slug = input.slug ?? slugify(input.name);
     // Explicit duplicate-slug check → a clean 409 instead of an uncaught
     // unique-index error (500). Covers the NULL-project case too, where
@@ -334,6 +341,13 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
       await applyDefaultTags(app.db, req.user!, svc!.id);
     }
     void audit(app.db, req.user!.id, 'service.create', input.name);
+    app.kernel?.events.emit('service.created', {
+      serviceId: svc!.id,
+      // Services link to projects via tags now (services.projectId is gone);
+      // the event contract keeps the field, so unlinked = 0.
+      projectId: 0,
+      name: input.name,
+    });
     return serialize(svc, await sourceNameFor(app.db, svc.sourceId), await tagIdsOf(app.db, svc!.id));
   });
 
@@ -353,6 +367,12 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
     // Read access is any workspace seat; editing the definition is `member`+.
     await assertServiceRole(app.db, existing, req.user!, 'member');
     const { build, ...patch } = updateService.parse(req.body ?? {});
+    // Same rule as create: attaching a managed source is operator-only. A
+    // member editing their own service must not bolt an operator credential
+    // onto it afterwards.
+    if (patch.sourceId !== undefined && patch.sourceId !== null && !req.user!.isOperator) {
+      throw forbidden('Only operators may attach a managed source to a service');
+    }
     // The gate has to consider the MERGED result, not just the payload: a
     // member could otherwise switch `type` to pm2 on its own, or add a single
     // lifecycle hook, and reach host execution one field at a time.
@@ -465,6 +485,10 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
       req.log.warn({ err, slug: svc.slug }, 'failed to reap per-service bridge');
     }
     void audit(app.db, req.user!.id, 'service.delete', svc.name);
+    app.kernel?.events.emit('service.deleted', {
+      serviceId: svc.id,
+      name: svc.name,
+    });
     reply.status(204);
   });
 
@@ -561,6 +585,9 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
     }
     await app.db.update(services).set({ status: 'stopped' }).where(eq(services.id, svc.id));
     void audit(app.db, req.user!.id, 'service.stop', svc.name);
+    app.kernel?.events.emit('service.stopped', {
+      serviceId: svc.id,
+    });
     return { ok: true, status: 'stopped' };
   });
 

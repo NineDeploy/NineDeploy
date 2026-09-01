@@ -224,7 +224,10 @@ export const workspaceRoutes: FastifyPluginAsync = async (app) => {
 
     const isInstanceAdmin = req.user!.isOperator;
     if (!membership && !isInstanceAdmin) {
-      throw forbidden('You are not a member of this workspace');
+      // 404, not 403: "exists but you are not a member" vs "does not exist"
+      // would let any authenticated user enumerate private workspace ids
+      // (resourceAccess.ts convention / L-12).
+      throw notFound('Workspace not found');
     }
 
     const membersWithUser = await app.db
@@ -265,6 +268,8 @@ export const workspaceRoutes: FastifyPluginAsync = async (app) => {
     const membership = await app.db.query.workspaceMembers.findFirst({
       where: and(eq(workspaceMembers.workspaceId, id), eq(workspaceMembers.userId, userId)),
     });
+    // Non-members get the same 404 a missing row gets — no id oracle.
+    if (!membership && !req.user!.isOperator) throw notFound('Workspace not found');
 
     const canEdit = req.user!.isOperator || membership?.role === 'owner' || membership?.role === 'admin';
     if (!canEdit) throw forbidden('Admin or Owner role required to update workspace settings');
@@ -293,6 +298,12 @@ export const workspaceRoutes: FastifyPluginAsync = async (app) => {
     const ws = await app.db.query.workspaces.findFirst({ where: eq(workspaces.id, id) });
     if (!ws) throw notFound('Workspace not found');
 
+    // Non-members get the same 404 a missing row gets — no id oracle.
+    const callerMembership = await app.db.query.workspaceMembers.findFirst({
+      where: and(eq(workspaceMembers.workspaceId, id), eq(workspaceMembers.userId, userId)),
+    });
+    if (!callerMembership && !req.user!.isOperator) throw notFound('Workspace not found');
+
     const isOwner = ws.ownerId === userId || req.user!.isOperator;
     if (!isOwner) throw forbidden('Only the workspace owner or system admin can delete a workspace');
 
@@ -315,6 +326,8 @@ export const workspaceRoutes: FastifyPluginAsync = async (app) => {
     const callerMembership = await app.db.query.workspaceMembers.findFirst({
       where: and(eq(workspaceMembers.workspaceId, id), eq(workspaceMembers.userId, userId)),
     });
+    // Non-members get the same 404 a missing row gets — no id oracle.
+    if (!callerMembership && !req.user!.isOperator) throw notFound('Workspace not found');
 
     const canInvite = req.user!.isOperator || callerMembership?.role === 'owner' || callerMembership?.role === 'admin';
     if (!canInvite) throw forbidden('Admin or Owner role required to invite workspace members');
@@ -388,6 +401,8 @@ export const workspaceRoutes: FastifyPluginAsync = async (app) => {
     const callerMembership = await app.db.query.workspaceMembers.findFirst({
       where: and(eq(workspaceMembers.workspaceId, id), eq(workspaceMembers.userId, userId)),
     });
+    // Non-members get the same 404 a missing row gets — no id oracle.
+    if (!callerMembership && !req.user!.isOperator) throw notFound('Workspace not found');
 
     const canManage = req.user!.isOperator || callerMembership?.role === 'owner' || callerMembership?.role === 'admin';
     if (!canManage) throw forbidden('Admin or Owner role required to update member roles');
@@ -447,6 +462,8 @@ export const workspaceRoutes: FastifyPluginAsync = async (app) => {
     const callerMembership = await app.db.query.workspaceMembers.findFirst({
       where: and(eq(workspaceMembers.workspaceId, id), eq(workspaceMembers.userId, userId)),
     });
+    // Non-members get the same 404 a missing row gets — no id oracle.
+    if (!callerMembership && !req.user!.isOperator) throw notFound('Workspace not found');
 
     const isSelf = targetMembership.userId === userId;
     const canRemove = req.user!.isOperator || callerMembership?.role === 'owner' || callerMembership?.role === 'admin' || isSelf;

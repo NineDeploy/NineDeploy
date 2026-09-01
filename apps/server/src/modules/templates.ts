@@ -282,7 +282,12 @@ export const templateRoutes: FastifyPluginAsync = async (app) => {
     '/community/:id',
     { preHandler: app.requireAdmin },
     async (req) => {
-      const result = await removeCommunityTemplateLib((req.params as { id: string }).id);
+      // The id becomes a file name — an unsafe slug is a 400, not a lookup.
+      const id = (req.params as { id: string }).id;
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id) || id.includes('..')) {
+        throw badRequest(`Invalid template id "${id}"`);
+      }
+      const result = await removeCommunityTemplateLib(id);
       if (!result.removed) throw notFound(`Community template "${result.id}" not found`);
       void audit(app.db, req.user!.id, 'templates.community_remove', result.id);
       return { ok: true, ...result };

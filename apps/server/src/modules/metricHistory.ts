@@ -82,7 +82,9 @@ export const metricHistoryRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // ── POST /v1/metric-history/flush — run built-in retention sweep ──
-  app.post('/flush', async (req) => {
+  // Operator-gated: the sweep deletes rows instance-wide, a destructive
+  // global action that any authenticated member must not be able to trigger.
+  app.post('/flush', { preHandler: app.requireOperator }, async (req) => {
     const p = plugin();
     const deleted = p ? await p.runRetention(app.kernel) : 0;
     app.kernel.events.emitCustom('metric.flush.completed', {

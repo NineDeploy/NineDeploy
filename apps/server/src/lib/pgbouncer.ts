@@ -17,13 +17,12 @@
  * typical operator that's a few hundred MiB of RAM, which
  * is well below what a pooled Postgres workload saves.
  */
-import { unlink } from 'node:fs/promises';
 import { eq } from 'drizzle-orm';
 import { databases, type DB, type Database } from '@ninedeploy/db';
 import { decrypt } from './crypto.js';
 import { capture, run } from './exec.js';
 import { NETWORK } from '../engine/proxy.js';
-import { writeSecretFile } from './secretFile.js';
+import { writeSecretFile, type SecretFile } from './secretFile.js';
 
 const PGBOUNCER_IMAGE = 'bitnami/pgbouncer:1.24.1';
 const DEFAULT_PORT = 6432;
@@ -112,28 +111,37 @@ export async function enablePgbouncer(db: DB, d: Database, log: (line: string) =
     dbName,
   });
   const userlist = renderUserlist({ user, password });
-  const iniPath = await writeTempFile('pgbouncer.ini', ini);
-  const userlistPath = await writeTempFile('userlist.txt', userlist);
+  const iniFile = await writeTempFile('pgbouncer.ini', ini);
+  const userlistFile = await writeTempFile('userlist.txt', userlist);
 
   // Remove any stale (stopped) container of the same
-  // name so `docker run` does not fail with a name
+  // name so the create below does not fail with a name
   // conflict; pgbouncer has no retained state.
   await run('docker', ['rm', '-f', containerName], {}, swallow).catch(swallow);
 
   try {
+    // Create → docker cp → start: the config files are copied INTO the
+    // container instead of bind-mounted, so the host-side copies (which
+    // carry the DB password) can be deleted as soon as this sequence ends.
+    // A bind mount would force them to stay on disk for the container's
+    // lifetime, leaking secret material in the shared tmp dir.
     const args = [
-      'run',
-      '-d',
+      'create',
       '--name', containerName,
       '--network', NETWORK,
       '--restart', 'unless-stopped',
-      '-p', `${port}:${port}`,
-      '-v', `${iniPath}:/etc/pgbouncer/pgbouncer.ini:ro`,
-      '-v', `${userlistPath}:/etc/pgbouncer/userlist.txt:ro`,
+      // Only publish when the operator chose an explicit sidecar port: the
+      // default (6432) is shared by EVERY sidecar, so publishing it makes
+      // the second enable fail with "port is already allocated". Clients
+      // connect over the docker network by container name anyway.
+      ...(d.pgbouncerPort != null ? ['-p', `${port}:${port}`] : []),
       PGBOUNCER_IMAGE,
     ];
-    log(`Starting PgBouncer sidecar ${containerName} on port ${port} …`);
+    log(`Creating PgBouncer sidecar ${containerName} on port ${port} …`);
     await run('docker', args, {}, log);
+    await run('docker', ['cp', iniFile.path, `${containerName}:/etc/pgbouncer/pgbouncer.ini`], {}, swallow);
+    await run('docker', ['cp', userlistFile.path, `${containerName}:/etc/pgbouncer/userlist.txt`], {}, swallow);
+    await run('docker', ['start', containerName], {}, log);
 
     // Stamp the row.
     await db
@@ -141,15 +149,16 @@ export async function enablePgbouncer(db: DB, d: Database, log: (line: string) =
       .set({ pgbouncerEnabled: true, pgbouncerContainerName: containerName, pgbouncerPort: port, updatedAt: new Date() })
       .where(eq(databases.id, d.id));
   } finally {
-    // The bind-mounted files are needed for the
-    // container's lifetime, so we leave them on disk
-    // and clean them up on disable. Until then a small
-    // leak in /tmp is acceptable (the next disable call
-    // reaps both the row's files).
+    // The container has its own copy; the host-side secret files are no
+    // longer needed and must never outlive this call — even on failure.
+    iniFile.cleanup();
+    userlistFile.cleanup();
   }
 }
 
-/** Disable: stop + rm the container, clear the row. */
+/** Disable: stop + rm the container, clear the row. The config files were
+ *  copied into the container at enable time and already reaped there, so
+ *  there is nothing on the host filesystem to clean up. */
 export async function disablePgbouncer(db: DB, d: Database, log: (line: string) => void): Promise<void> {
   if (!d.pgbouncerEnabled) return;
   const containerName = d.pgbouncerContainerName ?? pgbouncerContainerName(d);
@@ -159,10 +168,6 @@ export async function disablePgbouncer(db: DB, d: Database, log: (line: string) 
     .update(databases)
     .set({ pgbouncerEnabled: false, pgbouncerContainerName: null, updatedAt: new Date() })
     .where(eq(databases.id, d.id));
-  // Reap the temp config files we wrote on enable.
-  const base = `${containerName}.`;
-  await unlink(`/tmp/${base}pgbouncer.ini`).catch(swallow);
-  await unlink(`/tmp/${base}userlist.txt`).catch(swallow);
 }
 
 /** Read the sidecar's runtime state. `running` is a
@@ -214,15 +219,15 @@ async function containerRunning(name: string): Promise<boolean> {
   }
 }
 
-async function writeTempFile(suffix: string, body: string): Promise<string> {
+async function writeTempFile(suffix: string, body: string): Promise<SecretFile> {
   // Use the per-process temp file helper for secrets
-  // (mode 0o600, cleaned up by the OS on reboot). The
-  // pgbouncer config carries the DB password, so we use
-  // it even for the userlist (which only carries an MD5
-  // hash) — defense in depth.
+  // (mode 0o600, private 0700 dir). The pgbouncer config
+  // carries the DB password, so we use it even for the
+  // userlist (which only carries an MD5 hash) — defense
+  // in depth. The caller MUST call cleanup() once the
+  // files have been copied into the container.
   const ref = `nd-pgb-${process.pid}-${Date.now()}`;
-  const path = await writeSecretFile(ref, suffix, body);
-  return path.path;
+  return writeSecretFile(ref, suffix, body);
 }
 
 interface RenderInput {

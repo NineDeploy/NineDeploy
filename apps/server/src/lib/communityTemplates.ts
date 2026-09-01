@@ -31,6 +31,18 @@ function dir(): string {
   return join(config.paths.dataDir, DIR);
 }
 
+/**
+ * Template ids become FILE NAMES (`<id>.json`), so the id must be a
+ * filename-safe slug: no separators, no dot segments. `join()` happily
+ * resolves `../..` out of the community dir otherwise, turning a template
+ * paste into an arbitrary-file write/delete.
+ */
+function assertSafeFileId(id: string): void {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id) || id.includes('..')) {
+    throw new Error(`Invalid template id "${id}": must be a filename-safe slug (letters, digits, dot, dash, underscore)`);
+  }
+}
+
 export interface CommunityTemplateEntry {
   /** Template id (from the JSON). */
   id: string;
@@ -122,6 +134,7 @@ export async function importCommunityTemplate(
   const templates = parseTemplates([parsed]);
   const t = templates[0];
   if (!t) throw new Error('No template object in file');
+  assertSafeFileId(t.id);
   await mkdir(dir(), { recursive: true });
   const file = `${t.id}.json`;
   const path = join(dir(), file);
@@ -147,6 +160,7 @@ export async function importCommunityTemplate(
 
 /** Remove a community template by id. */
 export async function removeCommunityTemplate(id: string): Promise<{ id: string; removed: boolean }> {
+  assertSafeFileId(id);
   const path = join(dir(), `${id}.json`);
   try {
     await unlink(path);

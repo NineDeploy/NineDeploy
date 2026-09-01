@@ -21,7 +21,7 @@ export function buildServer(
   warn: (msg: string) => void = console.error,
   options: { readOnly?: boolean; tokenScopes?: string[] | null } = {},
 ): McpServer {
-  const server = new McpServer({ name: 'ninedeploy', version: '0.4.9' });
+  const server = new McpServer({ name: 'ninedeploy', version: '0.5.0' });
 
   // Read-only mode keeps the pre-existing behaviour (a
   // hand-picked allowlist of mutating-free tools). The
@@ -35,7 +35,15 @@ export function buildServer(
   // not the broader `read/anything`.
   let tools = options.readOnly ? TOOLS.filter((tool) => READ_ONLY_TOOL_NAMES.has(tool.name)) : TOOLS;
   if (options.tokenScopes !== undefined) {
-    tools = tools.filter((tool) => toolMeetsScope(tool.requiredScopes, options.tokenScopes ?? null));
+    // Mirror the server-side normalization (apps/server/src/lib/auth.ts):
+    // an EMPTY scope list is the "unrestricted legacy token" and `session`
+    // is the interactive-JWT marker — both cover every scope, so the filter
+    // must not run for them or all scoped tools would silently disappear.
+    const scopes = options.tokenScopes;
+    const unrestricted = scopes === null || scopes.length === 0 || scopes.includes('session');
+    if (!unrestricted) {
+      tools = tools.filter((tool) => toolMeetsScope(tool.requiredScopes, scopes));
+    }
   }
   for (const tool of tools) {
     server.registerTool(

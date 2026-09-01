@@ -145,6 +145,30 @@ volume:
     expect(reparsed).toEqual(original);
   });
 
+  it('round-trips notification channels containing YAML-special characters', () => {
+    // ` #` starts a comment in a plain scalar and `a: b` turns a list item
+    // into a map — the emitter must quote scalars that are not provably safe,
+    // or the re-parse silently corrupts (first) or fails (second).
+    const original = parseManifestYaml(`
+version: "1"
+notifications:
+  onDeploy:
+    - "https://hook.example.com/a?x=1#frag"
+    - "a: b"
+`);
+    const m = parseManifestYaml(formatManifestYaml(original));
+    expect(m.notifications?.onDeploy).toEqual(['https://hook.example.com/a?x=1#frag', 'a: b']);
+  });
+
+  it('keeps newlines inside quoted scalar values without YAML folding corruption', () => {
+    const original = parseManifestYaml('version: "1"\nbuild:\n  build: "echo one\\ntwo"\n');
+    expect(original.build?.build).toBe('echo one\ntwo');
+    const out = formatManifestYaml(original);
+    // A raw newline inside the emitted double quotes would fold to a space.
+    const m = parseManifestYaml(out);
+    expect(m.build?.build).toBe('echo one\ntwo');
+  });
+
   it('emits volume without backups when only mount is set', () => {
     const out = formatManifestYaml({ version: '1', volume: { mount: '/data' } });
     expect(out).toContain('volume:');

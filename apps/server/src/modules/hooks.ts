@@ -10,6 +10,10 @@ import { isPing, isPullRequest, parsePullRequest, parsePush, verifyWebhook } fro
 import { loadServiceForUser } from '../lib/serviceAccess.js';
 import { assertMayDeployStoredService } from '../lib/hostPrivilege.js';
 import { isOperator } from '../lib/resourceAccess.js';
+
+/** GitHub caps the push payload's `commits` array at this size; a list at the
+ *  cap may be truncated, so watch-path filtering fails open (see below). */
+const COMMIT_LIST_CAP = 20;
 import { dockerBuilder } from '../engine/builders/docker.js';
 import { pm2Builder } from '../engine/builders/pm2.js';
 import { composeBuilder } from '../engine/builders/compose.js';
@@ -334,8 +338,12 @@ export const hookReceiveRoutes: FastifyPluginAsync = async (app) => {
     // Watch paths (monorepos): when the webhook defines globs, deploy only if
     // at least one changed file matches. Payloads without file lists (rare)
     // still deploy — never silently block an unverifiable push.
+    // GitHub caps the `commits` array at ~20 entries for big pushes, so a list
+    // AT the cap may simply not SHOW the watched change (it happened in a
+    // commit the payload omitted). A redundant deploy costs minutes; a
+    // silently skipped one strands a monorepo team — fail open at the cap.
     const patterns = parseWatchPaths(hook.watchPaths);
-    if (patterns.length > 0 && push.changedFiles.length > 0) {
+    if (patterns.length > 0 && push.changedFiles.length > 0 && push.commitsListed < COMMIT_LIST_CAP) {
       const hit = push.changedFiles.some((f) => matchesAny(f, patterns));
       if (!hit) return { ok: 'skipped', reason: 'watch_paths', patterns: patterns.length };
     }
