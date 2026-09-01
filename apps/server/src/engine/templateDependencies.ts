@@ -10,7 +10,7 @@ import {
 import { eq } from 'drizzle-orm';
 import { encrypt, randomToken } from '../lib/crypto.js';
 import { getTemplates } from '../templates/registry.js';
-import { adoptRetainedVolume, attachDatabaseToServiceBridges, defaultPort, ENGINES, startDatabase } from './database.js';
+import { adoptRetainedVolume, attachDatabaseToServiceBridges, defaultPort, ENGINES, needsVolumeAdoption, startDatabase } from './database.js';
 
 export type TemplateDependencyResult = { database: Database; alreadyAttached: boolean } | null;
 
@@ -106,9 +106,12 @@ export async function reconcileTemplateDependencies(
     // A fresh row mounting a retained volume must never inherit the deleted
     // installation's credentials — re-key what can be re-keyed, refuse the
     // rest with provenance (this is the "reinstall then healthcheck never
-    // passes" trap). Retained ROWS reused above keep their working password
-    // and skip this entirely.
-    if (database.status === 'creating') await adoptRetainedVolume(database, log);
+    // passes" trap). The gate keys off the initializedAt marker, not the row
+    // status alone: a failed first attempt flips the row to 'error' and the
+    // RETRY must run the adoption again instead of booting stale credentials.
+    // Rows whose start already succeeded under their own credentials keep
+    // their marker and skip this entirely.
+    if (needsVolumeAdoption(database)) await adoptRetainedVolume(database, log);
     await startDatabase(database, log, { labels: { 'ninedeploy.template': template.id } });
     // Model B: the DB must also live on the service's per-slug bridge so the
     // app can reach it by name without being able to reach other services.
@@ -117,6 +120,7 @@ export async function reconcileTemplateDependencies(
       status: 'running',
       internalHost: database.containerName,
       internalPort: defaultPort(database.engine),
+      initializedAt: database.initializedAt ?? new Date(),
     }).where(eq(databases.id, database.id));
   } catch (error) {
     await db.update(databases).set({ status: 'error' }).where(eq(databases.id, database.id));

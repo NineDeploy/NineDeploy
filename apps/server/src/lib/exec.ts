@@ -5,10 +5,15 @@ export interface ExecOptions {
   env?: Record<string, string>;
   /** Hard kill the process (and its children) after this many ms. Default: 30 min. */
   timeoutMs?: number;
-  /** Emit a progress heartbeat after this much output silence. Set to 0 to disable. */
+  /** Emit a progress heartbeat after this much output silence. Set to 0 to disable.
+   *  In {@link capture} the heartbeat lines go here — capture has no log sink of
+   *  its own, so without `onProgress` the heartbeat options are inert. */
   heartbeatMs?: number;
   /** Safe, user-facing heartbeat label. Command arguments are never logged implicitly. */
   heartbeatLabel?: string;
+  /** Progress sink for {@link capture} heartbeats (and nothing else — captured
+   *  stdout/stderr stay out of it and are returned/resolved as before). */
+  onProgress?: (line: string) => void;
 }
 
 /**
@@ -229,24 +234,42 @@ export function capture(cmd: string, args: string[], opts: ExecOptions = {}, inp
     let out = '';
     let errOut = '';
     let settled = false;
+    const startedAt = Date.now();
+    let lastActivityAt = startedAt;
+    const cancelHeartbeat = armHeartbeat(
+      (line) => opts.onProgress?.(line),
+      opts.heartbeatMs ?? 0,
+      opts.heartbeatLabel ?? label,
+      startedAt,
+      () => lastActivityAt,
+    );
     // onTimeout fires from the single-shot timer; close/error cancel it first,
     // and Promise settlement is idempotent regardless, so no settled guard here.
     const cancelTimeout = armTimeout(child, timeoutMs, () => {
       settled = true;
+      cancelHeartbeat();
       reject(new ExecTimeoutError(label, timeoutMs));
     });
 
-    child.stdout?.on('data', (d) => (out += d.toString()));
-    child.stderr?.on('data', (d) => (errOut += d.toString()));
+    child.stdout?.on('data', (d) => {
+      lastActivityAt = Date.now();
+      out += d.toString();
+    });
+    child.stderr?.on('data', (d) => {
+      lastActivityAt = Date.now();
+      errOut += d.toString();
+    });
     child.on('error', (err) => {
       if (settled) return;
       settled = true;
+      cancelHeartbeat();
       cancelTimeout();
       reject(err);
     });
     child.on('close', (code) => {
       if (settled) return;
       settled = true;
+      cancelHeartbeat();
       cancelTimeout();
       if (code === 0) resolve(out);
       else reject(new Error(`\`${label}\` exited ${code}${errOut ? `: ${errOut.trim()}` : ''}`));

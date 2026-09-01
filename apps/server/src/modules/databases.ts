@@ -10,6 +10,7 @@ import {
   databaseLogs,
   defaultPort,
   ENGINES,
+  needsVolumeAdoption,
   restartDatabase,
   startDatabase,
   startDatabaseStudio,
@@ -143,6 +144,12 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
         if (!sameRequest) throw badRequest('A different database already uses this name');
 
         try {
+          // A reused row whose adoption never completed (failed first attempt
+          // left it 'error' with a NULL marker) must not boot the retained
+          // volume's stale credentials — same gate the fresh-create path runs.
+          if (needsVolumeAdoption(existing)) {
+            await adoptRetainedVolume(existing, (line) => app.log.info({ component: 'database' }, line));
+          }
           await startDatabase(existing, (line) => app.log.info({ component: 'database' }, line));
           const resumed = {
             ...existing,
@@ -152,7 +159,12 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
           };
           await app.db
             .update(databases)
-            .set({ status: resumed.status, internalHost: resumed.internalHost, internalPort: resumed.internalPort })
+            .set({
+              status: resumed.status,
+              internalHost: resumed.internalHost,
+              internalPort: resumed.internalPort,
+              initializedAt: existing.initializedAt ?? new Date(),
+            })
             .where(eq(databases.id, existing.id));
           void audit(app.db, req.user!.id, 'database.reuse', existing.name);
           return serialize(resumed, { isAdmin: req.user?.isOperator === true });
@@ -190,11 +202,13 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
       // under this name holds credentials from the database that created it.
       // Re-key (postgres) or refuse loudly (engines without a re-key) so a
       // remount never boots a server the credentials cannot reach.
-      await adoptRetainedVolume(created, (line) => app.log.info({ component: 'database' }, line));
+      if (needsVolumeAdoption(created)) {
+        await adoptRetainedVolume(created, (line) => app.log.info({ component: 'database' }, line));
+      }
       await startDatabase(created, (line) => app.log.info({ component: 'database' }, line));
       await app.db
         .update(databases)
-        .set({ status: 'running', internalHost: containerName, internalPort: defaultPort(input.engine) })
+        .set({ status: 'running', internalHost: containerName, internalPort: defaultPort(input.engine), initializedAt: new Date() })
         .where(eq(databases.id, created.id));
     } catch (err) {
       await app.db.update(databases).set({ status: 'error' }).where(eq(databases.id, created.id));
@@ -346,8 +360,16 @@ export const databasesRoutes: FastifyPluginAsync = async (app) => {
     const id = num((req.params as { id: string }).id);
     const d = await loadDatabaseForUser(app.db, id, req.user!);
     await assertDatabaseRole(app.db, d, req.user!, 'member');
+    // A row can sit in 'error' with a NULL marker (failed first attempt) —
+    // starting it must clear the same retained-volume gate as a create/retry.
+    if (needsVolumeAdoption(d)) {
+      await adoptRetainedVolume(d, (line) => app.log.info({ component: 'database' }, line));
+    }
     await startDatabase(d, (line) => app.log.info({ component: 'database' }, line));
-    await app.db.update(databases).set({ status: 'running' }).where(eq(databases.id, d.id));
+    await app.db
+      .update(databases)
+      .set({ status: 'running', initializedAt: d.initializedAt ?? new Date() })
+      .where(eq(databases.id, d.id));
     void audit(app.db, req.user!.id, 'database.start', d.name);
     return { ok: true };
   });

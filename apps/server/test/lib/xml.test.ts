@@ -124,5 +124,36 @@ describe('lib/xml', () => {
       const root = parseXml('<a><!-- just a comment --></a>');
       expect(root.text).toBe('');
     });
+
+    it('extracts single-quoted attributes (regression: silently dropped)', () => {
+      // TAG_RE has always matched single-quoted attribute values, but
+      // ATTR_RE only extracted double quotes — the parse "succeeded"
+      // while the attrs object came back empty, so a single-quoted
+      // Namecheap response lost its Status / host fields.
+      const root = parseXml(
+        "<ApiResponse Status='OK'>" +
+          '<CommandResponse><DomainDNSGetHostsResult>' +
+          "<host HostId='11' Name='www' Type='CNAME' Address='target.example.com.' TTL='1800' />" +
+          '</DomainDNSGetHostsResult></CommandResponse></ApiResponse>',
+      );
+      expect(root.attrs['Status']).toBe('OK');
+      const host = findChild(
+        findChild(findChild(root, 'CommandResponse')!, 'DomainDNSGetHostsResult')!,
+        'host',
+      )!;
+      expect(host.attrs).toMatchObject({
+        HostId: '11',
+        Name: 'www',
+        Type: 'CNAME',
+        Address: 'target.example.com.',
+        TTL: '1800',
+      });
+    });
+
+    it('extracts mixed quote styles in one tag and decodes entities in both', () => {
+      const root = parseXml('<Root double="a &amp; b" single=\'c &apos; d\' />');
+      expect(root.attrs['double']).toBe('a & b');
+      expect(root.attrs['single']).toBe("c ' d");
+    });
   });
 });

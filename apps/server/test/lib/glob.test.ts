@@ -1,5 +1,5 @@
 ﻿import { describe, expect, it } from 'vitest';
-import { globToRegExp, matchesAny, parseWatchPaths } from '../../src/lib/glob.js';
+import { globToRegExp, isSafeWatchPath, matchesAny, parseWatchPaths } from '../../src/lib/glob.js';
 
 describe('globToRegExp', () => {
   it('matches exact paths and rejects others', () => {
@@ -53,6 +53,12 @@ describe('matchesAny', () => {
 });
 
 describe('parseWatchPaths', () => {
+  it('drops patterns that could create pathological regex backtracking', () => {
+    expect(isSafeWatchPath('**'.repeat(5))).toBe(false);
+    expect(isSafeWatchPath('*'.repeat(17))).toBe(false);
+    expect(parseWatchPaths('**'.repeat(5))).toEqual([]);
+  });
+
   it('splits on newlines and commas, trimming blanks', () => {
     expect(parseWatchPaths('a/**, b/*\n\n  c  ')).toEqual(['a/**', 'b/*', 'c']);
     expect(parseWatchPaths(null)).toEqual([]);

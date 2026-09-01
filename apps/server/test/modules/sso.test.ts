@@ -114,6 +114,19 @@ describe('GET /v1/sso/providers', () => {
 });
 
 describe('POST /v1/sso/providers', () => {
+  it('rejects a non-operator before it can register an identity provider', async () => {
+    const app = await buildTestApp();
+    await app.register(ssoRoutes);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/providers',
+      headers: asUser({ role: 'member' }),
+      payload: { type: 'saml', name: 'attacker-idp', config: { idpMetadata: 'attacker-controlled' } },
+    });
+    expect(res.statusCode).toBe(403);
+    await app.close();
+  });
+
   it('rejects an unknown type', async () => {
     const app = await buildTestApp();
     await app.register(ssoRoutes);
@@ -246,6 +259,14 @@ describe('POST /v1/sso/providers', () => {
 });
 
 describe('DELETE /v1/sso/providers/:id', () => {
+  it('rejects a non-operator before it can remove an identity provider', async () => {
+    const app = await buildTestApp();
+    await app.register(ssoRoutes);
+    const res = await app.inject({ method: 'DELETE', url: '/providers/999', headers: asUser({ role: 'member' }) });
+    expect(res.statusCode).toBe(403);
+    await app.close();
+  });
+
   it('removes a provider by id (or no-op if missing)', async () => {
     const app = await buildTestApp();
     await app.register(ssoRoutes);
@@ -1377,4 +1398,3 @@ function makeSsoDb() {
     } as never,
   };
 }
-

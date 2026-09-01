@@ -318,7 +318,10 @@ export type Domain = z.infer<typeof domain>;
 export const createWebhook = z.object({
   branch: gitBranch.optional(),
   /** Newline/comma-separated globs — deploy only when a changed file matches. */
-  watchPaths: z.string().max(4000).optional(),
+  watchPaths: z.string().max(1024).refine((raw) => {
+    const patterns = raw.split(/[\n,]/).map((pattern) => pattern.trim()).filter(Boolean);
+    return patterns.length <= 32 && patterns.every((pattern) => pattern.length <= 256 && (pattern.match(/\*\*/g) ?? []).length <= 4 && (pattern.match(/[?*]/g) ?? []).length <= 16);
+  }, 'watchPaths contains an unsafe glob pattern').optional(),
 });
 export type CreateWebhookInput = z.input<typeof createWebhook>;
 

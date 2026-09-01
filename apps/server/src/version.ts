@@ -1,4 +1,4 @@
-export const VERSION = '0.4.3';
+export const VERSION = '0.4.4';
 
 export interface ChangelogEntry {
   version: string;
@@ -8,6 +8,19 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.4.4',
+    date: '2026-09-01',
+    title: 'Adoption-Retry Fix & Doctor Accuracy',
+    changes: [
+      'The retained-volume fix survives a retry now: adoption was gated on status creating, but failures flip the row to error, so the most common follow-up (deploy again) skipped adoption and booted the retained volume\'s stale credentials — the exact crash-loop 0.4.3 set out to close. Databases carry an initialized_at marker (migration 0048) stamped once the volume\'s contents are consistent with THIS row\'s credentials; the gate re-arms while the marker is NULL and the row sits in creating/error',
+      'The adoption gate (needsVolumeAdoption) is wired into all four start paths: API create, Hub-provisioning retry (reuseExisting), the explicit start route, and template reconcile — where a retained row left in error by a failed first attempt now goes through adoption again instead of silently starting under credentials nobody has',
+      'Doctor no longer mistakes every compose stack\'s network for an orphan: compose networks are ndcmp-<slug>_default and the scan compared the full name against service slugs, never matching — healthy stacks were flagged as "no owner" and a stopped-but-existing stack\'s live network was offered a delete. The project suffix is stripped before the ownership check',
+      'Doctor fix refusals answer 409 with the reason instead of an opaque 500 (which hid the message in production): container came back running, volume gained an owner, row gone, deploy moved on now throw proper conflicts; volume deletion also VERIFIES the removal landed, so a failed docker volume rm (volume still mounted) no longer reports Fixed while the volume survives',
+      'Re-key progress is visible: capture() silently ignored the heartbeat options, so a slow postgres re-key sat silent in the deploy log for up to its 5-minute timeout; heartbeats now flow through an optional onProgress sink like run() always did',
+      'The Doctor panel seeds its query cache with the fix response\'s post-fix report instead of invalidating (a third full scan per click), and the Doctor sidebar link is hidden from non-operators via an operatorOnly nav filter',
+    ],
+  },
   {
     version: '0.4.3',
     date: '2026-09-01',

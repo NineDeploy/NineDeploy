@@ -385,7 +385,11 @@ export const deploysRoutes: FastifyPluginAsync = async (app) => {
       socket.close(1008, 'unauthorized');
       return;
     }
-    if (!user.isOperator) {
+    // WebSocket routes do not pass through the HTTP auth plugin's onRequest
+    // hook, so repeat its API-token privilege narrowing here. A scoped CI
+    // token owned by an operator needs an explicit `operator` scope before it
+    // can open an interactive container shell.
+    if (!user.isOperator || (Array.isArray(user.tokenScopes) && !user.tokenScopes.includes('operator'))) {
       socket.close(1008, 'operator access required');
       return;
     }

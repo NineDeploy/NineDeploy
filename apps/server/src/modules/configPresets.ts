@@ -48,6 +48,10 @@ const NAMESPACE_DEFAULT = 'plugin:config-presets';
 
 export const configPresetsRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('onRequest', app.authenticate);
+  // Presets read and write instance-wide Config Center keys.  Applying one
+  // can change arbitrary configuration, so there is no member-safe route in
+  // this module (including reads, which may expose configured values).
+  app.addHook('preHandler', app.requireOperator);
 
   // Resolve the configured namespace; default keeps existing keys stable.
   const namespace = async (): Promise<string> => {

@@ -58,6 +58,7 @@ describe('databases table — schema/migration drift guard', () => {
       'pgbouncer_enabled',
       'pgbouncer_container_name',
       'pgbouncer_port',
+      'initialized_at',
       'created_at',
       'updated_at',
     ];

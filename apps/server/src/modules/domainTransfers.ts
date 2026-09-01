@@ -124,6 +124,12 @@ export const domainTransferTokenRoutes: FastifyPluginAsync = async (app) => {
       if (!body.success) {
         throw unprocessable(body.error.issues[0]!.message);
       }
+      // The one-time token proves that the caller was invited to accept the
+      // transfer; it must not authorize choosing an arbitrary target service.
+      // Otherwise a recipient could point another tenant's hostname at a
+      // victim container and bypass that service's routing middleware.
+      const targetService = await loadServiceForUser(app.db, body.data.targetServiceId, req.user!);
+      await assertServiceRole(app.db, targetService, req.user!, 'admin');
       let result: Awaited<ReturnType<typeof acceptTransfer>>;
       try {
         result = await acceptTransfer(app.db, {

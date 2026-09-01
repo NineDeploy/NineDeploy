@@ -56,6 +56,60 @@ describe('lib/saml', () => {
       expect(() => parseIdpMetadata(xml)).toThrow(/no X509 signing certificate/);
     });
 
+    it('extracts entityID when it uses single-quoted attributes', () => {
+      // Regression: parseAttrs previously only matched double-quoted values,
+      // silently producing {} → "missing entityID" for valid single-quoted IdP configs.
+      const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata" entityID='https://idp.example.com/saml2'>
+  <md:IDPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
+    <md:KeyDescriptor use="signing">
+      <md:KeyInfo xmlns:ds="http://www.w3.org/2000/09/xmldsig#">
+        <ds:X509Data><ds:X509Certificate>MIIDazCCAlOgAwIBAgIUJfAK</ds:X509Certificate></ds:X509Data>
+      </md:KeyInfo>
+    </md:KeyDescriptor>
+    <md:SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"
+                            Location="https://idp.example.com/sso/post" />
+  </md:IDPSSODescriptor>
+</md:EntityDescriptor>`;
+      const meta = parseIdpMetadata(xml);
+      expect(meta.entityId).toBe('https://idp.example.com/saml2');
+      expect(meta.ssoUrl).toBe('https://idp.example.com/sso/post');
+    });
+
+    it('extracts Location when it uses single-quoted attributes', () => {
+      const xml = `<EntityDescriptor entityID="https://ok.example.com">
+  <IDPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
+    <KeyDescriptor use="signing">
+      <KeyInfo xmlns="http://www.w3.org/2000/09/xmldsig#">
+        <X509Data><X509Certificate>MIIDazCCAlOgAwIBAgIUJfAK</X509Certificate></X509Data>
+      </KeyInfo>
+    </KeyDescriptor>
+    <SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"
+                         Location='https://single.example.com/sso/post' />
+  </IDPSSODescriptor>
+</EntityDescriptor>`;
+      const meta = parseIdpMetadata(xml);
+      expect(meta.ssoUrl).toBe('https://single.example.com/sso/post');
+    });
+
+    it('extracts mixed quote styles in a single EntityDescriptor', () => {
+      const xml = `<EntityDescriptor entityID="https://double.example.com"
+  xmlns="urn:oasis:names:tc:SAML:2.0:metadata">
+  <IDPSSODescriptor>
+    <KeyDescriptor use="signing">
+      <KeyInfo xmlns="http://www.w3.org/2000/09/xmldsig#">
+        <X509Data><X509Certificate>MIIDazCCAlOgAwIBAgIUJfAK</X509Certificate></X509Data>
+      </KeyInfo>
+    </KeyDescriptor>
+    <SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect"
+                         Location='https://sso.example.com/saml2/sso' />
+  </IDPSSODescriptor>
+</EntityDescriptor>`;
+      const meta = parseIdpMetadata(xml);
+      expect(meta.entityId).toBe('https://double.example.com');
+      expect(meta.ssoUrl).toBe('https://sso.example.com/saml2/sso');
+    });
+
     it('strips whitespace from the certificate body', () => {
       const xml = `<EntityDescriptor entityID="x">
         <IDPSSODescriptor>
@@ -72,6 +126,63 @@ describe('lib/saml', () => {
       // a single continuous base64 string.
       expect(meta.signingCert).not.toMatch(/\s/);
       expect(meta.signingCert.length).toBeGreaterThan(0);
+    });
+
+    it('extracts single-quoted entityID attribute', () => {
+      // Covers the parseAttrs fix: single-quoted values were silently dropped
+      // before the fix, causing "SAML metadata: missing entityID" on valid IdP configs.
+      const xml = `<?xml version="1.0"?>
+<EntityDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata" entityID='https://idp.single.example.com/idp'>
+  <IDPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
+    <KeyDescriptor use="signing">
+      <KeyInfo xmlns="http://www.w3.org/2000/09/xmldsig#">
+        <X509Data><X509Certificate>MIIDazCCAlOgAwIBAgIUJfAK</X509Certificate></X509Data>
+      </KeyInfo>
+    </KeyDescriptor>
+    <SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"
+                         Location="https://idp.single.example.com/sso/post" />
+  </IDPSSODescriptor>
+</EntityDescriptor>`;
+      const meta = parseIdpMetadata(xml);
+      expect(meta.entityId).toBe('https://idp.single.example.com/idp');
+      expect(meta.ssoUrl).toBe('https://idp.single.example.com/sso/post');
+      expect(meta.signingCert).toBe('MIIDazCCAlOgAwIBAgIUJfAK');
+    });
+
+    it('extracts single-quoted Location in SingleSignOnService', () => {
+      const xml = `<?xml version="1.0"?>
+<EntityDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata" entityID="https://idp.example.com/idp">
+  <IDPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
+    <KeyDescriptor use="signing">
+      <KeyInfo xmlns="http://www.w3.org/2000/09/xmldsig#">
+        <X509Data><X509Certificate>MIIDazCCAlOgAwIBAgIUJfAK</X509Certificate></X509Data>
+      </KeyInfo>
+    </KeyDescriptor>
+    <SingleSignOnService Binding='urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST'
+                         Location='https://idp.example.com/sso/post' />
+  </IDPSSODescriptor>
+</EntityDescriptor>`;
+      const meta = parseIdpMetadata(xml);
+      expect(meta.ssoUrl).toBe('https://idp.example.com/sso/post');
+    });
+
+    it('handles mixed quote styles in the same tag', () => {
+      // Boundary: double and single quotes in one tag must each be extracted correctly.
+      const xml = `<?xml version="1.0"?>
+<EntityDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata" entityID="https://double.example.com/idp" foo='bar'>
+  <IDPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
+    <KeyDescriptor use="signing">
+      <KeyInfo xmlns="http://www.w3.org/2000/09/xmldsig#">
+        <X509Data><X509Certificate>MIIDazCCAlOgAwIBAgIUJfAK</X509Certificate></X509Data>
+      </KeyInfo>
+    </KeyDescriptor>
+    <SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"
+                         Location="https://double.example.com/sso/post" />
+  </IDPSSODescriptor>
+</EntityDescriptor>`;
+      const meta = parseIdpMetadata(xml);
+      expect(meta.entityId).toBe('https://double.example.com/idp');
+      expect(meta.ssoUrl).toBe('https://double.example.com/sso/post');
     });
   });
 

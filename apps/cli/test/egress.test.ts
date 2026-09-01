@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { egressClear, egressClearAction, egressList, egressListAction, egressSet, egressSetAction } from '../src/commands/egress.js';
+import { egressClear, egressClearAction, egressListAction, egressSet, egressSetAction } from '../src/commands/egress.js';
 
 const h = vi.hoisted(() => ({
   errorSpy: vi.fn(),

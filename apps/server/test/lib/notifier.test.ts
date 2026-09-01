@@ -496,19 +496,20 @@ describe('sendSystemEmail', () => {
 
   it('returns false when no active email channel exists', async () => {
     const { db } = makeDb([{ id: 1, type: 'telegram', targetEncrypted: 'x', eventFilter: '', active: true }]);
-    await expect(sendSystemEmail(db as never, 'subject', 'text')).resolves.toBe(false);
+    await expect(sendSystemEmail(db as never, 'user@example.com', 'subject', 'text')).resolves.toBe(false);
   });
 
   it('returns false when the channels query fails (table missing)', async () => {
     const { db } = makeDb([], async () => {
       throw new Error('no such table');
     });
-    await expect(sendSystemEmail(db as never, 'subject', 'text')).resolves.toBe(false);
+    await expect(sendSystemEmail(db as never, 'user@example.com', 'subject', 'text')).resolves.toBe(false);
   });
 
   it('sends through the first active email channel and logs the delivery', async () => {
+    const sendMail = vi.fn(async () => ({ messageId: '1' }));
     const createTransport = vi.fn(() => ({
-      sendMail: vi.fn(async () => ({ messageId: '1' })),
+      sendMail,
       close: vi.fn(),
     }));
     vi.doMock('nodemailer', () => ({ createTransport }));
@@ -516,8 +517,9 @@ describe('sendSystemEmail', () => {
     const { db, lastValues } = makeDb([
       { id: 30, type: 'email', targetEncrypted: encrypt(target), eventFilter: '', active: true },
     ]);
-    await expect(sendSystemEmail(db as never, 'NineDeploy password reset', 'body')).resolves.toBe(true);
+    await expect(sendSystemEmail(db as never, 'reset@example.com', 'NineDeploy password reset', 'body')).resolves.toBe(true);
     expect(createTransport).toHaveBeenCalled();
+    expect(sendMail).toHaveBeenCalledWith(expect.objectContaining({ to: 'reset@example.com' }));
     expect(lastValues()).toHaveBeenCalledWith(expect.objectContaining({ status: 'sent', event: 'email.system' }));
   });
 
@@ -534,7 +536,7 @@ describe('sendSystemEmail', () => {
     const { db, lastValues } = makeDb([
       { id: 31, type: 'email', targetEncrypted: encrypt(target), eventFilter: '', active: true },
     ]);
-    await expect(sendSystemEmail(db as never, 'subject', 'text')).resolves.toBe(false);
+    await expect(sendSystemEmail(db as never, 'user@example.com', 'subject', 'text')).resolves.toBe(false);
     expect(lastValues()).toHaveBeenCalledWith(expect.objectContaining({ status: 'failed', error: 'smtp-down' }));
   });
 
@@ -551,7 +553,7 @@ describe('sendSystemEmail', () => {
     const { db, lastValues } = makeDb([
       { id: 32, type: 'email', targetEncrypted: encrypt(target), eventFilter: '', active: true },
     ]);
-    await expect(sendSystemEmail(db as never, 'subject', 'text')).resolves.toBe(false);
+    await expect(sendSystemEmail(db as never, 'user@example.com', 'subject', 'text')).resolves.toBe(false);
     expect(lastValues()).toHaveBeenCalledWith(expect.objectContaining({ status: 'failed', error: 'smtp refused' }));
   });
 });

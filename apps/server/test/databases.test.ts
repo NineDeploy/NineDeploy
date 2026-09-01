@@ -20,21 +20,30 @@ const engineMocks = vi.hoisted(() => ({
 
 // Partial ENGINES: `mysql` is a valid schema enum value but intentionally
 // missing here so the "Unknown engine" branch of the create route is reachable.
-vi.mock('../src/engine/database.js', () => ({
-  ENGINES: {
-    postgres: { username: () => 'nine', dbName: () => 'app' },
-    redis: { username: () => undefined, dbName: () => undefined },
-  },
-  startDatabase: engineMocks.startDatabase,
-  stopDatabase: engineMocks.stopDatabase,
-  restartDatabase: engineMocks.restartDatabase,
-  databaseLogs: engineMocks.databaseLogs,
-  connectionString: engineMocks.connectionString,
-  defaultPort: engineMocks.defaultPort,
-  startDatabaseStudio: engineMocks.startDatabaseStudio,
-  stopDatabaseStudio: engineMocks.stopDatabaseStudio,
-  adoptRetainedVolume: engineMocks.adoptRetainedVolume,
-}));
+vi.mock('../src/engine/database.js', async (importOriginal) => {
+  // The real module is imported for its pure helpers (needsVolumeAdoption —
+  // the adopted/retried gate under test); everything that touches docker or
+  // the DB driver is stubbed below. The ENGINES override stays partial:
+  // `mysql` is a valid schema enum value but intentionally missing here so
+  // the "Unknown engine" branch of the create route is reachable.
+  const actual = await importOriginal<typeof import('../src/engine/database.js')>();
+  return {
+    ...actual,
+    ENGINES: {
+      postgres: { username: () => 'nine', dbName: () => 'app' },
+      redis: { username: () => undefined, dbName: () => undefined },
+    },
+    startDatabase: engineMocks.startDatabase,
+    stopDatabase: engineMocks.stopDatabase,
+    restartDatabase: engineMocks.restartDatabase,
+    databaseLogs: engineMocks.databaseLogs,
+    connectionString: engineMocks.connectionString,
+    defaultPort: engineMocks.defaultPort,
+    startDatabaseStudio: engineMocks.startDatabaseStudio,
+    stopDatabaseStudio: engineMocks.stopDatabaseStudio,
+    adoptRetainedVolume: engineMocks.adoptRetainedVolume,
+  };
+});
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -87,7 +96,9 @@ describe('databases routes', () => {
 
   it('creates a database reusing an existing retained volume', async () => {
     const fakeDb = createFakeDb({
-      insert: { databases: [dbRow({ id: 8, volumeName: 'nd-db-old-data', status: 'running' })] },
+      // The INSERT stub mirrors what the route actually writes: a fresh row is
+      // 'creating' with no marker yet, so the adoption gate fires.
+      insert: { databases: [dbRow({ id: 8, volumeName: 'nd-db-old-data', status: 'creating' })] },
       findFirst: { databases: dbRow({ id: 8, volumeName: 'nd-db-old-data', status: 'running' }) },
     });
     const app = await buildTestApp({ db: fakeDb });
@@ -163,6 +174,37 @@ describe('databases routes', () => {
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ id: 9, status: 'running', host: 'nd-db-directus-db', port: 5432 });
     expect(engineMocks.startDatabase).toHaveBeenCalledWith(existing, expect.any(Function));
+    // The retry of a FAILED first attempt is exactly where the retained-volume
+    // trap re-opens: the row is 'error' with no marker, so its volume may hold
+    // the deleted installation's credentials. Adoption must run again.
+    expect(engineMocks.adoptRetainedVolume).toHaveBeenCalledTimes(1);
+    expect(engineMocks.adoptRetainedVolume).toHaveBeenCalledWith(existing, expect.any(Function));
+  });
+
+  it('skips adoption for a row whose volume was already initialized under its own credentials', async () => {
+    const existing = dbRow({
+      id: 11,
+      ownerUserId: 1,
+      name: 'directus-db',
+      slug: 'directus-db',
+      status: 'stopped',
+      version: null,
+      containerName: 'nd-db-directus-db',
+      initializedAt: new Date('2026-08-30T00:00:00Z'),
+    });
+    const app = await buildTestApp({ db: createFakeDb({ findFirst: { databases: existing } }) });
+    await app.register(databasesRoutes);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/',
+      headers: asUser(),
+      payload: { name: 'directus-db', engine: 'postgres', reuseExisting: true },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(engineMocks.adoptRetainedVolume).not.toHaveBeenCalled();
+    expect(engineMocks.startDatabase).toHaveBeenCalledTimes(1);
   });
 
   it('does not reuse a same-name database owned by another user', async () => {

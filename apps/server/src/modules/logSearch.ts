@@ -39,11 +39,14 @@ export const logSearchRoutes: FastifyPluginAsync = async (app) => {
     if (!body.success) {
       throw badRequest(body.error.issues[0]!.message);
     }
-    // When the operator narrows to one service, the
-    // service must be visible to them with at least
-    // `member` (the route itself only reads). The
-    // shared access helper covers all the usual
-    // workspace / operator / membership rules.
+    // A cluster-wide Loki query has no tenant boundary to apply, so it is an
+    // instance-operator operation. A member may search only after narrowing
+    // to one service they can access.
+    if (body.data.serviceId === undefined && !req.user!.isOperator) {
+      throw badRequest('Cluster-wide log search requires operator access');
+    }
+    // When the caller narrows to one service, it must be visible with at
+    // least `member`. The shared helper covers workspace/operator rules.
     if (body.data.serviceId !== undefined) {
       const svc = await loadServiceForUser(app.db, body.data.serviceId, req.user!);
       await assertServiceRole(app.db, svc, req.user!, 'member');

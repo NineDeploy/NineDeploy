@@ -45,7 +45,10 @@ export function Doctor() {
     mutationFn: (findingId: string) => api.doctor.fix({ findingId }),
     onSuccess: (res) => {
       toast(`Fixed: ${res.action}`, 'info');
-      qc.invalidateQueries({ queryKey: ['doctor-report'] });
+      // The fix response already carries the post-fix report — seed the cache
+      // with it instead of invalidating, which would trigger a THIRD full
+      // scan (fix already scans before and after executing) per click.
+      qc.setQueryData(['doctor-report'], res.report);
     },
     onError: (err: Error) => toast(err.message ?? 'Fix failed', 'error'),
   });

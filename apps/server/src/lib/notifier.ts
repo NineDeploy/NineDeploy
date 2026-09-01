@@ -262,7 +262,7 @@ export function parseEmailTarget(target: string): EmailTarget {
 }
 
 /** Send an email through SMTP (target = JSON config, credentials encrypted at rest). */
-async function sendEmail(target: string, subject: string, message: string): Promise<void> {
+async function sendEmail(target: string, subject: string, message: string, recipient?: string): Promise<void> {
   const cfg = parseEmailTarget(target);
   const nodemailer = await import('nodemailer');
   const transport = nodemailer.createTransport({
@@ -272,7 +272,7 @@ async function sendEmail(target: string, subject: string, message: string): Prom
     auth: cfg.user ? { user: cfg.user, pass: cfg.pass ?? '' } : undefined,
   });
   try {
-    await transport.sendMail({ from: cfg.from, to: cfg.to, subject, text: message });
+    await transport.sendMail({ from: cfg.from, to: recipient ?? cfg.to, subject, text: message });
   } finally {
     transport.close();
   }
@@ -400,13 +400,12 @@ export async function notifyEvent(db: DB, event: AppEvent): Promise<void> {
 }
 
 /**
- * Send an ad-hoc email through the first active email channel (used by the
- * forgot-password flow). Returns true when a channel existed and the message
- * was sent; false when no email channel is configured (the caller then relies
- * on admin-issued links). Failures are logged into notification_log like any
- * other delivery.
+ * Send an ad-hoc email through the first active email channel. `recipient` is
+ * deliberately separate from the channel's configured fallback address: reset
+ * links and invitations must go to the account they were issued for, never to
+ * a shared operations mailbox. Returns false when no email channel exists.
  */
-export async function sendSystemEmail(db: DB, subject: string, text: string): Promise<boolean> {
+export async function sendSystemEmail(db: DB, recipient: string, subject: string, text: string): Promise<boolean> {
   let channel: NotificationChannel | undefined;
   try {
     channel = (await db.query.notificationChannels.findMany()).find((c) => c.active && c.type === 'email');
@@ -416,7 +415,7 @@ export async function sendSystemEmail(db: DB, subject: string, text: string): Pr
   if (!channel) return false;
   const target = decrypt(channel.targetEncrypted);
   try {
-    await withRetry(() => sendEmail(target, subject, text));
+    await withRetry(() => sendEmail(target, subject, text, recipient));
     await db.insert(notificationLog).values({ channelId: channel.id, event: 'email.system', entity: subject, status: 'sent', attempts: 1 });
     return true;
   } catch (err) {

@@ -9,6 +9,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-09-01
+
+> A review pass over 0.4.3's doctor mode and retained-volume work found
+> one deep flaw and two sharp edges: the headline fix did not survive
+> its own retry path, every compose stack's network looked like an
+> orphan to the Doctor, and the guarded-fix refusals surfaced as opaque
+> 500s instead of the promised 409s. Fixed together with a few
+> papercuts (hidden progress, one scan too many, a sidebar link for a
+> page that can only refuse you).
+
+### Fixed
+
+- **The retained-volume fix now survives a retry.** Adoption was gated
+  on `status = 'creating'`, but every failure path flips the row to
+  `error` — so the most common follow-up (deploy again) skipped
+  adoption entirely and booted the retained volume's stale credentials,
+  re-creating the exact crash-loop 0.4.3 set out to close. Databases now
+  carry an `initialized_at` marker (migration 0048), stamped once the
+  volume's contents have been made consistent with THIS row's
+  credentials; the adoption gate re-arms whenever the marker is NULL and
+  the row sits in `creating`/`error`. Covers the API create path, the
+  Hub-provisioning retry (`reuseExisting`), the explicit start route,
+  and template reconcile — where a retained row left in `error` by a
+  failed first attempt now goes through adoption again instead of
+  silently starting under credentials nobody has.
+- **Doctor no longer mistakes every compose stack's network for an
+  orphan.** Compose networks are named `ndcmp-<slug>_default`; the scan
+  compared the full name (suffix included) against service slugs and
+  never matched — flagging healthy stacks as "no owner" and offering a
+  delete for a stopped-but-existing stack's live network. The project
+  suffix is now stripped before the ownership check.
+- **Doctor fix refusals answer 409 with the reason, not an opaque
+  500.** The guarded re-checks (container came back running, volume
+  gained an owner, row gone, deploy moved on) threw plain errors that
+  the global handler turned into 500s — hiding the actionable message
+  in production entirely. They now throw proper conflicts, and a volume
+  deletion VERIFIES the removal landed: a failed `docker volume rm`
+  (volume still mounted by a container) no longer reports "Fixed" while
+  the volume survives on disk.
+- **Re-key progress is visible.** `capture()` silently ignored the
+  heartbeat options, so a slow postgres re-key (up to its 5-minute
+  timeout) sat silent in the deploy log; heartbeats now flow through an
+  optional `onProgress` sink like `run()` always did.
+- **The Doctor panel no longer triggers a third full scan per fix** —
+  the fix response already carries the post-fix report; the panel seeds
+  its query cache with it instead of invalidating and refetching.
+- **The Doctor sidebar link is hidden from non-operators** (`operatorOnly`
+  nav filter) instead of leading every member to a page that can only
+  refuse them.
+
 ## [0.4.3] - 2026-09-01
 
 > Two long-standing operator pain points close out this release.

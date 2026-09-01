@@ -57,7 +57,10 @@ export function encodeXmlEntities(s: string): string {
 }
 
 const TAG_RE = /<!--[\s\S]*?-->|<(\/?)([A-Za-z_][\w:.-]*)((?:\s+[A-Za-z_][\w:.-]*\s*=\s*(?:"[^"]*"|'[^']*'))*)\s*(\/?)>/g;
-const ATTR_RE = /([A-Za-z_][\w:.-]*)\s*=\s*"([^"]*)"/g;
+// TAG_RE above matches attribute values in either quote style, so both must be
+// extracted here — a single-quoted attr that only TAG_RE recognised used to be
+// silently dropped (empty attrs) instead of parsed.
+const ATTR_RE = /([A-Za-z_][\w:.-]*)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
 
 /** Parse a Namecheap-shaped XML document. Throws on malformed input. */
 export function parseXml(input: string): XmlElement {
@@ -102,7 +105,7 @@ export function parseXml(input: string): XmlElement {
       ATTR_RE.lastIndex = 0;
       let am = ATTR_RE.exec(rawAttrs);
       while (am) {
-        attrs[am[1]!] = decodeXmlEntities(am[2]!);
+        attrs[am[1]!] = decodeXmlEntities(am[2] ?? am[3] ?? '');
         am = ATTR_RE.exec(rawAttrs);
       }
       const el: XmlElement = { name: tagName, attrs, text: '', children: [] };

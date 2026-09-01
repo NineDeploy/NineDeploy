@@ -10,7 +10,7 @@ const authMocks = vi.hoisted(() => ({
   // 'valid' = admin session; 'member' = non-admin (used for the RBAC test).
   resolveUser: vi.fn(
     async (_db: unknown, token: string) =>
-      token === 'valid' ? { id: 1, isOperator: true as const } : token === 'member' ? { id: 2, isOperator: false as const } : null,
+      token === 'valid' ? { id: 1, isOperator: true as const } : token === 'member' ? { id: 2, isOperator: false as const } : token === 'scoped-read-only' ? { id: 1, isOperator: true as const, tokenScopes: ['read'] } : null,
   ),
 }));
 vi.mock('../src/lib/auth.js', () => authMocks);
@@ -552,6 +552,21 @@ describe('deploys routes', () => {
     const closed = new Promise<void>((resolve) => ws.addEventListener('close', (_ev) => resolve()));
     await closed;
     expect((ws as unknown as { _code?: number })._code ?? 1008).toBe(1008);
+    expect(childProc.spawn).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('rejects an operator-owned API token without the operator scope from the exec terminal', async () => {
+    const app = await buildTestApp({
+      websocket: true,
+      db: createFakeDb({ findFirst: { services: svcRow({ id: 1, runtimeId: 'c1' }) } }),
+    });
+    await app.register(deploysRoutes, { prefix: '/services' });
+    const port = await listen(app);
+    const ws = await openWs(wsUrl(port, '/services/1/exec'), 'ninedeploy.bearer.scoped-read-only');
+    sockets.push(ws);
+    const closed = new Promise<number>((resolve) => ws.addEventListener('close', (ev) => resolve(ev.code)));
+    expect(await closed).toBe(1008);
     expect(childProc.spawn).not.toHaveBeenCalled();
     await app.close();
   });

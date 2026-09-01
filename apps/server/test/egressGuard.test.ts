@@ -1,5 +1,5 @@
 ﻿import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { assertPublicHttpUrl, isPrivateAddress } from '../src/lib/egressGuard.js';
+import { assertPublicHttpUrl, guardedFetch, isPrivateAddress } from '../src/lib/egressGuard.js';
 import { notifyEvent } from '../src/lib/notifier.js';
 import { exchangeOidcCode, fetchOidcConfiguration, fetchOidcUserInfo } from '../src/lib/oauth.js';
 import { encrypt } from '../src/lib/crypto.js';
@@ -36,6 +36,9 @@ describe('isPrivateAddress', () => {
       'fd00::1', // unique-local
       'fe80::1', // link-local
       '::ffff:169.254.169.254', // IPv4-mapped metadata
+      '::ffff:a9fe:a9fe', // same address after WHATWG URL normalisation
+      '64:ff9b::a9fe:a9fe', // RFC 6052 NAT64 metadata endpoint
+      '2002:a9fe:a9fe::1', // 6to4 metadata endpoint
     ]) {
       expect(isPrivateAddress(ip), ip).toBe(true);
     }
@@ -78,6 +81,14 @@ describe('assertPublicHttpUrl', () => {
   it('honours the operator escape hatch', async () => {
     process.env['NINEDEPLOY_ALLOW_PRIVATE_EGRESS'] = '1';
     await expect(assertPublicHttpUrl('http://127.0.0.1:3000/hook')).resolves.toBeInstanceOf(URL);
+  });
+
+  it('does not follow a validated public URL to an unchecked redirect target', async () => {
+    await guardedFetch('https://203.0.113.10/redirect', { method: 'POST' });
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://203.0.113.10/redirect',
+      expect.objectContaining({ method: 'POST', redirect: 'manual' }),
+    );
   });
 });
 

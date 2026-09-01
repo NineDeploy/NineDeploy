@@ -1,0 +1,15 @@
+-- Retained-volume adoption marker (0.4.4).
+--
+-- `adoptRetainedVolume` re-keys (postgres) or refuses (engines without a
+-- re-key path) when a fresh row mounts a retained volume that still holds the
+-- deleted installation's credentials. The gate used to key off
+-- `status = 'creating'`, but every failure path flips the row to 'error' — so
+-- the most common follow-up (a retry) skipped adoption entirely and booted
+-- the stale-credential server the feature exists to prevent. `initialized_at`
+-- records "this volume's contents were made consistent with THIS row's
+-- credentials": NULL keeps the adoption gate armed, a timestamp retires it.
+--
+-- Nullable on purpose: rows predating this column have been running on their
+-- own credentials; a NULL marker only re-arms adoption for 'creating'/'error'
+-- rows, which is exactly where staleness is possible.
+ALTER TABLE `databases` ADD `initialized_at` integer;

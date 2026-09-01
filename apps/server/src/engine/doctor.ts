@@ -7,12 +7,13 @@ import type {
 } from '@ninedeploy/schemas';
 import { eq } from 'drizzle-orm';
 import { getDiskUsage, executeAutoPrune } from './autoPrune.js';
-import { removeVolume, startDatabase, volumeLabels } from './database.js';
+import { removeVolume, startDatabase, volumeExists, volumeLabels } from './database.js';
 import { parseHumanBytes, parseReclaimedBytes } from '../lib/imageInventory.js';
 import {
   capture,
   run,
 } from '../lib/exec.js';
+import { conflict } from '../lib/errors.js';
 import {
   containerRunning,
   listManagedVolumeNames,
@@ -263,10 +264,14 @@ export async function scanDoctor(db: DB): Promise<DoctorReport> {
   const serviceSlugs = new Set(svcs.map((s) => s.slug));
   for (const net of userNetworks) {
     if (net.name === SHARED_NETWORK || BUILT_IN_NETWORKS.has(net.name)) continue;
+    // Compose networks are `ndcmp-<slug>_default` (lib/serviceBridge.ts) —
+    // strip the project suffix before the ownership check or every healthy
+    // compose stack reads as an orphan, and a stopped-but-existing stack's
+    // network becomes an actionable delete.
     const slug = net.name.startsWith('nd-svc-')
       ? net.name.slice('nd-svc-'.length)
       : net.name.startsWith('ndcmp-')
-        ? net.name.slice('ndcmp-'.length)
+        ? net.name.slice('ndcmp-'.length).replace(/_default$/, '')
         : null;
     if (slug === null) continue;
     if (serviceSlugs.has(slug)) continue;
@@ -397,12 +402,16 @@ export async function fixDoctorFinding(
   };
 
   switch (finding.action) {
+    // "State moved on" refusals throw conflict() — the caller's report is stale
+    // by definition, and the API contract (module docs + CHANGELOG) promises a
+    // 409 with the reason, not a 500. Genuine docker failures below stay plain
+    // Errors so they surface as 500s.
     case 'remove_container': {
       const name = finding.target.name ?? '';
       if (!isHubContainerName(name)) throw new Error('refusing to remove a non-Hub container');
       const c = (await listAllContainers()).find((x) => x.name === name);
-      if (!c) throw new Error(`container ${name} is already gone`);
-      if (c.state === 'running') throw new Error(`container ${name} is running again — refusing`);
+      if (!c) throw conflict(`Container ${name} is already gone — re-scan and retry.`);
+      if (c.state === 'running') throw conflict(`Container ${name} is running again — something claimed it, so it is no longer removable here.`);
       await run('docker', ['rm', '-f', name], {}, collect);
       break;
     }
@@ -414,13 +423,19 @@ export async function fixDoctorFinding(
         db.select().from(databases),
         db.select().from(serviceVolumeAttachments),
       ]);
-      if (resolveVolumeOwner(svcs, dbs, name, atts)) throw new Error(`volume ${name} gained an owner — refusing`);
+      if (resolveVolumeOwner(svcs, dbs, name, atts)) throw conflict(`Volume ${name} gained an owner — refusing to delete it.`);
       await removeVolume(name, collect);
+      // removeVolume tolerates a failed `docker volume rm` (e.g. the volume is
+      // still mounted by a container); reporting success while the volume
+      // survived would be a lie, so verify the removal actually landed.
+      if (await volumeExists(name)) {
+        throw conflict(`Volume ${name} could not be deleted — it is likely still in use by a container. Remove the container first, then re-scan.`);
+      }
       break;
     }
     case 'remove_network': {
       const name = finding.target.name ?? '';
-      if (name === SHARED_NETWORK || BUILT_IN_NETWORKS.has(name)) throw new Error('refusing to remove a protected network');
+      if (name === SHARED_NETWORK || BUILT_IN_NETWORKS.has(name)) throw conflict(`Network ${name} is protected and can never be removed here.`);
       await run('docker', ['network', 'rm', name], {}, collect);
       break;
     }
@@ -443,7 +458,7 @@ export async function fixDoctorFinding(
       const id = finding.target.id;
       if (id == null) throw new Error('missing database id');
       const [row] = await db.select().from(databases).where(eq(databases.id, id));
-      if (!row) throw new Error('database row is gone');
+      if (!row) throw conflict(`Database #${id} is gone — re-scan and retry.`);
       await startDatabase(row, collect);
       break;
     }
@@ -458,9 +473,9 @@ export async function fixDoctorFinding(
       const id = finding.target.id;
       if (id == null) throw new Error('missing service id');
       const [row] = await db.select().from(services).where(eq(services.id, id));
-      if (!row) throw new Error('service row is gone');
+      if (!row) throw conflict(`Service #${id} is gone — re-scan and retry.`);
       if (row.runtimeId && (await containerRunning(row.runtimeId))) {
-        throw new Error(`container ${row.runtimeId} is back up — re-scan instead`);
+        throw conflict(`Container ${row.runtimeId} is back up — the service no longer needs a sync. Re-scan instead.`);
       }
       await db.update(services).set({ status: 'error' }).where(eq(services.id, id));
       collect(`service "${row.name}" synced to error — redeploy it from the service page`);
@@ -470,9 +485,9 @@ export async function fixDoctorFinding(
       const id = finding.target.id;
       if (id == null) throw new Error('missing deployment id');
       const [row] = await db.select().from(deployments).where(eq(deployments.id, id));
-      if (!row) throw new Error('deployment row is gone');
+      if (!row) throw conflict(`Deployment #${id} is gone — re-scan and retry.`);
       if (row.status !== 'queued' && row.status !== 'building') {
-        throw new Error(`deployment #${id} moved to ${row.status} — re-scan instead`);
+        throw conflict(`Deployment #${id} moved to "${row.status}" on its own — re-scan instead of cancelling.`);
       }
       await db.update(deployments).set({ status: 'cancelled', finishedAt: new Date() }).where(eq(deployments.id, id));
       collect(`deployment #${id} cancelled`);

@@ -25,10 +25,16 @@ const engineMocks = vi.hoisted(() => ({
   stopDatabaseStudio: vi.fn(async () => undefined),
   adoptRetainedVolume: vi.fn(async () => ({ action: 'fresh' as const })),
 }));
-vi.mock('../src/engine/database.js', () => ({
-  ENGINES: { postgres: { username: () => 'nine', dbName: () => 'app' } },
-  ...engineMocks,
-}));
+vi.mock('../src/engine/database.js', async (importOriginal) => {
+  // Spread the real module so pure helpers (needsVolumeAdoption) stay real;
+  // the docker-touching surface comes from engineMocks below.
+  const actual = await importOriginal<typeof import('../src/engine/database.js')>();
+  return {
+    ...actual,
+    ENGINES: { postgres: { username: () => 'nine', dbName: () => 'app' } },
+    ...engineMocks,
+  };
+});
 
 const proxyMocks = vi.hoisted(() => ({
   writeDynamicConfig: vi.fn(async () => undefined),

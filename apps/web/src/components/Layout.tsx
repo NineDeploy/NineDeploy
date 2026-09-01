@@ -22,7 +22,7 @@ import { HelpProvider } from '../help/HelpContext.js';
 import { useExperienceMode } from '../lib/mode.js';
 import { installPanelAutofillGuard } from '../lib/autofill.js';
 
-interface NavItem { to: string; label: string; icon: LucideIcon; advancedOnly?: boolean }
+interface NavItem { to: string; label: string; icon: LucideIcon; advancedOnly?: boolean; operatorOnly?: boolean }
 
 interface NavGroup { id: string; label: string; icon: LucideIcon; items: NavItem[] }
 
@@ -92,8 +92,9 @@ const GROUPS: NavGroup[] = [
       { to: '/activity', label: 'Activity', icon: Clock },
       { to: '/monitoring', label: 'Monitoring', icon: Activity },
       // Host-wide analysis + guarded cleanup (dead containers, orphan volumes,
-      // row/runtime desync, reclaimable bloat). Operator-gated server-side.
-      { to: '/doctor', label: 'Doctor', icon: Stethoscope },
+      // row/runtime desync, reclaimable bloat). Operator-gated server-side, so
+      // members don't get a sidebar link to a page that can only refuse them.
+      { to: '/doctor', label: 'Doctor', icon: Stethoscope, operatorOnly: true },
       { to: '/docker', label: 'Docker', icon: Container, advancedOnly: true },
       { to: '/sources', label: 'Sources', icon: KeyRound },
       { to: '/servers', label: 'Servers', icon: HardDrive, advancedOnly: true },
@@ -159,9 +160,11 @@ export function Layout() {
   });
 
   const navGroups = useMemo(() => {
+    const visible = (item: NavItem) =>
+      (!item.advancedOnly || !isSimple) && (!item.operatorOnly || user?.isOperator === true);
     const rawGroups = GROUPS.map((g) => ({
       ...g,
-      items: isSimple ? g.items.filter((item) => !item.advancedOnly) : g.items,
+      items: g.items.filter(visible),
     }));
 
     // Only the items the plugin authors want in the secondary sidebar
@@ -191,7 +194,7 @@ export function Layout() {
         items: extensionItems,
       },
     ];
-  }, [menus.data, isSimple]);
+  }, [menus.data, isSimple, user?.isOperator]);
 
   const [activeGroup, setActiveGroup] = useState<string | null>(() => {
     // On first paint: if the current path matches a known group, open that

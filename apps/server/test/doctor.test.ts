@@ -47,9 +47,18 @@ beforeEach(() => {
   ap.executeAutoPrune.mockImplementation(async () => ({ ok: true as const, freedBytes: 1234, diskUsedPercentAfter: 40, details: {} }));
   ex.capture.mockImplementation(async (_cmd: string, args: string[]) => {
     const a = args as string[];
-    if (a[0] === 'ps') return host.containers.map((c) => JSON.stringify(c)).join('\n');
+    if (a[0] === 'ps') {
+      // `ps --filter name=^X$ -q` (containerRunning) answers bare ids for the
+      // matching name only; the plain `ps -a --format` dump is JSON lines.
+      if (a.includes('-q')) {
+        const filter = (a.find((x) => x.startsWith('name=^')) ?? '').slice('name=^'.length).replace(/\$$/, '');
+        return host.containers.filter((c) => c.Names === filter).map((c) => `id-${c.Names}`).join('\n');
+      }
+      return host.containers.map((c) => JSON.stringify(c)).join('\n');
+    }
     if (a[0] === 'volume' && a[1] === 'ls') return host.volumeLs;
     if (a[0] === 'volume' && a[1] === 'inspect' && a.includes('--format')) return '{}';
+    if (a[0] === 'volume' && a[1] === 'inspect') return 'Error: No such volume';
     if (a[0] === 'network' && a[1] === 'ls') return host.networks;
     if (a[0] === 'network' && a[1] === 'inspect') return host.networkMembers[String(a[2])] ?? '';
     if (a[0] === 'images') return host.images;
@@ -128,6 +137,21 @@ describe('doctor scan', () => {
     expect(report.findings.filter((f) => f.kind === 'orphan_network')).toEqual([]);
   });
 
+  it('recognizes a live compose stack through its <slug>_default network', async () => {
+    host.networks = 'ndcmp-web_default\tbridge\n';
+    host.networkMembers['ndcmp-web_default'] = 'web-1 ';
+    const report = await scanDoctor(createFakeDb({ select: { services: [svcRow()] } }));
+    expect(report.findings.filter((f) => f.kind === 'orphan_network')).toEqual([]);
+  });
+
+  it('flags an empty compose network whose service is gone, suffix and all', async () => {
+    host.networks = 'ndcmp-gone_default\tbridge\n';
+    host.networkMembers['ndcmp-gone_default'] = '';
+    const report = await scanDoctor(createFakeDb());
+    const f = report.findings.find((x) => x.kind === 'orphan_network');
+    expect(f).toMatchObject({ id: 'orphan_network:ndcmp-gone_default', action: 'remove_network' });
+  });
+
   it('flags an empty compose network whose service is gone', async () => {
     host.networks = 'ndcmp-gone\tbridge\n';
     host.networkMembers['ndcmp-gone'] = '';
@@ -203,6 +227,43 @@ describe('doctor fix', () => {
   it('refuses with null when the finding no longer exists (stale report guard)', async () => {
     await expect(fixDoctorFinding(createFakeDb(), 'orphan_volume:nd-never-existed', vi.fn())).resolves.toBeNull();
   });
+
+  it('answers 409 (not 500) when the container came back up mid-fix — the state moved on', async () => {
+    // The scan lists the container as exited (desync finding exists), but by
+    // the time the fix's fresh `containerRunning` probe looks, it is up again —
+    // exactly the race the guard exists for.
+    host.containers = [{ Names: 'nd-web-1', State: 'exited', Image: 'nginx' }];
+    const db = createFakeDb({ select: { services: [svcRow()] } });
+    const err = await fixDoctorFinding(db, 'service_runtime_desync:1', vi.fn()).catch((e: unknown) => e);
+    expect((err as { statusCode?: number }).statusCode).toBe(409);
+    expect((err as Error).message).toContain('back up');
+  });
+
+  it('answers 409 instead of lying about success when a volume rm fails and the volume survives', async () => {
+    host.volumeLs = 'nd-db-stuck-data\n';
+    ex.run.mockRejectedValueOnce(new Error('volume is in use'));
+    // removeVolume swallows the rm failure, but the post-delete verification
+    // probe still finds the volume — the fix must refuse with 409, not report
+    // success while the volume is still on disk.
+    ex.capture.mockImplementation(async (_cmd: string, args: string[]) => {
+      const a = args as string[];
+      if (a[0] === 'volume' && a[1] === 'ls') return host.volumeLs;
+      if (a[0] === 'volume' && a[1] === 'inspect') return 'nd-db-stuck-data';
+      if (a[0] === 'run') return '0 /v';
+      return '';
+    });
+    const err = await fixDoctorFinding(createFakeDb(), 'orphan_volume:nd-db-stuck-data', vi.fn()).catch((e: unknown) => e);
+    expect((err as { statusCode?: number }).statusCode).toBe(409);
+    expect((err as Error).message).toContain('could not be deleted');
+  });
+
+  it('keeps genuine docker failures as plain 500-class errors', async () => {
+    host.containers = [{ Names: 'nd-old', State: 'exited', Image: 'nginx' }];
+    ex.run.mockRejectedValueOnce(new Error('docker daemon unreachable'));
+    const err = await fixDoctorFinding(createFakeDb(), 'exited_container:nd-old', vi.fn()).catch((e: unknown) => e);
+    expect((err as { statusCode?: number }).statusCode).toBeUndefined();
+    expect((err as Error).message).toContain('docker daemon unreachable');
+  });
 });
 
 describe('doctor routes', () => {
@@ -229,6 +290,15 @@ describe('doctor routes', () => {
     await app.register(doctorRoutes);
     const res = await app.inject({ method: 'POST', url: '/fix', headers: asUser(), payload: { findingId: 'orphan_volume:nd-nope' } });
     expect(res.statusCode).toBe(409);
+  });
+
+  it('surfaces state-moved-on refusals as 409 with the reason, not a 500', async () => {
+    host.containers = [{ Names: 'nd-web-1', State: 'exited', Image: 'nginx' }];
+    const app = await buildTestApp({ db: createFakeDb({ select: { services: [svcRow()] } }) });
+    await app.register(doctorRoutes);
+    const res = await app.inject({ method: 'POST', url: '/fix', headers: asUser(), payload: { findingId: 'service_runtime_desync:1' } });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.message).toContain('back up');
   });
 
   it('validates the fix body', async () => {

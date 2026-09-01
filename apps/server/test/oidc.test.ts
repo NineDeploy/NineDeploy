@@ -618,6 +618,39 @@ describe('OIDC and OAuth2 SSO endpoints', () => {
       expect(location).not.toContain('evil.example.com');
     });
 
+    it('K7: sanitizes a tab-prefixed returnTo that browsers normalize cross-origin', async () => {
+      const state = generateOAuthState('google', '/\t/evil.example.com');
+      const mockToken = `at-${Date.now()}`;
+
+      globalThis.fetch = vi
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            authorization_endpoint: 'https://accounts.google.com/o/oauth2/v2/auth',
+            token_endpoint: 'https://oauth2.googleapis.com/token',
+            userinfo_endpoint: 'https://openidconnect.googleapis.com/v1/userinfo',
+          }),
+        } as never)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ access_token: mockToken }),
+        } as never)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ sub: 'g_user_tab', email: 'tab@rel.test', email_verified: true }),
+        } as never);
+
+      const res = await app.inject({
+        method: 'GET',
+        url: `/v1/auth/oidc/google/callback?code=valid_code&state=${encodeURIComponent(state)}`,
+      });
+      expect(res.statusCode).toBe(302);
+      const location = res.headers.location as string;
+      expect(location.startsWith('/#access_token=')).toBe(true);
+      expect(location).not.toContain('evil.example.com');
+    });
+
     it('creates admin user if first user in database registers via SSO', async () => {
       // Clear users table temporarily
       await app.db.delete(users);

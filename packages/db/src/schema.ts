@@ -882,6 +882,13 @@ export const databases = sqliteTable(
     pgbouncerEnabled: integer('pgbouncer_enabled', { mode: 'boolean' }).notNull().default(false),
     pgbouncerContainerName: text('pgbouncer_container_name'),
     pgbouncerPort: integer('pgbouncer_port').notNull().default(6432),
+    // Set once this row's start has been made consistent with the volume's
+    // contents (fresh init, or a retained volume adopted/re-keyed by THIS
+    // row). NULL on rows predating the marker and on rows whose adoption has
+    // not run yet: the retained-volume adoption gate keys off it, so a failed
+    // first attempt retries the adoption on the next deploy instead of
+    // booting the deleted installation's credentials.
+    initializedAt: integer('initialized_at', { mode: 'timestamp' }),
     createdAt: ts('created_at'),
     updatedAt: tsUpdatable('updated_at'),
   },

@@ -65,6 +65,15 @@ beforeEach(() => {
 });
 
 describe('Config Presets routes (G-23 PR-A)', () => {
+  it('rejects a member before reading or applying instance configuration', async () => {
+    const { app } = await newApp();
+    const headers = asUser({ role: 'member' });
+    const get = await app.inject({ method: 'GET', url: '/', headers });
+    const apply = await app.inject({ method: 'PUT', url: '/any/apply', headers, payload: {} });
+    expect(get.statusCode).toBe(403);
+    expect(apply.statusCode).toBe(403);
+  });
+
   it('GET / returns an empty list when nothing is registered', async () => {
     const { app } = await newApp();
     const res = await app.inject({ method: 'GET', url: '/', headers: asUser() });

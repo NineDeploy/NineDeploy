@@ -43,16 +43,46 @@ function isPrivateIPv4(ip: string): boolean {
   return false;
 }
 
-/** Loopback, unique-local, link-local and IPv4-mapped IPv6. */
+/** Return the eight 16-bit words of an IPv6 literal, or null when malformed. */
+function ipv6Words(ip: string): number[] | null {
+  const addr = ip.toLowerCase().split('%')[0] ?? '';
+  const halves = addr.split('::');
+  if (halves.length > 2) return null;
+  const parse = (half: string): number[] | null => {
+    if (!half) return [];
+    const segments = half.split(':');
+    if (segments.some((segment) => !/^[0-9a-f]{1,4}$/.test(segment))) return null;
+    return segments.map((segment) => Number.parseInt(segment, 16));
+  };
+  const left = parse(halves[0] ?? '');
+  const right = parse(halves[1] ?? '');
+  if (!left || !right) return null;
+  if (halves.length === 1) return left.length === 8 ? left : null;
+  const zeroes = 8 - left.length - right.length;
+  return zeroes >= 1 ? [...left, ...Array<number>(zeroes).fill(0), ...right] : null;
+}
+
+function ipv4FromWords(words: number[]): string {
+  return `${words[6]! >> 8}.${words[6]! & 0xff}.${words[7]! >> 8}.${words[7]! & 0xff}`;
+}
+
+/** Loopback, unique-local, link-local and IPv4-embedded IPv6 ranges. */
 function isPrivateIPv6(ip: string): boolean {
   const addr = ip.toLowerCase().split('%')[0] ?? '';
   if (addr === '::' || addr === '::1') return true;
-  // IPv4-mapped (::ffff:169.254.169.254) — judge the embedded IPv4.
-  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(addr);
-  if (mapped?.[1]) return isPrivateIPv4(mapped[1]);
-  if (/^f[cd]/.test(addr)) return true; // fc00::/7 unique-local
-  if (/^fe[89ab]/.test(addr)) return true; // fe80::/10 link-local
-  if (/^ff/.test(addr)) return true; // multicast
+  const words = ipv6Words(addr);
+  if (!words) return true;
+
+  // URL normalisation turns ::ffff:127.0.0.1 into ::ffff:7f00:1, so
+  // compare numeric words rather than a dotted-quad spelling. RFC 6052
+  // NAT64 and 6to4 can encode the same private targets too.
+  const mapped = words.slice(0, 5).every((word) => word === 0) && words[5] === 0xffff;
+  const nat64 = words[0] === 0x64 && words[1] === 0xff9b && words.slice(2, 6).every((word) => word === 0);
+  if (mapped || nat64) return isPrivateIPv4(ipv4FromWords(words));
+  if (words[0] === 0x2002) return isPrivateIPv4(`${words[1]! >> 8}.${words[1]! & 0xff}.${words[2]! >> 8}.${words[2]! & 0xff}`);
+  if ((words[0]! & 0xfe00) === 0xfc00) return true; // fc00::/7 unique-local
+  if ((words[0]! & 0xffc0) === 0xfe80) return true; // fe80::/10 link-local
+  if ((words[0]! & 0xff00) === 0xff00) return true; // multicast
   return false;
 }
 
@@ -120,5 +150,8 @@ export async function assertPublicHttpUrl(raw: string): Promise<URL> {
 /** `fetch`, refusing anything that points inside the host's own network. */
 export async function guardedFetch(raw: string, init?: RequestInit): Promise<Response> {
   await assertPublicHttpUrl(raw);
-  return fetch(raw, init);
+  // Do not let fetch turn one validated public URL into an unchecked private
+  // redirect target. Callers receive the redirect response and can make an
+  // explicit, separately guarded follow-up request if their protocol needs it.
+  return fetch(raw, { ...init, redirect: 'manual' });
 }

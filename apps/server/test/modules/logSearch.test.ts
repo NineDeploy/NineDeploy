@@ -120,6 +120,17 @@ describe('POST /search', () => {
     expect(lib.calls[0]).toMatchObject({ query: 'hello', serviceId: undefined });
   });
 
+  it('rejects a member cluster-wide query before calling Loki', async () => {
+    const { port } = await startApp();
+    const res = await fetch(`http://127.0.0.1:${port}/search`, {
+      method: 'POST',
+      headers: { ...asUser({ id: 2, role: 'member' }), 'content-type': 'application/json' },
+      body: JSON.stringify({ query: 'tenant secret' }),
+    });
+    expect(res.status).toBe(400);
+    expect(lib.calls).toEqual([]);
+  });
+
   it('passes through serviceId / sinceMinutes / limit / drainId', async () => {
     const { port } = await startApp();
     const res = await fetch(`http://127.0.0.1:${port}/search`, {

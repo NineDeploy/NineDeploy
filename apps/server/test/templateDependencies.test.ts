@@ -10,16 +10,22 @@ const mocks = vi.hoisted(() => ({
 vi.mock('../src/templates/registry.js', () => ({
   getTemplates: vi.fn(async () => mocks.templates),
 }));
-vi.mock('../src/engine/database.js', () => ({
-  startDatabase: mocks.startDatabase,
-  adoptRetainedVolume: mocks.adoptRetainedVolume,
-  attachDatabaseToServiceBridges: vi.fn(async () => undefined),
-  defaultPort: vi.fn((engine: string) => engine === 'redis' ? 6379 : 3306),
-  ENGINES: {
-    mysql: { username: () => 'root', dbName: () => 'app' },
-    redis: { username: () => null, dbName: () => null },
-  },
-}));
+vi.mock('../src/engine/database.js', async (importOriginal) => {
+  // The real module is imported for its pure helpers (needsVolumeAdoption);
+  // everything that touches docker or the DB driver is stubbed below.
+  const actual = await importOriginal<typeof import('../src/engine/database.js')>();
+  return {
+    ...actual,
+    startDatabase: mocks.startDatabase,
+    adoptRetainedVolume: mocks.adoptRetainedVolume,
+    attachDatabaseToServiceBridges: vi.fn(async () => undefined),
+    defaultPort: vi.fn((engine: string) => engine === 'redis' ? 6379 : 3306),
+    ENGINES: {
+      mysql: { username: () => 'root', dbName: () => 'app' },
+      redis: { username: () => null, dbName: () => null },
+    },
+  };
+});
 
 const { reconcileTemplateDependencies } = await import('../src/engine/templateDependencies.js');
 
@@ -153,6 +159,24 @@ describe('template dependency recovery', () => {
     });
     // The retained row already owns its volume and password — never re-key it.
     expect(mocks.adoptRetainedVolume).not.toHaveBeenCalled();
+  });
+
+  it('re-runs adoption when reusing a retained row left in error by a failed first attempt', async () => {
+    // The row flipped to 'error' after a failed start, so its marker is still
+    // NULL and the volume may hold the previous installation's credentials —
+    // the RETRY must go through the adoption gate again, not skip it.
+    const retained = dbRow({ id: 12, slug: 'wordpress-db', ownerUserId: 1, projectId: 2, engine: 'mysql', status: 'error' });
+    let calls = 0;
+    const db = createFakeDb({
+      findMany: { database_attachments: [{ serviceId: 7, databaseId: 99 }], ...linkedToProject2 },
+      findFirst: { databases: () => (++calls === 1 ? dbRow({ id: 99, engine: 'postgres' }) : retained) },
+    });
+    await expect(reconcileTemplateDependencies(db, service(), vi.fn())).resolves.toMatchObject({
+      database: { id: 12 },
+      alreadyAttached: false,
+    });
+    expect(mocks.adoptRetainedVolume).toHaveBeenCalledTimes(1);
+    expect(mocks.adoptRetainedVolume).toHaveBeenCalledWith(retained, expect.any(Function));
   });
 
   it('rejects a retained slug owned by another resource', async () => {

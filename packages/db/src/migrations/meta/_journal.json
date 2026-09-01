@@ -330,6 +330,13 @@
       "when": 1788860000000,
       "tag": "0047_email_template_overrides",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "6",
+      "when": 1789030000000,
+      "tag": "0048_database_initialized_at",
+      "breakpoints": true
     }
   ]
 }

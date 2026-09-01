@@ -33,10 +33,18 @@ export function globToRegExp(pattern: string): RegExp {
   return new RegExp(`^(?:${re})$`);
 }
 
+/** Keep user-supplied globs within a linear, bounded matching budget. */
+export function isSafeWatchPath(pattern: string): boolean {
+  if (pattern.length === 0 || pattern.length > 256) return false;
+  const deepStars = (pattern.match(/\*\*/g) ?? []).length;
+  const wildcards = (pattern.match(/[?*]/g) ?? []).length;
+  return deepStars <= 4 && wildcards <= 16;
+}
+
 /** True when `path` matches ANY of the glob patterns. */
 export function matchesAny(path: string, patterns: string[]): boolean {
   const clean = path.replace(/^\/+/, '');
-  return patterns.some((p) => globToRegExp(p).test(clean));
+  return patterns.some((p) => isSafeWatchPath(p) && globToRegExp(p).test(clean));
 }
 
 /** Split a raw watchPaths field (newline or comma separated) into patterns. */
@@ -45,5 +53,6 @@ export function parseWatchPaths(raw: string | null | undefined): string[] {
   return raw
     .split(/[\n,]/)
     .map((p) => p.trim())
-    .filter((p) => p.length > 0);
+    .filter(isSafeWatchPath)
+    .slice(0, 32);
 }

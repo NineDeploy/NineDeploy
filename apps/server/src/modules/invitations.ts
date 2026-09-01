@@ -322,7 +322,7 @@ export const invitationRoutes: FastifyPluginAsync = async (app) => {
       const inviter = await app.db.query.users.findFirst({ where: eq(users.id, req.user!.id) });
       const acceptUrl = buildAcceptUrl(token);
       const emailBody = buildInviteEmail(ws.name, created.role as WorkspaceRole, inviter?.name ?? null, acceptUrl);
-      void sendSystemEmail(app.db, emailBody.subject, emailBody.text).catch(() => undefined);
+      void sendSystemEmail(app.db, created.email, emailBody.subject, emailBody.text).catch(() => undefined);
 
       reply.header('x-invitation-token', token);
       return serializeInvitation(

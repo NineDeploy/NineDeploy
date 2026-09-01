@@ -1,8 +1,33 @@
 const releases = [
   {
-    version: "0.4.3",
+    version: "0.4.4",
     date: "2026-09-01",
     status: "current",
+    notes: [
+      {
+        t: "Fixed — Retained-Volume Adoption on Retry",
+        items: [
+          "The retained-volume fix now survives a retry. Adoption was gated on status = 'creating', but every failure path flips the row to error — so the most common follow-up (deploy again) skipped adoption entirely and booted the retained volume's stale credentials, re-creating the exact crash-loop 0.4.3 set out to close",
+          "Databases now carry an initialized_at marker (migration 0048) stamped once the volume's contents have been made consistent with THIS row's credentials; the adoption gate re-arms whenever the marker is NULL and the row sits in creating/error. Healthy rows — including pre-marker rows that always owned their volume — skip the gate, so restarts never trip the non-rekeyable-engine refusal",
+          "The gate (needsVolumeAdoption) is wired into all four start paths: API create, the Hub-provisioning retry (reuseExisting), the explicit start route, and template reconcile",
+        ],
+      },
+      {
+        t: "Doctor Accuracy & Honesty",
+        items: [
+          "Doctor no longer mistakes every compose stack's network for an orphan: compose networks are named ndcmp-<slug>_default and the scan compared the full name (suffix included) against service slugs — it never matched, flagging healthy stacks as 'no owner' and offering a delete for a stopped-but-existing stack's live network. The project suffix is now stripped before the ownership check",
+          "Doctor fix refusals answer 409 with the reason, not an opaque 500: the guarded re-checks (container came back running, volume gained an owner, row gone, deploy moved on) threw plain errors that the global handler turned into 500s, hiding the actionable message in production. They now throw proper conflicts",
+          "Volume deletion verifies the removal landed: a failed docker volume rm (volume still mounted by a container) no longer reports 'Fixed' while the volume survives on disk",
+          "Re-key progress is visible — capture() silently ignored the heartbeat options, so a slow postgres re-key sat silent for up to its 5-minute timeout; heartbeats now flow through an optional onProgress sink",
+          "The Doctor panel seeds its query cache with the fix response's post-fix report instead of invalidating (a third full scan per click), and the Doctor sidebar link is hidden from non-operators",
+        ],
+      },
+    ],
+  },
+  {
+    version: "0.4.3",
+    date: "2026-09-01",
+    status: "stable",
     notes: [
       {
         t: "Fixed — Retained Database Volumes",

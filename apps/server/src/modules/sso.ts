@@ -58,8 +58,12 @@ export const ssoRoutes: FastifyPluginAsync = async (app) => {
 
   app.addHook('onRequest', app.authenticate);
 
+  // Provider configuration controls a trust boundary for the whole instance.
+  // Keep every management operation operator-only; a regular authenticated
+  // user must never be able to register an IdP that asserts an operator email.
+  // The login/callback routes below intentionally remain authentication-only.
   // GET /providers — read-only list
-  app.get('/providers', async () => {
+  app.get('/providers', { preHandler: [app.requireAdmin] }, async () => {
     const rows = await db.select().from(ssoProviders);
     const list: SsoProviderListItem[] = rows.map((r) => ({
       id: r.id,
@@ -73,6 +77,7 @@ export const ssoRoutes: FastifyPluginAsync = async (app) => {
   // POST /providers — create
   app.post<{ Body: { type: 'oidc' | 'saml'; name: string; config: Record<string, unknown> } }>(
     '/providers',
+    { preHandler: [app.requireAdmin] },
     async (req) => {
       const { type, name, config } = req.body ?? ({} as Record<string, unknown>);
       if (type !== 'oidc' && type !== 'saml') {
@@ -97,7 +102,7 @@ export const ssoRoutes: FastifyPluginAsync = async (app) => {
   );
 
   // DELETE /providers/:id — remove
-  app.delete<{ Params: { id: string } }>('/providers/:id', async (req) => {
+  app.delete<{ Params: { id: string } }>('/providers/:id', { preHandler: [app.requireAdmin] }, async (req) => {
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) return { ok: false, error: '`id` must be a number' };
     await db.delete(ssoProviders).where(eq(ssoProviders.id, id));

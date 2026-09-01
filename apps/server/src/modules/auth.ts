@@ -451,6 +451,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       // Best-effort delivery — failures never change the response.
       await sendSystemEmail(
         app.db,
+        user.email,
         'NineDeploy password reset',
         `A password reset was requested for ${input.email}.\n\nOpen this link within 30 minutes to set a new password:\n${link}\n\nIf you did not request this, you can ignore this email.`,
       ).catch(() => false);
@@ -825,11 +826,22 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     // which browsers normalize the same way) passes a naive startsWith('/')
     // check and would carry the tokens in the fragment to the attacker's site.
     const rawReturnTo = stateData.returnTo;
-    const returnToSafe =
-      typeof rawReturnTo === 'string' &&
-      rawReturnTo.startsWith('/') &&
-      !rawReturnTo.startsWith('//') &&
-      !rawReturnTo.startsWith('/\\');
+    const returnToSafe = (() => {
+      if (typeof rawReturnTo !== 'string') return false;
+      const hasUnsafeCharacter = [...rawReturnTo].some((character) => {
+        const code = character.charCodeAt(0);
+        return code <= 0x1f || code === 0x7f || character === '\\';
+      });
+      if (hasUnsafeCharacter) return false;
+      try {
+        // Resolve against the configured public URL, never the request Host.
+        // This rejects protocol-relative paths as well as parser quirks such
+        // as `/\t/evil.example` that browsers normalize into another origin.
+        return new URL(rawReturnTo, config.publicUrl).origin === new URL(config.publicUrl).origin;
+      } catch {
+        return false;
+      }
+    })();
     const returnTo = returnToSafe ? rawReturnTo : '/';
     return reply.redirect(`${returnTo}#access_token=${tokens.accessToken}&refresh_token=${tokens.refreshToken}`);
   };

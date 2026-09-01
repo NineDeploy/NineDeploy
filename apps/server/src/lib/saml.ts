@@ -33,10 +33,10 @@ function unwrapCdata(raw: string): string {
 /** Split top-level XML attributes out of a single opening tag. */
 function parseAttrs(tag: string): Record<string, string> {
   const attrs: Record<string, string> = {};
-  const re = /([A-Za-z_][A-Za-z0-9_:.-]*)\s*=\s*"([^"]*)"/g;
+  const re = /([A-Za-z_][A-Za-z0-9_:.-]*)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
   let m = re.exec(tag);
   while (m) {
-    attrs[m[1]!] = m[2]!;
+    attrs[m[1]!] = m[2]! ?? m[3]!;
     m = re.exec(tag);
   }
   return attrs;

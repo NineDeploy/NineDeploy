@@ -518,7 +518,7 @@ async function resetPostgresVolumePassword(
   const out = await capture(
     'docker',
     ['run', '--rm', '-i', '-v', `${d.volumeName}:${cfg.volumePath}`, image, 'postgres', '--single', '-D', cfg.volumePath, 'postgres'],
-    { timeoutMs: 300_000, heartbeatMs: 20_000, heartbeatLabel: `Re-keying retained volume ${d.volumeName}` },
+    { timeoutMs: 300_000, heartbeatMs: 20_000, heartbeatLabel: `Re-keying retained volume ${d.volumeName}`, onProgress: log },
     Buffer.from(`${sql}\n`),
   );
   if (!out.includes('NINEDEPLOY_REKEY_OK')) {
@@ -527,6 +527,20 @@ async function resetPostgresVolumePassword(
 }
 
 export type RetainedVolumeAdoption = { action: 'fresh' | 'rekeyed' | 'no-rekey-needed' };
+
+/**
+ * Whether starting `d` could still mount a volume whose credentials belong to
+ * someone else. The marker `initializedAt` retires the gate: it is stamped
+ * once THIS row's start has been made consistent with the volume's contents,
+ * so a failed first attempt (the row flips to 'error', marker stays NULL)
+ * retries the adoption on the next deploy instead of silently booting the
+ * deleted installation's credentials. Healthy 'running'/'stopped' rows —
+ * including pre-marker rows that have always owned their volume — skip the
+ * gate so restarts never trip the non-rekeyable-engine refusal.
+ */
+export function needsVolumeAdoption(d: Pick<Database, 'status' | 'initializedAt'>): boolean {
+  return d.initializedAt == null && (d.status === 'creating' || d.status === 'error');
+}
 
 /**
  * Prepare a retained volume under `d.volumeName` for a BRAND-NEW database row.

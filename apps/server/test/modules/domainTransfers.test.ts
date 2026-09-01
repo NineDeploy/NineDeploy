@@ -115,8 +115,15 @@ async function startStartApp() {
   return { app, port, db };
 }
 
-async function startTokenApp() {
-  const db = createFakeDb();
+async function startTokenApp(targetVisible = true) {
+  const db = createFakeDb({
+    findFirst: {
+      // The accept route must authorize the target service before it invokes
+      // the transfer primitive. This represents the recipient's admin seat.
+      services: () => (targetVisible ? { id: 2, name: 'target', projectId: 1, workspaceId: 1 } : undefined),
+      workspaceMembers: () => ({ id: 1, workspaceId: 1, userId: 1, role: 'owner' }),
+    },
+  });
   const app = await buildTestApp({ db });
   await app.register((await import('../../src/modules/domainTransfers.js')).domainTransferTokenRoutes);
   const port = await listen(app);
@@ -265,6 +272,17 @@ describe('GET /domain-transfers/:token (preview)', () => {
 });
 
 describe('POST /domain-transfers/:token/accept', () => {
+  it('rejects a transfer target the recipient cannot access before invoking the transfer primitive', async () => {
+    const { port } = await startTokenApp(false);
+    const res = await fetch(`http://127.0.0.1:${port}/tok-1/accept`, {
+      method: 'POST',
+      headers: { ...asUser(1), 'content-type': 'application/json' },
+      body: JSON.stringify({ targetServiceId: 2 }),
+    });
+    expect(res.status).toBe(404);
+    expect(lib.acceptCalls).toEqual([]);
+  });
+
   it('rejects a missing body with 422', async () => {
     const { port } = await startTokenApp();
     const res = await fetch(`http://127.0.0.1:${port}/tok-1/accept`, {

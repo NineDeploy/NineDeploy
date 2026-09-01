@@ -111,6 +111,23 @@ describe('Layout', () => {
     expect(screen.getByText('ada@example.com · Sign out')).toBeInTheDocument();
   });
 
+  it('shows the Doctor sidebar link to instance operators', () => {
+    renderLayout();
+    fireEvent.click(screen.getByRole('button', { name: 'System' }));
+    expect(screen.getByRole('link', { name: 'Doctor' })).toBeInTheDocument();
+  });
+
+  it('hides the Doctor sidebar link from non-operators', () => {
+    authMock.useAuth.mockReturnValue({
+      user: { id: 2, email: 'member@example.com', name: 'Mem', isOperator: false },
+      logout: vi.fn(),
+      loading: false,
+    });
+    renderLayout();
+    fireEvent.click(screen.getByRole('button', { name: 'System' }));
+    expect(screen.queryByRole('link', { name: 'Doctor' })).not.toBeInTheDocument();
+  });
+
   it('opens the group panel and marks the matching link active', () => {
     renderLayout('/databases');
     expect(screen.getAllByText('Data').length).toBeGreaterThan(0);

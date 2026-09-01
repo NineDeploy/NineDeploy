@@ -360,7 +360,7 @@ export const workspaceRoutes: FastifyPluginAsync = async (app) => {
 
     const acceptUrl = buildAcceptUrl(token);
     const emailBody = buildInviteEmail(ws.name, input.role, inviter?.name ?? null, acceptUrl);
-    void sendSystemEmail(app.db, emailBody.subject, emailBody.text).catch(() => undefined);
+    void sendSystemEmail(app.db, input.email, emailBody.subject, emailBody.text).catch(() => undefined);
 
     reply.header('x-invitation-token', token);
     return {
