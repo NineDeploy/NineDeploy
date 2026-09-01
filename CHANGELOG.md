@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.8] - 2026-09-01
+
+> Cancelling a deployment and immediately removing it from the queue left
+> the pipeline itself alive: the row that carried the cancellation signal
+> was gone, so the zombie kept building, deploying and holding its
+> concurrency slot — and every queued deploy behind it waited for a deploy
+> that no longer existed. Deleting a cancelled deploy now stops the
+> pipeline at its very next checkpoint.
+
+### Fixed
+
+- **Cancel-then-remove no longer strands the queue behind a zombie
+  pipeline.** The cancel route flips the row terminal immediately while
+  the pipeline stops at its NEXT checkpoint — which can be minutes away
+  (a docker build, a healthcheck window). Removing the row in that
+  window destroyed the only signal the pipeline polls: `isCancelled`
+  read the missing row as "not cancelled" and ran the whole deploy to
+  completion — holding its concurrency slot, so the queue's #1 entry
+  never claimed, with no way left to stop the zombie. A deployment row
+  that disappears under a running pipeline is now treated as cancelled:
+  the pipeline aborts at the next checkpoint, releases the slot, and the
+  queued deploys behind it proceed.
+
 ## [0.4.7] - 2026-09-01
 
 > The postgres 18 support shipped in 0.4.5's dependency defaults was

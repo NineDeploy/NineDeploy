@@ -1,8 +1,22 @@
 const releases = [
   {
-    version: "0.4.7",
+    version: "0.4.8",
     date: "2026-09-01",
     status: "current",
+    notes: [
+      {
+        t: "Fixed — Cancel + Remove No Longer Strands the Deploy Queue",
+        items: [
+          "The cancel route flips the deployment row terminal immediately, but the pipeline itself stops at its NEXT checkpoint — which can be minutes away inside a docker build or a healthcheck window. Removing the row in that window destroyed the only signal the pipeline polls: it read the missing row as 'not cancelled' and ran the whole deploy to completion, holding its concurrency slot while every queued deploy behind it waited for a deploy that no longer existed",
+          "A deployment row that disappears under a running pipeline is now treated as cancelled: the zombie aborts at the next checkpoint, releases the slot, and the queued deploys behind it proceed",
+        ],
+      },
+    ],
+  },
+  {
+    version: "0.4.7",
+    date: "2026-09-01",
+    status: "stable",
     notes: [
       {
         t: "Fixed — Managed Postgres 18+ Databases Start Again",

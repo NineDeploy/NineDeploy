@@ -1,4 +1,4 @@
-export const VERSION = '0.4.7';
+export const VERSION = '0.4.8';
 
 export interface ChangelogEntry {
   version: string;
@@ -8,6 +8,14 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.4.8',
+    date: '2026-09-01',
+    title: 'Zombie Pipeline Fix on Cancel + Remove',
+    changes: [
+      'Cancelling a deployment and immediately removing it no longer strands the queue behind a zombie pipeline: the cancel route flips the row terminal immediately while the pipeline stops at its NEXT checkpoint (which can be minutes away inside a docker build or a healthcheck window), and removing the row in that window destroyed the only signal the pipeline polls — isCancelled read the missing row as "not cancelled", so the zombie ran the whole deploy to completion, holding its concurrency slot while the queue\'s #1 entry never claimed. A deployment row that disappears under a running pipeline is now treated as cancelled: the pipeline aborts at the next checkpoint, releases the slot, and the queued deploys behind it proceed',
+    ],
+  },
   {
     version: '0.4.7',
     date: '2026-09-01',
