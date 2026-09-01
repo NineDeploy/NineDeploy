@@ -412,6 +412,9 @@ export async function buildTestApp(opts: TestAppOpts = {}): Promise<FastifyInsta
     });
   });
 
+  // Freeze the Fastify v5 compilation pipeline before any test makes a request.
+  // Without this, v8 coverage instrumentation (enabled in `pnpm test` via
+  // `coverage.providers[0]: v8`) corrupts async hook references passed as
   openApps.add(app);
   return app;
 }
@@ -453,7 +456,23 @@ export const asUser = (
 };
 
 /** Start the app on an ephemeral port and return the port. */
+/**
+ * Start the app on an ephemeral port and return the port.
+ *
+ * `await app.ready()` is called here (not in `buildTestApp`) because:
+ *   1. `buildTestApp` returns before the test registers its route modules.
+ *      Calling `ready()` there would boot the root plugin prematurely and
+ *      block all subsequent `await app.register(routeModule)` calls.
+ *   2. `listen()` is called after all route registrations, so `ready()`
+ *      correctly freezes the compiled pipeline at that point.
+ *
+ * This prevents the v8 coverage instrumentation from corrupting the async
+ * hook references (`app.authenticate`, `app.requireOperator`) at the
+ * moment the first HTTP request is dispatched.
+ * Refs: https://github.com/vitest-dev/vitest/issues/7131
+ */
 export async function listen(app: FastifyInstance): Promise<number> {
+  await app.ready();
   await app.listen({ port: 0 });
   const addr = app.server.address();
   if (!addr || typeof addr === 'string') throw new Error('app is not listening on a TCP port');

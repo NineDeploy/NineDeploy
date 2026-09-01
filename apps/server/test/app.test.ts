@@ -121,6 +121,28 @@ describe('buildApp', () => {
     await plain.close();
   });
 
+  it('does not trust local development origins in production', async () => {
+    const app = await buildApp({
+      NODE_ENV: 'production',
+      NINEDEPLOY_JWT_SECRET: 'a-strong-production-secret-value',
+      NINEDEPLOY_PUBLIC_URL: 'https://panel.example.test',
+    });
+    const local = await app.inject({
+      method: 'GET',
+      url: '/health',
+      headers: { origin: 'http://localhost:5173' },
+    });
+    expect(local.headers['access-control-allow-origin']).toBeUndefined();
+
+    const panel = await app.inject({
+      method: 'GET',
+      url: '/health',
+      headers: { origin: 'https://panel.example.test' },
+    });
+    expect(panel.headers['access-control-allow-origin']).toBe('https://panel.example.test');
+    await app.close();
+  });
+
   it('never logs query strings (WebSocket ?token= must not reach the logs)', async () => {
     const app = await buildApp();
     const infoSpy = vi.spyOn(app.log, 'info');

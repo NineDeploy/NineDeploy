@@ -42,6 +42,21 @@ describe('egress routes', () => {
     vi.clearAllMocks();
   });
 
+  it('rejects a member before listing or mutating host egress rules', async () => {
+    const app = await buildTestApp({ db: createFakeDb() });
+    const driver = mockDriver('iptables');
+    app.kernel.registry.registerEgressIpDriver(driver);
+    await app.register(egressRoutes);
+    const headers = asUser({ role: 'member' });
+    const list = await app.inject({ method: 'GET', url: '/', headers });
+    const attach = await app.inject({ method: 'POST', url: '/', headers, payload: { projectId: 1, ip: '203.0.113.7' } });
+    expect(list.statusCode).toBe(403);
+    expect(attach.statusCode).toBe(403);
+    expect(driver.list).not.toHaveBeenCalled();
+    expect(driver.attach).not.toHaveBeenCalled();
+    await app.close();
+  });
+
   describe('GET /', () => {
     it('aggregates the list() of every registered driver', async () => {
       const app = await buildTestApp({ db: createFakeDb() });

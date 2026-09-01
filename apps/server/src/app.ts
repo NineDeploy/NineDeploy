@@ -46,20 +46,25 @@ export async function buildApp(): Promise<FastifyInstance> {
         },
       },
     },
-    // System import uploads a full backup tarball (SQLite + Traefik config);
-    // the default 1 MB cap would reject every real backup.
-    bodyLimit: 256 * 1024 * 1024,
+    // Keep the default request budget small. The only legitimate large upload
+    // is system import, which declares its own route-level limit below.
+    bodyLimit: 1024 * 1024,
   });
 
   // Restrict CORS to a known allowlist instead of reflecting any origin
-  // (`origin: true`). The dashboard is same-origin in production; the extra
-  // entries cover local dev (Vite :5173) and additional origins via env.
+  // (`origin: true`). The dashboard is same-origin in production; localhost
+  // origins are available only during development, while explicitly configured
+  // origins remain available in every environment.
   const extraOrigins = (process.env['NINEDEPLOY_CORS_ORIGINS'] ?? '')
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
   const allowedOrigins = [
-    ...new Set([config.publicUrl, 'http://localhost:5173', 'http://localhost:3000', ...extraOrigins]),
+    ...new Set([
+      config.publicUrl,
+      ...(config.isProd ? [] : ['http://localhost:5173', 'http://localhost:3000']),
+      ...extraOrigins,
+    ]),
   ];
   await app.register(cors, { origin: allowedOrigins, credentials: true });
   await app.register(websocket);

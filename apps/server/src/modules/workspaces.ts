@@ -397,6 +397,13 @@ export const workspaceRoutes: FastifyPluginAsync = async (app) => {
     });
     if (!targetMembership) throw notFound('Member not found in this workspace');
 
+    // Keep the ownership row internally consistent. Changing the owner's
+    // membership role without transferring `workspaces.ownerId` would either
+    // let an admin lock out the owner or leave an owner without owner access.
+    if (targetMembership.userId === ws.ownerId && input.role !== 'owner') {
+      throw forbidden('The workspace owner role can only change through ownership transfer');
+    }
+
     if (input.role === 'owner') {
       if (ws.ownerId !== userId && !req.user!.isOperator) {
         throw forbidden('Only the workspace owner can transfer ownership');

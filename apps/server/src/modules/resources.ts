@@ -168,7 +168,10 @@ export const systemRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // ── Import: upload a tar.gz and restore system state ──────────────────
-  app.post('/import', async (req, reply) => {
+  // A backup archive is the sole large request this API accepts. Keep the
+  // 256 MB allowance local so login, webhooks and ordinary JSON endpoints
+  // cannot allocate a quarter-gigabyte Buffer before authentication runs.
+  app.post('/import', { bodyLimit: 256 * 1024 * 1024 }, async (req, reply) => {
     const body = req.body;
     if (!body || typeof body !== 'string') {
       return reply.status(400).send({ error: { code: 'bad_request', message: 'No body received' } });

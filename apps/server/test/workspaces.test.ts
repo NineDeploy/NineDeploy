@@ -598,6 +598,33 @@ describe('workspaces routes', () => {
       expect(res.statusCode).toBe(403);
     });
 
+    it('forbids an admin from demoting the workspace owner (403)', async () => {
+      let membershipLookup = 0;
+      const app = await buildTestApp({
+        db: createFakeDb({
+          findFirst: {
+            workspaces: workspaceRow({ id: 1, ownerId: 2 }),
+            workspaceMembers: () => {
+              membershipLookup++;
+              return membershipLookup === 1
+                ? memberRow({ id: 9, workspaceId: 1, userId: 4, role: 'admin' })
+                : memberRow({ id: 10, workspaceId: 1, userId: 2, role: 'owner' });
+            },
+          },
+        }),
+      });
+      await app.register(workspaceRoutes, { prefix: '/workspaces' });
+
+      const res = await app.inject({
+        method: 'PATCH',
+        url: '/workspaces/1/members/10',
+        headers: { ...asUser({ id: 4, role: 'member' }), 'content-type': 'application/json' },
+        payload: { role: 'viewer' },
+      });
+      expect(res.statusCode).toBe(403);
+      expect(res.json().error.message).toContain('owner role');
+    });
+
     it('forbids viewer from updating member roles (403)', async () => {
       const app = await buildTestApp({
         db: createFakeDb({

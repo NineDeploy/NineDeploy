@@ -15,6 +15,9 @@ const DEFAULT_DRIVER = 'iptables';
 
 export const egressRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('onRequest', app.authenticate);
+  // Drivers mutate host-level SNAT/iptables state and their rule list exposes
+  // instance networking topology. This is not a project-member capability.
+  app.addHook('preHandler', app.requireOperator);
 
   // Pull the named driver (or the first registered one) from the
   // kernel's IServiceRegistry.
