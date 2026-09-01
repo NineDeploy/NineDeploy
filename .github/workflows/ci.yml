@@ -76,13 +76,14 @@ jobs:
       # them (pnpm keeps the pre-patch edges when re-resolving). pnpm audit does
       # NOT flag deprecated packages, so a re-derived lockfile would pass CI
       # unnoticed. The lockfile is the source of truth for `--frozen-lockfile`
-      # installs, so grep it directly. Fix: hand-prune the edges (see
-      # packages/db migration note) or re-run the deterministic prune script.
+      # installs, so grep it directly — but strip the overrides: metadata block
+      # first, which legitimately NAMES the packages the overrides remove.
       - name: Check for deprecated dependencies
         run: |
-          if grep -qE 'esbuild-kit|glob@10\.5\.0' pnpm-lock.yaml; then
+          strip_overrides() { sed '/^overrides:/,/^patchedDependencies:/d' pnpm-lock.yaml; }
+          if strip_overrides | grep -qE 'esbuild-kit|glob@10\.5\.0'; then
             echo "::error::Deprecated packages re-derived into pnpm-lock.yaml (non-frozen install re-added patched-away edges)"
-            grep -nE 'esbuild-kit|glob@10\.5\.0' pnpm-lock.yaml
+            strip_overrides | grep -nE 'esbuild-kit|glob@10\.5\.0'
             exit 1
           fi
 

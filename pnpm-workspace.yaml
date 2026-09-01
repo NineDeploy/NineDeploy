@@ -13,6 +13,15 @@ overrides:
   # version drizzle-kit already uses (0.25.12) — not a bare >= range, which
   # would let the deprecated toolchain ride a newer major than drizzle-kit's own.
   esbuild: "0.25.12"
+  # The drizzle-kit patch removes @esbuild-kit/esm-loader from its manifest and
+  # the archiver-utils patch moves glob to ^13 — but pnpm keeps resolving those
+  # edges from the UNPATCHED manifests, so the lockfile (and the installed
+  # store) kept carrying the deprecated packages the patches exist to remove.
+  # Overrides cut the edges at resolution level: esm-loader is gone entirely
+  # (the patched drizzle-kit never imports it) and every glob ^10 consumer
+  # resolves into the maintained 13.x line already in the tree.
+  "@esbuild-kit/esm-loader": "-"
+  "glob@^10.0.0": "^13.0.6"
 
 # Dependencies allowed to run install scripts (pnpm 11 blocks these by default).
 # esbuild ships its native binary via postinstall; Vite/tsx need it.
