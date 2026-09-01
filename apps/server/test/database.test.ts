@@ -13,7 +13,10 @@ import {
   databaseSize,
   defaultPort,
   ENGINES,
+  postgresMajor,
   removeVolume,
+  resolveDataDir,
+  resolveVolumePath,
   restartDatabase,
   restoreDatabase,
   startDatabase,
@@ -108,11 +111,24 @@ describe('ENGINES metadata', () => {
     expect(ENGINES.redis.port).toBe(6379);
     expect(ENGINES.mongo.port).toBe(27017);
 
-    expect(ENGINES.postgres.volumePath).toBe('/var/lib/postgresql/data');
-    expect(ENGINES.mysql.volumePath).toBe('/var/lib/mysql');
-    expect(ENGINES.mariadb.volumePath).toBe('/var/lib/mysql');
-    expect(ENGINES.redis.volumePath).toBe('/data');
-    expect(ENGINES.mongo.volumePath).toBe('/data/db');
+    // postgres 18+ moved the data directory under /var/lib/postgresql/<major>/docker
+    // and REFUSES the classic /var/lib/postgresql/data mount (docker-library/postgres#1259):
+    // mounting there crash-loops the container, its DNS name never registers and the
+    // attached app dies with `getaddrinfo EAI_AGAIN` against the database hostname.
+    expect(resolveVolumePath(ENGINES.postgres)).toBe('/var/lib/postgresql');
+    expect(resolveVolumePath(ENGINES.postgres, '18')).toBe('/var/lib/postgresql');
+    expect(resolveVolumePath(ENGINES.postgres, 'pgvector')).toBe('/var/lib/postgresql');
+    expect(resolveDataDir(ENGINES.postgres)).toBe('/var/lib/postgresql/18/docker');
+    expect(resolveDataDir(ENGINES.postgres, '19')).toBe('/var/lib/postgresql/19/docker');
+    expect(resolveVolumePath(ENGINES.postgres, '17')).toBe('/var/lib/postgresql/data');
+    expect(resolveDataDir(ENGINES.postgres, '17')).toBe('/var/lib/postgresql/data');
+    expect(postgresMajor('vector')).toBe(18);
+    expect(postgresMajor('17')).toBe(17);
+    expect(postgresMajor(undefined)).toBe(18);
+    expect(resolveVolumePath(ENGINES.mysql)).toBe('/var/lib/mysql');
+    expect(resolveVolumePath(ENGINES.mariadb)).toBe('/var/lib/mysql');
+    expect(resolveVolumePath(ENGINES.redis)).toBe('/data');
+    expect(resolveVolumePath(ENGINES.mongo)).toBe('/data/db');
 
     expect(ENGINES.postgres.username()).toBe('nine');
     expect(ENGINES.mysql.username()).toBe('root');
@@ -162,6 +178,20 @@ describe('startDatabase', () => {
       {},
       log,
     );
+  });
+
+  it('mounts postgres 18+ volumes at /var/lib/postgresql (cluster layout, docker-library/postgres#1259)', async () => {
+    h.capture.mockResolvedValue('[{"Name":"v"}]');
+    const log = vi.fn();
+
+    // dbRow defaults to version null → the 18 default major.
+    await startDatabase(dbRow({ engine: 'postgres' }), log);
+
+    const call = h.run.mock.calls.find((c) => (c[1] as string[])[0] === 'run');
+    const argv = (call![1] as string[]).join(' ');
+    expect(argv).toContain('-v v:/var/lib/postgresql ');
+    expect(argv).not.toContain('/var/lib/postgresql/data');
+    expect(argv).toContain('postgres:18');
   });
 
   it('is a no-op when the container is already running (idempotent restart)', async () => {
@@ -402,6 +432,23 @@ describe('retained volume provenance + adoption', () => {
 
     await expect(adoptRetainedVolume(dbRow({ passwordEncrypted: 'v0:secret' }), vi.fn())).resolves.toEqual({ action: 'rekeyed' });
     expect(h.ensureDockerImage).toHaveBeenCalledWith('postgres:16', expect.any(Function));
+  });
+
+  it('re-keys a postgres 18+ labeled volume with the 18 cluster layout (single mount at /var/lib/postgresql)', async () => {
+    captureVolume(true, labels({ 'ninedeploy.database.image': 'pgvector/pgvector:pg18' }));
+    h.capture.mockImplementation(async (_cmd: string, args: string[], _opts: unknown, input?: Buffer) => {
+      if (args.includes('--single')) {
+        expect(args).toEqual([
+          'run', '--rm', '-i', '-v', 'v:/var/lib/postgresql', 'pgvector/pgvector:pg18',
+          'postgres', '--single', '-D', '/var/lib/postgresql/18/docker', 'postgres',
+        ]);
+        return 'NINEDEPLOY_REKEY_OK';
+      }
+      if (args.includes('--format')) return JSON.stringify(labels({ 'ninedeploy.database.image': 'pgvector/pgvector:pg18' }));
+      return '[{"Name":"v"}]';
+    });
+
+    await expect(adoptRetainedVolume(dbRow({ passwordEncrypted: 'v0:secret' }), vi.fn())).resolves.toEqual({ action: 'rekeyed' });
   });
 
   it('escapes single quotes in the generated password', async () => {

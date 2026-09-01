@@ -143,7 +143,13 @@ async function stageForRestore(file: string): Promise<{ path: string; cleanup: (
 interface EngineConfig {
   image: (version?: string) => string;
   port: number;
-  volumePath: string;
+  /** Container path the managed volume is mounted at. A function for engines
+   *  whose layout depends on the resolved version (postgres 18+). */
+  volumePath: string | ((version?: string) => string);
+  /** The engine's data directory inside the container. Defaults to the mount
+   *  path; postgres 18+ splits them (single mount at /var/lib/postgresql,
+   *  data under /var/lib/postgresql/<major>/docker). */
+  dataDir?: (version?: string) => string;
   env: (password: string) => Record<string, string>;
   /** Engines that cannot take a password via env vars (redis/valkey) get it
    *  as a `--requirepass` container-command argument instead. */
@@ -156,6 +162,52 @@ interface EngineConfig {
 /** RFC-3986-encode a userinfo/password segment so special chars can't break (or inject into) the URI. */
 function enc(segment: string): string {
   return encodeURIComponent(segment);
+}
+
+// ── postgres 18+ cluster layout ────────────────────────────────────────────
+//
+// The official postgres 18+ (and pgvector pg18) images moved the data
+// directory to a major-version-specific path (/var/lib/postgresql/<major>/docker,
+// pg_ctlcluster-compatible) and REFUSE to start when they detect the classic
+// /var/lib/postgresql/data mount — which is exactly what every deploy here
+// used to mount. The container then crash-loops, its DNS name never
+// registers, and the attached app dies with `getaddrinfo EAI_AGAIN` against
+// the database hostname. For 18+ the volume must be mounted ONCE at
+// /var/lib/postgresql and the data lives in the versioned subdirectory
+// (docker-library/postgres#1259). Older majors keep the classic layout.
+
+const POSTGRES_DEFAULT_MAJOR = 18;
+
+export function postgresMajor(version?: string | null): number {
+  if (version === 'vector' || version === 'pgvector') return 18;
+  const parsed = Number.parseInt(String(version ?? ''), 10);
+  return Number.isFinite(parsed) ? parsed : POSTGRES_DEFAULT_MAJOR;
+}
+
+function postgresClusterLayout(version?: string | null): boolean {
+  return postgresMajor(version) >= 18;
+}
+
+/** Layout for a CONCRETE postgres image. The re-key sidecar must match the
+ *  image that owns the volume's data (recorded in the volume label) — that
+ *  can be an older major than the row's configured version. */
+function postgresImageLayout(image: string, fallbackVersion?: string | null): { mount: string; dataDir: string } {
+  const tag = image.slice(image.lastIndexOf(':') + 1);
+  const pgMatch = tag.match(/^pg(\d+)/);
+  const major = pgMatch ? Number.parseInt(pgMatch[1]!, 10) : postgresMajor(Number.isNaN(Number.parseInt(tag, 10)) ? fallbackVersion : tag);
+  return major >= 18
+    ? { mount: '/var/lib/postgresql', dataDir: `/var/lib/postgresql/${major}/docker` }
+    : { mount: '/var/lib/postgresql/data', dataDir: '/var/lib/postgresql/data' };
+}
+
+/** Resolve the volume mount path for a database row's engine + version. */
+export function resolveVolumePath(cfg: EngineConfig, version?: string | null): string {
+  return typeof cfg.volumePath === 'function' ? cfg.volumePath(version ?? undefined) : cfg.volumePath;
+}
+
+/** Resolve the engine's in-container data directory (defaults to the mount path). */
+export function resolveDataDir(cfg: EngineConfig, version?: string | null): string {
+  return cfg.dataDir ? cfg.dataDir(version ?? undefined) : resolveVolumePath(cfg, version);
 }
 
 /**
@@ -173,7 +225,8 @@ export const ENGINES: Record<string, EngineConfig> = {
   postgres: {
     image: (v) => (v === 'vector' || v === 'pgvector' ? 'pgvector/pgvector:pg18' : `postgres:${v || '18'}`),
     port: 5432,
-    volumePath: '/var/lib/postgresql/data',
+    volumePath: (v) => (postgresClusterLayout(v) ? '/var/lib/postgresql' : '/var/lib/postgresql/data'),
+    dataDir: (v) => (postgresClusterLayout(v) ? `/var/lib/postgresql/${postgresMajor(v)}/docker` : '/var/lib/postgresql/data'),
     env: (p) => ({ POSTGRES_USER: 'nine', POSTGRES_PASSWORD: p, POSTGRES_DB: 'app' }),
     username: () => 'nine',
     dbName: () => 'app',
@@ -356,7 +409,7 @@ export async function startDatabase(
   const args = ['run', '-d', '--name', d.containerName, '--network', NETWORK, '--restart', 'unless-stopped'];
   if (d.cpuShares > 0) args.push('--cpu-shares', String(d.cpuShares));
   if (d.memLimitMb > 0) args.push('--memory', `${d.memLimitMb}m`);
-  args.push('-v', `${d.volumeName}:${cfg.volumePath}`);
+  args.push('-v', `${d.volumeName}:${resolveVolumePath(cfg, d.version)}`);
   // Pass secrets via a 0600 env-file instead of `-e KEY=value` on the argv —
   // argv is visible to every local user via `ps`.
   const vars = cfg.env(password);
@@ -514,10 +567,14 @@ async function resetPostgresVolumePassword(
     '\\q',
   ].join('\n');
   await ensureDockerImage(image, log);
+  // The sidecar image comes from the volume's provenance label — it can be an
+  // older major than the row's configured version, and the data directory must
+  // match the IMAGE's layout (postgres 18+ moved it under /var/lib/postgresql).
+  const { mount: mountPath, dataDir } = postgresImageLayout(image, d.version);
   log(`Re-keying retained volume ${d.volumeName} (${user} @ ${image}) …`);
   const out = await capture(
     'docker',
-    ['run', '--rm', '-i', '-v', `${d.volumeName}:${cfg.volumePath}`, image, 'postgres', '--single', '-D', cfg.volumePath, 'postgres'],
+    ['run', '--rm', '-i', '-v', `${d.volumeName}:${mountPath}`, image, 'postgres', '--single', '-D', dataDir, 'postgres'],
     { timeoutMs: 300_000, heartbeatMs: 20_000, heartbeatLabel: `Re-keying retained volume ${d.volumeName}`, onProgress: log },
     Buffer.from(`${sql}\n`),
   );
