@@ -132,6 +132,13 @@ async function syncRoutes(
     return;
   }
 
+  // Rows this run created, keyed by (hostname, path). `existing` is a snapshot
+  // taken before the loop, so it cannot see them — and `domains` enforces
+  // (hostname, path) uniqueness GLOBALLY (`domains_host_path_idx`), not per
+  // service. Without this, a manifest listing the same route twice
+  // blind-INSERTs into that index and the deploy dies on a raw UNIQUE error.
+  const created = new Map<string, { id: number }>();
+
   for (const route of routes) {
     const hostname = route.host.toLowerCase();
     const path = route.path;
@@ -140,7 +147,8 @@ async function syncRoutes(
     const rateAverage = route.rateLimit?.average ?? null;
     const rateBurst = route.rateLimit?.burst ?? null;
 
-    const match = existing.find((d) => d.hostname === hostname && d.path === path);
+    const key = `${hostname}|${path}`;
+    const match = existing.find((d) => d.hostname === hostname && d.path === path) ?? created.get(key);
     if (match) {
       await db
         .update(domains)
@@ -157,25 +165,44 @@ async function syncRoutes(
         })
         .where(eq(domains.id, match.id));
     } else {
+      // The uniqueness is global: a (hostname, path) another service already
+      // registered is claimed. Skip it with a warning — the same graceful
+      // refusal `assertHostnameClaimable` gives the panel flow — instead of
+      // crashing the deploy on the raw UNIQUE constraint.
+      const claimedBy = await db
+        .select({ serviceId: domains.serviceId })
+        .from(domains)
+        .where(and(eq(domains.hostname, hostname), eq(domains.path, path)))
+        .limit(1);
+      if (claimedBy.length > 0) {
+        result.warnings.push(
+          `routes: ${hostname}${path} is already registered to service #${claimedBy[0]!.serviceId}; manifest route skipped.`,
+        );
+        continue;
+      }
       // Newly declared route: insert in `pending` state. The platform's
       // existing DNS-challenge flow will lift it to `active` once the
       // operator proves ownership (or immediately if the host is in the
       // instance's own zone).
-      await db.insert(domains).values({
-        serviceId,
-        hostname,
-        path,
-        ssl: route.ssl,
-        redirectWww: route.redirectWww ?? false,
-        headers,
-        ipAllowlist,
-        rateLimitAverage: rateAverage,
-        rateLimitBurst: rateBurst,
-        basicAuth: null,
-        status: 'pending',
-        verificationToken: null,
-        dnsRecordId: null,
-      });
+      const [createdRow] = await db
+        .insert(domains)
+        .values({
+          serviceId,
+          hostname,
+          path,
+          ssl: route.ssl,
+          redirectWww: route.redirectWww ?? false,
+          headers,
+          ipAllowlist,
+          rateLimitAverage: rateAverage,
+          rateLimitBurst: rateBurst,
+          basicAuth: null,
+          status: 'pending',
+          verificationToken: null,
+          dnsRecordId: null,
+        })
+        .returning({ id: domains.id });
+      if (createdRow) created.set(key, createdRow);
     }
     result.routesUpserted += 1;
   }

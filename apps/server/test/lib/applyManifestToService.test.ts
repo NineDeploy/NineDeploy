@@ -159,6 +159,62 @@ describe('applyManifestToService — routes', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]!.hostname).toBe('existing.example.com');
   });
+
+  it('does not crash when the manifest lists the same (host, path) route twice', async () => {
+    // `domains` enforces (hostname, path) uniqueness GLOBALLY
+    // (domains_host_path_idx), while the sync loop matched only against this
+    // service's pre-loop snapshot. Two identical entries therefore
+    // blind-INSERTed both rows — the second died on `UNIQUE constraint
+    // failed: domains.hostname, domains.path` and failed the whole deploy.
+    // The second entry must update the row the first one created instead.
+    const result = await applyManifestToService(
+      db,
+      serviceId,
+      m({
+        routes: [
+          { host: 'dup.example.com', path: '/', ssl: true },
+          { host: 'dup.example.com', path: '/', ssl: true },
+        ],
+      }),
+    );
+    expect(result.warnings).toEqual([]);
+    const rows = await db.select().from(domains).where(eq(domains.serviceId, serviceId));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.hostname).toBe('dup.example.com');
+    expect(rows[0]!.ssl).toBe(true);
+  });
+
+  it('skips a route whose hostname another service already registered, with a warning', async () => {
+    // The uniqueness is global across services: a manifest re-declaring a
+    // hostname owned by ANOTHER service must be refused the way the panel's
+    // assertHostnameClaimable flow refuses it — gracefully, with a warning —
+    // not by crashing the deploy on the raw UNIQUE constraint (and unlike the
+    // duplicate case, that crash was NOT self-healing: every redeploy of the
+    // service failed until the manifest was edited).
+    const [other] = await db
+      .insert(services)
+      .values({ name: 'other', slug: 'other', type: 'docker', port: 3000, healthPath: '/' })
+      .returning();
+    await db.insert(domains).values({
+      serviceId: other!.id,
+      hostname: 'taken.example.com',
+      path: '/',
+      status: 'active',
+    });
+
+    const result = await applyManifestToService(
+      db,
+      serviceId,
+      m({ routes: [{ host: 'taken.example.com', path: '/', ssl: true }] }),
+    );
+
+    expect(result.routesUpserted).toBe(0);
+    expect(result.warnings.some((w) => w.includes('taken.example.com'))).toBe(true);
+    // The row stays with its original owner — the manifest cannot hijack it.
+    const [row] = await db.select().from(domains).where(eq(domains.hostname, 'taken.example.com'));
+    expect(row!.serviceId).toBe(other!.id);
+    expect(row!.status).toBe('active');
+  });
 });
 
 describe('applyManifestToService — database', () => {
