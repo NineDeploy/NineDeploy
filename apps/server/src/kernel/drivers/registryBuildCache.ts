@@ -7,7 +7,8 @@ import type { BlobRef, IBuildCache } from '../types.js';
  *
  * A `RegistryBuildCache` writes a small `BlobRef` marker to an OCI
  * registry as a single-tag manifest, and reads it back via
- * `HEAD /v2/<repo>/manifests/<tag>`. The blob payload itself is the
+ * `GET /v2/<repo>/manifests/<tag>`, parsing the cached-content digest
+ * out of the manifest's layers[0].digest. The blob payload itself is the
  * digest of the original layer cache, not the layer bytes — BuildKit
  * already has the bytes inside the registry from a previous
  * `--cache-to=type=registry,ref=...` invocation, so re-pushing them
@@ -17,7 +18,7 @@ import type { BlobRef, IBuildCache } from '../types.js';
  * The driver persists (key → digest, repo) in the
  * `cache_registry_blobs` table so a kernel restart can resume without
  * re-listing the registry. A cache miss in the table is NOT a miss
- * for the cache overall — `lookup()` falls back to a `HEAD` against
+ * for the cache overall — `lookup()` falls back to a `GET` against
  * the registry to confirm; if the registry has been garbage-collected
  * out-of-band, the driver records a `0` hit count and treats the key
  * as cold.
@@ -49,8 +50,9 @@ export interface RegistryBuildCacheOptions {
   fetchImpl?: typeof fetch;
 }
 
-interface RegistryManifestHead {
-  digest: string;
+interface RegistryManifest {
+  /** The cached-content pointer carried in the manifest's layers[0].digest. */
+  layerDigest: string;
   sizeBytes: number;
 }
 
@@ -80,26 +82,35 @@ export class RegistryBuildCache implements IBuildCache {
   }
 
   async lookup(key: string): Promise<BlobRef | null> {
+    // Fetch the manifest and read the cached-content pointer out of its
+    // layers[0].digest. A HEAD cannot decide this: its Docker-Content-Digest
+    // is the digest OF THE MANIFEST, not of the layer the row stores, so a
+    // HEAD-based comparison never matched and every store→lookup round-trip
+    // missed on a real registry (r021).
+    const manifest = await this.fetchManifest(this.tagFor(key));
+    if (!manifest) {
+      this.misses += 1;
+      return null;
+    }
+
     const row = await this.db.query.cacheRegistryBlobs.findFirst({
       where: eq(cacheRegistryBlobs.key, key),
     });
     if (!row) {
       // The registry may still have the tag (e.g. an instance that
-      // joined an existing cluster). A HEAD on the manifest tells us
-      // whether the digest is still reachable.
-      const head = await this.headManifest(this.tagFor(key));
-      if (!head) {
-        this.misses += 1;
-        return null;
-      }
+      // joined an existing cluster). The layer digest inside the manifest
+      // is the cached-content pointer for this key.
       this.hits += 1;
-      return { digest: head.digest, sizeBytes: head.sizeBytes, storedAt: new Date().toISOString() };
+      return {
+        digest: manifest.layerDigest,
+        sizeBytes: manifest.sizeBytes,
+        storedAt: new Date().toISOString(),
+      };
     }
 
-    // Confirm the registry still has the tag; an out-of-band GC
-    // would otherwise hand back a stale digest.
-    const head = await this.headManifest(this.tagFor(key));
-    if (!head || head.digest !== row.digest) {
+    // Confirm the registry still serves what we stored; an out-of-band GC
+    // or a foreign overwrite would otherwise hand back a stale digest.
+    if (manifest.layerDigest !== row.digest) {
       this.misses += 1;
       return null;
     }
@@ -185,17 +196,27 @@ export class RegistryBuildCache implements IBuildCache {
     return `/v2/${this.repo}/manifests/${tag}`;
   }
 
-  private async headManifest(tag: string): Promise<RegistryManifestHead | null> {
+  private async fetchManifest(tag: string): Promise<RegistryManifest | null> {
     try {
       const res = await this.fetchImpl(`${this.baseUrl}${this.manifestPath(tag)}`, {
-        method: 'HEAD',
+        method: 'GET',
         headers: this.authHeaders({ Accept: 'application/vnd.oci.image.manifest.v1+json' }),
       });
       if (res.status !== 200) return null;
-      const digest = res.headers.get('Docker-Content-Digest');
-      const len = Number(res.headers.get('Content-Length') ?? '0');
-      if (!digest) return null;
-      return { digest, sizeBytes: Number.isFinite(len) ? len : 0 };
+      const parsed = (await res.json()) as {
+        layers?: Array<{ digest?: unknown; size?: unknown }>;
+      };
+      const layer = parsed.layers?.[0];
+      if (typeof layer?.digest !== 'string' || !layer.digest.startsWith('sha256:')) {
+        // 200 but not one of our marker manifests — wrong repo or foreign
+        // tag content; treat the key as cold rather than trust the body
+        // (same rule the S3 driver applies to unparsable markers).
+        return null;
+      }
+      return {
+        layerDigest: layer.digest,
+        sizeBytes: typeof layer.size === 'number' ? layer.size : 0,
+      };
     } catch {
       return null;
     }
