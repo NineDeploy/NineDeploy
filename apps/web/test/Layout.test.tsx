@@ -603,6 +603,32 @@ describe('Layout', () => {
       toggleMode: vi.fn(),
     });
   });
+
+  it('activity drawer reconnects after a drop and never lies about live state', async () => {
+    const user = userEvent.setup();
+    renderLayout();
+
+    // Open the drawer: the socket connects and the drawer reports live.
+    await user.click(screen.getByTitle('Activity'));
+    const first = FakeWebSocket.instances.at(-1)!;
+    first.open();
+    expect(await screen.findByText(/● live/)).toBeInTheDocument();
+
+    // A drop schedules a reconnect (2s backoff on the first retry) and the
+    // badge says reconnecting instead of claiming a dead feed is live.
+    first.closeFromServer();
+    expect(await screen.findByText(/● reconnecting/)).toBeInTheDocument();
+
+    // The backoff fires: a NEW socket is created; when it opens, live returns.
+    await vi.waitFor(
+      () => {
+        expect(FakeWebSocket.instances.length).toBeGreaterThan(1);
+      },
+      { timeout: 4000 },
+    );
+    FakeWebSocket.instances.at(-1)!.open();
+    expect(await screen.findByText(/● live/)).toBeInTheDocument();
+  });
 });
 
 /** Simulate the socket receiving a payload and flush React updates. */

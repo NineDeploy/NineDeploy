@@ -712,6 +712,22 @@ describe('KeyValueEditor', () => {
     expect(onChange).toHaveBeenCalledWith({ '': '' });
   });
 
+  it('focuses the existing empty row when Add is pressed again (no silent no-op)', async () => {
+    const user = userEvent.setup({ delay: null });
+    function Harness() {
+      const [value, setValue] = useState<Record<string, string>>({ '': '' });
+      return <KeyValueEditor value={value} onChange={setValue} addLabel="Add pair" />;
+    }
+    render(<Harness />);
+
+    await user.click(screen.getByRole('button', { name: 'Add pair' }));
+    // The focus is scheduled on the next animation frame — flush it.
+    await new Promise((r) => setTimeout(r, 30));
+
+    const emptyKey = screen.getByLabelText('key (empty)') as HTMLInputElement;
+    expect(document.activeElement).toBe(emptyKey);
+  });
+
   it('renames the key on blur of the key input', async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
