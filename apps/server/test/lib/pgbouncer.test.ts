@@ -23,8 +23,10 @@
  *    the bind-mounted config files.
  *  - `pgbouncerStatusFor` returns the disabled shape when
  *    the row is not flagged, otherwise queries docker for
- *    the running flag and parses `PGBOUNCER_POOL_MODE` out
- *    of the inspect output.
+ *    the running flag and parses `pool_mode` out of the
+ *    rendered ini inside the sidecar (r016: the container
+ *    env can never answer — enablePgbouncer passes no -e
+ *    flags, so PGBOUNCER_POOL_MODE does not exist there).
  */
 import { readFile } from 'node:fs/promises';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -456,14 +458,35 @@ describe('pgbouncerStatusFor', () => {
     expect(status.port).toBe(7000);
   });
 
-  it('returns running=true and the pooled URL when the container is up', async () => {
+  // r016 regression: pool_mode is parsed from the rendered ini that
+  // `enablePgbouncer` docker-cp'd into the sidecar. The container env can
+  // never answer — the create argv passes no -e flags, so
+  // PGBOUNCER_POOL_MODE does not exist there, and the old
+  // `{{index .Config.Env}}` template was invalid Go template usage
+  // ("index of nothing") besides. poolMode must be null ONLY when the
+  // sidecar is down or the ini cannot be read — never while it is running.
+  const STATUS_INI = [
+    '[databases]',
+    'app = host=nd-pg-mydb port=5432',
+    '',
+    '[pgbouncer]',
+    'listen_addr = 0.0.0.0',
+    'listen_port = 6432',
+    'auth_type = md5',
+    'auth_file = /etc/pgbouncer/userlist.txt',
+    'pool_mode = transaction',
+    'max_client_conn = 1000',
+    '',
+  ].join('\n');
+
+  it('returns running=true, the pool mode from the rendered ini, and the pooled URL when the container is up', async () => {
     execState.toolResults.set(
       'docker inspect --format {{.State.Running}} nd-pgb-mydb',
       { stdout: 'true\n' },
     );
     execState.toolResults.set(
-      'docker inspect --format {{index .Config.Env}} nd-pgb-mydb',
-      { stdout: '[PGBOUNCER_POOL_MODE=transaction OTHER=foo]\n' },
+      'docker exec nd-pgb-mydb cat /etc/pgbouncer/pgbouncer.ini',
+      { stdout: STATUS_INI },
     );
     const status = await pgbouncerStatusFor(
       buildDb({ pgbouncerEnabled: true, pgbouncerContainerName: 'nd-pgb-mydb' }),
@@ -474,28 +497,44 @@ describe('pgbouncerStatusFor', () => {
     expect(status.pooledConnectionString).toBe('postgres://nine:plainpw@nd-pgb-mydb:6432/app');
   });
 
-  it('returns poolMode=null when the env line lacks the variable', async () => {
+  it('reports the mode the ini actually pins, not a hardcoded value', async () => {
     execState.toolResults.set(
       'docker inspect --format {{.State.Running}} nd-pgb-mydb',
       { stdout: 'true\n' },
     );
     execState.toolResults.set(
-      'docker inspect --format {{index .Config.Env}} nd-pgb-mydb',
-      { stdout: '[OTHER=foo]\n' },
+      'docker exec nd-pgb-mydb cat /etc/pgbouncer/pgbouncer.ini',
+      { stdout: STATUS_INI.replace('pool_mode = transaction', 'pool_mode=session') },
     );
     const status = await pgbouncerStatusFor(
       buildDb({ pgbouncerEnabled: true, pgbouncerContainerName: 'nd-pgb-mydb' }),
     );
-    expect(status.poolMode).toBeNull();
+    expect(status.poolMode).toBe('session');
   });
 
-  it('returns poolMode=null when the env inspect throws (best-effort)', async () => {
+  it('returns poolMode=null when the rendered ini has no pool_mode line', async () => {
     execState.toolResults.set(
       'docker inspect --format {{.State.Running}} nd-pgb-mydb',
       { stdout: 'true\n' },
     );
     execState.toolResults.set(
-      'docker inspect --format {{index .Config.Env}} nd-pgb-mydb',
+      'docker exec nd-pgb-mydb cat /etc/pgbouncer/pgbouncer.ini',
+      { stdout: STATUS_INI.replace('pool_mode = transaction\n', '') },
+    );
+    const status = await pgbouncerStatusFor(
+      buildDb({ pgbouncerEnabled: true, pgbouncerContainerName: 'nd-pgb-mydb' }),
+    );
+    expect(status.running).toBe(true);
+    expect(status.poolMode).toBeNull();
+  });
+
+  it('returns poolMode=null when reading the ini fails (best-effort)', async () => {
+    execState.toolResults.set(
+      'docker inspect --format {{.State.Running}} nd-pgb-mydb',
+      { stdout: 'true\n' },
+    );
+    execState.toolResults.set(
+      'docker exec nd-pgb-mydb cat /etc/pgbouncer/pgbouncer.ini',
       { throw: new Error('no such container') },
     );
     const status = await pgbouncerStatusFor(

@@ -191,12 +191,16 @@ export async function pgbouncerStatusFor(d: Database): Promise<PgbouncerStatus> 
   let poolMode: string | null = null;
   if (running) {
     try {
-      const inspect = await capture('docker', ['inspect', '--format', '{{index .Config.Env}}', containerName]);
-      const envLine = inspect.replace(/[[\]]/g, '');
-      const m = /PGBOUNCER_POOL_MODE=([A-Za-z0-9_]+)/.exec(envLine);
+      // pool_mode lives in the ini that `enablePgbouncer` docker-cp'd into
+      // the container — that file is the config the sidecar actually runs
+      // with. The container ENV never carries PGBOUNCER_POOL_MODE (the
+      // create argv passes no -e flags), and `{{index .Config.Env}}` is
+      // invalid Go template usage anyway, so inspecting env never answers.
+      const ini = await capture('docker', ['exec', containerName, 'cat', '/etc/pgbouncer/pgbouncer.ini']);
+      const m = /^pool_mode\s*=\s*([A-Za-z0-9_]+)/m.exec(ini);
       if (m) poolMode = m[1] ?? null;
     } catch {
-      /* the inspect failed; poolMode stays null */
+      /* the exec failed; poolMode stays null */
     }
   }
   return {
