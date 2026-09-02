@@ -1,4 +1,4 @@
-export const VERSION = '0.5.0';
+export const VERSION = '0.5.1';
 
 export interface ChangelogEntry {
   version: string;
@@ -8,6 +8,18 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.5.1',
+    date: '2026-09-02',
+    title: 'Real Demo, Orchestrator Gate & Watch-Path Reliability',
+    changes: [
+      'The demo is real: "Load Demo" now creates a single deployable Docker source build of github.com/ersinkoc/nextjs-test (port 3000, /api/health) and queues its first build — replacing rows that claimed to be running with nothing behind them. No PM2, no database; legacy fake demo rows are reaped on first seed',
+      'Watch-path webhook matcher hardening: patterns like **a**b**c**d compiled into a regex that backtracked ~C(n,3) steps on long non-matching paths (ReDoS); the matcher is now a bounded DP walk with identical folding semantics, over-long inputs fail open, and branch/tag deletion pushes no longer queue spurious failed deployments',
+      'Orchestrator routes are operator-gated: the stack list and stack-status endpoints executed host Docker daemon commands behind bare authentication',
+      'Deploy finalize no longer strands the previous container when env decryption fails; the managed-env fingerprint merges into the config snapshot instead of replacing it',
+      'Mimosa deep-scan cleanup: the last six false-positive findings resolved at source, and the one supported_static business-logic finding triaged to the operator trust boundary',
+    ],
+  },
   {
     version: '0.5.0',
     date: '2026-09-02',

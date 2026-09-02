@@ -92,6 +92,18 @@ function changedFilesFrom(commits: Array<Record<string, unknown>>): string[] {
 /** Parse a push payload into the fields the deploy pipeline needs. */
 export function parsePush(body: unknown, provider: Provider): PushEvent | null {
   const b = body as Record<string, unknown>;
+  // A JSON body of literal `null` arrives here from the public receiver
+  // (Fastify parses it to null); same contract as parsePullRequest below.
+  if (!b) return null;
+  // Branch/tag DELETION pushes are not deployable: GitHub/Gitea send
+  // `deleted: true` with an all-zero `after` and a null head_commit; GitLab
+  // sends the all-zero `after` with no commits (already filtered below).
+  // Unguarded, the event parsed into a deploy with a NULL commitSha, which
+  // engine/pipeline.ts resolves to checkoutCommit(service.branch) — a ref
+  // that no longer exists — so deleting the tracked branch always produced
+  // a spurious failing deployment. A real commit SHA is never all zeros.
+  const after = typeof b['after'] === 'string' ? b['after'] : '';
+  if (b['deleted'] === true || /^0+$/.test(after)) return null;
   const ref = typeof b['ref'] === 'string' ? (b['ref'] as string) : '';
   const branch = ref.startsWith('refs/heads/') ? ref.slice('refs/heads/'.length) : ref;
   if (!branch) return null;

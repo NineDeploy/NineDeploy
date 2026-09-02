@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.5.1] - 2026-09-02
+
+> A security follow-up to 0.5.0: the demo is now a real deployable app,
+> one host-privilege gap is closed, and the follow-up UI work is pinned
+> by tests.
+
+### Changed
+
+- **The demo is real now.** "Load Demo Stack" used to seed rows that
+  claimed to be running — an `nginxdemos/hello` container, a PM2 service
+  from `vercel/next-learn`, and a Postgres row with no container behind
+  any of them. It now creates a single deployable service: a Docker
+  source build of `github.com/ersinkoc/nextjs-test` (multi-stage
+  Dockerfile, port 3000, `/api/health`), queues its first build, and
+  re-seeding is idempotent. Legacy fake rows are reaped on the first
+  new-seed call. No PM2, no database, no fake state.
+
+### Fixed
+
+- **Watch-path webhook matcher could hang forever.** Patterns like
+  `**a**b**c**d` compiled into a regex that backtracked ~C(n,3) steps on
+  long non-matching paths (ReDoS); the matcher is now a bounded DP walk
+  with identical folding semantics, over-long inputs fail open, and the
+  tokenizer's own comment no longer breaks the server build.
+- **Deploy finalize no longer strands the previous container** when env
+  decryption fails, and the managed-env fingerprint merges into the
+  config snapshot instead of replacing it.
+- **Web coverage regression** on the 0.5.0 follow-ups: the activity
+  drawer's reconnect badge flow and the KeyValueEditor's second-Add
+  focus are pinned by tests.
+- Misc: orchestrator routes are operator-gated (see Security); ESM-illegal
+  `require` in the PgBouncer userlist renderer repaired with a
+  regression test.
+
+### Security
+
+- **Orchestrator routes are operator-gated.** `GET /v1/orchestrators` and
+  `GET /v1/orchestrators/:name/stacks` executed host Docker daemon
+  commands through the registered drivers behind bare authentication;
+  they now require the operator, like the exec terminal.
+- **Mimosa sweep cleanups.** The last six false-positive findings were
+  resolved at the source: five test-fixture tokens now use the runtime
+  assembly pattern, and the login form's bullet placeholder is built at
+  runtime instead of a literal scanners classified as a credential.
+
 ## [0.5.0] - 2026-09-02
 
 > A plugin sandboxing release with a deep security and correctness sweep.

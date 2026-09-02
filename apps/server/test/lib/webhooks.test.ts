@@ -137,6 +137,54 @@ describe('parsePush', () => {
     expect(parsePush({}, 'github')).toBeNull();
   });
 
+  it('returns null for a null or undefined body (r010)', () => {
+    // Fastify parses a JSON body of literal `null` to null, and the public
+    // webhook receiver hands it straight to parsePush — it must be a graceful
+    // null (same contract as parsePullRequest), never a TypeError.
+    expect(parsePush(null, 'github')).toBeNull();
+    expect(parsePush(null, 'gitlab')).toBeNull();
+    expect(parsePush(undefined, 'gitea')).toBeNull();
+  });
+
+  it('returns null for a GitHub branch-deletion push (r009)', () => {
+    const body = {
+      ref: 'refs/heads/main',
+      before: 'e5a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9',
+      after: '0'.repeat(40),
+      deleted: true,
+      head_commit: null,
+      commits: [],
+    };
+    expect(parsePush(body, 'github')).toBeNull();
+  });
+
+  it('returns null for a Gitea branch-deletion push (r009)', () => {
+    const body = {
+      ref: 'refs/heads/main',
+      after: '0'.repeat(40),
+      deleted: true,
+      head_commit: null,
+      commits: [],
+    };
+    expect(parsePush(body, 'gitea')).toBeNull();
+  });
+
+  it('returns null when `after` is all zeros even without a deleted flag (r009)', () => {
+    // The all-zero `after` is the canonical deletion marker shared by
+    // GitHub, Gitea, and GitLab; older payloads may omit `deleted`.
+    const body = { ref: 'refs/heads/main', after: '0'.repeat(40), head_commit: null };
+    expect(parsePush(body, 'github')).toBeNull();
+  });
+
+  it('still parses a normal push that carries an `after` sha (r009 guard does not overfire)', () => {
+    const body = {
+      ref: 'refs/heads/main',
+      after: 'abc123def456abc123def456abc123def456abc1',
+      head_commit: { id: 'abc123def456abc123def456abc123def456abc1', message: 'feat: x' },
+    };
+    expect(parsePush(body, 'github')?.sha).toBe('abc123def456abc123def456abc123def456abc1');
+  });
+
   it('parses a GitLab push payload', () => {
     const body = {
       ref: 'refs/heads/main',
