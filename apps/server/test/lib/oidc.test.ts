@@ -7,6 +7,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPrivateKey, createPublicKey, generateKeyPairSync, sign as cryptoSign } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { verifyIdToken, type OidcConfig, type OidcDiscovery } from '../../src/lib/oidc.js';
 
 interface TestKey {
@@ -151,5 +152,19 @@ describe('lib/oidc verifyIdToken', () => {
     await expect(verifyIdToken(discovery(uri), config, token, '')).rejects.toThrow(/kid/);
     // The refresh was attempted before giving up.
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+// r018 regression (the r007 defect class): this package runs as pure ESM
+// (`node dist/server.js`), where `require` does not exist. verifyRs256 used
+// to call `require('node:crypto')` — vitest's module runner shims require,
+// so every test above stayed green while production OIDC logins died with
+// `ReferenceError: require is not defined` at signature verification. The
+// durable guard is source-level: no `require(` call syntax may appear in
+// this module.
+describe('ESM purity (r018 regression)', () => {
+  it('never references CJS require — the runtime is `node dist/server.js`', async () => {
+    const src = await readFile(new URL('../../src/lib/oidc.ts', import.meta.url), 'utf8');
+    expect(src).not.toMatch(/\brequire\s*\(/);
   });
 });

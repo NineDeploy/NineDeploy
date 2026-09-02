@@ -1,4 +1,4 @@
-import { createHash, createHmac, randomBytes } from 'node:crypto';
+import { createHash, createHmac, createPublicKey, createVerify, randomBytes } from 'node:crypto';
 
 /**
  * Minimal OIDC client — Sprint 5, Gap G-22.
@@ -174,7 +174,6 @@ function verifyRs256(input: string, signature: string, jwk: Jwk): boolean {
   // PEM/DER round-trip the verifier really wants is awkward to
   // get right across the JOSE / OIDC key universe). JWK → KeyObject
   // is the supported path.
-  const { createPublicKey, createVerify } = require('node:crypto') as typeof import('node:crypto');
   const key = createPublicKey({ key: { kty: jwk.kty, n: jwk.n, e: jwk.e }, format: 'jwk' });
   return createVerify('RSA-SHA256').update(data).verify(key, sig);
 }
