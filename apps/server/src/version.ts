@@ -1,4 +1,4 @@
-export const VERSION = '0.5.1';
+export const VERSION = '0.5.2';
 
 export interface ChangelogEntry {
   version: string;
@@ -8,6 +8,15 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.5.2',
+    date: '2026-09-02',
+    title: 'Uniform Hub Icons & Alert State Seed',
+    changes: [
+      'Uniform Hub icons: template cards and the detail drawer render a plain slate Package icon instead of 89 arbitrary per-template emojis, matching the panel\'s monochrome design; original brand logos are deliberately not used (licensing and asset hosting for third-party marks)',
+      'New alert rules now evaluate from a clean slate: creating a rule seeds its alert_state row so evaluateAlerts can track breaches immediately instead of skipping the first evaluation window',
+    ],
+  },
   {
     version: '0.5.1',
     date: '2026-09-02',

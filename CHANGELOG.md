@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.5.2] - 2026-09-02
+
+> UI polish release: the Hub template catalog drops its noisy per-app
+> emojis for a uniform monochrome icon, and an alert-evaluation bug
+> affecting new rules is fixed.
+
+### Changed
+
+- **Uniform Hub icons.** Template cards and the detail drawer render a
+  plain slate `Package` icon instead of 89 arbitrary per-template
+  emojis, matching the panel's monochrome design. Original brand logos
+  are deliberately not used (licensing and asset hosting for
+  third-party marks).
+
+### Fixed
+
+- **New alert rules now evaluate from a clean slate.** Creating a rule
+  seeds its `alert_state` row so `evaluateAlerts` can track breaches
+  immediately instead of skipping the first evaluation window.
+
 ## [0.5.1] - 2026-09-02
 
 > A security follow-up to 0.5.0: the demo is now a real deployable app,
