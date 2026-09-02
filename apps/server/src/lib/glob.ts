@@ -57,9 +57,9 @@ export function isSafeWatchPath(pattern: string): boolean {
 
 type GlobToken = { kind: 'lit'; ch: string } | { kind: 'any1' } | { kind: 'star1' } | { kind: 'star2' };
 
-/** Tokenize with the exact folding rules globToRegExp applies (kept in lockstep:
- *  `**` consumes one following slash so `a/**/b` also matches `a/b`;
- *  `*`/`?` never match `/`). */
+// Tokenize with the exact folding rules globToRegExp applies (kept in lockstep:
+// `**` consumes one following slash so `a/**/b` also matches `a/b`;
+// `*`/`?` never match `/`).
 function tokenizeGlob(src: string): GlobToken[] {
   const tokens: GlobToken[] = [];
   let i = 0;

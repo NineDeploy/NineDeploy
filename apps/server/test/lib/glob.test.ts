@@ -50,6 +50,45 @@ describe('matchesAny', () => {
     expect(matchesAny('packages/lib/a.ts', ['apps/**', 'packages/**'])).toBe(true);
     expect(matchesAny('docs/readme.md', ['apps/**', 'packages/**'])).toBe(false);
   });
+
+  it('agrees with the documented glob language on multi-star patterns', () => {
+    // ** crosses slashes and folds one following slash.
+    expect(matchesAny('a/b', ['a/**/b'])).toBe(true);
+    expect(matchesAny('a/x/y/b', ['a/**/b'])).toBe(true);
+    expect(matchesAny('a/b/c', ['a/**/b'])).toBe(false);
+    // * and ? never cross a slash.
+    expect(matchesAny('apps/api/index.ts', ['apps/*/index.ts'])).toBe(true);
+    expect(matchesAny('apps/x/y/index.ts', ['apps/*/index.ts'])).toBe(false);
+    expect(matchesAny('file1.ts', ['file?.ts'])).toBe(true);
+    expect(matchesAny('file/.ts', ['file?.ts'])).toBe(false);
+    // Leading slashes on the path are stripped, like globToRegExp does for patterns.
+    expect(matchesAny('/src/x.ts', ['src/x.ts'])).toBe(true);
+  });
+
+  it('answers a 4-deep-star pattern on a long non-matching path quickly (ReDoS r006)', () => {
+    // The pattern budget ACCEPTS this pattern (4 deep stars <= 4), and the
+    // regex it compiled — `^(?:(?:.*)a(?:.*)b(?:.*)c(?:.*)d)$` — backtracked
+    // ~C(4000,3) steps on this input before the bounded matcher replaced it,
+    // never returning. The DP answers in ~1ms with the exact verdict.
+    expect(isSafeWatchPath('**a**b**c**d')).toBe(true);
+    const start = performance.now();
+    expect(matchesAny('a'.repeat(3999) + 'z', ['**a**b**c**d'])).toBe(false);
+    expect(performance.now() - start).toBeLessThan(2000);
+  });
+
+  it('fails open for over-long paths instead of matching unbounded input', () => {
+    // > MAX_MATCH_INPUT: treated as a hit without running the matcher — a
+    // literal that cannot match still returns true (documented fail-open).
+    expect(matchesAny('x'.repeat(5000), ['y'])).toBe(true);
+  });
+
+  it('completes the historically-hanging 200k-char webhook path (fail-open)', () => {
+    // Before the bounded matcher this input against `apps/**/a**b` never
+    // returned — one verified push payload could hang the event loop.
+    const start = performance.now();
+    expect(matchesAny('apps/' + 'a'.repeat(199994) + 'z', ['apps/**/a**b'])).toBe(true);
+    expect(performance.now() - start).toBeLessThan(2000);
+  });
 });
 
 describe('parseWatchPaths', () => {
