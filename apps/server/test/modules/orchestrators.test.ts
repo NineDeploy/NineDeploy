@@ -87,4 +87,22 @@ describe('orchestrators routes', () => {
     expect(res.statusCode).toBe(401);
     await app.close();
   });
+
+  it('is operator-gated: a member cannot trigger host docker reads (403)', async () => {
+    // Both endpoints execute host Docker daemon commands through the drivers
+    // (`docker stack ls` / `docker service ls` / `docker compose ps`) — the
+    // same host-privilege boundary as the exec terminal.
+    const app = await buildTestApp();
+    await app.register(orchestratorsRoutes);
+    const driver = { getStackStatus: vi.fn().mockResolvedValue(null) };
+    (app as unknown as { kernel: { registry: { getOrchestrator: () => unknown } } }).kernel.registry.getOrchestrator = () => driver;
+    const res = await app.inject({
+      method: 'GET',
+      url: '/swarm/stacks',
+      headers: asUser({ id: 7, isOperator: false }),
+    });
+    expect(res.statusCode).toBe(403);
+    expect(driver.getStackStatus).not.toHaveBeenCalled();
+    await app.close();
+  });
 });

@@ -22,6 +22,11 @@ import type { FastifyPluginAsync } from 'fastify';
 
 export const orchestratorsRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('onRequest', app.authenticate);
+  // Operator-only: both endpoints execute host Docker daemon commands
+  // (`docker stack ls` / `docker service ls` / `docker compose ps`) on the
+  // panel's own daemon — the same host-privilege trust boundary the exec
+  // terminal and container diagnostics enforce.
+  app.addHook('preHandler', app.requireOperator);
 
   app.get('/', async () => {
     const drivers = app.kernel.registry.listOrchestrators();
