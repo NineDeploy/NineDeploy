@@ -19,12 +19,13 @@ import type { BlobRef, IBuildCache } from '../types.js';
  * bucket never collide.
  *
  * Contract:
- *   - `lookup(key)` runs `HEAD <bucket>/<prefix><tag>`. A 404 = miss.
- *     A 200 with no `x-amz-meta-ninedeploy-digest` header = miss
- *     (operator pointed us at the wrong prefix).
- *   - `store(key, blob)` runs `PUT` with `x-amz-meta-ninedeploy-*`
- *     metadata headers carrying the digest. Idempotent on duplicate
- *     (key, digest) — S3 overwrites the marker with itself.
+ *   - `store(key, blob)` PUTs the marker body. s3Request exposes no
+ *     extra-header parameter, so `x-amz-meta-*` metadata is not
+ *     available — the digest rides in the marker JSON. Idempotent on
+ *     duplicate (key, digest) — S3 overwrites the marker with itself.
+ *   - `lookup(key)` GETs `<bucket>/<prefix><tag>` and parses the
+ *     marker body. A 404 = miss; a 200 that does not parse as one of
+ *     our markers = miss (operator pointed us at the wrong prefix).
  *   - `stats()` reports the in-process counters. The bucket itself
  *     does not give us cheap "how many keys under <prefix>?" so the
  *     driver does not attempt a count; the panel's hit-rate column
@@ -56,22 +57,27 @@ export class S3BuildCache implements IBuildCache {
   }
 
   async lookup(key: string): Promise<BlobRef | null> {
+    // The marker IS the object body: store() cannot send `x-amz-meta-*`
+    // headers (s3Request exposes no extra-header parameter), so the
+    // digest is only recoverable by GETting the body and parsing it —
+    // exactly what the store() side documents. A HEAD that demanded the
+    // metadata header turned every store→lookup round-trip into a miss,
+    // so the cache could never hit (r019).
     const objectKey = this.objectKeyFor(key);
-    const head = await s3Request(this.config, 'HEAD', objectKey, undefined, 'application/octet-stream');
-    if (head.status !== 200) {
+    const res = await s3Request(this.config, 'GET', objectKey, undefined, 'application/octet-stream');
+    if (res.status !== 200) {
       this.misses += 1;
       return null;
     }
-    const digest = head.headers.get('x-amz-meta-ninedeploy-digest');
-    if (!digest || !digest.startsWith('sha256:')) {
+    const parsed = parseMarker(Buffer.from(await res.arrayBuffer()));
+    if (!parsed) {
+      // 200 but not one of our markers — wrong prefix or foreign object.
       this.misses += 1;
       return null;
     }
-    const sizeStr = head.headers.get('x-amz-meta-ninedeploy-size');
-    const sizeBytes = sizeStr ? Number(sizeStr) : 0;
-    const lastModified = head.headers.get('last-modified') ?? new Date().toISOString();
+    const lastModified = res.headers.get('last-modified') ?? new Date().toISOString();
     this.hits += 1;
-    return { digest, sizeBytes, storedAt: lastModified };
+    return { digest: parsed.digest, sizeBytes: parsed.sizeBytes, storedAt: lastModified };
   }
 
   async store(key: string, blob: Buffer | Uint8Array): Promise<BlobRef> {
