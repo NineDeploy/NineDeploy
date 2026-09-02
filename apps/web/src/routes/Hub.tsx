@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import {
   CheckCircle2, Download, ExternalLink,
-  Layers, RefreshCw, Rocket, Search, ShieldCheck, Sparkles, Store, X,
+  Layers, Package, RefreshCw, Rocket, Search, ShieldCheck, Sparkles, Store, X,
 } from 'lucide-react';
 import type { Template } from '@ninedeploy/sdk';
 import { api } from '../lib/api.js';
@@ -227,8 +227,8 @@ export function Hub() {
                 className="group p-5"
               >
                 <div className="flex items-start gap-3">
-                  <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-white/[0.05] text-2xl ring-1 ring-inset ring-white/10">
-                    {t.emoji}
+                  <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-white/[0.05] text-slate-400 ring-1 ring-inset ring-white/10">
+                    <Package size={20} />
                   </span>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
@@ -429,8 +429,8 @@ function TemplateDetail({
           <>
             <div className="flex items-start justify-between gap-3 border-b border-white/5 p-5">
               <div className="flex items-start gap-3">
-                <span className="grid h-12 w-12 place-items-center rounded-xl bg-white/[0.05] text-2xl ring-1 ring-inset ring-white/10">
-                  {detail.data.emoji}
+                <span className="grid h-12 w-12 place-items-center rounded-xl bg-white/[0.05] text-slate-400 ring-1 ring-inset ring-white/10">
+                  <Package size={22} />
                 </span>
                 <div>
                   <h2 className="text-lg font-semibold">{detail.data.name}</h2>
