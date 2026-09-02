@@ -81,6 +81,11 @@ async function savedBuild(): Promise<Record<string, unknown>> {
 describe('SettingsTab host-privilege gating', () => {
   afterEach(cleanup);
 
+  // The admin-save path chains several react-query round-trips through
+  // SettingsTab; on loaded CI runners it can exceed 15s, so these tests use
+  // the global 30s ceiling instead of a tighter override.
+  const TIMEOUT = 30_000;
+
   beforeEach(() => {
     vi.clearAllMocks();
     authMock.user = { id: 1, isOperator: true, email: 'a@test', name: 'A' };
@@ -95,14 +100,14 @@ describe('SettingsTab host-privilege gating', () => {
     expect(screen.getByText('CI/CD Lifecycle Hooks')).toBeInTheDocument();
     expect(screen.getByPlaceholderText('npm run db:migrate')).toBeInTheDocument();
     expect(screen.getByPlaceholderText('npm run cleanup')).toBeInTheDocument();
-  }, 15_000);
+  }, TIMEOUT);
 
   it('sends the hook values an admin has configured', async () => {
     renderTab();
     await screen.findByText('Service settings');
     fireEvent.click(screen.getByRole('button', { name: /Save settings/ }));
     expect((await savedBuild()).preDeployCmd).toBe('make migrate');
-  }, 15_000);
+  }, TIMEOUT);
 
   it('hides the lifecycle hook fields from a member', async () => {
     authMock.user = { id: 5, isOperator: false, email: 'm@test', name: 'M' };
@@ -113,7 +118,7 @@ describe('SettingsTab host-privilege gating', () => {
     expect(screen.queryByPlaceholderText('npm run cleanup')).not.toBeInTheDocument();
     // the rest of the build form is untouched
     expect(screen.getByPlaceholderText('npm run build')).toBeInTheDocument();
-  }, 15_000);
+  }, TIMEOUT);
 
   it("omits the hook keys from a member's patch instead of clearing them", async () => {
     authMock.user = { id: 5, isOperator: false, email: 'm@test', name: 'M' };
@@ -127,5 +132,5 @@ describe('SettingsTab host-privilege gating', () => {
     expect(build.preStopCmd).toBeUndefined();
     // and the unprivileged fields still go through
     expect(build.buildCmd).toBe('npm run build');
-  }, 15_000);
+  }, TIMEOUT);
 });
