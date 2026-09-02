@@ -134,6 +134,18 @@ describe('agent typed-op argv templates', () => {
     expect(await argvOf('git.reset', {})).toEqual(['reset', '--hard', 'HEAD']);
   });
 
+  it('rejects dash-leading git operands as options, not refs (r011)', async () => {
+    // Both of these passed RE_REF before the position-0 anchor was added:
+    // git would read them as options (`checkout -b`, and `clone --upload-pack`
+    // consuming the target dir as its value), not as the intended operands.
+    await expect(argvOf('git.checkout', { ref: '-b' })).rejects.toThrow('Invalid ref');
+    await expect(argvOf('git.clone', { url: '--upload-pack', dir: 'repo' })).rejects.toThrow('Invalid repo url');
+    // Belt and braces: `=` was never in the charset, but it must stay rejected.
+    await expect(argvOf('git.clone', { url: '--config=core.sshCommand=/bin/true', dir: 'r' })).rejects.toThrow(
+      'Invalid repo url',
+    );
+  });
+
   it('docker.runEnv without limits or volume', async () => {
     const argv = await argvOf('docker.runEnv', { name: 'w', image: 'i', envFile: 'e.env' });
     expect(argv).not.toContain('--cpu-shares');

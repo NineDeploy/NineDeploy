@@ -21,7 +21,7 @@ const RE_PATH_RAW = /^[A-Za-z0-9@._][A-Za-z0-9@._/-]*$|^\/[A-Za-z0-9@._/-]*$/; /
 /** Path validator: rejects any `..` segment so operands can never traverse up. */
 const RE_PATH = (value: string): boolean => RE_PATH_RAW.test(value) && !value.split('/').includes('..');
 const RE_SHA = /^(HEAD|[0-9a-f]{6,64})$/;
-const RE_REF = /^[A-Za-z0-9@:/._-]+$/; // branches, tags, URLs
+const RE_REF = /^[A-Za-z0-9@:/._][A-Za-z0-9@:/._-]*$/; // branches, tags, URLs — first char must not be `-` (git reads a dash-leading argv element as an option)
 
 type Params = Record<string, unknown>;
 
