@@ -9,6 +9,11 @@
  *    `overridden: true`) when one does. An override row that
  *    lacks `subject` or `text` is treated as absent — the
  *    default is rendered instead.
+ *  - Overrides are keyed by (workspace_id, name): a workspace may
+ *    override several templates at once (the unique index
+ *    `email_template_overrides_workspace_name_idx` allows one row
+ *    per name), and each render must use the row belonging to the
+ *    REQUESTED template name — never a sibling template's row.
  *  - An unknown template name throws (defensive — the
  *    Zod-validated routes can never hit this branch, but the
  *    lib is also called from auth.ts / invitations code that
@@ -18,8 +23,8 @@
  *    escapes so a template that needs a literal `{{` can
  *    write one.
  *  - `setOverride` upserts the (workspace, name) row;
- *    `clearOverride` deletes every override for the
- *    workspace (per the existing helper contract).
+ *    `clearOverride` deletes only that (workspace, name) row —
+ *    sibling template overrides survive.
  *  - `ALL_TEMPLATE_NAMES` lists the four built-ins.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -30,40 +35,82 @@ import {
   renderTemplate,
   setOverride,
 } from '../../src/lib/emailTemplates.js';
-import { createFakeDb } from '../helpers.js';
+import { createFakeDb, tableName } from '../helpers.js';
 
 const state = vi.hoisted(() => ({
   inserts: [] as Array<Record<string, unknown>>,
   deletes: [] as Array<Record<string, unknown>>,
-  /** workspaceId → { subject, text } */
-  overrides: new Map<number, { subject: string; text: string }>(),
+  /** One row per (workspaceId, name) — mirrors the table's unique key. */
+  overrides: [] as Array<{ workspaceId: number; name: string; subject: string; text: string }>,
 }));
 
 beforeEach(() => {
   state.inserts.length = 0;
   state.deletes.length = 0;
-  state.overrides.clear();
+  state.overrides.length = 0;
 });
 
+/** Convenience: seed one override row. */
+function seedOverride(workspaceId: number, name: EmailTemplateName, subject: string, text: string): void {
+  state.overrides.push({ workspaceId, name, subject, text });
+}
+
+/**
+ * Extract column → bound-value pairs from a drizzle where predicate built
+ * from `eq(col, value)` and `and(...)` combinations.
+ *
+ * Drizzle represents `eq(col, v)` as SQL with queryChunks
+ * `[Column, StringChunk(' = '), Param]`, and `and(a, b)` as SQL whose
+ * chunks recurse into the operand SQLs. A depth-first walk keeps each
+ * Column adjacent to its Param, so pairs can be associated positionally.
+ * This makes the fake EXECUTE the predicate the production code
+ * constructs — including the `name` half of the (workspace_id, name) key —
+ * instead of guessing it.
+ */
+function whereEquals(where: unknown): Record<string, unknown> {
+  const pairs: Record<string, unknown> = {};
+  let pendingColumn: string | null = null;
+  const walk = (node: unknown): void => {
+    if (node == null || typeof node !== 'object') return;
+    const n = node as { queryChunks?: unknown[]; name?: unknown; value?: unknown; encoder?: unknown };
+    if (Array.isArray(n.queryChunks)) {
+      for (const chunk of n.queryChunks) walk(chunk);
+      return;
+    }
+    // drizzle Column: carries `.name`, never `.value`.
+    if (typeof n.name === 'string' && !('value' in n)) {
+      pendingColumn = n.name;
+      return;
+    }
+    // drizzle Param: `.value` + `.encoder`. (StringChunk also has `.value`
+    // — it is the ' = ' operator fragment and must NOT be taken as the
+    // bound value — but it has no `encoder`.)
+    if ('value' in n && 'encoder' in n && typeof pendingColumn === 'string') {
+      pairs[pendingColumn] = n.value;
+      pendingColumn = null;
+    }
+  };
+  walk(where);
+  return pairs;
+}
+
 function makeDb() {
-  return createFakeDb({
+  const db = createFakeDb({
     findFirst: {
-      // `findFirst(emailTemplateOverrides)` filters by `workspaceId` via
-      // `eq(emailTemplateOverrides.workspaceId, id)`. The fake reads the
-      // bound `value` from `queryChunks`.
+      // `findFirst(emailTemplateOverrides)` runs the predicate the helper
+      // built. The fake evaluates it against the fixture rows the way SQL
+      // would: workspace must match, and — when the predicate constrains it —
+      // the template name too. First matching row wins (rowid order).
       emailTemplateOverrides: (args: unknown) => {
-        const chunks = (args as { where?: { queryChunks?: unknown[] } } | undefined)?.where?.queryChunks;
-        if (!Array.isArray(chunks)) return undefined;
-        let wid: number | null = null;
-        for (const c of chunks) {
-          const v = (c as { value?: unknown } | null)?.value;
-          if (typeof v === 'number') {
-            wid = v;
-            break;
-          }
-        }
-        if (wid == null) return undefined;
-        const row = state.overrides.get(wid);
+        const where = (args as { where?: unknown } | undefined)?.where;
+        if (where === undefined) return undefined;
+        const eq = whereEquals(where);
+        const wid = eq['workspace_id'];
+        if (typeof wid !== 'number') return undefined;
+        const name = eq['name'];
+        const row = state.overrides.find(
+          (r) => r.workspaceId === wid && (name === undefined || r.name === name),
+        );
         return row ? { subject: row.subject, text: row.text } : undefined;
       },
     },
@@ -91,6 +138,30 @@ function makeDb() {
       },
     },
   });
+
+  // Make DELETE behavioral: apply the predicate against the fixture rows so
+  // clearOverride's where clause is exercised (the stock fake ignores it and
+  // its delete resolver receives no predicate at all).
+  const dbish = db as unknown as {
+    delete: (table: unknown) => { where: (p: unknown) => unknown };
+  };
+  const originalDelete = dbish.delete.bind(db);
+  dbish.delete = (table: unknown) => {
+    const builder = originalDelete(table);
+    if (tableName(table) !== 'email_template_overrides') return builder;
+    return {
+      where: (p: unknown) => {
+        const eq = whereEquals(p);
+        const wid = eq['workspace_id'];
+        const name = eq['name'];
+        state.overrides = state.overrides.filter(
+          (r) => !(r.workspaceId === wid && (name === undefined || r.name === name)),
+        );
+        return builder.where(p);
+      },
+    };
+  };
+  return db;
 }
 
 describe('ALL_TEMPLATE_NAMES', () => {
@@ -120,10 +191,7 @@ describe('renderTemplate', () => {
   });
 
   it('returns the tenant override when one exists', async () => {
-    state.overrides.set(42, {
-      subject: 'Custom subject for {{email}}',
-      text: 'Hi {{email}}, your reset link is {{resetUrl}}',
-    });
+    seedOverride(42, 'password-reset', 'Custom subject for {{email}}', 'Hi {{email}}, your reset link is {{resetUrl}}');
     const db = makeDb();
     const result = await renderTemplate(
       db,
@@ -137,7 +205,7 @@ describe('renderTemplate', () => {
   });
 
   it('falls back to the default when the override row has no text', async () => {
-    state.overrides.set(42, { subject: 'only-subj', text: '' });
+    seedOverride(42, 'password-reset', 'only-subj', '');
     const db = makeDb();
     const result = await renderTemplate(
       db,
@@ -150,7 +218,7 @@ describe('renderTemplate', () => {
   });
 
   it('skips the override lookup entirely when ctx.workspaceId is null', async () => {
-    state.overrides.set(42, { subject: 'X', text: 'Y' });
+    seedOverride(42, 'password-reset', 'X', 'Y');
     const db = makeDb();
     const result = await renderTemplate(
       db,
@@ -211,6 +279,49 @@ describe('renderTemplate', () => {
   });
 });
 
+describe('renderTemplate — (workspace_id, name) override key', () => {
+  it('renders each template with ITS OWN override row when a workspace overrides several', async () => {
+    // Invitation seeded FIRST (it would win any name-blind lookup),
+    // password-reset second — the exact shape that used to contaminate.
+    seedOverride(42, 'workspace-invitation', 'INVITE-SUBJ {{workspaceName}}', 'INVITE-TEXT {{acceptUrl}}');
+    seedOverride(42, 'password-reset', 'RESET-SUBJ {{email}}', 'RESET-TEXT {{resetUrl}}');
+    const db = makeDb();
+
+    const reset = await renderTemplate(
+      db,
+      'password-reset',
+      { email: 'a@b.com', ttlMinutes: 15, resetUrl: 'https://reset.example' },
+      { workspaceId: 42 },
+    );
+    expect(reset.overridden).toBe(true);
+    expect(reset.subject).toBe('RESET-SUBJ a@b.com');
+    expect(reset.text).toBe('RESET-TEXT https://reset.example');
+
+    const invite = await renderTemplate(
+      db,
+      'workspace-invitation',
+      { inviter: 'Eve', workspaceName: 'Acme', role: 'admin', acceptUrl: 'https://invite.example', ttlDays: 7 },
+      { workspaceId: 42 },
+    );
+    expect(invite.overridden).toBe(true);
+    expect(invite.subject).toBe('INVITE-SUBJ Acme');
+    expect(invite.text).toBe('INVITE-TEXT https://invite.example');
+  });
+
+  it('falls back to the default when the REQUESTED name has no override but other names do', async () => {
+    seedOverride(43, 'workspace-invitation', 'INVITE-SUBJ', 'INVITE-TEXT');
+    const db = makeDb();
+    const result = await renderTemplate(
+      db,
+      'password-reset',
+      { email: 'a@b.com', ttlMinutes: 15, resetUrl: 'https://x/y' },
+      { workspaceId: 43 },
+    );
+    expect(result.overridden).toBe(false);
+    expect(result.subject).toBe('Reset your NineDeploy password');
+  });
+});
+
 describe('renderTemplate — interpolation', () => {
   it('substitutes known vars and drops unknown ones to empty string', async () => {
     const db = makeDb();
@@ -229,10 +340,7 @@ describe('renderTemplate — interpolation', () => {
     // Build the input via String.raw to avoid the TS source-escape
     // round-trip; the template is literally `literal \{{ x }}`.
     const esc = String.raw`\{{`;
-    state.overrides.set(42, {
-      subject: `literal ${esc} x }}`,
-      text: `${esc} not interpolated }}: {{hostname}}`,
-    });
+    seedOverride(42, 'domain-transfer', `literal ${esc} x }}`, `${esc} not interpolated }}: {{hostname}}`);
     const db = makeDb();
     const result = await renderTemplate(
       db,
@@ -249,10 +357,7 @@ describe('renderTemplate — interpolation', () => {
   });
 
   it('tolerates numeric and null vars in the substitution', async () => {
-    state.overrides.set(42, {
-      subject: '{{n}} — {{maybe}}',
-      text: 'n={{n}} maybe={{maybe}}',
-    });
+    seedOverride(42, 'domain-transfer', '{{n}} — {{maybe}}', 'n={{n}} maybe={{maybe}}');
     const db = makeDb();
     const result = await renderTemplate(
       db,
@@ -265,10 +370,7 @@ describe('renderTemplate — interpolation', () => {
   });
 
   it('accepts whitespace inside the {{ }} delimiters', async () => {
-    state.overrides.set(42, {
-      subject: '{{   email   }}',
-      text: 'x',
-    });
+    seedOverride(42, 'password-reset', '{{   email   }}', 'x');
     const db = makeDb();
     const result = await renderTemplate(
       db,
@@ -289,20 +391,32 @@ describe('setOverride / clearOverride', () => {
     ]);
   });
 
-  it('clearOverride issues a delete for the workspace', async () => {
+  it('clearOverride deletes only the named (workspace, name) row', async () => {
+    seedOverride(42, 'workspace-invitation', 'INVITE', 'TEXT');
+    seedOverride(42, 'password-reset', 'RESET', 'TEXT');
     const db = makeDb();
     await clearOverride(db, 42, 'password-reset');
-    // The helper deletes every override for the workspace; we assert
-    // the call was made against the right table. The fake db does not
-    // pass any payload to the delete resolver, so the entry is undefined.
+    // Exactly one delete was issued…
     expect(state.deletes).toHaveLength(1);
+    // …and it removed ONLY the named row; the sibling override survives.
+    expect(state.overrides.map((r) => ({ workspaceId: r.workspaceId, name: r.name }))).toEqual([
+      { workspaceId: 42, name: 'workspace-invitation' },
+    ]);
+  });
+
+  it('clearOverride is a no-op for a name the workspace never overrode', async () => {
+    seedOverride(42, 'workspace-invitation', 'INVITE', 'TEXT');
+    const db = makeDb();
+    await clearOverride(db, 42, 'backup-drill-failed');
+    expect(state.overrides).toHaveLength(1);
+    expect(state.overrides[0]!.name).toBe('workspace-invitation');
   });
 
   it('setOverride then renderTemplate picks up the override', async () => {
     const db = makeDb();
     await setOverride(db, 42, 'password-reset', 'NEW subj', 'NEW text body');
     // Mirror what the upsert would have done in the real DB.
-    state.overrides.set(42, { subject: 'NEW subj', text: 'NEW text body' });
+    seedOverride(42, 'password-reset', 'NEW subj', 'NEW text body');
     const result = await renderTemplate(
       db,
       'password-reset',

@@ -23,7 +23,7 @@
  * auth.ts call site.
  */
 
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { emailTemplateOverrides, type DB } from '@ninedeploy/db';
 
 export type EmailTemplateName =
@@ -122,8 +122,16 @@ export async function renderTemplate(
   const base = DEFAULTS[name];
   if (!base) throw new Error(`Unknown email template: ${name}`);
   if (ctx.workspaceId != null) {
+    // The override key is (workspace_id, name): look up the row for THIS
+    // template name only. Filtering by workspace alone let one template's
+    // override render in place of every other template's (the first matching
+    // row won), and a workspace overriding a second template silently
+    // replaced the built-in default for all the others.
     const override = await db.query.emailTemplateOverrides.findFirst({
-      where: eq(emailTemplateOverrides.workspaceId, ctx.workspaceId),
+      where: and(
+        eq(emailTemplateOverrides.workspaceId, ctx.workspaceId),
+        eq(emailTemplateOverrides.name, name),
+      ),
     });
     // The override table is keyed by (workspace_id, name);
     // a single row per (workspace, name) pair.
@@ -170,15 +178,18 @@ export async function setOverride(
     });
 }
 
-/** Drop a tenant override; the next render falls back
- *  to the built-in default. */
-export async function clearOverride(db: DB, workspaceId: number, _name: EmailTemplateName): Promise<void> {
+/**
+ * Drop a tenant override for ONE template name; the next render of that
+ * template falls back to the built-in default. Overrides for the
+ * workspace's other template names are untouched — the table is keyed by
+ * (workspace_id, name), so the delete carries both halves of the key.
+ */
+export async function clearOverride(db: DB, workspaceId: number, name: EmailTemplateName): Promise<void> {
   await db
     .delete(emailTemplateOverrides)
-    .where(eq(emailTemplateOverrides.workspaceId, workspaceId));
-  // Note: a single delete covers every name for the
-  // workspace. If a future PR adds per-(workspace, name)
-  // granularity the helper needs a name predicate.
+    .where(
+      and(eq(emailTemplateOverrides.workspaceId, workspaceId), eq(emailTemplateOverrides.name, name)),
+    );
 }
 
 // ── interpolation ─────────────────────────────────────────────────────────
