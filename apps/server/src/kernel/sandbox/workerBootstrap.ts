@@ -79,7 +79,9 @@ port.on('message', async (msg: MainToWorkerMessage) => {
         };
 
         if (code) {
-          const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+          // An async arrow's prototype IS the AsyncFunction constructor —
+          // same object the named class exposes, arrow-shaped for lint.
+          const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor;
           const factory = new AsyncFunction('require', 'ctx', code);
           activePlugin = await factory(undefined, ctx);
         }

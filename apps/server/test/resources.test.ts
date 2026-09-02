@@ -1,5 +1,5 @@
 ﻿import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { execSync } from 'node:child_process';
+import { gzipSync } from 'node:zlib';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -153,6 +153,28 @@ async function appWith(fixtures: Record<string, unknown> = {}) {
   const app = await buildTestApp({ db: createFakeDb(fixtures as never), rawBody: true });
   await app.register(systemRoutes);
   return app;
+}
+
+/** Minimal USTAR+gzip archive carrying a single `../evil` member (one byte).
+ *  Hand-built in-process: valid enough for GNU tar's extractor, and the test
+ *  never executes a shell to create its fixture. */
+function buildTarSlipFixture(): Buffer {
+  const header = Buffer.alloc(512, 0);
+  header.write('../evil', 0);
+  header.write('0000644\0', 100); // mode
+  header.write('0000000\0', 108); // uid
+  header.write('0000000\0', 116); // gid
+  header.write('00000000001\0', 124); // size: 1
+  header.write('00000000000\0', 136); // mtime
+  header.write('        ', 148); // checksum placeholder (spaces)
+  header.write('0', 156); // typeflag: regular file
+  header.write('ustar\0', 257);
+  header.write('00', 263);
+  let sum = 0;
+  for (const byte of header) sum += byte;
+  header.write(`${sum.toString(8).padStart(6, '0')}\0 `, 148);
+  const data = Buffer.concat([Buffer.from('x'), Buffer.alloc(511)]);
+  return gzipSync(Buffer.concat([header, data, Buffer.alloc(1024)]));
 }
 
 describe('system resources routes', () => {
@@ -497,16 +519,13 @@ describe('system resources routes', () => {
     expect(fs.existsSync(configMock.paths.dbFile)).toBe(false);
   });
 
-  it('rejects an archive with path-traversal members (tar-slip)', async () => {    // Craft an archive with a literal `../evil` member via python's tarfile
-    // (portable — bsdtar on macOS has no --transform).
+  it('rejects an archive with path-traversal members (tar-slip)', async () => {
+    // Craft an archive with a literal `../evil` member, built in-process as a
+    // minimal USTAR+gzip so the fixture never shells out.
     const uploadDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nd-slip-'));
     createdDirs.push(uploadDir);
     const archive = path.join(uploadDir, 'evil.tar.gz');
-    const pyArchive = archive.replace(/\\/g, '/');
-    const py = process.platform === 'win32' ? 'python' : 'python3';
-    execSync(
-      `${py} -c "import tarfile;t=tarfile.open('${pyArchive}','w:gz');i=tarfile.TarInfo('../evil');i.size=1;t.addfile(i,__import__('io').BytesIO(b'x'));t.close()"`,
-    );
+    fs.writeFileSync(archive, buildTarSlipFixture());
 
     const app = await appWith();
     const res = await app.inject({

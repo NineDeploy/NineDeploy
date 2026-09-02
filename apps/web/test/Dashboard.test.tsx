@@ -179,7 +179,7 @@ it('shows an error card with retry when the dashboard query fails', async () => 
     expect(await screen.findByText('cancelled')).toBeInTheDocument();
   });
 
-  it('triggers demo stack seeding on button click', async () => {
+  it('triggers demo creation on button click', async () => {
     mockOf(api.dashboard.get).mockResolvedValue(dashData as never);
     let resolveSeed!: (val: any) => void;
     mockOf(api.demo.seed).mockReturnValue(
@@ -189,31 +189,31 @@ it('shows an error card with retry when the dashboard query fails', async () => 
     );
 
     renderWithProviders(<Dashboard />);
-    const seedBtn = await screen.findByRole('button', { name: /Load Demo Stack/i });
+    const seedBtn = await screen.findByRole('button', { name: /Load Next.js Demo/i });
     fireEvent.click(seedBtn);
 
-    // Pending state renders 'Seeding Demo…'
-    expect(await screen.findByRole('button', { name: /Seeding Demo…/i })).toBeInTheDocument();
+    // Pending state renders 'Creating Demo…'
+    expect(await screen.findByRole('button', { name: /Creating Demo…/i })).toBeInTheDocument();
 
     resolveSeed({
       ok: true,
       projectId: 1,
-      projectName: 'Next.js Demo Stack',
-      services: [{ id: 1, name: 'Next.js Docker', type: 'docker', status: 'running', port: 3000 }],
-      database: { id: 2, name: 'demo-postgres', engine: 'postgres' },
+      projectName: 'Next.js Demo',
+      services: [{ id: 1, name: 'Next.js Demo', type: 'docker', status: 'idle', port: 3000 }],
+      database: null,
     });
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /Load Demo Stack/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Load Next.js Demo/i })).toBeInTheDocument();
     });
   });
 
-  it('handles demo stack seeding failure', async () => {
+  it('handles demo creation failure', async () => {
     mockOf(api.dashboard.get).mockResolvedValue(dashData as never);
     mockOf(api.demo.seed).mockRejectedValue(new Error('seed failed'));
 
     renderWithProviders(<Dashboard />);
-    const seedBtn = await screen.findByRole('button', { name: /Load Demo Stack/i });
+    const seedBtn = await screen.findByRole('button', { name: /Load Next.js Demo/i });
     fireEvent.click(seedBtn);
 
     await waitFor(() => {

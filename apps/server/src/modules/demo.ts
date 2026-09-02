@@ -2,275 +2,124 @@ import { eq } from 'drizzle-orm';
 import type { FastifyPluginAsync } from 'fastify';
 import {
   buildConfigs,
-  databases,
   deployments,
-  envVars,
   projects,
   serviceProjects,
   serviceWorkspaces,
   services,
 } from '@ninedeploy/db';
-import { encrypt, randomToken } from '../lib/crypto.js';
 import { audit } from '../lib/audit.js';
+
+/**
+ * The single demo payload: one real, deployable service built from a pinned
+ * public GitHub repo (Docker source build — no PM2, no fake rows). Seeding
+ * queues the first build so "Load demo" ends with a live app instead of
+ * database rows pretending to run.
+ */
+const DEMO = {
+  projectSlug: 'nextjs-demo',
+  projectName: 'Next.js Demo',
+  slug: 'nextjs-demo',
+  name: 'Next.js Demo',
+  repoUrl: 'https://github.com/ersinkoc/nextjs-test',
+  branch: 'main',
+  port: 3000,
+  healthPath: '/api/health',
+  publishedPort: 3000,
+} as const;
 
 export const demoRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('onRequest', app.authenticate);
 
-  // L-2: the seeded project/services/databases are created with a NULL owner,
-  // which `resourceAccess` treats as admin-only. A member could therefore
-  // populate instance-global rows they could not then see or clean up.
   app.post('/seed', { preHandler: [app.requireAdmin] }, async (req) => {
     const userId = req.user!.id;
 
-    // 1. Create or retrieve Demo Project
     let project = await app.db.query.projects.findFirst({
-      where: eq(projects.slug, 'nextjs-demo-stack'),
+      where: eq(projects.slug, DEMO.projectSlug),
     });
-
     if (!project) {
       const [insertedProject] = await app.db
         .insert(projects)
         .values({
-          name: 'Next.js Demo Stack',
-          slug: 'nextjs-demo-stack',
-          description: 'Production-ready Next.js demo suite featuring Docker and PM2 runtimes',
+          name: DEMO.projectName,
+          slug: DEMO.projectSlug,
+          description: 'Demo app built from its public GitHub repo with Docker',
         })
         .returning();
       project = insertedProject!;
       void audit(app.db, userId, 'project.create', project.name);
     }
 
-    // 2. Create PostgreSQL 18 Managed Database
-    let db = await app.db.query.databases.findFirst({
-      where: eq(databases.slug, 'demo-postgres'),
+    let service = await app.db.query.services.findFirst({
+      where: eq(services.slug, DEMO.slug),
     });
 
-    // A per-seed random password: the demo DB must never ship with a
-    // publicly-known credential (anyone who knows the source could otherwise
-    // connect to it over the shared Docker network).
-    const dbPassword = randomToken(24);
-    const connectionStr = `postgres://nine:${encodeURIComponent(dbPassword)}@nd-db-demo-postgres:5432/app`;
-
-    if (!db) {
-      const [insertedDb] = await app.db
-        .insert(databases)
-        .values({
-          projectId: project.id,
-          name: 'demo-postgres',
-          slug: 'demo-postgres',
-          engine: 'postgres',
-          version: '18',
-          status: 'running',
-          containerName: 'nd-db-demo-postgres',
-          volumeName: 'nd-db-demo-postgres-data',
-          internalHost: 'nd-db-demo-postgres',
-          internalPort: 5432,
-          username: 'nine',
-          passwordEncrypted: encrypt(dbPassword),
-          dbName: 'app',
-          cpuShares: 512,
-          memLimitMb: 512,
-        })
-        .returning();
-      db = insertedDb!;
-      void audit(app.db, userId, 'database.create', db.name);
-    }
-
-    const createdServices = [];
-
-    // 3. Create Next.js Docker Service
-    let dockerSvc = await app.db.query.services.findFirst({
-      where: eq(services.slug, 'nextjs-docker-app'),
-    });
-
-    if (!dockerSvc) {
-      const [insertedDocker] = await app.db
+    if (!service) {
+      const [inserted] = await app.db
         .insert(services)
         .values({
-          name: 'Next.js Docker App',
-          slug: 'nextjs-docker-app',
+          name: DEMO.name,
+          slug: DEMO.slug,
           type: 'docker',
-          image: 'nginxdemos/hello:plain-text',
-          port: 80,
-          publishedPort: 3000,
-          healthPath: '/',
-          status: 'running',
-          runtimeId: 'docker-nextjs-demo-container',
-          commitSha: '9f8e7d6',
+          repoUrl: DEMO.repoUrl,
+          branch: DEMO.branch,
+          port: DEMO.port,
+          healthPath: DEMO.healthPath,
+          publishedPort: DEMO.publishedPort,
+          status: 'idle',
           cpuShares: 512,
           memLimitMb: 512,
         })
         .returning();
-      dockerSvc = insertedDocker!;
+      service = inserted!;
 
-      // Insert Docker Environment Variables
-      await app.db.insert(envVars).values([
-        {
-          serviceId: dockerSvc.id,
-          scope: 'service',
-          scopeKey: dockerSvc.id,
-          key: 'DATABASE_URL',
-          valueEncrypted: encrypt(connectionStr),
-          isSecret: true,
-        },
-        {
-          serviceId: dockerSvc.id,
-          scope: 'service',
-          scopeKey: dockerSvc.id,
-          key: 'NODE_ENV',
-          valueEncrypted: encrypt('production'),
-          isSecret: false,
-        },
-        {
-          serviceId: dockerSvc.id,
-          scope: 'service',
-          scopeKey: dockerSvc.id,
-          key: 'PORT',
-          valueEncrypted: encrypt('80'),
-          isSecret: false,
-        },
-      ]);
-
-      // Insert Initial Deployment Record
-      await app.db.insert(deployments).values({
-        serviceId: dockerSvc.id,
-        status: 'running',
-        commitSha: '9f8e7d6',
-        trigger: 'user',
-        message: 'Initial deployment: Next.js standalone container image',
-      });
-
-      void audit(app.db, userId, 'service.create', dockerSvc.name);
-    }
-
-    // Tag the docker service into the demo project and the caller's personal
-    // workspace (or every workspace for operators).
-    if (dockerSvc) {
-      const personalWs = await app.db.query.workspaces.findFirst({
-        where: (w, { eq: eqOp, and: andOp }) => andOp(eqOp(w.ownerId, userId), eqOp(w.slug, `personal-${String(userId)}`)),
-      });
-      const wsIds = personalWs ? [personalWs.id] : (await app.db.query.workspaces.findMany()).map((w) => w.id);
-      await app.db.insert(serviceProjects).values({ serviceId: dockerSvc.id, projectId: project.id });
-      for (const wsId of wsIds) {
-        await app.db.insert(serviceWorkspaces).values({ serviceId: dockerSvc.id, workspaceId: wsId });
-      }
-    }
-
-    createdServices.push({
-      id: dockerSvc.id,
-      name: dockerSvc.name,
-      type: dockerSvc.type,
-      status: dockerSvc.status,
-      port: dockerSvc.port,
-    });
-
-    // 4. Create Next.js PM2 Service
-    let pm2Svc = await app.db.query.services.findFirst({
-      where: eq(services.slug, 'nextjs-pm2-service'),
-    });
-
-    if (!pm2Svc) {
-      const [insertedPm2] = await app.db
-        .insert(services)
-        .values({
-          name: 'Next.js PM2 Service',
-          slug: 'nextjs-pm2-service',
-          type: 'pm2',
-          branch: 'main',
-          repoUrl: 'https://github.com/vercel/next-learn',
-          port: 3001,
-          publishedPort: 3001,
-          healthPath: '/',
-          status: 'running',
-          runtimeId: 'pm2-nextjs-demo-process',
-          commitSha: 'a1b2c3d',
-          cpuShares: 512,
-          memLimitMb: 512,
-        })
-        .returning();
-      pm2Svc = insertedPm2!;
-
-      // Insert PM2 Build Configuration
+      // The repo ships a root Dockerfile (multi-stage, EXPOSE 3000, its own
+      // /api/health healthcheck) — build exactly that.
       await app.db.insert(buildConfigs).values({
-        serviceId: pm2Svc.id,
-        buildPack: 'auto',
-        baseDir: '/basics/learn-starter',
-        installCmd: 'npm install',
-        buildCmd: 'npm run build',
-        startCmd: 'npm start -- -p 3001',
+        serviceId: service.id,
+        buildPack: 'dockerfile',
+        baseDir: '/',
+        dockerfilePath: 'Dockerfile',
       });
 
-      // Insert PM2 Environment Variables
-      await app.db.insert(envVars).values([
-        {
-          serviceId: pm2Svc.id,
-          scope: 'service',
-          scopeKey: pm2Svc.id,
-          key: 'DATABASE_URL',
-          valueEncrypted: encrypt(connectionStr),
-          isSecret: true,
-        },
-        {
-          serviceId: pm2Svc.id,
-          scope: 'service',
-          scopeKey: pm2Svc.id,
-          key: 'NODE_ENV',
-          valueEncrypted: encrypt('production'),
-          isSecret: false,
-        },
-        {
-          serviceId: pm2Svc.id,
-          scope: 'service',
-          scopeKey: pm2Svc.id,
-          key: 'PORT',
-          valueEncrypted: encrypt('3001'),
-          isSecret: false,
-        },
-      ]);
-
-      // Insert Initial Deployment Record
+      // Queue the first build right away: the deploy worker turns this row
+      // into a real clone → docker build → run.
       await app.db.insert(deployments).values({
-        serviceId: pm2Svc.id,
-        status: 'running',
-        commitSha: 'a1b2c3d',
+        serviceId: service.id,
+        status: 'queued',
         trigger: 'user',
-        message: 'Initial deployment: Next.js Node.js server under PM2 cluster',
+        message: 'Initial demo deployment from ersinkoc/nextjs-test',
       });
 
-      void audit(app.db, userId, 'service.create', pm2Svc.name);
-    }
+      void audit(app.db, userId, 'service.create', service.name);
 
-    // Mirror the docker tagging for the PM2 service so a seed populates
-    // both services with the same visible audience.
-    if (pm2Svc) {
+      // Tag the new service into the demo project and the caller's personal
+      // workspace (or every workspace for operators). Only on create — a
+      // re-seed must not duplicate the tag rows.
       const personalWs = await app.db.query.workspaces.findFirst({
         where: (w, { eq: eqOp, and: andOp }) => andOp(eqOp(w.ownerId, userId), eqOp(w.slug, `personal-${String(userId)}`)),
       });
       const wsIds = personalWs ? [personalWs.id] : (await app.db.query.workspaces.findMany()).map((w) => w.id);
-      await app.db.insert(serviceProjects).values({ serviceId: pm2Svc.id, projectId: project.id });
+      await app.db.insert(serviceProjects).values({ serviceId: service.id, projectId: project.id });
       for (const wsId of wsIds) {
-        await app.db.insert(serviceWorkspaces).values({ serviceId: pm2Svc.id, workspaceId: wsId });
+        await app.db.insert(serviceWorkspaces).values({ serviceId: service.id, workspaceId: wsId });
       }
     }
-
-    createdServices.push({
-      id: pm2Svc.id,
-      name: pm2Svc.name,
-      type: pm2Svc.type,
-      status: pm2Svc.status,
-      port: pm2Svc.port,
-    });
 
     return {
       ok: true,
       projectId: project.id,
       projectName: project.name,
-      services: createdServices,
-      database: {
-        id: db.id,
-        name: db.name,
-        engine: db.engine,
-      },
+      services: [
+        {
+          id: service.id,
+          name: service.name,
+          type: service.type,
+          status: service.status,
+          port: service.port,
+        },
+      ],
+      database: null,
     };
   });
 };

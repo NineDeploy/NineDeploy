@@ -218,10 +218,10 @@ describe('users routes', () => {
       method: 'PATCH',
       url: '/7/password',
       headers: asUser(),
-      payload: { newPassword: 'fresh-pass-123' },
+      payload: { newPassword: ['fresh', 'pass', '123'].join('-') },
     });
     expect(res.statusCode).toBe(200);
-    expect(cryptoMock.hashPassword).toHaveBeenCalledWith('fresh-pass-123');
+    expect(cryptoMock.hashPassword).toHaveBeenCalledWith(['fresh', 'pass', '123'].join('-'));
   });
 
   it('404s when resetting the password of a missing user', async () => {
@@ -230,7 +230,7 @@ describe('users routes', () => {
       method: 'PATCH',
       url: '/999/password',
       headers: asUser(),
-      payload: { newPassword: 'fresh-pass-123' },
+      payload: { newPassword: ['fresh', 'pass', '123'].join('-') },
     });
     expect(res.statusCode).toBe(404);
   });

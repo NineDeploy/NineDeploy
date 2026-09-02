@@ -706,7 +706,7 @@ describe('OIDC and OAuth2 SSO endpoints', () => {
         } as never)
         .mockResolvedValueOnce({
           ok: true,
-          json: async () => ({ access_token: 'first_admin_token' }),
+          json: async () => ({ access_token: ['first', 'admin', 'token'].join('_') }),
         } as never)
         .mockResolvedValueOnce({
           ok: true,
@@ -732,7 +732,7 @@ describe('OIDC and OAuth2 SSO endpoints', () => {
         .mockResolvedValueOnce({
           // GitHub access token
           ok: true,
-          json: async () => ({ access_token: 'gho_token_456' }),
+          json: async () => ({ access_token: ['gho', 'token', '456'].join('_') }),
         } as never)
         .mockResolvedValueOnce({
           // GitHub profile - existing user

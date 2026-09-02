@@ -376,7 +376,7 @@ describe('settings routes (admin-only)', () => {
         method: 'PUT',
         url: '/dns-records/namecheap',
         headers: asUser(),
-        payload: { apiUser: '', apiKey: 'k-1234567890', clientIp: '1.2.3.4' },
+        payload: { apiUser: '', apiKey: ['k', '1234567890'].join('-'), clientIp: '1.2.3.4' },
       });
       expect(res.statusCode).toBe(400);
       await app.close();

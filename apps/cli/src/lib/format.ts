@@ -75,8 +75,9 @@ export async function spinner<T>(msg: string, fn: () => Promise<T>): Promise<T> 
   }
 }
 
-/** ANSI SGR escape sequence (built via RegExp so no literal control char). */
-const ANSI_SGR = new RegExp('\\x1b\\[[0-9;]*m', 'g');
+/** ANSI SGR escape sequence — built from a fragment so the source carries no
+ *  literal control character and the regex stays a literal (biome-friendly). */
+const ANSI_SGR = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, 'g');
 
 /** Visible length: ANSI SGR escapes render as zero width, so they must not
  *  count toward column widths or padding budgets. */

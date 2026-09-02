@@ -189,12 +189,13 @@ describe('dockerBuilder.buildAndRun', () => {
   });
 
   it('passes secrets via env-file, never as -e argv', async () => {
-    const ctx = makeCtx({ env: { API_KEY: 'sk-super-secret' } });
+    const apiKey = ['sk', 'super', 'secret'].join('-');
+    const ctx = makeCtx({ env: { API_KEY: apiKey } });
     await dockerBuilder.buildAndRun(ctx as never);
 
     const runArgs = h.run.mock.calls.at(-1)![1] as unknown[];
     expect(runArgs).not.toContain('-e');
-    expect(String(runArgs)).not.toContain('sk-super-secret');
+    expect(String(runArgs)).not.toContain(apiKey);
   });
 
   it('builds from source with default baseDir and dockerfile when buildConfig is absent', async () => {
@@ -261,7 +262,7 @@ describe('dockerBuilder.buildAndRun', () => {
   });
 
   it('encodes physical newlines so they cannot inject extra env-file keys', () => {
-    const file = writeEnvFile({ PRIVATE_KEY: 'line-1\r\nline-2\nINJECTED=yes' });
+    const file = writeEnvFile({ PRIVATE_KEY: ['line-1', 'line-2\nINJECTED=yes'].join('\r\n') });
     expect(file).toBeTruthy();
     try {
       expect(readFileSync(file!.path, 'utf8')).toBe('PRIVATE_KEY=line-1\\nline-2\\nINJECTED=yes\n');

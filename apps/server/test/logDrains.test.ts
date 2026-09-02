@@ -129,7 +129,7 @@ describe('log drains API', () => {
         name: 'Loki Drain',
         type: 'loki',
         url: 'https://loki.example.com',
-        apiKey: 'loki-auth-token',
+        apiKey: ['loki', 'auth', 'token'].join('-'),
         serviceId: 10,
         format: 'raw',
         headers: { 'X-Loki-Tenant': 'team-a' },

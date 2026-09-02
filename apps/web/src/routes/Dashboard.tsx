@@ -27,11 +27,12 @@ export function Dashboard() {
     onSuccess: (res) => {
       qc.invalidateQueries({ queryKey: ['dashboard'] });
       qc.invalidateQueries({ queryKey: ['services'] });
-      qc.invalidateQueries({ queryKey: ['databases'] });
       qc.invalidateQueries({ queryKey: ['projects'] });
-      toast(`Demo Stack seeded: ${res.services.length} services & Postgres DB`, 'success');
+      qc.invalidateQueries({ queryKey: ['deploys'] });
+      const demo = res.services[0];
+      toast(`Next.js Demo created — first build queued for ${demo?.name ?? 'the demo service'}`, 'success');
     },
-    onError: () => toast('Could not seed demo stack', 'error'),
+    onError: () => toast('Could not create the demo', 'error'),
   });
 
   const doImport = async (file: File) => {
@@ -88,7 +89,7 @@ export function Dashboard() {
           disabled={seedDemo.isPending}
         >
           <Sparkles size={13} className="text-indigo-400" />
-          {seedDemo.isPending ? 'Seeding Demo…' : 'Load Demo Stack'}
+          {seedDemo.isPending ? 'Creating Demo…' : 'Load Next.js Demo'}
         </Button>
         <Button variant="secondary" size="sm" onClick={() => importRef.current?.click()} disabled={importing}>
           <Upload size={13} /> {importing ? 'Importing…' : 'Import service'}

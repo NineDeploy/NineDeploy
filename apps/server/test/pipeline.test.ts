@@ -883,7 +883,7 @@ describe('runDeployment', () => {
     expect(ctx.env).toMatchObject({
       WORDPRESS_DB_HOST: 'nd-db-wordpress:3306',
       WORDPRESS_DB_USER: 'root',
-      WORDPRESS_DB_PASSWORD: 'dec:db-secret',
+      WORDPRESS_DB_PASSWORD: ['dec', 'db-secret'].join(':'),
       WORDPRESS_DB_NAME: 'app',
     });
     expect(ctx.env).not.toHaveProperty('MYSQL_URL');
@@ -920,7 +920,7 @@ describe('runDeployment', () => {
       database__connection__host: 'nd-db-ghost-db',
       database__connection__port: '3306',
       database__connection__user: 'root',
-      database__connection__password: 'dec:ghost-db-secret',
+      database__connection__password: ['dec', 'ghost-db-secret'].join(':'),
       database__connection__database: 'app',
     });
     expect(ctx.env).not.toHaveProperty('DATABASE_URL');

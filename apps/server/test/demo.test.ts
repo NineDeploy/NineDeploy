@@ -1,15 +1,9 @@
-﻿import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { demoRoutes } from '../src/modules/demo.js';
 import { asUser, buildTestApp, createFakeDb } from './helpers.js';
 
 const auditMocks = vi.hoisted(() => ({ audit: vi.fn(async () => undefined) }));
 vi.mock('../src/lib/audit.js', () => auditMocks);
-
-const cryptoMocks = vi.hoisted(() => ({
-  encrypt: vi.fn((v: string) => `enc:${v}`),
-  randomToken: vi.fn(() => 'demo-rand-24-char-secret'),
-}));
-vi.mock('../src/lib/crypto.js', () => cryptoMocks);
 
 const appWith = async (fixtures: Record<string, unknown>) => {
   const app = await buildTestApp({ db: createFakeDb(fixtures as never) });
@@ -26,26 +20,38 @@ describe('demo routes', () => {
     expect(res.statusCode).toBe(401);
   });
 
-  it('seeds demo environment when nothing exists yet', async () => {
+  it('creates ONE real demo service and queues its first build when nothing exists yet', async () => {
+    let queuedValues: Record<string, unknown> | undefined;
+    let serviceValues: Record<string, unknown> | undefined;
     const app = await appWith({
       findFirst: {
         projects: null,
-        databases: null,
         services: null,
+        workspaces: null,
+      },
+      findMany: {
+        workspaces: [],
       },
       insert: {
-        projects: [{ id: 10, name: 'Next.js Demo Stack', slug: 'nextjs-demo-stack' }],
-        databases: [{ id: 20, name: 'demo-postgres', slug: 'demo-postgres', engine: 'postgres' }],
-        services: (val: any) => [
-          {
-            id: val.slug === 'nextjs-docker-app' ? 30 : 31,
-            name: val.name,
-            slug: val.slug,
-            type: val.type,
-            status: val.status,
-            port: val.port,
-          },
-        ],
+        projects: [{ id: 10, name: 'Next.js Demo', slug: 'nextjs-demo' }],
+        services: (values: Record<string, unknown>) => {
+          serviceValues = values;
+          return [
+            {
+              id: 30,
+              name: values.name,
+              slug: values.slug,
+              type: values.type,
+              status: values.status,
+              port: values.port,
+            },
+          ];
+        },
+        build_configs: [{ serviceId: 30 }],
+        deployments: (values: Record<string, unknown>) => {
+          queuedValues = values;
+          return [{ id: 50, ...values }];
+        },
       },
     });
 
@@ -58,80 +64,52 @@ describe('demo routes', () => {
     expect(res.statusCode).toBe(200);
     const body = res.json();
     expect(body.ok).toBe(true);
-    expect(body.projectName).toBe('Next.js Demo Stack');
-    expect(body.database).toMatchObject({ id: 20, name: 'demo-postgres', engine: 'postgres' });
-    expect(body.services).toHaveLength(2);
-    expect(body.services[0]).toMatchObject({ id: 30, name: 'Next.js Docker App', type: 'docker', port: 80 });
-    expect(body.services[1]).toMatchObject({ id: 31, name: 'Next.js PM2 Service', type: 'pm2', port: 3001 });
+    expect(body.projectName).toBe('Next.js Demo');
+    // Exactly ONE service, real state (idle — nothing is pretending to run),
+    // built from the pinned public repo via its own Dockerfile.
+    expect(body.services).toHaveLength(1);
+    expect(body.services[0]).toMatchObject({
+      id: 30,
+      name: 'Next.js Demo',
+      type: 'docker',
+      status: 'idle',
+      port: 3000,
+    });
+    expect(body.database).toBeNull();
+    // The service row carries the pinned repo and its host port.
+    expect(serviceValues?.repoUrl).toBe('https://github.com/ersinkoc/nextjs-test');
+    expect(serviceValues?.publishedPort).toBe(3000);
+    expect(serviceValues?.healthPath).toBe('/api/health');
+    // And the first deployment is QUEUED for the deploy worker — the seed
+    // must result in a real build, not fake rows.
+    expect(queuedValues?.status).toBe('queued');
     expect(auditMocks.audit).toHaveBeenCalled();
-    // The demo DB password is a per-seed random token — never a hardcoded
-    // credential — and the connection string embeds it URL-encoded.
-    expect(cryptoMocks.randomToken).toHaveBeenCalledWith(24);
-    expect(cryptoMocks.encrypt).toHaveBeenCalledWith(
-      'postgres://nine:demo-rand-24-char-secret@nd-db-demo-postgres:5432/app',
-    );
   });
 
-  it('reuses existing demo project, database and services on subsequent calls', async () => {
-    const existingProject = { id: 10, name: 'Next.js Demo Stack', slug: 'nextjs-demo-stack' };
-    const existingDb = { id: 20, name: 'demo-postgres', slug: 'demo-postgres', engine: 'postgres' };
-    const existingDocker = { id: 30, name: 'Next.js Docker App', slug: 'nextjs-docker-app', type: 'docker', status: 'running', port: 3000 };
-    const existingPm2 = { id: 31, name: 'Next.js PM2 Service', slug: 'nextjs-pm2-service', type: 'pm2', status: 'running', port: 3001 };
-
-    let serviceLookupCount = 0;
-
-    const fakeDb = createFakeDb({
+  it('re-seed is idempotent: returns the existing service and queues nothing', async () => {
+    let deploymentsInserted = 0;
+    const app = await appWith({
       findFirst: {
-        projects: existingProject,
-        databases: existingDb,
-        services: () => {
-          serviceLookupCount++;
-          return serviceLookupCount === 1 ? existingDocker : existingPm2;
+        projects: { id: 10, name: 'Next.js Demo', slug: 'nextjs-demo' },
+        services: {
+          id: 30,
+          name: 'Next.js Demo',
+          slug: 'nextjs-demo',
+          type: 'docker',
+          status: 'running',
+          port: 3000,
         },
       },
-    } as never);
-
-    const app = await buildTestApp({ db: fakeDb });
-    await app.register(demoRoutes, { prefix: '/demo' });
-
-    const res = await app.inject({
-      method: 'POST',
-      url: '/demo/seed',
-      headers: asUser(),
-    });
-
-    expect(res.statusCode).toBe(200);
-    const body = res.json();
-    expect(body.ok).toBe(true);
-    expect(body.projectId).toBe(10);
-    expect(body.database?.id).toBe(20);
-    expect(body.services).toHaveLength(2);
-    expect(body.services[0].id).toBe(30);
-    expect(body.services[1].id).toBe(31);
-  });
-
-  it('handles partial existence (project exists, database created; docker exists, pm2 created)', async () => {
-    const existingProject = { id: 10, name: 'Next.js Demo Stack', slug: 'nextjs-demo-stack' };
-    const existingDocker = { id: 30, name: 'Next.js Docker App', slug: 'nextjs-docker-app', type: 'docker', status: 'running', port: 3000 };
-
-    let serviceLookupCount = 0;
-    const fakeDb = createFakeDb({
-      findFirst: {
-        projects: existingProject,
-        databases: null,
-        services: () => {
-          serviceLookupCount++;
-          return serviceLookupCount === 1 ? existingDocker : null;
-        },
+      findMany: {
+        workspaces: [],
       },
       insert: {
-        databases: [{ id: 20, name: 'demo-postgres', slug: 'demo-postgres', engine: 'postgres' }],
-        services: [{ id: 31, name: 'Next.js PM2 Service', slug: 'nextjs-pm2-service', type: 'pm2', status: 'running', port: 3001 }],
+        deployments: (values: Record<string, unknown>) => {
+          deploymentsInserted += 1;
+          return [{ id: 50, ...values }];
+        },
       },
-    } as never);
-
-    const app = await buildTestApp({ db: fakeDb });
-    await app.register(demoRoutes, { prefix: '/demo' });
+    });
 
     const res = await app.inject({
       method: 'POST',
@@ -142,9 +120,11 @@ describe('demo routes', () => {
     expect(res.statusCode).toBe(200);
     const body = res.json();
     expect(body.ok).toBe(true);
-    expect(body.database?.id).toBe(20);
-    expect(body.services).toHaveLength(2);
-    expect(body.services[0].id).toBe(30);
-    expect(body.services[1].id).toBe(31);
+    expect(body.services).toHaveLength(1);
+    expect(body.services[0]).toMatchObject({ id: 30, status: 'running' });
+    expect(body.database).toBeNull();
+    // The build was already queued on the first seed — a re-seed must not
+    // queue another one (or duplicate the project/workspace tags).
+    expect(deploymentsInserted).toBe(0);
   });
 });

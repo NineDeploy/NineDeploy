@@ -281,7 +281,7 @@ export const TOOLS: ToolDef[] = [
   // ── Demo & Service Configuration ───────────────────────────────────────
   {
     name: 'seed_demo',
-    description: 'Seed the full demo stack including PostgreSQL database, Next.js Docker app with host port publishing, and Next.js PM2 service.',
+    description: 'Create the demo service: a Docker source build of github.com/ersinkoc/nextjs-test (port 3000 published) and queue its first deployment. No database, no PM2.',
     input: z.object({}),
     requiredScopes: ['nd://scope/admin/services'],
     handler: (c) => c.demo.seed(),

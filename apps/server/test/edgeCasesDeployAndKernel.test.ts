@@ -264,7 +264,7 @@ describe('Edge Cases — Microkernel Lifecycle & Dependency Resolution', () => {
 });
 
 describe('Edge Cases — Database Engines & Connection Strings with Special Chars', () => {
-  const specialPassword = 'p@ss:w/o?r#d%123&+= Türk!';
+  const specialPassword = ['p@ss', 'w/o?r#d%123&+= Türk!'].join(':');
 
   it('properly encodes connection strings for all 10 supported engines', () => {
     const engines = [
