@@ -4,7 +4,7 @@
  * `ninedeploy images {ls,prune}` — give the operator a list
  * of every image on the host with repo / tag / size / created
  * / dangling / in-use status, and a prune command that can
- * keep the most recent N (per repo:tag) and / or strip
+ * keep the most recent N (per repository) and / or strip
  * anything older than X hours. The companion
  * `housekeeping.autoPrune` already does a one-shot
  * `docker image prune -af`; this module is the
@@ -39,7 +39,7 @@ export interface ImageInfo {
 }
 
 export interface PruneOptions {
-  /** Keep at least this many images per repo:tag (newest first). */
+  /** Keep at least this many images per repository (newest first). */
   keepLast?: number;
   /** Only prune images older than this many hours. */
   olderThanHours?: number;
@@ -165,13 +165,18 @@ export async function pruneImages(opts: PruneOptions = {}): Promise<PruneResult>
     };
   }
 
-  // 2. Build the per-repo:tag keep set: newest N.
+  // 2. Build the per-repository keep set: newest N of each repo.
+  //    The group key must be the REPOSITORY, not `repo:tag`: a tag
+  //    reference maps to exactly one image id (re-tagging moves it), so
+  //    repo:tag groups are always singletons — a repo:tag key would make
+  //    every tagged image its own group's "newest" member and keepLast
+  //    would protect the entire tagged inventory (a silent no-op).
   //    `createdAt` is a string; sort lexicographically when
   //    the format is comparable (ISO 8601), else fall back
   //    to image id which is monotonic on the docker side.
   const groups = new Map<string, ImageInfo[]>();
   for (const img of images) {
-    const key = `${img.repository}:${img.tag}`;
+    const key = img.repository;
     if (img.dangling) continue; // dangling handled by the dangling path
     const list = groups.get(key) ?? [];
     list.push(img);

@@ -16,8 +16,11 @@
  *  - `pruneImages`:
  *    - `danglingOnly` runs `docker image prune -f` (no
  *      candidate building).
- *    - `keepLast` keeps the newest N images per repo:tag and
- *      marks the rest as candidates.
+ *    - `keepLast` keeps the newest N images per repository
+ *      (a repo:tag reference maps to exactly one image id, so
+ *      the retention group must be the repository) and marks
+ *      the rest as candidates (r017 regression: grouping by
+ *      repo:tag made the prune a silent no-op).
  *    - `olderThanHours` filters candidates by age.
  *    - `dryRun` returns the would-delete set without
  *      `docker image rm`.
@@ -73,7 +76,7 @@ const IMG_LS_JSON = [
   }),
   JSON.stringify({
     Repository: 'nginx',
-    Tag: '1.27-alpine',
+    Tag: '1.26-alpine',
     ID: 'sha256:bbbb',
     Size: '150MB',
     CreatedAt: new Date(Date.now() - 7_200_000).toISOString(),
@@ -160,18 +163,32 @@ describe('pruneImages', () => {
     expect(result.output).toBe('');
   });
 
-  it('keeps the newest N images per repo:tag and prunes the rest on dryRun', async () => {
+  it('keeps the newest N images per repository and prunes the rest on dryRun', async () => {
     execState.byArgs.set('docker image ls --no-trunc --format {{json .}}', { stdout: IMG_LS_JSON });
     execState.byArgs.set('docker ps --no-trunc --format {{.Image}}', { stdout: '' });
     const result = await pruneImages({ keepLast: 1, dryRun: true });
     expect(result.dryRun).toBe(true);
-    // Two distinct non-dangling repo:tags (nginx:1.27-alpine,
-    // nginx:1.25-alpine). keepLast=1 keeps the newest of each:
-    // aaaa (1.27-alpine) and cccc (1.25-alpine). The older
-    // 1.27-alpine (bbbb) is the only prune candidate.
-    expect(result.removed.sort()).toEqual(['sha256:bbbb']);
+    // One nginx repository with three tags (1.27 / 1.26 / 1.25-alpine —
+    // a real docker host never shows two images under one repo:tag).
+    // keepLast=1 keeps the newest (aaaa); the two older versions
+    // (bbbb, cccc) are the prune candidates.
+    expect(result.removed.sort()).toEqual(['sha256:bbbb', 'sha256:cccc']);
     // No docker rm call on dryRun.
     expect(execState.rmCalls).toEqual([]);
+  });
+
+  // r017 regression: retention groups must be per REPOSITORY. A repo:tag
+  // reference maps to exactly one image id in docker (re-tagging moves
+  // it), so grouping by repo:tag yielded singleton groups and keepLast>=1
+  // protected the whole tagged inventory — the prune deleted nothing.
+  it('keeps the N newest versions of a repo and retires only older ones (r017)', async () => {
+    execState.byArgs.set('docker image ls --no-trunc --format {{json .}}', { stdout: IMG_LS_JSON });
+    execState.byArgs.set('docker ps --no-trunc --format {{.Image}}', { stdout: '' });
+    const result = await pruneImages({ keepLast: 2, dryRun: true });
+    // keepLast=2 protects the two newest nginx versions (aaaa, bbbb);
+    // only the oldest (cccc) is a candidate.
+    expect(result.removed).toEqual(['sha256:cccc']);
+    expect(result.removedLabels).toEqual(['nginx:1.25-alpine']);
   });
 
   it('skips in-use images even when they would otherwise be candidates', async () => {
@@ -180,27 +197,27 @@ describe('pruneImages', () => {
       stdout: 'sha256:aaaa\n',
     });
     const result = await pruneImages({ keepLast: 1, dryRun: true });
-    // aaaa is the newest 1.27-alpine → protected, AND in use.
-    // bbbb is the older 1.27-alpine → only candidate. cccc
-    // is the only 1.25-alpine → protected (keepLast=1).
+    // aaaa is the newest nginx image → protected, AND in use.
+    // bbbb and cccc are older versions → candidates (neither
+    // is in use).
     expect(result.removed).not.toContain('sha256:aaaa');
-    expect(result.removed).toEqual(['sha256:bbbb']);
+    expect(result.removed).toEqual(['sha256:bbbb', 'sha256:cccc']);
   });
 
   it('filters by olderThanHours on the candidate set', async () => {
     execState.byArgs.set('docker image ls --no-trunc --format {{json .}}', { stdout: IMG_LS_JSON });
     execState.byArgs.set('docker ps --no-trunc --format {{.Image}}', { stdout: '' });
-    // With keepLast=1, the protected set is {aaaa, cccc}. The
-    // only non-protected non-dangling image is bbbb (age 2h).
-    // olderThanHours=12 → bbbb is too young, prune is empty.
+    // With keepLast=1, the protected set is {aaaa}. Candidates
+    // by age: bbbb is 2h old (too young for 12h), cccc is 24h
+    // old (old enough) → only cccc is pruned.
     const result = await pruneImages({ keepLast: 1, olderThanHours: 12, dryRun: true });
-    expect(result.removed).toEqual([]);
+    expect(result.removed).toEqual(['sha256:cccc']);
   });
 
   it('performs the real delete via `docker image rm` in 50-id chunks', async () => {
-    // 60 distinct repo:tag groups, each with 3 images (newest,
+    // 60 repositories, each with 3 tagged versions (newest,
     // middle, oldest). keepLast=1 protects the newest of each
-    // → 2 candidates per group × 60 groups = 120 candidates.
+    // → 2 candidates per repo × 60 repos = 120 candidates.
     // 120 ids / 50 per chunk = 3 chunks (50 + 50 + 20).
     const lines: string[] = [];
     for (let i = 0; i < 60; i += 1) {
@@ -209,7 +226,7 @@ describe('pruneImages', () => {
         lines.push(
           JSON.stringify({
             Repository: `x${i}`,
-            Tag: 'v1',
+            Tag: `v${v}`,
             ID: id,
             Size: '1MB',
             // v=0 newest (1h ago), v=1 middle (2h ago), v=2 oldest (3h ago).
@@ -244,9 +261,9 @@ describe('pruneImages', () => {
   it('clamps keepLast to the per-group size — never deletes the only image of a tag', async () => {
     execState.byArgs.set('docker image ls --no-trunc --format {{json .}}', { stdout: IMG_LS_JSON });
     execState.byArgs.set('docker ps --no-trunc --format {{.Image}}', { stdout: '' });
-    // nginx:1.25-alpine has only cccc; keepLast=10 should still
-    // protect it. The 1.27-alpine group has 2 images, so keep=2
-    // protects both. Nothing is removed.
+    // The nginx repository has 3 images; keepLast=10 exceeds the
+    // group size, so keep=min(10,3)=3 protects all of them.
+    // Nothing is removed.
     const result = await pruneImages({ keepLast: 10, dryRun: true });
     expect(result.removed).toEqual([]);
   });
@@ -334,8 +351,8 @@ describe('pruneImages error + edge branches', () => {
   });
 
   it('continues with the remaining chunks when one docker image rm fails', async () => {
-    // 60 distinct repo:tag groups, each with 2 images. With
-    // keepLast=1: 1 protected per group, 1 candidate per group
+    // 60 repositories, each with 2 tagged versions. With
+    // keepLast=1: 1 protected per repo, 1 candidate per repo
     // → 60 candidates → 2 chunks (50 + 10). The first chunk
     // throws; the second still goes through.
     const lines: string[] = [];
@@ -345,7 +362,7 @@ describe('pruneImages error + edge branches', () => {
         lines.push(
           JSON.stringify({
             Repository: `x${i}`,
-            Tag: 'v1',
+            Tag: `v${v}`,
             ID: id,
             Size: '1MB',
             CreatedAt: new Date(Date.now() - (v + 1) * 3_600_000).toISOString(),

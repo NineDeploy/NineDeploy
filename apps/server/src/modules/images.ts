@@ -15,7 +15,7 @@ import { badRequest, unprocessable } from '../lib/errors.js';
 import { listImages, pruneImages } from '../lib/imageInventory.js';
 
 const pruneBody = z.object({
-  /** Keep at least this many images per repo:tag. */
+  /** Keep at least this many images per repository. */
   keepLast: z.number().int().min(0).max(1000).optional(),
   /** Only prune images older than this many hours. */
   olderThanHours: z.number().int().min(0).max(8760).optional(),
