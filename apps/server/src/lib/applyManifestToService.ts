@@ -7,6 +7,7 @@ import {
   type DB,
 } from '@ninedeploy/db';
 import type { NinedeployManifest, Route } from '@ninedeploy/schemas';
+import { ensureAlertState } from './alerting.js';
 import { isOperator, visibleDatabaseIds } from './resourceAccess.js';
 
 /**
@@ -316,16 +317,26 @@ async function syncAlertRules(
         .update(alertRules)
         .set({ metric, operator, threshold, durationWindows, updatedAt: new Date() })
         .where(eq(alertRules.id, existing[0]!.id));
+      // Re-applies must heal a missing state row but never wipe live breach
+      // state — ensure only INSERTs when the row is absent.
+      await ensureAlertState(db, existing[0]!.id);
     } else {
-      await db.insert(alertRules).values({
-        serviceId,
-        name,
-        metric,
-        operator,
-        threshold,
-        durationWindows,
-        enabled: true,
-      });
+      const [created] = await db
+        .insert(alertRules)
+        .values({
+          serviceId,
+          name,
+          metric,
+          operator,
+          threshold,
+          durationWindows,
+          enabled: true,
+        })
+        .returning({ id: alertRules.id });
+      // evaluateAlerts only UPDATEs alert_state by ruleId — a rule without a
+      // state row can never leave 'ok' (breachSince restarts every tick), so
+      // creation must seed one.
+      if (created) await ensureAlertState(db, created.id);
     }
     result.alertsUpserted += 1;
   }

@@ -9,6 +9,7 @@ import { eq } from 'drizzle-orm';
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   alertRules,
+  alertState,
   createDb,
   databases,
   databaseAttachments,
@@ -20,6 +21,7 @@ import {
   type DB,
 } from '@ninedeploy/db';
 import { applyManifestToService } from '../../src/lib/applyManifestToService.js';
+import { evaluateAlerts } from '../../src/lib/alerting.js';
 import type { NinedeployManifest } from '@ninedeploy/schemas';
 
 const migrationsFolder = fileURLToPath(
@@ -407,6 +409,46 @@ describe('applyManifestToService — alerts', () => {
   it('does nothing when the manifest declares no alerts', async () => {
     const result = await applyManifestToService(db, serviceId, m({}));
     expect(result.alertsUpserted).toBe(0);
+  });
+
+  it('fires a manifest-declared alert rule once the breach sustains', async () => {
+    // r014: rules created here previously had no alert_state row, and
+    // evaluateAlerts only UPDATEs by ruleId — the breach clock could never
+    // accumulate and the rule never fired.
+    await db.delete(alertState);
+    await applyManifestToService(
+      db,
+      serviceId,
+      m({ alerts: [{ when: 'highMemory', channel: 'oncall', thresholdPct: 90 }] }),
+    );
+    const [rule] = await db.select().from(alertRules);
+
+    const t0 = Date.parse('2026-01-01T00:00:00Z');
+    for (let tick = 0; tick <= 4; tick++) {
+      await evaluateAlerts(db, [{ serviceId, kind: 'memory', value: 95 }], new Date(t0 + tick * 30_000));
+    }
+
+    const [state] = await db.select().from(alertState);
+    expect(state?.ruleId).toBe(rule!.id);
+    expect(state?.status).toBe('firing');
+  });
+
+  it('recovers a fired manifest alert to ok once the metric clears', async () => {
+    await db.delete(alertState);
+    await applyManifestToService(
+      db,
+      serviceId,
+      m({ alerts: [{ when: 'highMemory', channel: 'oncall', thresholdPct: 90 }] }),
+    );
+
+    const t0 = Date.parse('2026-01-01T00:00:00Z');
+    for (let tick = 0; tick <= 4; tick++) {
+      await evaluateAlerts(db, [{ serviceId, kind: 'memory', value: 95 }], new Date(t0 + tick * 30_000));
+    }
+    await evaluateAlerts(db, [{ serviceId, kind: 'memory', value: 30 }], new Date(t0 + 5 * 30_000));
+
+    const [state] = await db.select().from(alertState);
+    expect(state?.status).toBe('ok');
   });
 });
 
