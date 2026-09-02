@@ -17,6 +17,7 @@
  * typical operator that's a few hundred MiB of RAM, which
  * is well below what a pooled Postgres workload saves.
  */
+import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { databases, type DB, type Database } from '@ninedeploy/db';
 import { decrypt } from './crypto.js';
@@ -273,9 +274,11 @@ function renderPgbouncerIni(input: RenderInput): string {
 /** pgbouncer's userlist format. md5 hashing: "md5" +
  *  hex(md5(password + user)). */
 function renderUserlist(input: { user: string; password: string }): string {
-  // Lazy import to keep the startup path cold when no
-  // pgbouncer is ever started.
-  const { createHash } = require('node:crypto') as typeof import('node:crypto');
+  // Static import, not a lazy `require`: this package runs as pure ESM
+  // (tsc → `node dist/server.js`), where `require` does not exist — the lazy
+  // form made every `pgbouncer enable` die with a ReferenceError outside
+  // vitest (whose module runner shims `require`). node:crypto is loaded at
+  // boot regardless, so the "cold startup path" rationale never applied.
   const md5 = createHash('md5').update(input.password + input.user).digest('hex');
   return `"${input.user}" "md5${md5}"\n`;
 }

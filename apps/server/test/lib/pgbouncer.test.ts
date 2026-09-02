@@ -26,6 +26,7 @@
  *    the running flag and parses `PGBOUNCER_POOL_MODE` out
  *    of the inspect output.
  */
+import { readFile } from 'node:fs/promises';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
@@ -525,5 +526,20 @@ describe('pgbouncerStatusFor', () => {
       buildDb({ pgbouncerEnabled: true, pgbouncerContainerName: 'nd-pgb-mydb' }),
     );
     expect(status.running).toBe(false);
+  });
+
+  // vitest shims CJS `require` in its module runner, so the original defect
+  // (a lazy require of 'node:crypto' inside renderUserlist) crashed only in
+  // production ESM (`node dist/server.js`) and was invisible to this suite.
+  // The durable guard is therefore source-level: this package is pure ESM,
+  // so no module here may ever invoke CJS require syntax.
+  describe('ESM purity (r007 regression)', () => {
+    it('never references CJS require — the runtime is `node dist/server.js`', async () => {
+      const src = await readFile(
+        new URL('../../src/lib/pgbouncer.ts', import.meta.url),
+        'utf8',
+      );
+      expect(src).not.toMatch(/\brequire\s*\(/);
+    });
   });
 });
