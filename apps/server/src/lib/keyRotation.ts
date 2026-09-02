@@ -2,12 +2,14 @@ import { eq } from 'drizzle-orm';
 import {
   backupDestinations,
   backups,
+  configEntries,
   databases,
   envVars,
   logDrains,
   notificationChannels,
   oidcProviders,
   servers,
+  settings,
   sources,
   tunnels,
   users,
@@ -20,6 +22,11 @@ import { activeKeyVersion, reencrypt } from './crypto.js';
  * Single registry of every encrypted column in the schema. `rotateSecrets`
  * walks it, so adding a new encrypted column is a one-line change here —
  * forgetting it silently leaves that secret on the retired key forever.
+ *
+ * The id-keyed loop cannot reach the two string-keyed stores — the settings
+ * table and the config center's `config_entries` — because their rows have no
+ * `id` and hold mostly PLAINTEXT values. `rotateKeyedStoreSecrets` covers them
+ * with an explicit key list; the same one-line-change rule applies there.
  *
  * Each entry selects the row id + the encrypted value(s) from the table, and
  * maps them back onto the column name(s) for the UPDATE. `re` keeps nulls
@@ -141,6 +148,54 @@ export async function rotateSecretsWithReport(db: DB): Promise<RotationResult> {
   return { rotated, activeVersion: activeKeyVersion(), backupsNotRotated };
 }
 
+/**
+ * Encrypted rows in the two string-keyed stores. The settings table holds
+ * mostly PLAINTEXT values (booleans, strings, JSON) and most `config_entries`
+ * rows are plaintext too, so neither store can ride the id-keyed registry
+ * loop — a blanket entry would run plaintext through `reencrypt` and die.
+ * Their encrypted rows are enumerated explicitly: adding a new encrypted
+ * settings key (or flipping a config entry to `isSecret`) is a one-line
+ * change in one of these lists — forgetting it leaves that secret on the
+ * retired key forever, exactly like a missed registry column.
+ */
+const SETTINGS_ENCRYPTED_KEYS = [
+  'vault_token_encrypted', // lib/vault.ts
+  'agent_enrolment_token', // lib/enrolment.ts (ENROLMENT_SETTING_KEY)
+  'namecheap_api_key_encrypted', // lib/namecheap.ts (KEY_API_KEY)
+  'dns_token_encrypted', // /settings /dns route (encryptDnsToken)
+  'dns_records_token_encrypted', // lib/cloudflare.ts
+] as const;
+
+async function rotateKeyedStoreSecrets(db: DB): Promise<number> {
+  let count = 0;
+
+  const settingRows = await db.select({ key: settings.key, v: settings.value }).from(settings);
+  for (const row of settingRows) {
+    if (!(SETTINGS_ENCRYPTED_KEYS as readonly string[]).includes(row.key)) continue;
+    if (typeof row.v !== 'string' || row.v === '') continue;
+    await db
+      .update(settings)
+      .set({ value: reencrypt(row.v), updatedAt: new Date() })
+      .where(eq(settings.key, row.key));
+    count++;
+  }
+
+  const configRows = await db
+    .select({ key: configEntries.key, v: configEntries.value, s: configEntries.isSecret })
+    .from(configEntries);
+  for (const row of configRows) {
+    if (row.s !== true) continue;
+    if (typeof row.v !== 'string' || row.v === '') continue;
+    await db
+      .update(configEntries)
+      .set({ value: reencrypt(row.v), updatedAt: new Date() })
+      .where(eq(configEntries.key, row.key));
+    count++;
+  }
+
+  return count;
+}
+
 export async function rotateSecrets(db: DB): Promise<number> {
   let count = 0;
 
@@ -158,6 +213,8 @@ export async function rotateSecrets(db: DB): Promise<number> {
       count++;
     }
   }
+
+  count += await rotateKeyedStoreSecrets(db);
 
   return count;
 }

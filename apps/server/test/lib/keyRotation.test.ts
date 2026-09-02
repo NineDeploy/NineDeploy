@@ -1,12 +1,14 @@
 ﻿import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   backupDestinations,
+  configEntries,
   databases,
   envVars,
   logDrains,
   notificationChannels,
   oidcProviders,
   servers,
+  settings,
   sources,
   tunnels,
   users,
@@ -52,12 +54,16 @@ describe('rotateSecrets', () => {
       [backupDestinations, [{ id: 9, v: 'bkd-enc' }]],
       [servers, [{ id: 10, v: 'srv-enc' }]],
       [logDrains, [{ id: 11, v: 'drain-enc' }]],
+      // Keyed stores: only the enumerated encrypted rows rotate; plaintext
+      // settings rows and non-secret config entries must be skipped.
+      [settings, [{ key: 'vault_token_encrypted', v: 'enc-vault' }, { key: 'allow_registration', v: true }]],
+      [configEntries, [{ key: 'cfg-1', v: 'enc-cfg', s: true }, { key: 'cfg-2', v: 'plain-value', s: false }]],
     ]);
     const db = makeDb(rows, updates);
 
     const count = await rotateSecrets(db as never);
 
-    expect(count).toBe(11); // one row per table
+    expect(count).toBe(13); // 11 registry rows + 1 settings secret + 1 config-center secret
     // reencrypt was applied to every non-null secret (null source key is skipped).
     expect(cryptoMock.reencrypt).toHaveBeenCalledWith('ev-enc');
     expect(cryptoMock.reencrypt).toHaveBeenCalledWith('wh-enc');
@@ -79,6 +85,20 @@ describe('rotateSecrets', () => {
     expect(userUpdate?.values).toEqual({ totpSecretEncrypted: 're:totp-enc' });
     const drainUpdate = updates.find((u) => u.table === logDrains);
     expect(drainUpdate?.values).toEqual({ apiKeyEncrypted: 're:drain-enc' });
+
+    // Keyed stores: encrypted rows rotate onto the active key; plaintext
+    // settings values and non-secret config entries are never touched.
+    expect(cryptoMock.reencrypt).toHaveBeenCalledWith('enc-vault');
+    expect(cryptoMock.reencrypt).toHaveBeenCalledWith('enc-cfg');
+    expect(cryptoMock.reencrypt).not.toHaveBeenCalledWith(true);
+    expect(cryptoMock.reencrypt).not.toHaveBeenCalledWith('plain-value');
+    const settingsUpdates = updates.filter((u) => u.table === settings);
+    expect(settingsUpdates).toHaveLength(1);
+    expect(String(settingsUpdates[0]!.values.value)).toBe('re:enc-vault');
+    expect(settingsUpdates[0]!.values.updatedAt).toBeInstanceOf(Date);
+    const cfgUpdates = updates.filter((u) => u.table === configEntries);
+    expect(cfgUpdates).toHaveLength(1);
+    expect(String(cfgUpdates[0]!.values.value)).toBe('re:enc-cfg');
   });
 
   it('keeps nullable encrypted columns null without calling reencrypt', async () => {
