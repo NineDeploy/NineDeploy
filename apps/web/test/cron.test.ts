@@ -63,6 +63,11 @@ describe('describeCron', () => {
     expect(describeCron('0,20,40 9 * * *')).toBeNull();
     // Missing the final rung of its step family must not read as uniform.
     expect(describeCron('0,15,30 * * * *')).toBeNull();
+    // Multi-day day-of-month sets fire on more than one day a month — a
+    // "monthly on the Nth" summary would be factually wrong (r022).
+    expect(describeCron('0 0 1,15 * *')).toBeNull();
+    expect(describeCron('0 0 */7 * *')).toBeNull();
+    expect(describeCron('0 0 1-15 * *')).toBeNull();
   });
 });
 

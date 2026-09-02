@@ -250,7 +250,10 @@ export function describeCron(expr: string): string | null {
     return `every ${WEEKDAYS[parts.weekdays ? lowest(parts.weekdays) : 0]} at ${atTime(parts)}`;
   }
   // Monthly — single day-of-month + fixed time, any weekday.
-  if (parts.minutes.size === 1 && parts.hours.size === 1 && trivialMon && parts.weekdays == null) {
+  if (
+    parts.minutes.size === 1 && parts.hours.size === 1 &&
+    parts.daysOfMonth.size === 1 && trivialMon && parts.weekdays == null
+  ) {
     const d = lowest(parts.daysOfMonth);
     const suffix = d % 10 === 1 && d !== 11 ? 'st' : d % 10 === 2 && d !== 12 ? 'nd' : d % 10 === 3 && d !== 13 ? 'rd' : 'th';
     return `monthly on the ${d}${suffix} at ${atTime(parts)}`;
