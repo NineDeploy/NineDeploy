@@ -160,6 +160,32 @@ notifications:
     expect(m.notifications?.onDeploy).toEqual(['https://hook.example.com/a?x=1#frag', 'a: b']);
   });
 
+  it('quotes YAML-ambiguous scalars so string header values round-trip as strings', () => {
+    // `true`, `8080` and `007` sit inside the plain-safe charset but YAML
+    // resolves them to boolean/integer — emitting them bare turned a legal
+    // string header into a different type on the next parse (r023).
+    const original = parseManifestYaml(`
+version: "1"
+routes:
+  - host: app.example.com
+    path: /
+    ssl: true
+    headers:
+      X-Frame-Options: DENY
+      X-Flag: "true"
+      X-Port: "8080"
+      X-Zero: "007"
+`);
+    const out = formatManifestYaml(original);
+    expect(out).toContain('X-Flag: "true"');
+    expect(out).toContain('X-Port: "8080"');
+    expect(out).toContain('X-Zero: "007"');
+    // Unambiguous strings keep their plain (unquoted) form.
+    expect(out).toContain('X-Frame-Options: DENY');
+    const reparsed = parseManifestYaml(out);
+    expect(reparsed.routes?.[0]?.headers).toEqual(original.routes?.[0]?.headers);
+  });
+
   it('keeps newlines inside quoted scalar values without YAML folding corruption', () => {
     const original = parseManifestYaml('version: "1"\nbuild:\n  build: "echo one\\ntwo"\n');
     expect(original.build?.build).toBe('echo one\ntwo');

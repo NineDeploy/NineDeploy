@@ -238,7 +238,16 @@ function quote(value: string): string {
   // double-quote escapes, so embedded newlines survive a round-trip instead
   // of folding into spaces, and ` #` sequences stay inside the scalar instead
   // of truncating it as a comment.
-  if (/^[A-Za-z0-9._/-]+$/.test(value)) return value;
+  // The charset check alone is NOT "unambiguously safe": YAML resolves
+  // charset-safe scalars like `true`, `8080`, `007` or `2024-01-01` to
+  // booleans/numbers/timestamps, which would turn a string value (e.g. a
+  // route header) into a different type on the next parse (r023). So a
+  // candidate plain scalar is emitted bare only when js-yaml loads it back
+  // as a string.
+  if (/^[A-Za-z0-9._/-]+$/.test(value)) {
+    const loaded: unknown = yaml.load(value);
+    if (typeof loaded === 'string') return value;
+  }
   return JSON.stringify(value);
 }
 
