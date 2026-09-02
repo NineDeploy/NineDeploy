@@ -234,14 +234,39 @@ describe('ServiceDetail', () => {
   });
 
   it('reports deploy trigger failures with and without a message', async () => {
+    // Round 1: Error instance → the message rides along on the toast.
     mockOf(api.deploys.trigger).mockRejectedValueOnce(new Error('registry unreachable') as never);
     renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
     fireEvent.click(await screen.findByRole('button', { name: 'Deploy' }));
+    // Running service → the redeploy confirmation gates the trigger.
+    fireEvent.click(screen.getByRole('button', { name: 'Redeploy' }));
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Deploy failed: registry unreachable', 'error'));
 
+    // Round 2: plain string rejection → generic toast. Fresh render so the
+    // once-queue and the dialog state start clean.
     mockOf(api.deploys.trigger).mockRejectedValueOnce('boom' as never);
     fireEvent.click(screen.getByRole('button', { name: 'Deploy' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Redeploy' }));
     await waitFor(() => expect(toastSpy.toast).toHaveBeenCalledWith('Deploy failed', 'error'));
+  });
+
+  it('asks for confirmation before redeploying a running service', async () => {
+    renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+    fireEvent.click(await screen.findByRole('button', { name: 'Deploy' }));
+
+    // The dialog gates the trigger for a LIVE service...
+    expect(await screen.findByText(/Redeploy "api"/)).toBeInTheDocument();
+    expect(api.deploys.trigger).not.toHaveBeenCalled();
+
+    // Cancel closes it without queueing anything.
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByText(/Redeploy "api"/)).not.toBeInTheDocument());
+    expect(api.deploys.trigger).not.toHaveBeenCalled();
+
+    // ...and confirming through the dialog queues the build.
+    fireEvent.click(screen.getByRole('button', { name: 'Deploy' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Redeploy' }));
+    await waitFor(() => expect(api.deploys.trigger).toHaveBeenCalledWith(1));
   });
 
   it('lets an admin re-attach or clear the Git credential from settings', async () => {
@@ -337,6 +362,8 @@ describe('ServiceDetail', () => {
     renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
     // Exact match: the sidebar "Deploys" tab would also match /Deploy/.
     fireEvent.click(await screen.findByRole('button', { name: 'Deploy' }));
+    // Running service → the redeploy confirmation gates the trigger.
+    fireEvent.click(screen.getByRole('button', { name: 'Redeploy' }));
     await waitFor(() => expect(api.deploys.trigger).toHaveBeenCalledWith(1));
   });
 
@@ -344,6 +371,7 @@ describe('ServiceDetail', () => {
     mockOf(api.deploys.trigger).mockReturnValue(new Promise(() => {}) as never);
     renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
     fireEvent.click(await screen.findByRole('button', { name: 'Deploy' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Redeploy' }));
     expect(await screen.findByText('Triggering…')).toBeInTheDocument();
   });
 

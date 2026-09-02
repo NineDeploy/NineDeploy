@@ -7,7 +7,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { api, authedFetch } from '../../lib/api.js';
 import { ContainerTerminal } from '../../components/ContainerTerminal.js';
 import { useToast } from '../../components/Toast.js';
-import { Button, Card, CardBody, Skeleton, StatusBadge, cn } from '../../components/ui.js';
+import { Button, Card, CardBody, ConfirmDialog, Skeleton, StatusBadge, cn } from '../../components/ui.js';
 import { downloadBlob } from '../../lib/format.js';
 import { OverviewTab } from './OverviewTab.js';
 import { ArchitectureTab } from './ArchitectureTab.js';
@@ -100,6 +100,11 @@ export function ServiceDetail() {
     if (latest) setActiveDeploy(latest.id);
   }, [deploys.data, activeDeploy]);
 
+  // Redeploying a LIVE service is intentional but easy to hit by accident —
+  // the button sits next to Restart/Stop — so a running service requires a
+  // confirmation before the build is queued.
+  const [confirmRedeploy, setConfirmRedeploy] = useState(false);
+
   const trigger = useMutation({
     mutationFn: () => api.deploys.trigger(id),
     onSuccess: (res) => {
@@ -165,6 +170,13 @@ export function ServiceDetail() {
   });
 
   const svc = service.data;
+  // Redeploying a LIVE service is intentional but easy to hit by accident —
+  // the button sits next to Restart/Stop — so a running service requires a
+  // confirmation before the build is queued.
+  const requestDeploy = () => {
+    if (svc?.status === 'running') setConfirmRedeploy(true);
+    else trigger.mutate();
+  };
   const activeDeployRow = deploys.data?.find((d) => d.id === activeDeploy) ?? null;
 
   const lastStatus = useRef<string | null>(null);
@@ -231,7 +243,7 @@ export function ServiceDetail() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <ServiceDomainLauncher serviceId={id} serviceName={svc.name} label />
-          <Button onClick={() => trigger.mutate()} disabled={trigger.isPending}>
+          <Button onClick={requestDeploy} disabled={trigger.isPending}>
             <Rocket size={16} /> {trigger.isPending ? 'Triggering…' : 'Deploy'}
           </Button>
           <Button
@@ -392,6 +404,24 @@ export function ServiceDetail() {
             />
           )}
         </main>
+
+        <ConfirmDialog
+          open={confirmRedeploy}
+          title={`Redeploy "${svc.name}"?`}
+          message={
+            <>
+              <strong>{svc.name}</strong> is currently running. Triggering a deploy builds a
+              new version while the current one keeps serving traffic — once it passes the
+              healthcheck, traffic switches over and the previous container retires.
+            </>
+          }
+          confirmLabel="Redeploy"
+          onConfirm={() => {
+            setConfirmRedeploy(false);
+            trigger.mutate();
+          }}
+          onClose={() => setConfirmRedeploy(false)}
+        />
       </div>
     </div>
   );
