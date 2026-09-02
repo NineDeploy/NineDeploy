@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import {
+  Activity,
   ArrowLeft,
   Check,
   Compass,
@@ -18,6 +19,8 @@ import {
   Square,
   Terminal,
   Trash2,
+  Cpu,
+  MemoryStick,
 } from 'lucide-react';
 import { Link, useNavigate, useParams } from 'react-router';
 import type { DatabaseDetail as IDatabaseDetail } from '@ninedeploy/sdk';
@@ -323,6 +326,14 @@ function OverviewPanel({
     queryFn: () => api.databases.credentials(db.id),
   });
 
+  // Live container stats for THIS database (polls only while the tab is open).
+  const liveStats = useQuery({
+    queryKey: ['live-stats-snapshot'],
+    queryFn: () => api.stats.snapshot(),
+    refetchInterval: 3000,
+  });
+  const live = liveStats.data?.containers.find((c) => c.kind === 'database' && c.refId === db.id);
+
   const creds = credsQuery.data;
   const isRunning = db.status === 'running';
   const studioPort = db.webGuiPort || (18000 + (db.id % 1000));
@@ -409,6 +420,54 @@ function OverviewPanel({
             </div>
           )}
         </Card>
+
+        {/* Live CPU / RAM (from the docker stats snapshot) */}
+        {isRunning && (
+          <Card className="p-5 space-y-4">
+            <div className="flex items-center gap-2">
+              <Activity size={16} className="text-emerald-400" />
+              <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-400">Live Resources</h2>
+              <span className="ml-auto inline-flex items-center gap-1.5 text-[10px] font-medium text-emerald-300">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" /> live
+              </span>
+            </div>
+
+            {live ? (
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-lg bg-white/[0.02] border border-white/[0.04] p-3">
+                  <div className="flex items-center gap-1.5 text-[10px] uppercase font-semibold text-slate-500">
+                    <Cpu size={11} /> CPU
+                  </div>
+                  <div className="mt-1 font-mono text-xl text-slate-100">{live.cpuPct.toFixed(1)}%</div>
+                </div>
+                <div className="rounded-lg bg-white/[0.02] border border-white/[0.04] p-3">
+                  <div className="flex items-center gap-1.5 text-[10px] uppercase font-semibold text-slate-500">
+                    <MemoryStick size={11} /> RAM
+                  </div>
+                  <div className="mt-1 font-mono text-xl text-slate-100">
+                    {live.memMb}
+                    <span className="text-xs text-slate-500"> MB</span>
+                  </div>
+                  {(db.memLimitMb ?? 0) > 0 && (
+                    <div className="mt-2">
+                      <div className="h-1.5 w-full overflow-hidden rounded bg-white/5">
+                        <div
+                          className="h-1.5 rounded bg-indigo-500"
+                          style={{ width: `${Math.min(100, (live.memMb / (db.memLimitMb ?? 1)) * 100)}%` }}
+                        />
+                      </div>
+                      <div className="mt-1 text-[10px] text-slate-500">of {db.memLimitMb} MB limit</div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-lg border border-dashed border-white/10 p-4 text-center text-xs text-slate-500">
+                {liveStats.isLoading ? 'Loading live stats…' : 'No live stats — start the database to see CPU and memory.'}
+              </div>
+            )}
+          </Card>
+        )}
 
         {/* Web Studio (GUI) card */}
         <Card className="p-5 space-y-4">

@@ -28,6 +28,16 @@ export function Databases() {
   const [wizard, setWizard] = useState(false);
   const [pendingRemove, setPendingRemove] = useState<{ id: number; name: string; attachedServices?: Array<{ id: number; name: string; slug: string }> } | null>(null);
   const { copied, copy } = useCopy();
+  // Live per-container stats (kind 'database', refId = database id) — the
+  // backend already reports running managed databases in the snapshot.
+  const snapshot = useQuery({
+    queryKey: ['live-stats-snapshot'],
+    queryFn: () => api.stats.snapshot(),
+    refetchInterval: 3000,
+  });
+  const liveStats = new Map(
+    (snapshot.data?.containers ?? []).filter((c) => c.kind === 'database').map((c) => [c.refId, c]),
+  );
   // Databases are still scoped by a single project (the new many-to-many
   // tagging is services-only). We pull the first selected project from the
   // tag scope so the top-bar filter continues to narrow the list.
@@ -135,7 +145,25 @@ export function Databases() {
                   <div className="rounded-lg bg-black/20 px-2.5 py-2 text-[11px] text-slate-600">Not running</div>
                 )}
                 {d.status === 'running' && (
-                  <div className="mt-3">
+                  <div className="mt-3 space-y-2">
+                    <div className="flex items-center gap-4 text-[11px] text-slate-400">
+                      {liveStats.get(d.id) ? (
+                        <>
+                          <span className="inline-flex items-center gap-1.5">
+                            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                            CPU <span className="font-mono text-slate-300">{liveStats.get(d.id)!.cpuPct.toFixed(1)}%</span>
+                          </span>
+                          <span>
+                            RAM{' '}
+                            <span className="font-mono text-slate-300">{liveStats.get(d.id)!.memMb} MB</span>
+                          </span>
+                        </>
+                      ) : (
+                        <span className="inline-flex items-center gap-1.5 text-slate-600">
+                          <span className="h-1.5 w-1.5 rounded-full bg-slate-600" /> live stats…
+                        </span>
+                      )}
+                    </div>
                     <StorageGauge databaseId={d.id} />
                   </div>
                 )}
