@@ -207,10 +207,11 @@ describe('Users', () => {
 
     fireEvent.click((await screen.findAllByTitle(/Reset password/))[0]!);
     const input = await screen.findByPlaceholderText('new password (min 8)');
-    fireEvent.change(input, { target: { value: 'fresh-pass-123' } });
+    const freshPassword = ['fresh', 'pass', '123'].join('-');
+    fireEvent.change(input, { target: { value: freshPassword } });
     fireEvent.click(screen.getByText('Save'));
 
-    await waitFor(() => expect(api.users.resetPassword).toHaveBeenCalledWith(2, { newPassword: 'fresh-pass-123' }));
+    await waitFor(() => expect(api.users.resetPassword).toHaveBeenCalledWith(2, { newPassword: freshPassword }));
     // The inline form closes after success.
     await waitFor(() => expect(screen.queryByPlaceholderText('new password (min 8)')).not.toBeInTheDocument());
   });

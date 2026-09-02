@@ -1,12 +1,15 @@
-import { eq } from 'drizzle-orm';
+import { eq, inArray, and } from 'drizzle-orm';
 import type { FastifyPluginAsync } from 'fastify';
 import {
   buildConfigs,
+  databases,
   deployments,
+  envVars,
   projects,
   serviceProjects,
   serviceWorkspaces,
   services,
+  type DB,
 } from '@ninedeploy/db';
 import { audit } from '../lib/audit.js';
 
@@ -28,11 +31,59 @@ const DEMO = {
   publishedPort: 3000,
 } as const;
 
+/** Slugs the pre-0.5.0 seed created: rows that CLAIMED to be running with no
+ *  real container or PM2 process behind any of them. */
+const LEGACY = {
+  projectSlug: 'nextjs-demo-stack',
+  serviceSlugs: ['nextjs-docker-app', 'nextjs-pm2-service'],
+  dbSlug: 'demo-postgres',
+} as const;
+
+/**
+ * Reap the legacy fake demo stack on the first new-seed call. The old seed
+ * inserted rows marked `running` with nothing behind them; the new demo is a
+ * real build, so keeping the fakes around would leave two dead services and
+ * a dead database on the dashboard forever.
+ */
+async function reapLegacyFakeStack(db: DB, userId: number): Promise<void> {
+  const legacyProject = await db.query.projects.findFirst({
+    where: eq(projects.slug, LEGACY.projectSlug),
+  });
+  const legacyServices = await db
+    .select()
+    .from(services)
+    .where(inArray(services.slug, [...LEGACY.serviceSlugs]));
+  const legacyDb = await db.query.databases.findFirst({
+    where: eq(databases.slug, LEGACY.dbSlug),
+  });
+  if (!legacyProject && legacyServices.length === 0 && !legacyDb) return;
+
+  const svcIds = legacyServices.map((s) => s.id);
+  if (svcIds.length > 0) {
+    await db.delete(envVars).where(and(eq(envVars.scope, 'service'), inArray(envVars.scopeKey, svcIds)));
+    await db.delete(deployments).where(inArray(deployments.serviceId, svcIds));
+    await db.delete(buildConfigs).where(inArray(buildConfigs.serviceId, svcIds));
+    await db.delete(serviceProjects).where(inArray(serviceProjects.serviceId, svcIds));
+    await db.delete(serviceWorkspaces).where(inArray(serviceWorkspaces.serviceId, svcIds));
+    await db.delete(services).where(inArray(services.id, svcIds));
+  }
+  if (legacyDb) {
+    await db.delete(databases).where(eq(databases.id, legacyDb.id));
+  }
+  if (legacyProject) {
+    await db.delete(projects).where(eq(projects.id, legacyProject.id));
+  }
+  void audit(db, userId, 'demo.legacy_reaped', [...LEGACY.serviceSlugs, LEGACY.dbSlug].join(','));
+}
+
 export const demoRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('onRequest', app.authenticate);
 
   app.post('/seed', { preHandler: [app.requireAdmin] }, async (req) => {
     const userId = req.user!.id;
+    // One-time sweep: remove the pre-0.5.0 fake demo rows before seeding the
+    // real one (no-op on installs that never pressed the old button).
+    await reapLegacyFakeStack(app.db, userId);
 
     let project = await app.db.query.projects.findFirst({
       where: eq(projects.slug, DEMO.projectSlug),

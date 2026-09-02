@@ -76,8 +76,8 @@ export async function searchLogs(
   const limit = Math.min(Math.max(opts.limit ?? 200, 1), 1000);
   const serviceLabel = await resolveServiceLabel(db, opts.serviceId);
   const lokiQuery = serviceLabel
-    ? `{service="${serviceLabel}"} |= \`${escapeLoki(opts.query)}\``
-    : `{job="ninedeploy"} |= \`${escapeLoki(opts.query)}\``;
+    ? `{service="${serviceLabel}"} |= "${escapeLoki(opts.query)}"`
+    : `{job="ninedeploy"} |= "${escapeLoki(opts.query)}"`;
   const url = new URL('/loki/api/v1/query_range', drain.url);
   url.searchParams.set('query', lokiQuery);
   url.searchParams.set('start', (since.getTime() / 1000).toString());
@@ -128,13 +128,21 @@ async function resolveServiceLabel(db: DB, serviceId: number | undefined): Promi
 }
 
 function escapeLoki(s: string): string {
-  // Backticks delimit the line-filter expression. The
-  // substring is the operator's own input; we escape
-  // backticks and double-quotes to keep the expression
-  // parseable. A more thorough escape would also handle
-  // Loki regex metacharacters; for a substring search the
-  // default `|=` semantics is enough.
-  return s.replace(/[`\\]/g, '\\$&');
+  // Double-quoted LogQL string (Go-style interpreted literal): a raw `"`
+  // terminates the literal and a raw `\` starts an escape sequence, so both
+  // must be escaped — `\` first, then `"` — and literal newlines are illegal
+  // in interpreted literals. Backtick RAW strings (used here before) support
+  // NO escapes at all: a query containing a backtick ended the literal early
+  // and the remainder parsed as LogQL (400s / injected pipeline stages),
+  // while an escaped `\\` was taken literally, silently filtering for two
+  // backslashes. (Grafana: "How to escape special characters with Loki's
+  // LogQL".) For a substring filter the default `|=` semantics is enough;
+  // regex metacharacters only matter for `|~` filters, which we don't emit.
+  return s
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '\\r');
 }
 
 interface LokiStream {

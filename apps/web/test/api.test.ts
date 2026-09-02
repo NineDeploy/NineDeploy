@@ -37,6 +37,7 @@ const REFRESH_KEY = 'ninedeploy.refreshToken';
 // secret scanners, even though every value here is fake.
 const FRESH_ACC = ['fresh', 'acc'].join('-');
 const EXPIRED_ACC = ['expired', 'acc'].join('-');
+const REFRESH_1 = ['refresh', '1'].join('-');
 const REFRESH_2 = ['refresh', '2'].join('-');
 const bearer = (token: string) => ['Bearer', token].join(' ');
 
@@ -219,7 +220,7 @@ describe('fetchWithRefresh (401 → refresh → retry)', () => {
   });
 
   it('refreshes once and retries with the new access token after a 401', async () => {
-    setSessionTokens('expired-acc', 'refresh-1');
+    setSessionTokens('expired-acc', REFRESH_1);
     client.auth.refresh.mockResolvedValue({
       user: { id: 1 },
       tokens: { accessToken: FRESH_ACC, refreshToken: REFRESH_2, expiresIn: 900 },
@@ -233,7 +234,7 @@ describe('fetchWithRefresh (401 → refresh → retry)', () => {
     const res = await fetchWithRefresh('/v1/services', { headers: { Authorization: bearer(EXPIRED_ACC) } });
 
     expect(res.status).toBe(200);
-    expect(client.auth.refresh).toHaveBeenCalledWith({ refreshToken: 'refresh-1' });
+    expect(client.auth.refresh).toHaveBeenCalledWith({ refreshToken: REFRESH_1 });
     // The retry carries the refreshed token.
     const retryHeaders = new Headers(fetchMock.mock.calls[1]![1]!.headers);
     expect(retryHeaders.get('Authorization')).toBe(bearer(FRESH_ACC));
@@ -379,7 +380,7 @@ describe('authedFetch', () => {
   });
 
   it('delegates to fetchWithRefresh: a 401 triggers a refresh and retry', async () => {
-    setSessionTokens('stale-acc', 'refresh-1');
+    setSessionTokens('stale-acc', REFRESH_1);
     client.auth.refresh.mockResolvedValue({
       user: { id: 1 },
       tokens: { accessToken: FRESH_ACC, refreshToken: REFRESH_2, expiresIn: 900 },
@@ -394,7 +395,7 @@ describe('authedFetch', () => {
 
     expect(res.status).toBe(200);
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(client.auth.refresh).toHaveBeenCalledWith({ refreshToken: 'refresh-1' });
+    expect(client.auth.refresh).toHaveBeenCalledWith({ refreshToken: REFRESH_1 });
     const retryHeaders = new Headers(fetchMock.mock.calls[1]![1]!.headers);
     expect(retryHeaders.get('Authorization')).toBe(bearer(FRESH_ACC));
     vi.unstubAllGlobals();

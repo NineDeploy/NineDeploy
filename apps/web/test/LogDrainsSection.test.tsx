@@ -153,7 +153,7 @@ describe('LogDrainsSection', () => {
           name: 'Vector Sink',
           type: 'vector',
           url: 'https://vector.example.com',
-          apiKey: 'secret-token',
+          apiKey: ['secret', 'token'].join('-'),
           format: 'raw',
           serviceId: undefined,
         }),

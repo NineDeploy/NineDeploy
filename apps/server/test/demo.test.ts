@@ -127,4 +127,71 @@ describe('demo routes', () => {
     // queue another one (or duplicate the project/workspace tags).
     expect(deploymentsInserted).toBe(0);
   });
+
+  it('reaps the legacy fake demo rows before seeding the real one', async () => {
+    // The pre-0.5.0 seed inserted rows CLAIMING to run (nginx image container,
+    // PM2 service, a postgres row with no container). The new seed reaps them
+    // first so a legacy install does not keep dead services on the dashboard.
+    // The fake db's delete resolvers receive no predicate args — count the
+    // sweeps instead: 8 tables (env, deployments, buildConfigs, project and
+    // workspace tags, services, the database, the legacy project).
+    let deleteCalls = 0;
+    const sweep = () => {
+      deleteCalls += 1;
+      return [];
+    };
+    const app = await appWith({
+      findFirst: {
+        projects: { id: 11, name: 'Next.js Demo Stack', slug: 'nextjs-demo-stack' },
+        services: null,
+        databases: { id: 20, name: 'demo-postgres', slug: 'demo-postgres', engine: 'postgres' },
+        workspaces: null,
+      },
+      select: {
+        services: [
+          { id: 31, slug: 'nextjs-docker-app', name: 'Next.js Docker App', type: 'docker', status: 'running' },
+          { id: 32, slug: 'nextjs-pm2-service', name: 'Next.js PM2 Service', type: 'pm2', status: 'running' },
+        ],
+      },
+      findMany: {
+        workspaces: [],
+      },
+      insert: {
+        projects: [{ id: 10, name: 'Next.js Demo', slug: 'nextjs-demo' }],
+        services: (values: Record<string, unknown>) => [{ id: 30, ...values }],
+        build_configs: [{ serviceId: 30 }],
+        deployments: [{ id: 50, status: 'queued' }],
+      },
+      delete: {
+        env_vars: sweep,
+        deployments: sweep,
+        build_configs: sweep,
+        service_projects: sweep,
+        service_workspaces: sweep,
+        services: sweep,
+        databases: sweep,
+        projects: sweep,
+      },
+    });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/demo/seed',
+      headers: asUser(),
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.ok).toBe(true);
+    // The NEW real demo is created regardless.
+    expect(body.services[0]).toMatchObject({ id: 30, type: 'docker', status: 'idle' });
+    // The legacy fake rows were swept across all 8 child/parent tables.
+    expect(deleteCalls).toBe(8);
+    expect(auditMocks.audit).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      'demo.legacy_reaped',
+      expect.stringContaining('nextjs-docker-app'),
+    );
+  });
 });

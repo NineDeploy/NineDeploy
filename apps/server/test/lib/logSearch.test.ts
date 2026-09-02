@@ -221,20 +221,50 @@ describe('lib/logSearch', () => {
     expect(result.serviceId).toBe(42);
   });
 
-  it('escapes backticks and backslashes in the query', async () => {
+  it('emits a double-quoted literal that round-trips backticks and backslashes (r008)', async () => {
     const db = buildDb();
     state.drains.set(1, { id: 1, name: 'loki', type: 'loki', enabled: true, url: 'https://loki.example.com', apiKeyEncrypted: null });
-    setResponseFor('https://loki\\.example\\.com/loki/api/v1/query_range\\?query=%7Bjob%3D%22ninedeploy%22%7D%20%7C%3D%20%60a%5C%60b%5C%5Cc%60\\&end=0\\&limit=200\\&direction=backward', {
+    setResponseFor('https://loki\\.example\\.com/loki/api/v1/query_range\\?query=%7Bjob%3D%22ninedeploy%22%7D%20%7C%3D%20%22a%60b%5C%5Cc%22\\&end=0\\&limit=200\\&direction=backward', {
       body: { status: 'success', data: { result: [] } },
     });
     const result = await searchLogs(db, { query: 'a`b\\c' });
     expect(result.unsupported).toBe(false);
     const url = state.captured[0]?.url ?? '';
-    // The raw `\` and `` ` `` must not appear; they should be
-    // percent-encoded (as %5C and %60) after the lib's
-    // URLSearchParams encoding. The escape inserts an extra
-    // backslash before each.
-    expect(url).toContain('a%5C%60b%5C%5Cc');
+    // LogQL raw backtick strings support NO escapes, so the filter must be
+    // a double-quoted (interpreted) literal: the backtick survives verbatim
+    // and every input backslash is doubled for Loki. URLSearchParams uses
+    // form-urlencoded encoding: space -> +, ` -> %60, \ -> %5C, " -> %22.
+    expect(url).toContain('query=%7Bjob%3D%22ninedeploy%22%7D+%7C%3D+%22a%60b%5C%5Cc%22');
+    expect(new URL(url).searchParams.get('query')).toBe('{job="ninedeploy"} |= "a`b\\\\c"');
+  });
+
+  it('does not let a backtick end the filter literal early (r008 injection guard)', async () => {
+    const db = buildDb();
+    state.drains.set(1, { id: 1, name: 'loki', type: 'loki', enabled: true, url: 'https://loki.example.com', apiKeyEncrypted: null });
+    setResponseFor('https://loki\\.example\\.com/loki/api/v1/query_range.*', {
+      body: { status: 'success', data: { result: [] } },
+    });
+    const hostile = 'x` } |= `injected';
+    await searchLogs(db, { query: hostile });
+    const query = new URL(state.captured[0]?.url ?? '').searchParams.get('query') ?? '';
+    // Under the old backtick-raw-string form the first interior backtick
+    // terminated the literal and the tail (` } |= `injected`) parsed as
+    // LogQL pipeline syntax. Exact equality proves the whole hostile text
+    // stayed inside one literal.
+    expect(query).toBe('{job="ninedeploy"} |= "x` } |= `injected"');
+  });
+
+  it('escapes double quotes and newlines so pasted multi-line text stays one literal (r008)', async () => {
+    const db = buildDb();
+    state.drains.set(1, { id: 1, name: 'loki', type: 'loki', enabled: true, url: 'https://loki.example.com', apiKeyEncrypted: null });
+    setResponseFor('https://loki\\.example\\.com/loki/api/v1/query_range.*', {
+      body: { status: 'success', data: { result: [] } },
+    });
+    await searchLogs(db, { query: 'say "hi"\nbye' });
+    const query = new URL(state.captured[0]?.url ?? '').searchParams.get('query') ?? '';
+    // Raw " would terminate an interpreted literal and a raw newline is
+    // illegal inside one, so both must reach Loki escaped (\", \n).
+    expect(query).toBe('{job="ninedeploy"} |= "say \\"hi\\"\\nbye"');
   });
 
   it('clamps `limit` to [1, 1000]', async () => {

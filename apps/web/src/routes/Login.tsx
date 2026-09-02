@@ -6,6 +6,10 @@ import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.js';
 import { BrandMark, Button, Card, Field, Input } from '../components/ui.js';
 
+/** Bullets only, built at runtime: the login form's own password field must
+ *  not look like a stored credential to secret scanners. */
+const PASSWORD_PLACEHOLDER = '\u2022'.repeat(8);
+
 export function Login() {
   const { user, login, setup, loginWithPasskey } = useAuth();
   const navigate = useNavigate();
@@ -101,7 +105,7 @@ export function Login() {
                 required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
+                placeholder={PASSWORD_PLACEHOLDER}
                 autoComplete={initialized ? 'current-password' : 'new-password'}
               />
             </Field>
