@@ -1,3 +1,4 @@
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { run, capture } from '../../lib/exec.js';
 import type { EgressIpRule, EgressIpSelector, IEgressIpDriver } from '../types.js';
 
@@ -150,7 +151,6 @@ export class IptablesEgressDriver implements IEgressIpDriver {
 
   private rehydrate(): void {
     try {
-      const { readdirSync, readFileSync } = require('node:fs') as typeof import('node:fs');
       const entries = readdirSync(this.rootDir) as string[];
       for (const entry of entries) {
         if (!entry.endsWith('.rules')) continue;
@@ -171,7 +171,6 @@ export class IptablesEgressDriver implements IEgressIpDriver {
 
   private persist(projectId: number, rule: EgressIpRule): void {
     try {
-      const { mkdirSync, writeFileSync } = require('node:fs') as typeof import('node:fs');
       mkdirSync(this.rootDir, { recursive: true });
       writeFileSync(
         `${this.rootDir}/${projectId}.rules`,
@@ -186,7 +185,6 @@ export class IptablesEgressDriver implements IEgressIpDriver {
 
   private persistDelete(projectId: number): void {
     try {
-      const { rmSync, existsSync } = require('node:fs') as typeof import('node:fs');
       const path = `${this.rootDir}/${projectId}.rules`;
       if (existsSync(path)) rmSync(path);
     } catch {

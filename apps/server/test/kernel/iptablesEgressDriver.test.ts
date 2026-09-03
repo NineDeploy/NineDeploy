@@ -1,6 +1,7 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { IptablesEgressDriver } from '../../src/kernel/drivers/iptablesEgressDriver.js';
 
@@ -118,5 +119,53 @@ describe('IptablesEgressDriver', () => {
     await driver.attach({ projectId: 20 }, '198.51.100.20');
     const list = await driver.list();
     expect(list.map((r) => r.selector.projectId)).toEqual([10, 20, 30]);
+  });
+
+  it('detach scrubs the on-disk rules file, not just the in-memory state (r025 regression)', async () => {
+    await driver.attach({ projectId: 7 }, '203.0.113.7');
+    expect(existsSync(join(tmpRoot, '7.rules'))).toBe(true);
+    await driver.detach({ projectId: 7 });
+    expect(existsSync(join(tmpRoot, '7.rules'))).toBe(false);
+  });
+
+  it('rehydrate skips a corrupt rules file and ignores non-numeric names (r025 regression)', async () => {
+    // Half-written file (kernel died mid-write): skipped, valid siblings still load.
+    writeFileSync(join(tmpRoot, '21.rules'), '{ not json');
+    // Non-numeric file name: not a project rule, ignored.
+    writeFileSync(
+      join(tmpRoot, 'bogus.rules'),
+      JSON.stringify({
+        selector: { projectId: 1 },
+        ip: '198.51.100.1',
+        createdAt: '2026-09-03T00:00:00.000Z',
+      }),
+    );
+    writeFileSync(
+      join(tmpRoot, '22.rules'),
+      JSON.stringify({
+        selector: { projectId: 22 },
+        ip: '198.51.100.22',
+        createdAt: '2026-09-03T00:00:00.000Z',
+      }),
+    );
+    const fresh = new IptablesEgressDriver({ rootDir: tmpRoot });
+    const list = await fresh.list();
+    expect(list.map((r) => r.selector.projectId)).toEqual([22]);
+  });
+});
+
+describe('ESM purity (r025 regression)', () => {
+  // apps/server is a pure-ESM package ("type": "module", runs as `node dist/server.js`).
+  // A lazy `require('node:fs')` inside a driver method throws "ReferenceError: require is
+  // not defined" in production, while vitest's module runner shims `require` and keeps
+  // this suite green (same class as r007 pgbouncer and r018 oidc). The runtime crash is
+  // not observable under vitest, so guard the SOURCE instead.
+  it('uses no CJS require() — static node: imports only', () => {
+    const sourcePath = join(
+      dirname(fileURLToPath(import.meta.url)),
+      '../../src/kernel/drivers/iptablesEgressDriver.ts',
+    );
+    const source = readFileSync(sourcePath, 'utf8');
+    expect(source).not.toMatch(/\brequire\s*\(/);
   });
 });
