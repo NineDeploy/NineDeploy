@@ -162,3 +162,108 @@ describe('promptHidden', () => {
     await expect(result).resolves.toBe('secret');
   });
 });
+
+// ── r024: stdin line framing ───────────────────────────────────────────────
+//
+// stdin delivers CHUNKS, not lines: a multi-line paste or piped write arrives
+// as one chunk, and a line can be split across chunks. The framer must queue
+// complete lines in FIFO order, keep the incomplete tail, and route the tail
+// left after a hidden prompt's Enter back into the queue — otherwise a pasted
+// block collapses into one value with embedded newlines (the r024 defect) or
+// is silently lost. Each case loads a FRESH module instance (the framer keeps
+// per-process state) against a fresh fake stdin.
+
+async function loadFramer(): Promise<typeof import('../src/prompts.js')> {
+  vi.resetModules();
+  return await import('../src/prompts.js');
+}
+
+async function flushed(): Promise<void> {
+  await new Promise((resolve) => setImmediate(resolve));
+}
+
+/** Wait until the given prompt label has been flushed to stdout. */
+async function waitForLabel(label: string): Promise<void> {
+  for (let i = 0; i < 100; i++) {
+    if (stdoutWrite.mock.calls.some((c: unknown[]) => String(c[0]).includes(label))) return;
+    await flushed();
+  }
+  throw new Error(`prompt label "${label}" never flushed`);
+}
+
+describe('prompt line framing (r024)', () => {
+  it('delivers the FIRST line of a multi-line paste to the active prompt', async () => {
+    const { prompt } = await loadFramer();
+    const stdin = makeStdin(false);
+    stubStdin(stdin);
+
+    const pending = prompt('Repository URL');
+    await flushed();
+    await waitForLabel('Repository URL');
+    stdin.emit('data', 'my-service\nmain\n');
+    await expect(pending).resolves.toBe('my-service');
+  });
+
+  it('feeds successive prompts in FIFO order from one paste', async () => {
+    const { prompt } = await loadFramer();
+    const stdin = makeStdin(false);
+    stubStdin(stdin);
+
+    const a = prompt('A');
+    await flushed();
+    await waitForLabel('A');
+    const b = prompt('B');
+    await flushed();
+    await waitForLabel('B');
+    stdin.emit('data', 'one\ntwo\n');
+    await expect(a).resolves.toBe('one');
+    await expect(b).resolves.toBe('two');
+  });
+
+  it('reassembles a line split across two chunk writes', async () => {
+    const { prompt } = await loadFramer();
+    const stdin = makeStdin(false);
+    stubStdin(stdin);
+
+    const pending = prompt('Split');
+    await flushed();
+    await waitForLabel('Split');
+    stdin.emit('data', 'hel');
+    await flushed();
+    await expect(Promise.race([pending, Promise.resolve('pending')])).resolves.toBe('pending');
+    stdin.emit('data', 'lo\n');
+    await expect(pending).resolves.toBe('hello');
+  });
+
+  it('counts a final line without a trailing newline on EOF', async () => {
+    const { prompt } = await loadFramer();
+    const stdin = makeStdin(false);
+    stubStdin(stdin);
+
+    const pending = prompt('No newline');
+    await flushed();
+    await waitForLabel('No newline');
+    stdin.emit('data', 'tail-line');
+    await flushed();
+    stdin.emit('end');
+    await expect(pending).resolves.toBe('tail-line');
+  });
+});
+
+describe('promptHidden line framing (r024)', () => {
+  it('routes the paste tail after Enter to the NEXT prompt', async () => {
+    const { promptHidden, prompt } = await loadFramer();
+    const stdin = makeStdin(false);
+    stubStdin(stdin);
+
+    const pw = promptHidden('Password');
+    await flushed();
+    await waitForLabel('Password');
+    const name = prompt('Name');
+    await flushed();
+    await waitForLabel('Name');
+    stdin.emit('data', 'secret\nadmin\n');
+    await expect(pw).resolves.toBe('secret');
+    await expect(name).resolves.toBe('admin');
+  });
+});
