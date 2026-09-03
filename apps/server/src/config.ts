@@ -33,6 +33,15 @@ export const config = {
   host: env.NINEDEPLOY_HOST,
   port: env.NINEDEPLOY_PORT,
   publicUrl: env.NINEDEPLOY_PUBLIC_URL.replace(/\/+$/, ''),
+  // Fastify trustProxy: see the NINEDEPLOY_TRUST_PROXY note in env.ts. "true"
+  // trusts every hop, "false" none. Fastify (unlike Express) has no numeric
+  // hop form, so a hop count N becomes a function trusting the first N hops.
+  trustProxy:
+    env.NINEDEPLOY_TRUST_PROXY === 'true'
+      ? true
+      : env.NINEDEPLOY_TRUST_PROXY === 'false'
+        ? false
+        : (_addr: string, hop: number) => hop < Number(env.NINEDEPLOY_TRUST_PROXY),
   paths: {
     dataDir,
     dbFile,

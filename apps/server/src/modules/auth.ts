@@ -222,7 +222,10 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
    * "unrestricted legacy" — same semantics as the
    * pre-0.3.5 behaviour).
    */
-  app.get('/token', async (req) => {
+  // Like every other authenticated route in this module, the hook must be
+  // declared explicitly — `req.user` is only the decorated null otherwise,
+  // which turned this endpoint into a guaranteed 401 for its entire life.
+  app.get('/token', { onRequest: [app.authenticate] }, async (req) => {
     if (!req.user) throw unauthorized();
     const header = req.headers.authorization ?? '';
     const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';

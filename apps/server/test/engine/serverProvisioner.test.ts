@@ -83,11 +83,11 @@ describe('serverProvisioner engine', () => {
     expect(res.latencyMs).toBeGreaterThanOrEqual(0);
   });
 
-  it('tests SSH connection with uname fallback when os-release is absent', async () => {
-    execMocks.run.mockImplementationOnce(async (_cmd, _args, _opts, sink) => {
-      sink?.('Linux node-1 6.8.0-generic x86_64');
-    });
-
+  it('refuses password authentication with an actionable error (never wired to sshpass)', async () => {
+    // BatchMode=yes in the ssh invocation disables password prompting and the
+    // sshPassword field was never plumbed into sshpass/expect — password auth
+    // used to fail opaquely on EVERY host. The provisioner now says so up
+    // front. (No run() call happens, so no mock is queued or consumed.)
     const res = await testSshConnection({
       host: '10.0.0.2',
       sshPort: 22,
@@ -95,9 +95,8 @@ describe('serverProvisioner engine', () => {
       authType: 'password',
     });
 
-    expect(res.ok).toBe(true);
-    expect(res.os).toContain('Linux node-1');
-    expect(res.dockerInstalled).toBe(false);
+    expect(res.ok).toBe(false);
+    expect(res.message).toContain('Password authentication is not supported');
   });
 
   it('tests SSH connection with generic Linux fallback when output is unrecognized', async () => {
@@ -200,8 +199,10 @@ describe('serverProvisioner engine', () => {
         host: '192.168.1.102',
         sshPort: 22,
         sshUser: 'root',
-        authType: 'password',
-        sshPassword: 'password123',
+        // Key auth: the stored sshPassword field is never transmitted (see
+        // the password-refusal test above).
+        authType: 'key',
+        sshKey: 'sk-ecdsa-sha2-nistp256 test-key',
         installDocker: true,
         agentPort: 4600,
       },

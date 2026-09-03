@@ -56,6 +56,8 @@ interface SelfUpdateState {
   to: string;
   startedAt: string;
   finishedAt?: string;
+  /** Present only when the updater could not be launched at all. */
+  error?: string;
 }
 
 type Phase = 'idle' | 'running' | 'success' | 'failed' | 'unsupported';
@@ -334,16 +336,39 @@ export async function startSelfUpdate(version: string, opts: { installDir?: stri
   // leave a "running" marker the staleness bound can resolve, not silence.
   atomicWriteJson(p.state, state);
 
-  await launchUpdater(p.script, { ...updaterEnvironment(), ND_SELF_UPDATE_TARGET: target });
+  await launchUpdater(p.script, { ...updaterEnvironment(), ND_SELF_UPDATE_TARGET: target }, p.state, state);
   return { ok: true };
 }
 
-async function launchUpdater(script: string, env: Record<string, string>): Promise<void> {
+async function launchUpdater(
+  script: string,
+  env: Record<string, string>,
+  stateFile: string,
+  state: SelfUpdateState,
+): Promise<void> {
   if (await trySystemdRun(script, env)) return;
   // No systemd(-run): plain detached child. Correct wherever nothing stops
   // the panel unit mid-upgrade; the supported() gate above excludes hosts
   // where that distinction matters in practice.
-  spawn('/bin/bash', [script], { detached: true, stdio: 'ignore', env }).unref();
+  const child = spawn('/bin/bash', [script], { detached: true, stdio: 'ignore', env });
+  // A spawn failure (host without /bin/bash) arrives asynchronously as an
+  // 'error' event — with no listener Node turns it into an uncaught exception
+  // that kills the panel mid-request. Record the failure instead so the UI
+  // shows a finished, failed update rather than a stuck "running" marker.
+  child.once('error', (err) => {
+    try {
+      atomicWriteJson(stateFile, {
+        ...state,
+        phase: 'failed',
+        finishedAt: new Date().toISOString(),
+        error: `Failed to launch the updater: ${err.message}`,
+      });
+    } catch {
+      // Best effort — nothing sane is left to do if even the state file
+      // cannot be written at this point.
+    }
+  });
+  child.unref();
 }
 
 /**

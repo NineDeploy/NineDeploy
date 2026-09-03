@@ -2,9 +2,31 @@ import { eq } from 'drizzle-orm';
 import { deployments, jobRuns, scheduledJobs, services, type DB } from '@ninedeploy/db';
 import { run } from './exec.js';
 import { audit } from './audit.js';
+import { assertMayDeployStoredService } from './hostPrivilege.js';
+import { isOperator } from './resourceAccess.js';
 import { backupServiceVolumes } from '../modules/volumeBackups.js';
 
 const MAX_OUTPUT = 60_000; // ~60 KB of captured output per run
+
+/**
+ * Scheduled deploys carry no panel session — the same rule as webhook
+ * deliveries (assertWebhookMayDeploy): authorize against the service OWNER's
+ * privileges, so a `deploy` job for a host-executing service (PM2 / compose /
+ * lifecycle hooks / docker socket) cannot use the job path to run a deploy its
+ * owner could not have started from the UI themselves.
+ */
+async function assertJobMayDeploy(
+  db: DB,
+  svc: { id: number; type: string; dockerSocket?: boolean | null; ownerUserId: number | null },
+): Promise<void> {
+  const ownerId = svc.ownerUserId;
+  // Legacy rows created before ownership existed have no owner to authorize
+  // against (same convention as assertWebhookMayDeploy): they predate members
+  // entirely, so defer instead of breaking their schedules.
+  if (!ownerId) return;
+  const ownerIsOperator = await isOperator(db, { id: ownerId });
+  await assertMayDeployStoredService(db, { id: ownerId, isOperator: ownerIsOperator }, svc);
+}
 
 /**
  * Execute one scheduled job now (used by both the cron scheduler and the
@@ -22,6 +44,16 @@ export async function runJob(db: DB, jobId: number): Promise<void> {
   if (!svc) return;
 
   if (job.kind === 'deploy') {
+    // A scheduled deploy must obey the same host-privilege boundary as every
+    // other unattended deploy path. Refusals are audited rather than thrown:
+    // the job stays listed and the sweep skips it, while the audit trail says
+    // WHY it never fires.
+    try {
+      await assertJobMayDeploy(db, svc);
+    } catch (err) {
+      void audit(db, null, 'job.deploy_refused', `${job.name}: ${err instanceof Error ? err.message : String(err)}`);
+      return;
+    }
     // Delegated to the deployments table; the worker picks it up like any other.
     await db.insert(deployments).values({
       serviceId: job.serviceId,

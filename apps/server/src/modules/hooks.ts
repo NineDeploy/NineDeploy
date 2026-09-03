@@ -6,7 +6,7 @@ import { config } from '../config.js';
 import { decrypt, encrypt, randomToken } from '../lib/crypto.js';
 import { matchesAny, parseWatchPaths } from '../lib/glob.js';
 import { parseId, notFound, unauthorized } from '../lib/errors.js';
-import { isPing, isPullRequest, parsePullRequest, parsePush, verifyWebhook } from '../lib/webhooks.js';
+import { isPing, isPullRequest, isReplayedDelivery, parsePullRequest, parsePush, verifyWebhook } from '../lib/webhooks.js';
 import { loadServiceForUser } from '../lib/serviceAccess.js';
 import { assertMayDeployStoredService } from '../lib/hostPrivilege.js';
 import { isOperator } from '../lib/resourceAccess.js';
@@ -79,6 +79,14 @@ export const hookReceiveRoutes: FastifyPluginAsync = async (app) => {
     if (!provider) throw unauthorized('Invalid webhook signature');
 
     if (isPing(req.headers, provider)) return { ok: 'pong' };
+
+    // A replayed (captured-then-replayed) delivery must not redeploy an old
+    // commit once the SHA dedup has expired. Checked AFTER the HMAC so only
+    // authenticated deliveries consume dedup slots. Absent delivery ids fail
+    // open (isReplayedDelivery) — the signature remains authoritative.
+    if (isReplayedDelivery(req.headers, provider)) {
+      return { ok: 'ignored', reason: 'replayed_delivery' };
+    }
 
     // ── Ephemeral PR / MR Preview Deployments ──────────────────────────────────
     if (isPullRequest(req.headers, provider)) {
@@ -193,6 +201,9 @@ export const hookReceiveRoutes: FastifyPluginAsync = async (app) => {
             image: parent.image,
             volumeMount: null,
             composeService: parent.composeService,
+            // A preview of an inline stack deploys the parent's YAML; without
+            // this the clone would have `type: 'compose'` and nothing to run.
+            composeContent: parent.composeContent,
             port: parent.port,
             healthPath: parent.healthPath,
             cpuShares: parent.cpuShares,
@@ -201,8 +212,26 @@ export const hookReceiveRoutes: FastifyPluginAsync = async (app) => {
             previewParentServiceId: parent.id,
             prNumber: pr.prNumber,
           })
-          .returning();
-        targetService = created;
+          .returning()
+          // Two concurrent deliveries for the same PR both pass the
+          // existingPreview check above; services_slug_unique (migration 0049)
+          // lets exactly one insert win. The loser re-loads the winner's row
+          // and proceeds idempotently — a 500 here would make the provider
+          // redeliver and repeat the race. Other insert failures rethrow.
+          .catch((err: unknown) => {
+            if (err instanceof Error && /UNIQUE constraint failed.*services\.slug/.test(err.message)) {
+              return [] as typeof services.$inferSelect[];
+            }
+            throw err;
+          });
+        targetService = created ?? (
+          (await app.db.query.services.findFirst({
+            where: and(
+              eq(services.previewParentServiceId, parent.id),
+              eq(services.prNumber, pr.prNumber),
+            ),
+          })) ?? undefined
+        );
 
         // Copy parent build config
         const parentBuild = await app.db.query.buildConfigs.findFirst({ where: eq(buildConfigs.serviceId, parent.id) });

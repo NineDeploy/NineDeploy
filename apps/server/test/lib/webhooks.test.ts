@@ -1,6 +1,6 @@
 ﻿import { createHmac } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { isPing, isPullRequest, parsePullRequest, parsePush, verifyWebhook } from '../../src/lib/webhooks.js';
+import { isPing, isPullRequest, isReplayedDelivery, parsePullRequest, parsePush, verifyWebhook } from '../../src/lib/webhooks.js';
 
 const SECRET = 'whsec_test';
 
@@ -367,6 +367,28 @@ describe('isPullRequest and parsePullRequest', () => {
     expect(parsePullRequest({ object_attributes: {} }, 'gitlab')).toBeNull();
     expect(parsePullRequest({ object_attributes: { action: 'open', iid: 0 } }, 'gitlab')).toBeNull();
     expect(parsePullRequest({ object_attributes: { action: 'open', iid: 1, source_branch: '' } }, 'gitlab')).toBeNull();
+  });
+});
+
+describe('isReplayedDelivery', () => {
+  it('flags a repeated GitHub delivery id but not first sightings', () => {
+    const headers = { ...githubHeaders('{}'), 'x-github-delivery': 'd-1' };
+    expect(isReplayedDelivery(headers, 'github')).toBe(false);
+    expect(isReplayedDelivery(headers, 'github')).toBe(true);
+    const other = { ...githubHeaders('{}'), 'x-github-delivery': 'd-2' };
+    expect(isReplayedDelivery(other, 'github')).toBe(false);
+  });
+
+  it('tracks GitLab UUID and Gitea delivery headers', () => {
+    expect(isReplayedDelivery({ 'x-gitlab-uuid': 'u-1' }, 'gitlab')).toBe(false);
+    expect(isReplayedDelivery({ 'x-gitlab-uuid': 'u-1' }, 'gitlab')).toBe(true);
+    expect(isReplayedDelivery({ 'x-gitea-delivery': 'g-1' }, 'gitea')).toBe(false);
+    expect(isReplayedDelivery({ 'x-gitea-delivery': 'g-1' }, 'gitea')).toBe(true);
+  });
+
+  it('fails open when the provider sent no delivery id', () => {
+    expect(isReplayedDelivery(githubHeaders('{}'), 'github')).toBe(false);
+    expect(isReplayedDelivery(githubHeaders('{}'), 'github')).toBe(false);
   });
 });
 

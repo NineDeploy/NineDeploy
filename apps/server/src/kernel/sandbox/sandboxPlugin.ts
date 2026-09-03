@@ -4,6 +4,13 @@ import { dirname, join } from 'node:path';
 import type { KernelContext, KernelPlugin } from '../types.js';
 import type { MainToWorkerMessage, WorkerToMainMessage } from './protocol.js';
 
+/**
+ * Matches the hook pipeline's default per-tap budget (5000ms): whichever
+ * fires first recovers the caller, and this one additionally drains the
+ * stale pendingHookCalls entry.
+ */
+const HOOK_REPLY_TIMEOUT_MS = 5000;
+
 export interface SandboxPluginOptions {
   id: string;
   name: string;
@@ -145,7 +152,28 @@ export class SandboxPlugin implements KernelPlugin {
                 hookName as any,
                 async (payload) => {
                   return new Promise((res, rej) => {
-                    this.pendingHookCalls.set(hookId, { resolve: res, reject: rej });
+                    // Mirrors the pipeline's own 5s per-tap budget: when it
+                    // fires first the pipeline recovers, and this cleanup
+                    // makes sure a wedged worker cannot leave the entry in
+                    // pendingHookCalls forever (entries are keyed by hookId,
+                    // so a stale one would also poison the NEXT call). The
+                    // worker protocol carries one id per registration, so
+                    // truly CONCURRENT invocations of the same hook still
+                    // serialize through this map — a protocol-level limit.
+                    const timer = setTimeout(() => {
+                      this.pendingHookCalls.delete(hookId);
+                      rej(new Error(`Sandbox plugin "${this.id}" did not answer hook "${hookName}" in time`));
+                    }, HOOK_REPLY_TIMEOUT_MS);
+                    this.pendingHookCalls.set(hookId, {
+                      resolve: (value) => {
+                        clearTimeout(timer);
+                        res(value);
+                      },
+                      reject: (err) => {
+                        clearTimeout(timer);
+                        rej(err);
+                      },
+                    });
                     send({ type: 'HOOK_CALL', payload: { hookId, hookName, initialPayload: payload } });
                   });
                 },

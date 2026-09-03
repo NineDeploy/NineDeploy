@@ -400,7 +400,11 @@ export const traefikRoutes: FastifyPluginAsync = async (app) => {
 
   // ACME dosyasını yedekle
   app.post('/traefik/backup-certs', { preHandler: [app.authenticate, app.requireAdmin] }, async () => {
-    const dataDir = process.env.NINEDEPLOY_DATA_DIR ?? './.data';
+    // Resolve through config (which anchors relative data dirs to the repo
+    // root) — reading the env var directly followed the process cwd, so a
+    // restart from a different directory silently backed up the WRONG
+    // acme.json (or threw).
+    const dataDir = config.paths.dataDir;
     const acmePath = `${dataDir}/traefik/acme.json`;
     const backupPath = `${dataDir}/traefik/acme-backup-${Date.now()}.json`;
     
@@ -430,8 +434,8 @@ export const traefikRoutes: FastifyPluginAsync = async (app) => {
     
     log('Starting Traefik update...');
     
-    // 1. ACME dosyasını yedekle
-    const dataDir = process.env.NINEDEPLOY_DATA_DIR ?? './.data';
+    // 1. ACME dosyasını yedekle (config-anchored — see backup-certs above)
+    const dataDir = config.paths.dataDir;
     const acmePath = `${dataDir}/traefik/acme.json`;
     const backupPath = `${dataDir}/traefik/acme-backup-${Date.now()}.json`;
     

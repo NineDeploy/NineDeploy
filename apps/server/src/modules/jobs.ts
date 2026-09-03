@@ -1,11 +1,12 @@
-﻿import { and, desc, eq } from 'drizzle-orm';
-import { jobRuns, scheduledJobs } from '@ninedeploy/db';
+import { and, desc, eq } from 'drizzle-orm';
+import { buildConfigs, jobRuns, scheduledJobs, type DB } from '@ninedeploy/db';
 import { jobCreate, jobPatch } from '@ninedeploy/schemas';
 import type { FastifyPluginAsync } from 'fastify';
 import { Cron } from 'croner';
 import { audit } from '../lib/audit.js';
 import { loadServiceForUser } from '../lib/serviceAccess.js';
 import { assertServiceRole } from '../lib/resourceAccess.js';
+import { assertMayUseHostPrivilege } from '../lib/hostPrivilege.js';
 import { badRequest, forbidden, notFound, parseId } from '../lib/errors.js';
 import { runJob } from '../lib/jobRunner.js';
 
@@ -16,6 +17,22 @@ function assertCron(expr: string): void {
   } catch {
     throw badRequest('Invalid cron expression (expected 5 fields: minute hour day month weekday)');
   }
+}
+
+/**
+ * A `deploy` job re-runs the service's build on a schedule. On a
+ * host-privileged service (PM2 / compose / lifecycle hooks / docker socket)
+ * that means host execution — operator-only, consistent with the manual and
+ * webhook deploy paths. runJob re-checks the same boundary against the service
+ * OWNER, covering the cron sweep, legacy jobs and role changes after creation.
+ */
+async function assertMayScheduleDeploy(
+  db: DB,
+  user: { id: number; isOperator: boolean },
+  svc: { id: number; type: string; dockerSocket?: boolean | null },
+): Promise<void> {
+  const build = await db.query.buildConfigs.findFirst({ where: eq(buildConfigs.serviceId, svc.id) });
+  assertMayUseHostPrivilege(user, { type: svc.type, dockerSocket: svc.dockerSocket ?? false, build: build ?? null });
 }
 
 function serializeJob(j: typeof scheduledJobs.$inferSelect) {
@@ -57,6 +74,9 @@ export const jobRoutes: FastifyPluginAsync = async (app) => {
     // consistent with the exec WS route and the volume file manager.
     if (input.kind === 'exec' && !req.user?.isOperator) {
       throw forbidden('Operator access required');
+    }
+    if (input.kind === 'deploy') {
+      await assertMayScheduleDeploy(app.db, req.user!, svc);
     }
 
     const [row] = await app.db
@@ -106,6 +126,11 @@ export const jobRoutes: FastifyPluginAsync = async (app) => {
     if ((isExecLike || isBackup) && !req.user?.isOperator) {
       throw forbidden('Operator access required');
     }
+    // Switching a job TO deploy re-evaluates the host-privilege boundary
+    // (creating a deploy job directly is gated the same way).
+    if (values.kind === 'deploy') {
+      await assertMayScheduleDeploy(app.db, req.user!, svc);
+    }
     const [row] = await app.db
       .update(scheduledJobs)
       .set(values)
@@ -138,6 +163,9 @@ export const jobRoutes: FastifyPluginAsync = async (app) => {
     if (!job) throw notFound('Job not found');
     if ((job.kind === 'exec' || job.kind === 'backup') && !req.user?.isOperator) {
       throw forbidden('Operator access required');
+    }
+    if (job.kind === 'deploy') {
+      await assertMayScheduleDeploy(app.db, req.user!, svc);
     }
     await runJob(app.db, jobId);
     void audit(app.db, req.user!.id, 'job.run', job.name);

@@ -42,7 +42,10 @@ export const envRoutes: FastifyPluginAsync = async (app) => {
       if (existing) {
         const [updated] = await app.db
           .update(envVars)
-          .set({ valueEncrypted: encrypt(input.value), isSecret: input.isSecret ?? false })
+          // isSecret is optional in the payload (the web omits it on inline
+          // edits): defaulting it to false silently DEMOTED stored secrets to
+          // plain vars — preserve the stored classification instead.
+          .set({ valueEncrypted: encrypt(input.value), isSecret: input.isSecret ?? existing.isSecret })
           .where(and(eq(envVars.id, existing.id), eq(envVars.serviceId, id)))
           .returning();
         if (!updated) throw badRequest('Could not update existing env var');
@@ -71,9 +74,15 @@ export const envRoutes: FastifyPluginAsync = async (app) => {
     const target = await loadServiceForUser(app.db, id, req.user!);
     await assertServiceRole(app.db, target, req.user!, 'member');
     const input = upsertEnvVar.parse(req.body);
+    const existing = await app.db.query.envVars.findFirst({
+      where: and(eq(envVars.id, varId), eq(envVars.serviceId, id)),
+    });
+    if (!existing) throw notFound('Env var not found');
     const [updated] = await app.db
       .update(envVars)
-      .set({ valueEncrypted: encrypt(input.value), isSecret: input.isSecret ?? false })
+      // Omitted isSecret preserves the stored classification (see the POST
+      // overwrite path) instead of demoting a secret to a plain var.
+      .set({ valueEncrypted: encrypt(input.value), isSecret: input.isSecret ?? existing.isSecret })
       .where(and(eq(envVars.id, varId), eq(envVars.serviceId, id)))
       .returning();
     if (!updated) throw notFound('Env var not found');
@@ -138,9 +147,15 @@ export const projectEnvRoutes: FastifyPluginAsync = async (app) => {
       await assertWorkspaceRole(app.db, project.workspaceId, req.user!, 'member');
     }
     const input = upsertEnvVar.parse(req.body);
+    const existing = await app.db.query.envVars.findFirst({
+      where: and(eq(envVars.id, varId), eq(envVars.scope, 'project'), eq(envVars.scopeKey, id)),
+    });
+    if (!existing) throw notFound('Env var not found');
     const [updated] = await app.db
       .update(envVars)
-      .set({ valueEncrypted: encrypt(input.value), isSecret: input.isSecret ?? false })
+      // Omitted isSecret preserves the stored classification (same rule as
+      // the service-scope routes).
+      .set({ valueEncrypted: encrypt(input.value), isSecret: input.isSecret ?? existing.isSecret })
       .where(and(eq(envVars.id, varId), eq(envVars.scope, 'project'), eq(envVars.scopeKey, id)))
       .returning();
     if (!updated) throw notFound('Env var not found');

@@ -819,7 +819,12 @@ export async function backupDatabase(d: Database, file: string, log: (line: stri
   } else if (d.engine === 'mysql' || d.engine === 'mariadb') {
     const pass = decrypt(d.passwordEncrypted);
     const dumper = d.engine === 'mysql' ? 'mysqldump' : 'mariadb-dump';
-    await run('docker', ['exec', cn, dumper, '-uroot', `--password=${pass}`, '--all-databases', `--result-file=${DUMP_TMP}`], {}, log);
+    // --single-transaction: InnoDB dumps run inside one consistent snapshot
+    // instead of taking per-table locks — without it a scheduled backup blocks
+    // writes on the live databases it is supposed to protect, and a multi-DB
+    // dump is not even a point-in-time-consistent restore. --quick streams
+    // row-by-row instead of buffering each table.
+    await run('docker', ['exec', cn, dumper, '-uroot', `--password=${pass}`, '--single-transaction', '--quick', '--all-databases', `--result-file=${DUMP_TMP}`], {}, log);
     await run('docker', ['cp', `${cn}:${DUMP_TMP}`, file], {}, log);
     await run('docker', ['exec', cn, 'rm', '-f', DUMP_TMP], {}, swallow);
   } else if (d.engine === 'redis' || d.engine === 'valkey') {

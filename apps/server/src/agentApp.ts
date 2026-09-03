@@ -11,6 +11,10 @@ import rateLimitPlugin from './plugins/rateLimit.js';
  */
 export async function buildAgentApp() {
   const app = Fastify({
+    // Same reasoning as buildApp(): the agent may sit behind the panel's
+    // Traefik (agent enrolment routes are proxied), so trust the configured
+    // hop count for rate-limit keying.
+    trustProxy: config.trustProxy,
     logger: {
       // Same rule as the master app: never persist query strings.
       serializers: {

@@ -112,7 +112,9 @@ describe('project env routes', () => {
   });
 
   it('updates an existing row', async () => {
-    const db = createFakeDb({ findFirst: { projects: { id: 5 } }, update: { env_vars: [baseRow({ valueEncrypted: 'enc:next' })] } });
+    // The PATCH path re-loads the row to preserve its stored isSecret when
+    // the payload omits the field.
+    const db = createFakeDb({ findFirst: { projects: { id: 5 }, envVars: baseRow() }, update: { env_vars: [baseRow({ valueEncrypted: 'enc:next' })] } });
     const app = await buildTestApp({ db });
     await app.register(projectEnvRoutes);
     const res = await app.inject({

@@ -75,6 +75,55 @@ export function isPing(headers: Record<string, string | string[] | undefined>, p
   return h('x-gitlab-event') === 'Ping Hook';
 }
 
+// ── Delivery replay window ─────────────────────────────────────────────────
+// The HMAC covers only the body — providers sign no timestamp, so a captured
+// (still-valid) payload can be replayed much later to redeploy an old commit;
+// the deployment-status dedup only covers SHAs currently queued/building.
+// Providers stamp every delivery with a unique id; remembering those ids for
+// a window closes most of the replay surface. In-memory is a deliberate
+// mitigation rather than a guarantee: a panel restart clears it.
+const REPLAY_WINDOW_MS = 24 * 60 * 60 * 1000;
+const REPLAY_MAP_SOFT_CAP = 10_000;
+const seenDeliveries = new Map<string, number>();
+
+function deliveryId(headers: Record<string, string | string[] | undefined>, provider: Provider): string | null {
+  const h = (k: string) => {
+    const v = headers[k];
+    return typeof v === 'string' ? v : undefined;
+  };
+  if (provider === 'github') return h('x-github-delivery') ?? null;
+  if (provider === 'gitea') return h('x-gitea-delivery') ?? null;
+  return h('x-gitlab-uuid') ?? null;
+}
+
+/**
+ * True when this delivery id was already accepted inside the replay window.
+ * Absent ids (older providers, hand-rolled senders) fail OPEN — the HMAC
+ * remains the primary authentication.
+ */
+export function isReplayedDelivery(headers: Record<string, string | string[] | undefined>, provider: Provider): boolean {
+  const id = deliveryId(headers, provider);
+  if (!id) return false;
+  const now = Date.now();
+  if (seenDeliveries.size > REPLAY_MAP_SOFT_CAP) {
+    for (const [k, at] of seenDeliveries) {
+      if (now - at > REPLAY_WINDOW_MS) seenDeliveries.delete(k);
+    }
+    // Still oversized (a flood of unique ids): evict oldest-first. Map
+    // iteration is insertion order, so this bounds memory deterministically.
+    let excess = seenDeliveries.size - REPLAY_MAP_SOFT_CAP;
+    if (excess > 0) {
+      for (const k of seenDeliveries.keys()) {
+        if (excess-- <= 0) break;
+        seenDeliveries.delete(k);
+      }
+    }
+  }
+  const seenAt = seenDeliveries.get(id);
+  seenDeliveries.set(id, now);
+  return seenAt !== undefined;
+}
+
 /** Collect added/modified/removed paths from a commits array. */
 function changedFilesFrom(commits: Array<Record<string, unknown>>): string[] {
   const out: string[] = [];

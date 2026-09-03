@@ -85,6 +85,9 @@ function readState(): Record<string, unknown> | null {
 beforeEach(() => {
   newDataDir();
   spawnMock.calls = [];
+  // The bash-fallback test swaps in an erroring spawn override; restore the
+  // default install here so the leak cannot bleed into later cases.
+  spawnMock.spawn = installSpawn();
 });
 
 afterEach(() => {
@@ -243,6 +246,13 @@ describe('startSelfUpdate', () => {
 
     await lib.startSelfUpdate('v99.0.0', { installDir: newInstallDir() });
     expect(spawnMock.calls.map((c) => c.cmd)).toEqual(['systemd-run', '/bin/bash']);
+    // The bash spawn emitted ENOENT. The error must be recorded as a finished,
+    // failed update — not swallowed (which used to crash the panel with an
+    // uncaught 'error' event) and not left dangling as "running" forever.
+    const state = readState()!;
+    expect(state.phase).toBe('failed');
+    expect(state.finishedAt).toBeTruthy();
+    expect(String(state.error)).toContain('ENOENT');
   });
 });
 

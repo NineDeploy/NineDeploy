@@ -42,12 +42,22 @@ interface SshExecOptions {
 /**
  * Execute a remote command via SSH using OpenSSH client.
  * Key authentication writes a temporary file with restricted permissions.
+ *
+ * Password authentication is deliberately REFUSED: password prompting is only
+ * possible through sshpass/expect (an extra host dependency we do not ship),
+ * and the `BatchMode=yes` below disables it anyway — so the schema-accepted
+ * `sshPassword` field was a silent always-fail. Fail loudly instead.
  */
 export async function runSshCommand(
   opts: SshExecOptions,
   command: string,
   onLine?: (line: string) => void,
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  if (opts.authType === 'password') {
+    throw new Error(
+      'Password authentication is not supported for zero-touch bootstrap: install an SSH public key on the target host and use key auth (the stored sshPassword field is never transmitted).',
+    );
+  }
   let keyPath: string | null = null;
   const lines: string[] = [];
   const lineSink = (l: string) => {

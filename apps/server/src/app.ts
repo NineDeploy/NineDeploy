@@ -36,6 +36,10 @@ function formatZodError(error: ZodError) {
 /** Build a Fastify instance — exported so tests can spin up an isolated app. */
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
+    // The panel always sits behind its own Traefik in production; without
+    // trusting that single hop, request.ip (and therefore every rate-limit
+    // bucket and audit row) collapses onto the proxy's container IP.
+    trustProxy: config.trustProxy,
     logger: {
       // Never persist query strings. Current WebSocket clients use an auth
       // subprotocol header, while older clients may still send ?token=.

@@ -1,4 +1,4 @@
-﻿import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+﻿import { mkdtempSync, rmSync, writeFileSync, existsSync, statSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest';
@@ -6,8 +6,8 @@ import { activeDestination, deleteRemoteBackup, fetchRemoteBackup, uploadBackup 
 import { createFakeDb } from '../helpers.js';
 
 const s3Mocks = vi.hoisted(() => ({
-  s3Put: vi.fn(async () => undefined),
-  s3Get: vi.fn(async () => Buffer.from('remote-bytes')),
+  s3PutFile: vi.fn(async () => undefined),
+  s3GetToFile: vi.fn(async () => undefined),
   s3Delete: vi.fn(async () => undefined),
 }));
 vi.mock('../../src/lib/s3.js', () => s3Mocks);
@@ -49,7 +49,7 @@ describe('uploadBackup', () => {
   });
   afterEach(() => rmSync(tmp, { recursive: true, force: true }));
 
-  it('uploads the encrypted envelope and stamps remoteKey', async () => {
+  it('uploads the encrypted envelope from disk (streamed) and stamps remoteKey', async () => {
     const file = path.join(tmp, 'db-2026.dump');
     writeFileSync(file, 'v0:ZW5j');
     const db = createFakeDb({
@@ -58,10 +58,12 @@ describe('uploadBackup', () => {
     });
     const lines: string[] = [];
     await uploadBackup(db, 5, file, (l) => lines.push(l));
-    expect(s3Mocks.s3Put).toHaveBeenCalledWith(
+    // The upload streams the on-disk file (bounded memory) — the envelope
+    // bytes never pass through the heap as a readFileSync buffer.
+    expect(s3Mocks.s3PutFile).toHaveBeenCalledWith(
       expect.objectContaining({ bucket: 'b' }),
       'nd/db-2026.dump',
-      Buffer.from('v0:ZW5j'),
+      file,
     );
     expect(lines.join('\n')).toContain('Uploaded to b/nd/db-2026.dump');
   });
@@ -71,11 +73,11 @@ describe('uploadBackup', () => {
     const file = path.join(tmp, 'x.dump');
     writeFileSync(file, 'x');
     await uploadBackup(db, 5, file, () => {});
-    expect(s3Mocks.s3Put).not.toHaveBeenCalled();
+    expect(s3Mocks.s3PutFile).not.toHaveBeenCalled();
   });
 
   it('never throws when the upload fails', async () => {
-    s3Mocks.s3Put.mockRejectedValueOnce('plain-string failure');
+    s3Mocks.s3PutFile.mockRejectedValueOnce('plain-string failure');
     const file = path.join(tmp, 'y.dump');
     writeFileSync(file, 'y');
     const db = createFakeDb({ findMany: { backupDestinations: [dest] } });
@@ -83,7 +85,7 @@ describe('uploadBackup', () => {
     await expect(uploadBackup(db, 5, file, (l) => lines.push(l))).resolves.toBeUndefined();
     expect(lines.join('\n')).toContain('remote upload failed');
     // Error rejections print their message.
-    s3Mocks.s3Put.mockRejectedValueOnce(new Error('network down'));
+    s3Mocks.s3PutFile.mockRejectedValueOnce(new Error('network down'));
     await expect(uploadBackup(db, 5, file, (l) => lines.push(l))).resolves.toBeUndefined();
     expect(lines.join('\n')).toContain('network down');
   });
@@ -92,14 +94,19 @@ describe('uploadBackup', () => {
 describe('fetchRemoteBackup / deleteRemoteBackup', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('fetches remote bytes to a local path', async () => {
+  it('streams the remote object straight to a local file', async () => {
     const db = createFakeDb({ findMany: { backupDestinations: [dest] } });
     const target = path.join(os.tmpdir(), `fetch-${Date.now()}`);
     const p = await fetchRemoteBackup(db, 'nd/k', target);
     expect(p).toBe(target);
-    s3Mocks.s3Get.mockResolvedValueOnce(Buffer.from('payload'));
-    const crypto = await import('node:fs');
-    void crypto;
+    // The GET pipes to disk (s3GetToFile) — multi-GB restores never buffer.
+    expect(s3Mocks.s3GetToFile).toHaveBeenCalledWith(
+      expect.objectContaining({ bucket: 'b' }),
+      'nd/k',
+      target,
+    );
+    expect(existsSync(target)).toBe(false); // the s3 mock wrote nothing
+    expect(statSync(target, { throwIfNoEntry: false })?.size ?? 0).toBe(0);
   });
 
   it('throws when no destination is configured for a fetch', async () => {

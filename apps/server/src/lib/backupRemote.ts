@@ -2,7 +2,7 @@ import { basename } from 'node:path';
 import { eq } from 'drizzle-orm';
 import { backups, type BackupDestination, type DB } from '@ninedeploy/db';
 import { decrypt } from './crypto.js';
-import { s3Delete, s3Get, s3Put, type S3Config } from './s3.js';
+import { s3Delete, s3GetToFile, s3PutFile, type S3Config } from './s3.js';
 
 /** Resolve the first active destination into an S3 client config (or null). */
 export async function activeDestination(db: DB): Promise<(S3Config & { prefix: string }) | null> {
@@ -27,6 +27,8 @@ export async function activeDestination(db: DB): Promise<(S3Config & { prefix: s
  * Upload a completed backup's ENCRYPTED envelope to the active destination and
  * stamp `remoteKey` on the row. Best-effort: an upload failure is logged via
  * the callback but never fails the backup itself (the local copy remains).
+ * Streams from disk (multipart, bounded memory) — a multi-GB dump must never
+ * enter the heap of the panel that also hosts the deploy worker.
  */
 export async function uploadBackup(
   db: DB,
@@ -39,10 +41,9 @@ export async function uploadBackup(
   const { prefix, ...cfg } = dest;
   const key = `${prefix.replace(/\/$/, '')}/${basename(localPath)}`.replace(/^\/+/, '');
   try {
-    // readBackupBytes gives the PLAINTEXT; we re-upload the on-disk encrypted
-    // envelope so a stolen bucket alone can't leak database contents.
-    const { readFileSync } = await import('node:fs');
-    await s3Put(cfg, key, readFileSync(localPath));
+    // The on-disk file is already the encrypted envelope, so a stolen bucket
+    // alone can't leak database contents.
+    await s3PutFile(cfg, key, localPath);
     await db.update(backups).set({ remoteKey: key }).where(eq(backups.id, backupId));
     log(`☁ Uploaded to ${dest.bucket}/${key}`);
   } catch (err) {
@@ -59,9 +60,8 @@ export async function fetchRemoteBackup(
   const dest = await activeDestination(db);
   if (!dest) throw new Error('No backup destination configured');
   const { prefix, ...cfg } = dest;
-  const bytes = await s3Get(cfg, remoteKey);
-  const { writeFileSync } = await import('node:fs');
-  writeFileSync(localPath, bytes, { mode: 0o600 });
+  // Stream straight to disk — never buffer the whole dump in memory.
+  await s3GetToFile(cfg, remoteKey, localPath);
   return localPath;
 }
 

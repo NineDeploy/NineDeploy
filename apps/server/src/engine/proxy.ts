@@ -431,8 +431,23 @@ export function traefikConfigFingerprint(acmeEmail: string | null, dns: DnsConfi
  * Regenerate the Traefik dynamic config from the DB: one router+service per
  * domain pointing at the service's published port. Called after deploys and
  * domain changes.
+ *
+ * Each run is a read-all-domains-then-write sequence triggered from many
+ * places (deploy finalize, domain CRUD, settings apply, service delete).
+ * Without serialization, two overlapping runs each miss the other's change
+ * and the later file drops the earlier router until the next trigger — the
+ * same tail-queue as `ensureTraefik` makes every run observe the settled DB
+ * state. (`writeAtomic` already keeps each individual write crash-safe.)
  */
-export async function writeDynamicConfig(db: DB): Promise<void> {
+let dynamicConfigTail: Promise<void> = Promise.resolve();
+
+export function writeDynamicConfig(db: DB): Promise<void> {
+  const run = dynamicConfigTail.then(() => writeDynamicConfigUnlocked(db));
+  dynamicConfigTail = run.then(() => undefined, () => undefined);
+  return run;
+}
+
+async function writeDynamicConfigUnlocked(db: DB): Promise<void> {
   const all = await db.select().from(domains);
   const servicesById = new Map(
     (await db.select().from(services)).map((s) => [s.id, s]),

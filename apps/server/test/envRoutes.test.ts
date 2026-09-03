@@ -73,17 +73,41 @@ describe('env routes (src/modules/env.ts)', () => {
 
   it('updates an env var', async () => {
     const app = await buildTestApp({
-      db: createFakeDb({ findFirst: { services: { id: 1 } }, update: { env_vars: [envVarRow({ id: 3, key: 'PORT', isSecret: true, valueEncrypted: encrypt('9999') })] } }),
+      db: createFakeDb({
+        // The PATCH path now re-loads the row to preserve its stored
+        // classification when the payload omits isSecret.
+        findFirst: { services: { id: 1 }, envVars: envVarRow({ id: 3, key: 'PORT', isSecret: true, valueEncrypted: encrypt('old') }) },
+        update: { env_vars: [envVarRow({ id: 3, key: 'PORT', isSecret: true, valueEncrypted: encrypt('9999') })] },
+      }),
     });
     await app.register(envRoutes);
     const res = await app.inject({
       method: 'PATCH',
       url: '/1/env/3',
       headers: asUser(),
-      payload: { key: 'PORT', value: '9999', isSecret: true },
+      // No isSecret in the payload — the stored secret flag must survive.
+      payload: { key: 'PORT', value: '9999' },
     });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ id: 3, key: 'PORT', value: '', isSecret: true });
+  });
+
+  it('keeps a plain var plain when the payload omits isSecret', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { services: { id: 1 }, envVars: envVarRow({ id: 3, key: 'PORT', isSecret: false, valueEncrypted: encrypt('8080') }) },
+        update: { env_vars: [envVarRow({ id: 3, key: 'PORT', isSecret: false, valueEncrypted: encrypt('9999') })] },
+      }),
+    });
+    await app.register(envRoutes);
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/1/env/3',
+      headers: asUser(),
+      payload: { key: 'PORT', value: '9999' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ id: 3, isSecret: false });
   });
 
   it('returns 404 when updating a missing env var', async () => {

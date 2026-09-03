@@ -679,7 +679,7 @@ describe('backupDatabase', () => {
     const log = vi.fn();
     await backupDatabase(dbRow({ engine: 'mysql' }), file, log);
     expect(h.run).toHaveBeenCalledWith('docker', [
-      'exec', 'c', 'mysqldump', '-uroot', '--password=pw:enc', '--all-databases', '--result-file=/tmp/ninedeploy-dump',
+      'exec', 'c', 'mysqldump', '-uroot', '--password=pw:enc', '--single-transaction', '--quick', '--all-databases', '--result-file=/tmp/ninedeploy-dump',
     ], {}, log);
     expect(h.run).toHaveBeenCalledWith('docker', ['cp', 'c:/tmp/ninedeploy-dump', file], {}, log);
     expect(h.decrypt).toHaveBeenCalledWith('enc');
@@ -804,7 +804,7 @@ describe('restoreDatabase', () => {
     const log = vi.fn();
     await backupDatabase(dbRow({ engine: 'mariadb' }), file, log);
     expect(h.run).toHaveBeenCalledWith('docker', [
-      'exec', 'c', 'mariadb-dump', '-uroot', '--password=pw:enc', '--all-databases', '--result-file=/tmp/ninedeploy-dump',
+      'exec', 'c', 'mariadb-dump', '-uroot', '--password=pw:enc', '--single-transaction', '--quick', '--all-databases', '--result-file=/tmp/ninedeploy-dump',
     ], {}, log);
     expect(h.run).toHaveBeenCalledWith('docker', ['cp', 'c:/tmp/ninedeploy-dump', file], {}, log);
     expect(h.capture).not.toHaveBeenCalled();

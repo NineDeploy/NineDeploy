@@ -19,6 +19,17 @@ const schema = z.object({
   NINEDEPLOY_DATA_DIR: z.string().default('./.data'),
   NINEDEPLOY_DB_PATH: z.string().default('./.data/ninedeploy.db'),
   NINEDEPLOY_PUBLIC_URL: z.url().default('http://localhost:3000'),
+  // Trust the reverse proxy for client IP derivation (Fastify trustProxy).
+  // Every standard install fronts the panel with its own Traefik, so the
+  // default trusts ONE hop — without it every rate-limit bucket and audit row
+  // collapses onto the proxy's container IP. Set "false" when the panel is
+  // exposed directly (a client could otherwise mint fresh rate-limit buckets
+  // with fake X-Forwarded-For entries), or a larger hop count when extra
+  // proxies sit in front of Traefik.
+  NINEDEPLOY_TRUST_PROXY: z
+    .string()
+    .regex(/^(true|false|\d+)$/, 'must be "true", "false" or a hop count')
+    .default('1'),
   NINEDEPLOY_JWT_SECRET: z.string().min(16).default(INSECURE_JWT_SECRET),
   NINEDEPLOY_JWT_ACCESS_TTL: z.string().default('15m'),
   NINEDEPLOY_JWT_REFRESH_TTL: z.string().default('7d'),

@@ -112,7 +112,9 @@ export const volumeBackupRoutes: FastifyPluginAsync = async (app) => {
   app.post('/:name/backups', { preHandler: [app.requireAdmin] }, async (req) => {
     const name = (req.params as { name: string }).name;
     const input = createVolumeBackup.parse(req.body ?? {});
-    const { serviceIds } = await authorizeVolume(app, req.user!, name, true);
+    // Auth-only call: the volume's owning services no longer land on the
+    // backup row (scope='volumes' rows carry volumeName only — see insert).
+    await authorizeVolume(app, req.user!, name, true);
     // The volume is expected to be on this host; the auth helper already
     // verified. Defensive double-check (volumeExists makes a fresh docker
     // call, so it's the only one that can be wrong by now).
@@ -127,10 +129,13 @@ export const volumeBackupRoutes: FastifyPluginAsync = async (app) => {
     // Reserve the row up front so the worker / UI can observe status. The
     // sibling-container tar streams to the host; if it fails the row is
     // flipped to 'failed' and a partial file is best-effort unlinked.
+    // scope='volumes' rows must carry volumeName ONLY — the advertised
+    // backups invariant is "exactly one of (databaseId, volumeName)", and a
+    // stray databaseId here would confuse restore routing and retention.
     const [row] = await app.db
       .insert(backups)
       .values({
-        databaseId: serviceIds[0] ?? null,
+        databaseId: null,
         volumeName: name,
         scope: 'volumes',
         status: 'running',

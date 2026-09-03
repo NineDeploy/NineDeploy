@@ -1,5 +1,8 @@
-﻿import { afterEach, describe, expect, it, vi } from 'vitest';
-import { s3Delete, s3Get, s3Put, s3Request, s3Test } from '../../src/lib/s3.js';
+﻿import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { s3Delete, s3Get, s3GetToFile, s3Put, s3PutFile, s3Request, s3Test } from '../../src/lib/s3.js';
 
 const CFG = {
   endpoint: 'https://s3.example.com',
@@ -114,5 +117,141 @@ describe('s3Put/Get/Delete/Test', () => {
     await s3Get(CFG, 'k');
     await s3Delete(CFG, 'k');
     expect(((fetchMock.mock.calls[0] as [URL, RequestInit])[1].body)).toBeUndefined();
+  });
+});
+
+describe('s3PutFile / s3GetToFile (streamed transfers)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    fetchMock.mockReset();
+  });
+
+  it('s3PutFile single-PUTs a small file below the multipart threshold', async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 200, text: async () => '' });
+    vi.stubGlobal('fetch', fetchMock);
+    const file = path.join(tmpdir(), `s3-small-${Date.now()}`);
+    writeFileSync(file, 'tiny-payload');
+
+    await s3PutFile(CFG, 'k/small', file);
+
+    // One request, and the FULL bytes travel as the body.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const body = (fetchMock.mock.calls[0] as [URL, RequestInit])[1].body as Uint8Array;
+    expect(Buffer.from(body).toString()).toBe('tiny-payload');
+    rmSync(file, { force: true });
+  });
+
+  it('s3PutFile runs a bounded multipart upload and completes with the collected ETags', async () => {
+    // Inject tiny sizes so a 12-byte file drives the full multipart machine:
+    // initiate → 3 parts → complete.
+    const initiate = { ok: true, status: 200, text: async () => '<UploadId>up-123</UploadId>', headers: new Headers() };
+    const part = { ok: true, status: 200, text: async () => '', headers: new Headers({ etag: '"part-etag-1"' }) };
+    const done = { ok: true, status: 200, text: async () => '<CompleteMultipartUploadResult/>', headers: new Headers() };
+    fetchMock
+      .mockResolvedValueOnce(initiate)
+      .mockResolvedValueOnce(part)
+      .mockResolvedValueOnce(part)
+      .mockResolvedValueOnce(part)
+      .mockResolvedValueOnce(done);
+    vi.stubGlobal('fetch', fetchMock);
+
+    const file = path.join(tmpdir(), `s3-mpu-${Date.now()}`);
+    writeFileSync(file, Buffer.from('aaabbbcccddd'));
+
+    await s3PutFile(CFG, 'k/big', file, { partSize: 4, threshold: 10 });
+
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+    const [initUrl] = fetchMock.mock.calls[0] as [URL, RequestInit];
+    expect(initUrl.search).toBe('?uploads=');
+    // Parts 1 and 2 are full 4-byte chunks; part 3 carries the remaining 4.
+    const part1 = (fetchMock.mock.calls[1] as [URL, RequestInit]);
+    expect((part1[0] as URL).search).toContain('partNumber=1');
+    expect((part1[0] as URL).search).toContain('uploadId=up-123');
+    expect(Buffer.from(part1[1].body as Uint8Array).toString()).toBe('aaab');
+    const complete = (fetchMock.mock.calls[4] as [URL, RequestInit]);
+    expect((complete[0] as URL).search).toBe('?uploadId=up-123');
+    expect(complete[1].body).toContain('<PartNumber>3</PartNumber>');
+    expect(String(complete[1].body)).toContain('part-etag-1');
+    rmSync(file, { force: true });
+  });
+
+  it('s3PutFile aborts the multipart upload when a part fails', async () => {
+    const initiate = { ok: true, status: 200, text: async () => '<UploadId>up-x</UploadId>', headers: new Headers() };
+    const failPart = { ok: false, status: 500, text: async () => 'boom', headers: new Headers() };
+    const abort = { ok: true, status: 204, text: async () => '', headers: new Headers() };
+    fetchMock.mockResolvedValueOnce(initiate).mockResolvedValueOnce(failPart).mockResolvedValueOnce(abort);
+    vi.stubGlobal('fetch', fetchMock);
+
+    const file = path.join(tmpdir(), `s3-abort-${Date.now()}`);
+    writeFileSync(file, Buffer.from('aaabbbcccddd'));
+
+    await expect(s3PutFile(CFG, 'k/big', file, { partSize: 4, threshold: 10 })).rejects.toThrow('S3 multipart part 1/3 failed (500)');
+    // The third request is the DELETE ?uploadId= abort call.
+    const [abortUrl, abortInit] = fetchMock.mock.calls[2] as [URL, RequestInit];
+    expect(abortInit.method).toBe('DELETE');
+    expect((abortUrl as URL).search).toBe('?uploadId=up-x');
+    rmSync(file, { force: true });
+  });
+
+  it('s3PutFile surfaces an initiate failure', async () => {
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 403, text: async () => 'AccessDenied' } as unknown as Response);
+    vi.stubGlobal('fetch', fetchMock);
+    const file = path.join(tmpdir(), `s3-init-${Date.now()}`);
+    writeFileSync(file, Buffer.from('aaabbbcccddd'));
+    await expect(s3PutFile(CFG, 'k/big', file, { partSize: 4, threshold: 10 })).rejects.toThrow('S3 multipart initiate failed (403)');
+    rmSync(file, { force: true });
+  });
+
+  it('s3PutFile surfaces a malformed initiate response (no UploadId)', async () => {
+    fetchMock.mockResolvedValueOnce({ ok: true, status: 200, text: async () => '<Error>nope</Error>', headers: new Headers() } as unknown as Response);
+    vi.stubGlobal('fetch', fetchMock);
+    const file = path.join(tmpdir(), `s3-noid-${Date.now()}`);
+    writeFileSync(file, Buffer.from('aaabbbcccddd'));
+    await expect(s3PutFile(CFG, 'k/big', file, { partSize: 4, threshold: 10 })).rejects.toThrow('returned no UploadId');
+    rmSync(file, { force: true });
+  });
+
+  it('s3PutFile surfaces a failed complete call', async () => {
+    const initiate = { ok: true, status: 200, text: async () => '<UploadId>up-y</UploadId>', headers: new Headers() };
+    const part = { ok: true, status: 200, text: async () => '', headers: new Headers({ etag: '"e1"' }) };
+    const done = { ok: false, status: 400, text: async () => 'MalformedXML', headers: new Headers() };
+    fetchMock.mockResolvedValueOnce(initiate).mockResolvedValueOnce(part).mockResolvedValueOnce(part).mockResolvedValueOnce(part).mockResolvedValueOnce(done);
+    vi.stubGlobal('fetch', fetchMock);
+    const file = path.join(tmpdir(), `s3-done-${Date.now()}`);
+    writeFileSync(file, Buffer.from('aaabbbcccddd'));
+    await expect(s3PutFile(CFG, 'k/big', file, { partSize: 4, threshold: 10 })).rejects.toThrow('S3 multipart complete failed (400)');
+    rmSync(file, { force: true });
+  });
+
+  it('s3GetToFile pipes the response body to disk without buffering', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('streamed-'));
+          controller.enqueue(new TextEncoder().encode('bytes'));
+          controller.close();
+        },
+      }),
+    } as unknown as Response);
+    vi.stubGlobal('fetch', fetchMock);
+
+    const target = path.join(tmpdir(), `s3-get-${Date.now()}`);
+    await s3GetToFile(CFG, 'k', target);
+    expect(readFileSync(target, 'utf8')).toBe('streamed-bytes');
+    rmSync(target, { force: true });
+  });
+
+  it('s3GetToFile throws on failure and handles an empty body', async () => {
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 404 } as unknown as Response);
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(s3GetToFile(CFG, 'missing', path.join(tmpdir(), 'x'))).rejects.toThrow('S3 download failed (404)');
+
+    fetchMock.mockResolvedValueOnce({ ok: true, status: 200, body: null } as unknown as Response);
+    const target = path.join(tmpdir(), `s3-empty-${Date.now()}`);
+    await s3GetToFile(CFG, 'k', target);
+    expect(readFileSync(target, 'utf8')).toBe('');
+    rmSync(target, { force: true });
   });
 });

@@ -1,7 +1,7 @@
 import { createReadStream, existsSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync, mkdirSync, rmSync, copyFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
-import { count } from 'drizzle-orm';
+import { count, sql } from 'drizzle-orm';
 import { databases, deployments, services, users } from '@ninedeploy/db';
 import type { FastifyPluginAsync } from 'fastify';
 import { capture, run } from '../lib/exec.js';
@@ -119,8 +119,29 @@ export const systemRoutes: FastifyPluginAsync = async (app) => {
     const metaTmp = `_meta-${stamp}.json`;
 
     try {
+      // Tar'ing the LIVE database races concurrent writes: a transaction
+      // overlapping the archive yields a torn or journal-orphaned file that
+      // fails integrity on import — silently corrupting the primary DR
+      // artifact. `VACUUM INTO` produces a fully self-contained snapshot
+      // while the server keeps serving.
       const dbRel = path.relative(config.paths.dataDir, config.paths.dbFile);
-      if (existsSync(config.paths.dbFile)) files.push(dbRel);
+      if (existsSync(config.paths.dbFile)) {
+        const dbSnapshot = `_db-${stamp}.db`;
+        const dbSnapshotPath = path.join(config.paths.dataDir, dbSnapshot);
+        // VACUUM INTO refuses to overwrite; clear any orphan from a crash
+        // between VACUUM and the finally-cleanup.
+        try { unlinkSync(dbSnapshotPath); } catch { /* first run */ }
+        await app.db.run(sql`VACUUM INTO ${dbSnapshotPath}`);
+        if (existsSync(dbSnapshotPath)) {
+          files.push(dbSnapshot);
+        } else {
+          // libsql either writes the snapshot or throws; a resolved run with
+          // no file only happens under test doubles — fall back to the live
+          // file rather than shipping an archive with no database at all.
+          app.log.warn('VACUUM INTO produced no snapshot file; archiving the live database file');
+          files.push(dbRel);
+        }
+      }
       if (existsSync(config.paths.masterKeyFile)) files.push(path.relative(config.paths.dataDir, config.paths.masterKeyFile));
       const envFile = path.join(process.cwd(), '.env');
       if (existsSync(envFile)) {
@@ -163,6 +184,7 @@ export const systemRoutes: FastifyPluginAsync = async (app) => {
     } finally {
       try { unlinkSync(path.join(config.paths.dataDir, envTmp)); } catch { /* */ }
       try { unlinkSync(path.join(config.paths.dataDir, metaTmp)); } catch { /* */ }
+      try { unlinkSync(path.join(config.paths.dataDir, `_db-${stamp}.db`)); } catch { /* */ }
       try { unlinkSync(archive); } catch { /* */ }
     }
   });
@@ -279,8 +301,14 @@ export const systemRoutes: FastifyPluginAsync = async (app) => {
     };
 
     try {
-      const importedDb = path.join(tmpDir, path.relative(config.paths.dataDir, config.paths.dbFile));
-      if (existsSync(importedDb)) {
+      // Exports store the db under its data-dir-relative name (legacy
+      // archives) or as `_db-<stamp>.db` — the consistent VACUUM INTO
+      // snapshot taken at export time (see the export route). Prefix-matching
+      // mirrors how the stamped `_env-` file is located below.
+      const dbRel = path.relative(config.paths.dataDir, config.paths.dbFile);
+      const dbFilename = extractedFiles.find((f) => f === dbRel || f.startsWith('_db-'));
+      const importedDb = dbFilename ? path.join(tmpDir, dbFilename) : null;
+      if (importedDb && existsSync(importedDb)) {
         mkdirSync(backupDir, { recursive: true });
         if (existsSync(config.paths.dbFile)) renameSync(config.paths.dbFile, path.join(backupDir, 'ninedeploy.db'));
         renameSync(importedDb, config.paths.dbFile);

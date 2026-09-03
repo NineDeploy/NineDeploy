@@ -13,7 +13,7 @@ import {
   type DB,
   type Service,
 } from '@ninedeploy/db';
-import { createService, sameImageRepository, setLimits, updateService } from '@ninedeploy/schemas';
+import { composePreviewRequest, createService, sameImageRepository, setLimits, updateService } from '@ninedeploy/schemas';
 import { getTemplates } from '../templates/registry.js';
 import { capture } from '../lib/exec.js';
 import { audit } from '../lib/audit.js';
@@ -33,6 +33,10 @@ import { deleteLog } from '../engine/logs.js';
 import { writeDynamicConfig } from '../engine/proxy.js';
 import { removeServiceBridgeIfEmpty } from '../lib/serviceBridge.js';
 import { applyDefaultTags, replaceServiceTags } from './serviceTags.js';
+import { analyseComposeContent, stackEnvSeeds, stackPublicUrl } from './composeStacks.js';
+import { materialiseComposeFile } from '../lib/composeWorkspace.js';
+import { reconcileEnvironment } from './templates.js';
+import { resolveStackEnvironment } from '../engine/magicVars.js';
 
 /** The three tag id lists a service row is serialized with. */
 interface TagIds {
@@ -218,6 +222,20 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
       build: input.build,
     });
     assertMayPublishPort(req.user!, input.publishedPort);
+    // Inline compose stack: validate the pasted YAML with the SAME analysis
+    // the wizard previewed, and settle the routed service now — the builder
+    // falls back to the slug, which is almost never a service name in a file
+    // the user wrote by hand.
+    let inlineComposeService: string | null = null;
+    if (input.composeContent) {
+      const analysis = analyseComposeContent(input.composeContent, input.port);
+      if (!analysis.ok) throw badRequest(`Compose file cannot run here: ${analysis.reasons.join('; ')}`);
+      inlineComposeService = input.composeService ?? analysis.suggestedService;
+      if (!inlineComposeService) throw badRequest('Could not determine the main compose service — set composeService explicitly');
+      if (!analysis.services.includes(inlineComposeService)) {
+        throw badRequest(`composeService '${inlineComposeService}' is not declared in the compose file`);
+      }
+    }
     // Sources hold OPERATOR-managed git credentials (sourcesRoutes is
     // requireAdmin). A member attaching a guessed sourceId here would have
     // the pipeline clone the operator's private repos with the decrypted
@@ -293,7 +311,8 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
         sourceId: input.sourceId ?? null,
         image: input.image ?? null,
         volumeMount: input.volumeMount ?? null,
-        composeService: input.composeService ?? null,
+        composeService: inlineComposeService ?? input.composeService ?? null,
+        composeContent: input.composeContent ?? null,
         serverId: input.serverId ?? null,
         cpuShares: input.cpuShares ?? 0,
         memLimitMb: input.memLimitMb ?? 0,
@@ -308,7 +327,18 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
         previewDomainPattern: input.previewDomainPattern ?? null,
         previewMaxActive: input.previewMaxActive ?? 5,
       })
-      .returning();
+      .returning()
+      // The duplicate check above is check-then-insert: two concurrent
+      // creates with the same slug both pass it, and the services_slug_unique
+      // index (migration 0049) is the actual backstop — translate the
+      // constraint into the same clean slug_taken response the pre-check
+      // produces. Any other insert failure keeps failing loudly.
+      .catch((err: unknown): Array<typeof services.$inferSelect> => {
+        if (err instanceof Error && /UNIQUE constraint failed.*services\.slug/.test(err.message)) {
+          throw badRequest(`A service with slug '${slug}' already exists`, 'slug_taken');
+        }
+        throw err;
+      });
     if (!svc) throw notFound('Could not create service');
     await app.db
       .insert(buildConfigs)
@@ -326,6 +356,18 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
         restartPolicy: input.build.restartPolicy ?? 'unless-stopped',
         stopGraceSeconds: input.build.stopGraceSeconds ?? 5,
       });
+    if (input.composeContent) {
+      // Write the workspace copy now so the very first deploy has it, and
+      // resolve `SERVICE_*` tokens into persistent env rows exactly the way a
+      // Hub compose template does (composeStacks.ts) — same generator, same
+      // "existing values are never rotated" reconciliation.
+      materialiseComposeFile(svc.id, input.composeContent);
+      const resolved = resolveStackEnvironment(input.composeContent, {
+        publicUrl: await stackPublicUrl(app.db, svc.slug),
+      });
+      const stackEnv = stackEnvSeeds(resolved);
+      if (stackEnv.length > 0) await reconcileEnvironment(app, svc.id, { env: stackEnv }, []);
+    }
     // Tagging is a separate concern from the row itself: an explicit tag set
     // wins, otherwise the service lands in every workspace the caller belongs
     // to so it is visible to their team by default.
@@ -351,12 +393,33 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
     return serialize(svc, await sourceNameFor(app.db, svc.sourceId), await tagIdsOf(app.db, svc!.id));
   });
 
+  /**
+   * Dry-run a pasted compose file. Nothing is written and no service is
+   * created — the wizard calls this while the user types so blocking problems
+   * and the routable service list appear inline instead of as a 400 after the
+   * row exists. Admin-only for the same reason `type: 'compose'` is: this is
+   * the analysis half of a host-privileged deploy.
+   */
+  app.post('/compose/preview', { preHandler: app.requireAdmin }, async (req) => {
+    const input = composePreviewRequest.parse(req.body ?? {});
+    return analyseComposeContent(input.content, input.port);
+  });
+
   app.get('/:id', async (req) => {
     const id = num((req.params as { id: string }).id);
     const svc = await loadServiceForUser(app.db, id, req.user!);
     const build = await app.db.query.buildConfigs.findFirst({ where: eq(buildConfigs.serviceId, id) });
     return {
       ...serialize(svc, await sourceNameFor(app.db, svc.sourceId), await tagIdsOf(app.db, svc.id)),
+      // Detail only — a stack's YAML is up to 256 KiB and `serialize` also
+      // feeds the list endpoint, which would then ship every stack on the
+      // host in one response.
+      //
+      // Operators only, matching who may write it (PATCH runs the compose
+      // host-privilege gate): a compose file can carry a literal password
+      // inline, and members are deliberately kept away from secret VALUES
+      // everywhere else.
+      composeContent: req.user!.isOperator ? svc.composeContent ?? null : null,
       build: build ? serializeBuild(build) : null,
     };
   });
@@ -390,6 +453,21 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
     });
     // Same merged-result reasoning for the host port.
     assertMayPublishPort(req.user!, patch.publishedPort === undefined ? existing.publishedPort : patch.publishedPort);
+    // Editing an inline stack's YAML. Only a service that already stores one
+    // may receive it: `type` alone cannot distinguish an inline stack from a
+    // git-repo compose service, whose file lives in the repository and would
+    // be overwritten by the next checkout anyway.
+    if (patch.composeContent !== undefined) {
+      if (!existing.composeContent) {
+        throw badRequest('This service has no inline compose stack — its compose file comes from its repository');
+      }
+      const analysis = analyseComposeContent(patch.composeContent, patch.port ?? existing.port ?? undefined);
+      if (!analysis.ok) throw badRequest(`Compose file cannot run here: ${analysis.reasons.join('; ')}`);
+      const routed = patch.composeService ?? existing.composeService;
+      if (routed && !analysis.services.includes(routed)) {
+        throw badRequest(`composeService '${routed}' is not declared in the compose file`);
+      }
+    }
     // Build-config keys are optional; null out omitted-but-cleared ones via `set` semantics.
     const [svc] = await app.db.update(services).set(patch).where(eq(services.id, id)).returning();
     if (!svc) throw notFound('Service not found');
@@ -420,6 +498,10 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
         req.log.warn({ err, serviceId: id, port: patch.port }, 'failed to rewrite traefik config after container port update');
       }
     }
+    // Keep the workspace copy in step with the row. The deploy would rewrite
+    // it anyway, but a stale file on disk makes `docker compose` run by hand
+    // (or a File Browser peek) disagree with what the panel shows.
+    if (patch.composeContent !== undefined) materialiseComposeFile(id, patch.composeContent);
     void audit(app.db, req.user!.id, 'service.update', svc.name);
     return serialize(svc, await sourceNameFor(app.db, svc.sourceId), await tagIdsOf(app.db, svc.id));
   });
@@ -717,6 +799,9 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
         image: svc.image,
         volumeMount: svc.volumeMount,
         composeService: svc.composeService,
+        // An inline stack's definition travels with the clone; the file is
+        // materialised below so the copy is deployable before its first run.
+        composeContent: svc.composeContent,
         healthPath: svc.healthPath,
         port: svc.port,
         publishedPort: null, // do not collide host port
@@ -727,7 +812,18 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
         previewDomainPattern: svc.previewDomainPattern,
         previewMaxActive: svc.previewMaxActive,
       })
-      .returning();
+      .returning()
+      // The slug-probe loop above is check-then-insert; the unique index is
+      // the backstop for the same race as on the create path. Other insert
+      // failures keep their original (throwing) behavior.
+      .catch((err: unknown): Array<typeof services.$inferSelect> => {
+        if (err instanceof Error && /UNIQUE constraint failed.*services\.slug/.test(err.message)) {
+          throw badRequest(`A service with slug '${newSlug}' already exists`, 'slug_taken');
+        }
+        throw err;
+      });
+    if (!created) throw notFound('Could not create the service clone');
+    if (svc.composeContent) materialiseComposeFile(created.id, svc.composeContent);
 
     // Clone build config if exists
     const b = await app.db.query.buildConfigs.findFirst({ where: eq(buildConfigs.serviceId, svc.id) });

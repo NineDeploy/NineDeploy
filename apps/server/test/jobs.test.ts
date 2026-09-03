@@ -83,6 +83,33 @@ describe('jobs routes', () => {
     expect(res.statusCode).toBe(403);
   });
 
+  it('forbids deploy-job creation for members on a host-privileged service (S1)', async () => {
+    // A PM2 service executes its install/build/start commands on the HOST —
+    // a member must not be able to wrap one in a cron job they can trigger
+    // on demand (the exact bypass this gate closes).
+    const app = await appWith({ findFirst: { services: svcRow({ ownerUserId: 1, type: 'pm2' }) } });
+    const res = await app.inject({
+      method: 'POST', url: '/services/1/jobs',
+      headers: { ...asUser(), 'x-test-role': 'member' },
+      payload: { name: 'nightly', cron: '* * * * *', kind: 'deploy' },
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error.message).toContain('Operator access required');
+  });
+
+  it('still allows deploy-job creation for operators on a host-privileged service', async () => {
+    const app = await appWith({
+      findFirst: { services: svcRow({ ownerUserId: 1, type: 'pm2' }) },
+      insert: { scheduled_jobs: [jobRow({ id: 7, name: 'nightly', kind: 'deploy' })] },
+    });
+    const res = await app.inject({
+      method: 'POST', url: '/services/1/jobs', headers: asUser(),
+      payload: { name: 'nightly', cron: '0 3 * * *', kind: 'deploy' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ id: 7, kind: 'deploy' });
+  });
+
   it('rejects an invalid cron expression', async () => {
     const app = await appWith({ findFirst: { services: svcRow() } });
     const res = await app.inject({
@@ -291,6 +318,39 @@ describe('runJob', () => {
     await runJob(db, 3);
     // A queued deployment with trigger 'schedule' was inserted.
     void db;
+    expect(auditMocks.audit).toHaveBeenCalledWith(expect.anything(), null, 'job.deploy', expect.any(String));
+  });
+
+  it('refuses a scheduled deploy on a host-privileged service owned by a non-operator (S1)', async () => {
+    // The cron path has no session — the deploy is authorized against the
+    // service OWNER (same rule as webhook deliveries). A PM2 service whose
+    // owner is a plain member must not reach host execution via the scheduler.
+    const db = createFakeDb({
+      findFirst: {
+        scheduledJobs: jobRow({ id: 3, kind: 'deploy' }),
+        services: svcRow({ ownerUserId: 7, type: 'pm2' }),
+        users: userRow({ id: 7, isOperator: false, isInstanceOperator: false }),
+      },
+      update: { scheduledJobs: [{}] },
+    });
+    await runJob(db, 3);
+    expect(auditMocks.audit).toHaveBeenCalledWith(
+      expect.anything(), null, 'job.deploy_refused', expect.stringContaining('Operator access required'),
+    );
+    expect(auditMocks.audit).not.toHaveBeenCalledWith(expect.anything(), null, 'job.deploy', expect.anything());
+  });
+
+  it('runs a scheduled deploy for a host-privileged service owned by an operator', async () => {
+    const db = createFakeDb({
+      findFirst: {
+        scheduledJobs: jobRow({ id: 3, kind: 'deploy' }),
+        services: svcRow({ ownerUserId: 1, type: 'pm2' }),
+        users: userRow({ id: 1 }),
+      },
+      insert: { deployments: [{ id: 78 }] },
+      update: { scheduledJobs: [{}] },
+    });
+    await runJob(db, 3);
     expect(auditMocks.audit).toHaveBeenCalledWith(expect.anything(), null, 'job.deploy', expect.any(String));
   });
 

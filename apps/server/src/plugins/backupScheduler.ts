@@ -6,6 +6,7 @@ import fp from 'fastify-plugin';
 import { config } from '../config.js';
 import { backupDatabase } from '../engine/database.js';
 import { uploadBackup } from '../lib/backupRemote.js';
+import { audit } from '../lib/audit.js';
 
 const KEEP_PER_DB = 7;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -39,6 +40,24 @@ export default fp(
             if (row) await uploadBackup(fastify.db, row.id, file, log);
           } catch (err) {
             fastify.log.error({ err }, `scheduled backup failed for ${d.name}`);
+            // A scheduled failure must not be log-only: record the failed row
+            // (visible in the backups UI) and audit it — the audit bridge fans
+            // out to the notification channels, so an operator learns about a
+            // silently-broken backup pipeline the same way they learn about a
+            // failed deploy. System-initiated: actor null (operator-scoped).
+            // The insert itself is best-effort — never mask the tick loop.
+            try {
+              await fastify.db.insert(backups).values({
+                databaseId: d.id,
+                scope: 'scheduled',
+                status: 'failed',
+                path: file,
+                sizeBytes: 0,
+              });
+            } catch {
+              /* the failure row is cosmetic; the audit below still fires */
+            }
+            void audit(fastify.db, null, 'backup.schedule_failed', `${d.name}: ${err instanceof Error ? err.message : String(err)}`);
           }
           // Prune the latest KEEP_PER_DB SCHEDULED backups for this database.
           // Manual (user-initiated) backups are never touched by the scheduler

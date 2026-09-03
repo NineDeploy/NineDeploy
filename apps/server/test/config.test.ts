@@ -84,4 +84,20 @@ describe('config', () => {
     expect(config.dbUrl).toBe('file:/var/lib/ninedeploy/ninedeploy.db');
     expect(existsSync(config.paths.backupsDir)).toBe(true);
   });
+
+  it('derives trustProxy from NINEDEPLOY_TRUST_PROXY (true/false/hop count)', async () => {
+    vi.stubEnv('NINEDEPLOY_TRUST_PROXY', 'false');
+    expect((await loadConfig()).trustProxy).toBe(false);
+
+    vi.stubEnv('NINEDEPLOY_TRUST_PROXY', 'true');
+    expect((await loadConfig()).trustProxy).toBe(true);
+
+    // Default: trust ONE hop (the bundled Traefik) — and the Fastify-style
+    // function trusts hop 0 while refusing hop 1 and beyond.
+    delete process.env['NINEDEPLOY_TRUST_PROXY'];
+    const trust = (await loadConfig()).trustProxy as (addr: string, hop: number) => boolean;
+    expect(typeof trust).toBe('function');
+    expect(trust('10.0.0.1', 0)).toBe(true);
+    expect(trust('10.0.0.1', 1)).toBe(false);
+  });
 });

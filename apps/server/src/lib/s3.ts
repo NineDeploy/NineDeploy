@@ -5,6 +5,11 @@ import { createHash, createHmac } from 'node:crypto';
  * dependencies beyond node:crypto + fetch. Works with AWS S3 and any
  * S3-compatible endpoint (MinIO, R2, Backblaze B2, Garage, …) using
  * path-style addressing.
+ *
+ * Large transfers never buffer the whole object: `s3PutFile` streams a file
+ * as a bounded-memory multipart upload (one ≤32 MB part in heap at a time)
+ * and `s3GetToFile` pipes a GET straight to disk. Buffering multi-gigabyte
+ * database dumps used to OOM the panel, which also hosts the deploy worker.
  */
 
 export interface S3Config {
@@ -14,6 +19,11 @@ export interface S3Config {
   accessKeyId: string;
   secretAccessKey: string;
 }
+
+/** Part size for multipart uploads — the heap ceiling per part. */
+const MULTIPART_PART_SIZE = 32 * 1024 * 1024;
+/** Objects below this size skip the multipart handshake entirely. */
+const MULTIPART_THRESHOLD = 64 * 1024 * 1024;
 
 const sha256Hex = (data: Buffer | string): string => createHash('sha256').update(data).digest('hex');
 const hmac = (key: Buffer | string, data: string): Buffer => createHmac('sha256', key).update(data).digest();
@@ -26,18 +36,31 @@ function uriEncode(s: string): string {
     .replace(/%2F/g, '/');
 }
 
+/** Canonical (sorted, URI-encoded) query string for SigV4; '' when empty. */
+function canonicalQueryString(query?: URLSearchParams): string {
+  if (!query || [...query.keys()].length === 0) return '';
+  return [...query.entries()]
+    .map(([k, v]) => [uriEncode(k), uriEncode(v)] as const)
+    .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+    .map(([k, v]) => `${k}=${v}`)
+    .join('&');
+}
+
 /**
  * Sign and execute one S3 request. `path` is the object key (already
  * namespace-prefixed by the caller); method/body drive the signature.
  */
 export async function s3Request(
   cfg: S3Config,
-  method: 'GET' | 'PUT' | 'DELETE' | 'HEAD',
+  method: 'GET' | 'PUT' | 'POST' | 'DELETE' | 'HEAD',
   key: string,
   body?: Buffer | string,
   contentType = 'application/octet-stream',
+  query?: URLSearchParams,
 ): Promise<Response> {
+  const canonicalQuery = canonicalQueryString(query);
   const url = new URL(`${cfg.endpoint.replace(/\/$/, '')}/${cfg.bucket}/${uriEncode(key)}`);
+  if (canonicalQuery) url.search = canonicalQuery;
   const now = new Date();
   const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, '');
   const dateStamp = amzDate.slice(0, 8);
@@ -56,7 +79,7 @@ export async function s3Request(
   const canonicalRequest = [
     method,
     url.pathname,
-    '', // no query string
+    canonicalQuery,
     canonicalHeaders,
     signedHeaders.join(';'),
     payloadHash,
@@ -89,11 +112,110 @@ export async function s3Put(cfg: S3Config, key: string, data: Buffer | string): 
   if (!res.ok) throw new Error(`S3 upload failed (${res.status}): ${(await res.text()).slice(0, 200)}`);
 }
 
+/** Pull the upload id out of an InitiateMultipartUploadResult response. */
+function parseUploadId(xml: string): string | undefined {
+  return xml.match(/<UploadId>([^<]+)<\/UploadId>/)?.[1];
+}
+
+/**
+ * PUT a file from disk without ever holding the whole object in heap:
+ * single PUT below the multipart threshold, a bounded-memory multipart
+ * upload above it (one part in memory at a time).
+ *
+ * The size knobs are injectable so tests can drive the multipart path with
+ * tiny files.
+ */
+export async function s3PutFile(
+  cfg: S3Config,
+  key: string,
+  filePath: string,
+  sizes?: { partSize?: number; threshold?: number },
+): Promise<void> {
+  const { statSync, openSync, readSync, closeSync, readFileSync } = await import('node:fs');
+  const partSize = sizes?.partSize ?? MULTIPART_PART_SIZE;
+  const threshold = sizes?.threshold ?? MULTIPART_THRESHOLD;
+  const size = statSync(filePath).size;
+  if (size < threshold) {
+    await s3Put(cfg, key, readFileSync(filePath));
+    return;
+  }
+
+  // 1. Initiate.
+  const initRes = await s3Request(cfg, 'POST', key, undefined, 'application/xml', new URLSearchParams({ uploads: '' }));
+  if (!initRes.ok) throw new Error(`S3 multipart initiate failed (${initRes.status}): ${(await initRes.text()).slice(0, 200)}`);
+  const uploadId = parseUploadId(await initRes.text());
+  if (!uploadId) throw new Error('S3 multipart initiate returned no UploadId');
+
+  try {
+    // 2. Upload parts — one bounded chunk in heap at a time.
+    const parts: Array<{ partNumber: number; etag: string }> = [];
+    const totalParts = Math.ceil(size / partSize);
+    const fh = openSync(filePath, 'r');
+    try {
+      const buf = Buffer.alloc(partSize);
+      for (let partNumber = 1; partNumber <= totalParts; partNumber++) {
+        const length = partNumber === totalParts ? size - (partNumber - 1) * partSize : partSize;
+        readSync(fh, buf, 0, length, (partNumber - 1) * partSize);
+        const chunk = length === partSize ? buf : buf.subarray(0, length);
+        const res = await s3Request(
+          cfg, 'PUT', key, chunk, 'application/octet-stream',
+          new URLSearchParams({ partNumber: String(partNumber), uploadId }),
+        );
+        if (!res.ok) throw new Error(`S3 multipart part ${partNumber}/${totalParts} failed (${res.status})`);
+        const etag = res.headers.get('etag');
+        if (!etag) throw new Error(`S3 multipart part ${partNumber} returned no ETag`);
+        parts.push({ partNumber, etag: etag.replaceAll('"', '') });
+      }
+    } finally {
+      closeSync(fh);
+    }
+
+    // 3. Complete.
+    const completeXml =
+      '<CompleteMultipartUpload>' +
+      parts
+        .map((p) => `<Part><PartNumber>${p.partNumber}</PartNumber><ETag>"${p.etag}"</ETag></Part>`)
+        .join('') +
+      '</CompleteMultipartUpload>';
+    const done = await s3Request(
+      cfg, 'POST', key, completeXml, 'application/xml',
+      new URLSearchParams({ uploadId }),
+    );
+    if (!done.ok) throw new Error(`S3 multipart complete failed (${done.status}): ${(await done.text()).slice(0, 200)}`);
+  } catch (err) {
+    // An abandoned multipart upload keeps billing for stored parts — always
+    // abort on the way out of a failed upload.
+    await s3Request(cfg, 'DELETE', key, undefined, 'application/octet-stream', new URLSearchParams({ uploadId })).catch(() => undefined);
+    throw err;
+  }
+}
+
 /** GET an object as bytes. */
 export async function s3Get(cfg: S3Config, key: string): Promise<Buffer> {
   const res = await s3Request(cfg, 'GET', key);
   if (!res.ok) throw new Error(`S3 download failed (${res.status})`);
   return Buffer.from(await res.arrayBuffer());
+}
+
+/**
+ * GET an object straight to a file — the response stream is piped to disk
+ * so a multi-GB restore never enters the heap.
+ */
+export async function s3GetToFile(cfg: S3Config, key: string, filePath: string): Promise<void> {
+  const res = await s3Request(cfg, 'GET', key);
+  if (!res.ok) throw new Error(`S3 download failed (${res.status})`);
+  if (!res.body) {
+    const { writeFileSync } = await import('node:fs');
+    writeFileSync(filePath, '', { mode: 0o600 });
+    return;
+  }
+  const { createWriteStream } = await import('node:fs');
+  const { Readable } = await import('node:stream');
+  const { pipeline } = await import('node:stream/promises');
+  await pipeline(
+    Readable.fromWeb(res.body as unknown as import('node:stream/web').ReadableStream),
+    createWriteStream(filePath, { mode: 0o600 }),
+  );
 }
 
 /** DELETE an object; missing objects (404) are treated as success. */
