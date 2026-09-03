@@ -9,6 +9,24 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '0.6.0',
+    date: '2026-09-03',
+    title: 'Security Audit Fixes, Real Client IPs & Inline Compose Stacks',
+    changes: [
+      'Privilege escalation closed: a workspace member could wrap an operator-created PM2/compose service in a scheduled deploy job and reach host command execution on a cron; scheduled deploys now authorize against the service owner exactly like manual and webhook deploys',
+      'Real client IPs behind Traefik: without trusting the proxy hop, every rate-limit bucket and audit row collapsed onto the proxy\'s container IP — one tenant could 429 logins and webhooks instance-wide; NINEDEPLOY_TRUST_PROXY (default 1 hop, false for direct exposure) fixes the keying',
+      'Production dependency advisories cleared: fast-uri (8 HIGH, SSRF/host confusion via fastify\'s ajv chain) and qs (2 MODERATE, DoS via the MCP SDK\'s express edge) are pinned past their vulnerable ranges — pnpm audit --prod is clean',
+      'Editing an env var no longer corrupts secrets: inline saves silently flipped isSecret to false and a typed character overwrote the stored value; the classification is preserved and failures surface as toasts',
+      'Self-update no longer crashes the panel: on hosts without /bin/bash the detached updater spawn emitted an uncaught error event mid-request; the failure is now recorded as a finished, failed update',
+      'Backups: system export snapshots SQLite with VACUUM INTO (taring the live file could produce unrestorable archives), remote S3 transfers stream (multi-GB dumps no longer buffer in the panel\'s heap), MySQL/MariaDB dumps run --single-transaction (no table locks on live databases), and failed scheduled backups land a failed row plus a notification instead of a log line',
+      'Inline Compose stacks: paste YAML instead of cloning — schema-validated (type: compose, mutual exclusion with repoUrl), server-side preflight and dry-run preview, the workspace is re-materialised before every deploy, and a Compose tab offers Save / Save & redeploy',
+      'Webhook hardening: replayed provider deliveries are rejected via a 24h delivery-id dedup, and PR preview creation survives the slug race instead of 500ing into provider redelivery',
+      'CLI sessions survive past 15 minutes: the refresh token is persisted and 401s retry through a single-flight refresh; server URLs default to https for non-loopback hosts and the JWT secret moves off docker run argv into a 0600 env-file',
+      'Panel reliability: deploy logs keep a bounded tail (the per-message re-join froze tabs on multi-MB builds) with stream reconnect, the terminal session survives the fullscreen toggle, storage-denied reads no longer corrupt auth state, and /v1/auth/token answers again',
+      'Ops: CI publishes :edge only after tests pass (and the release prune no longer deletes it), services.slug is globally unique at the database level after a one-time dedup, FK indexes replace hot-path full scans, and the schema-drift guard can actually fail',
+    ],
+  },
+  {
     version: '0.5.3',
     date: '2026-09-03',
     title: 'Production ESM Repairs & Working Build Caches',
