@@ -31,9 +31,12 @@ describe('serverRunner', () => {
       expect(normalizeServerUrl('   ')).toBe('http://localhost:3000');
     });
 
-    it('adds http:// if protocol is missing', () => {
+    it('adds http:// for loopback hosts, https:// for anything else', () => {
       expect(normalizeServerUrl('localhost:3000')).toBe('http://localhost:3000');
-      expect(normalizeServerUrl('192.168.1.10:3000')).toBe('http://192.168.1.10:3000');
+      // Non-loopback hosts default to https: the bearer token must not ride
+      // plaintext HTTP to a remote host. LAN-IP users can type http:// explicitly.
+      expect(normalizeServerUrl('192.168.1.10:3000')).toBe('https://192.168.1.10:3000');
+      expect(normalizeServerUrl('panel.example.com')).toBe('https://panel.example.com');
     });
 
     it('preserves existing https:// and strips trailing slashes', () => {

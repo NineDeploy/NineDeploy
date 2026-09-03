@@ -162,7 +162,16 @@ program
   .option('-s, --server <url>', 'Set server URL')
   .action((opts: { server?: string }) => {
     if (opts.server) {
-      saveConfig({ baseUrl: opts.server, token: loadConfig().token });
+      const cfg = loadConfig();
+      // Tokens are issuer-scoped: carrying credentials (especially the
+      // refresh token) across a server switch would replay server A's
+      // bearer at B. Keep them only when the URL is genuinely unchanged.
+      const same = cfg.baseUrl === opts.server;
+      saveConfig({
+        baseUrl: opts.server,
+        token: same ? cfg.token : undefined,
+        refreshToken: same ? cfg.refreshToken : undefined,
+      });
       console.log(`  ✓ Server set to ${opts.server}`);
     } else {
       const cfg = loadConfig();

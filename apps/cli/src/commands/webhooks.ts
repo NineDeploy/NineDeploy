@@ -1,4 +1,3 @@
-import process from 'node:process';
 import type { NineDeployClient } from '../client.js';
 import { prompt } from '../prompts.js';
 import { c, error, header, info, kv, spinner, success, table } from '../lib/format.js';
@@ -91,6 +90,4 @@ export async function webhooksShow(client: NineDeployClient, svcArg: string, hoo
   kv('Watch paths', w.watchPaths || c.gray('— (all files)'));
   kv('URL', w.url);
   kv('Created', w.createdAt);
-  // Suppress the unused import warning when process is referenced via prompts only
-  void process;
 }

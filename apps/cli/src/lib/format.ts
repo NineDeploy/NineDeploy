@@ -57,20 +57,34 @@ ${MAGENTA}╚${'═'.repeat(44)}╝${RESET}`;
 
 /** Simple spinner that shows a message while a promise resolves. */
 export async function spinner<T>(msg: string, fn: () => Promise<T>): Promise<T> {
+  // Piped/CI stdout is not a TTY: `\r`-frames would smear braille garbage
+  // through captured logs. Non-TTY output stays to a single plain line.
+  const isTTY = process.stdout.isTTY === true;
   const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
   let i = 0;
-  const interval = setInterval(() => {
-    process.stdout.write(`\r${CYAN}${frames[i % frames.length]}${RESET} ${msg}...`);
-    i++;
-  }, 80);
+  const interval = isTTY
+    ? setInterval(() => {
+        process.stdout.write(`\r${CYAN}${frames[i % frames.length]}${RESET} ${msg}...`);
+        i++;
+      }, 80)
+    : null;
+  if (!isTTY) process.stdout.write(`${msg}... `);
   try {
     const result = await fn();
-    clearInterval(interval);
-    process.stdout.write(`\r${GREEN}✓${RESET} ${msg}\n`);
+    clearInterval(interval ?? undefined);
+    if (isTTY) {
+      process.stdout.write(`\r${GREEN}✓${RESET} ${msg}\n`);
+    } else {
+      process.stdout.write(`✓\n`);
+    }
     return result;
   } catch (err) {
-    clearInterval(interval);
-    process.stdout.write(`\r${RED}✗${RESET} ${msg}\n`);
+    clearInterval(interval ?? undefined);
+    if (isTTY) {
+      process.stdout.write(`\r${RED}✗${RESET} ${msg}\n`);
+    } else {
+      process.stdout.write(`✗\n`);
+    }
     throw err;
   }
 }

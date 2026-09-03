@@ -1,8 +1,12 @@
 import { execFile } from 'node:child_process';
 import crypto from 'node:crypto';
+import { promises as fs } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
+const randomBytes = crypto.randomBytes.bind(crypto);
 
 export interface ServerRunnerOptions {
   port?: number | string;
@@ -22,7 +26,14 @@ export interface ContainerState {
 export function normalizeServerUrl(rawUrl: string): string {
   const trimmed = rawUrl.trim();
   if (!trimmed) return 'http://localhost:3000';
-  const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
+  // Scheme-less input defaults to http for localhost, https elsewhere — a
+  // bare "panel.example.com" is almost certainly TLS-terminated, and the
+  // bearer token must not ride plaintext HTTP to a remote host.
+  const withProtocol = /^https?:\/\//i.test(trimmed)
+    ? trimmed
+    : /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i.test(trimmed)
+      ? `http://${trimmed}`
+      : `https://${trimmed}`;
   return withProtocol.replace(/\/+$/, '');
 }
 
@@ -107,6 +118,11 @@ export async function startServerContainer(
     }
   }
 
+  // The JWT secret travels via --env-file (0600 temp file), NOT `-e` argv:
+  // values passed as `-e NAME=value` stay visible in `ps` and `docker inspect`
+  // forever, while the env file exists only for the duration of `docker run`.
+  const envFile = join(tmpdir(), `nd_env_${randomBytes(8).toString('hex')}`);
+  await fs.writeFile(envFile, `NINEDEPLOY_JWT_SECRET=${secret}\n`, { mode: 0o600 });
   const args = [
     'run',
     '-d',
@@ -118,8 +134,8 @@ export async function startServerContainer(
     'ninedeploy-data:/data',
     '-p',
     `${port}:3000`,
-    '-e',
-    `NINEDEPLOY_JWT_SECRET=${secret}`,
+    '--env-file',
+    envFile,
     '-e',
     'NINEDEPLOY_PORT=3000',
     image,
@@ -130,6 +146,8 @@ export async function startServerContainer(
     return { port, newlyCreated: true };
   } catch (err) {
     throw new Error(formatDockerError(err));
+  } finally {
+    await fs.unlink(envFile).catch(() => undefined);
   }
 }
 

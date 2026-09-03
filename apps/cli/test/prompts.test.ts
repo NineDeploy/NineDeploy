@@ -266,4 +266,78 @@ describe('promptHidden line framing (r024)', () => {
     await expect(pw).resolves.toBe('secret');
     await expect(name).resolves.toBe('admin');
   });
+
+  it('strips the LF of a CRLF paste tail so later answers do not shift', async () => {
+    const { promptHidden, prompt } = await loadFramer();
+    const stdin = makeStdin(false);
+    stubStdin(stdin);
+
+    const pw = promptHidden('Password');
+    await flushed();
+    await waitForLabel('Password');
+    const name = prompt('Name');
+    await flushed();
+    await waitForLabel('Name');
+    // Windows paste: \r\n terminators. The hidden prompt consumes up to \r;
+    // the tail starts with \n, which must not queue a spurious empty line.
+    stdin.emit('data', 'secret\r\nadmin\r\n');
+    await expect(pw).resolves.toBe('secret');
+    await expect(name).resolves.toBe('admin');
+  });
+
+  it('swallows arrow-key CSI sequences instead of leaking their bytes', async () => {
+    const { promptHidden } = await loadFramer();
+    const stdin = makeStdin(true);
+    stubStdin(stdin);
+
+    const pw = promptHidden('Password');
+    await flushed();
+    await waitForLabel('Password');
+    // Up arrow pressed twice, then the actual value.
+    stdin.emit('data', '\u001b[A\u001b[B');
+    stdin.emit('data', 'real');
+    stdin.emit('data', '\r');
+    await expect(pw).resolves.toBe('real');
+    // The sequence bytes must never have echoed as stars.
+    expect(stdoutWrite).not.toHaveBeenCalledWith('*'.repeat(2));
+  });
+
+  it('swallows a two-byte Alt-chord (ESC + printable) without storing either byte', async () => {
+    const { promptHidden } = await loadFramer();
+    const stdin = makeStdin(true);
+    stubStdin(stdin);
+
+    const pw = promptHidden('Password');
+    await flushed();
+    await waitForLabel('Password');
+    stdin.emit('data', '\u001bx'); // Alt-x chord — both bytes dropped
+    stdin.emit('data', 'x');
+    stdin.emit('data', '\r');
+    await expect(pw).resolves.toBe('x');
+  });
+});
+
+describe('stdin swap', () => {
+  it('detaches listeners from the old stream so stale data cannot pollute', async () => {
+    const { prompt } = await loadFramer();
+    const first = makeStdin(false);
+    stubStdin(first);
+
+    const done = prompt('First');
+    await flushed();
+    await waitForLabel('First');
+    first.emit('data', 'one\n');
+    await expect(done).resolves.toBe('one');
+
+    // A fresh fake stdin (as a test suite re-stubs per case) must re-arm on
+    // the new object AND fully detach the old one.
+    const second = makeStdin(false);
+    stubStdin(second);
+    const next = prompt('Second');
+    await flushed();
+    await waitForLabel('Second');
+    second.emit('data', 'fresh\n'); // the real answer on the new stream
+    first.emit('data', 'stale\n'); // late data on the OLD stream
+    await expect(next).resolves.toBe('fresh');
+  });
 });

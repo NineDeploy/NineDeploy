@@ -97,13 +97,18 @@ describe('dbCreate', () => {
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Connection:'));
   });
 
-  it('falls back to postgres for an unknown engine choice', async () => {
+  it('errors on an unknown engine choice instead of silently provisioning postgres', async () => {
     const create = vi.fn().mockResolvedValue({ id: 1, name: 'db1' });
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     h.prompt.mockResolvedValueOnce('db1').mockResolvedValueOnce('99');
 
     await dbCreate({ databases: { create } } as never);
 
-    expect(create).toHaveBeenCalledWith({ name: 'db1', engine: 'postgres' });
+    // A fat-fingered number used to create a PostgreSQL database the user
+    // never asked for — it must refuse and create nothing.
+    expect(create).not.toHaveBeenCalled();
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('Unknown engine selection'));
+    errSpy.mockRestore();
   });
 
   it('skips the connection string when absent', async () => {

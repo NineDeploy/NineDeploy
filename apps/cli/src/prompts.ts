@@ -18,6 +18,9 @@ let lineBuffer: string[] = [];
 let pendingTail = '';
 let eof = false;
 let wiredStdin: unknown = null;
+/** The exact handler references `attach()` registered on the current stdin. */
+let wiredData: ((chunk: string) => void) | null = null;
+let wiredEnd: (() => void) | null = null;
 
 interface LineWaiter {
   deliver: (line: string) => void;
@@ -55,8 +58,13 @@ function flushLineWaiters(): void {
 }
 
 function detach(oldStdin: NodeJS.ReadStream): void {
-  oldStdin.removeListener('data', handleData);
-  oldStdin.removeListener('end', handleEnd);
+  // Remove the same function references `attach()` registered — removing
+  // different closures would be a silent no-op and leave live listeners on a
+  // swapped-out stream.
+  if (wiredData) oldStdin.removeListener('data', wiredData);
+  if (wiredEnd) oldStdin.removeListener('end', wiredEnd);
+  wiredData = null;
+  wiredEnd = null;
 }
 
 /**
@@ -76,14 +84,16 @@ function attach(): void {
   hiddenWaiter = null;
   hiddenOnEnd = null;
   stdin.setEncoding('utf8');
-  stdin.on('data', (chunk: string) => {
+  wiredData = (chunk: string) => {
     if (hiddenWaiter) hiddenWaiter(chunk);
     else handleData(chunk);
-  });
-  stdin.once('end', () => {
+  };
+  wiredEnd = () => {
     if (hiddenOnEnd) hiddenOnEnd();
     else handleEnd();
-  });
+  };
+  stdin.on('data', wiredData);
+  stdin.once('end', wiredEnd);
   stdin.resume();
 }
 
@@ -142,13 +152,41 @@ export function promptHidden(message: string): Promise<string> {
       hiddenWaiter = null;
       hiddenOnEnd = null;
     };
+    // Escape-sequence decoding state, carried across chunks: terminal control
+    // keys (arrows, Home, F1…) arrive as e.g. \x1b[A or \x1bOP — without
+    // decoding them, the printable bytes of the sequence would leak into the
+    // stored value.
+    let escaped = false;
+    let inCsi = false;
     hiddenWaiter = (chunk: string) => {
       for (let i = 0; i < chunk.length; i++) {
         const code = chunk.charCodeAt(i);
-        if (code === 13 || code === 10) {
+        if (escaped) {
+          escaped = false;
+          if (code >= 32 && code <= 126) {
+            // '[' opens a CSI sequence; any other printable byte opens a
+            // two-byte SS3-style sequence (function keys). Swallow the whole
+            // sequence. A control byte instead means the bare Escape key was
+            // pressed — fall through so Enter/Ctrl-C still work.
+            if (code === 91) inCsi = true;
+            continue;
+          }
+        }
+        if (inCsi) {
+          // CSI sequences end with a final byte in 0x40–0x7E.
+          if (code >= 64 && code <= 126) inCsi = false;
+          continue;
+        }
+        if (code === 27) {
+          escaped = true;
+        } else if (code === 13 || code === 10) {
           // Enter — deliver the hidden value; the rest of the chunk is the
-          // paste tail and must feed the line queue, not vanish (r024).
-          const rest = chunk.slice(i + 1);
+          // paste tail and must feed the line queue, not vanish (r024). A CRLF
+          // paste leaves a leading \n on that tail, which the framer would
+          // split into a spurious empty first line and shift every later
+          // answer — strip it here.
+          let rest = chunk.slice(i + 1);
+          if (code === 13 && rest.charCodeAt(0) === 10) rest = rest.slice(1);
           cleanup();
           process.stdout.write('\n');
           resolve(data);

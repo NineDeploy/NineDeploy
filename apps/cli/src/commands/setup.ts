@@ -60,7 +60,8 @@ export async function setupAction(): Promise<void> {
   const client = createClient({ baseUrl });
   try {
     const session = await client.auth.setup({ email, password, name });
-    saveConfig({ baseUrl, token: session.tokens.accessToken });
+    // Both tokens: the access token alone dies with the 15-minute TTL.
+    saveConfig({ baseUrl, token: session.tokens.accessToken, refreshToken: session.tokens.refreshToken });
     console.log(`✓ Admin account created: ${session.user.email}`);
     console.log('  Credentials saved — you are logged in.');
   } catch (err) {

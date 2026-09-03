@@ -554,15 +554,35 @@ describe('networks / sessions actions', () => {
 });
 
 describe('config action', () => {
-  it('sets a new server URL', async () => {
-    h.loadConfig.mockReturnValue({ baseUrl: 'http://old:3000', token: 'tok' });
+  it('clears credentials when the server URL changes (tokens are issuer-scoped)', async () => {
+    h.loadConfig.mockReturnValue({ baseUrl: 'http://old:3000', token: 'tok', refreshToken: 'rfr' });
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
     await loadIndex();
     await findCommand('config').actionFn!({ server: 'http://new:3000' });
 
-    expect(h.saveConfig).toHaveBeenCalledWith({ baseUrl: 'http://new:3000', token: 'tok' });
+    // The refresh token must NOT ride along to a different server — replaying
+    // server A's credentials at B is exactly the leak this guard closes.
+    expect(h.saveConfig).toHaveBeenCalledWith({
+      baseUrl: 'http://new:3000',
+      token: undefined,
+      refreshToken: undefined,
+    });
     expect(logSpy).toHaveBeenCalledWith('  ✓ Server set to http://new:3000');
+  });
+
+  it('keeps credentials when the server URL is unchanged', async () => {
+    h.loadConfig.mockReturnValue({ baseUrl: 'http://old:3000', token: 'tok', refreshToken: 'rfr' });
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await loadIndex();
+    await findCommand('config').actionFn!({ server: 'http://old:3000' });
+
+    expect(h.saveConfig).toHaveBeenCalledWith({
+      baseUrl: 'http://old:3000',
+      token: 'tok',
+      refreshToken: 'rfr',
+    });
   });
 
   it('shows the current server and token state', async () => {

@@ -22,6 +22,11 @@ export async function serverStartAction(opts: {
   }
 
   const port = Number(opts.port ?? 3000);
+  // `--port abc` used to mint `http://localhost:NaN` and a baffling docker
+  // error two steps later — validate where it is typed.
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    return error(`Invalid port: ${opts.port ?? 3000} (expected 1–65535)`);
+  }
   const containerName = opts.name ?? 'ninedeploy';
   const baseUrl = `http://localhost:${port}`;
 

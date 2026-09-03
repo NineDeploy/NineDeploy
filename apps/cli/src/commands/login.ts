@@ -24,7 +24,9 @@ export async function loginAction(): Promise<void> {
   const client = createClient({ baseUrl });
   try {
     const session = await client.auth.login({ email, password });
-    saveConfig({ baseUrl, token: session.tokens.accessToken });
+    // Both tokens: the access token alone dies with the 15-minute TTL and
+    // every scripted session used to die with it (client.ts now refreshes).
+    saveConfig({ baseUrl, token: session.tokens.accessToken, refreshToken: session.tokens.refreshToken });
     console.log(`✓ Logged in as ${session.user.email} (${session.user.isOperator ? 'operator' : 'member'})`);
   } catch (err) {
     if (err instanceof NineDeployError) {

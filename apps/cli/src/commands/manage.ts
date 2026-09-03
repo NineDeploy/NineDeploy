@@ -366,7 +366,9 @@ export async function backupsDrills(client: NineDeployClient, idStr: string): Pr
       engine: r.engine,
       status: r.status,
       durationMs: r.durationMs,
-      started: fmtTime(new Date(r.startedAt * 1000).toISOString()),
+      // The server serializes startedAt as epoch milliseconds (Date.getTime());
+      // scale defensively so a seconds-precision value still renders correctly.
+      started: fmtTime(new Date(r.startedAt < 1e12 ? r.startedAt * 1000 : r.startedAt).toISOString()),
       error: r.error ?? '',
     })),
     ['id', 'backup', 'engine', 'status', 'durationMs', 'started', 'error'],
@@ -508,8 +510,17 @@ export async function deploysWatch(serviceIdStr: string, deployIdStr: string, ti
     closed = true;
     info('Log stream closed.');
   });
-  ws.on('error', (err: Error) => error(`Stream error: ${err.message}`));
-  ws.on('unexpected-response', (_req, res) => error(`Stream rejected (${res.statusCode}).`));
+  // `close` normally follows `error`, but `unexpected-response` (handshake
+  // rejection) never reaches the close event on some ws versions — flag the
+  // loop here too or it spins to the hard cap printing nothing.
+  ws.on('error', (err: Error) => {
+    closed = true;
+    error(`Stream error: ${err.message}`);
+  });
+  ws.on('unexpected-response', (_req, res) => {
+    closed = true;
+    error(`Stream rejected (${res.statusCode}).`);
+  });
   // Exit when the server closes the stream (deploy finished) or on Ctrl-C.
   process.on('SIGINT', () => {
     closed = true;
