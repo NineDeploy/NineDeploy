@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { cacheRegistryBlobs, type DB } from '@ninedeploy/db';
 import type { BlobRef, IBuildCache } from '../types.js';
@@ -292,6 +293,5 @@ function parseMarker(blob: Buffer | Uint8Array): MarkerPayload | null {
 function placeholderHash(blob: Buffer | Uint8Array): string {
   // Deterministic placeholder digest for markers that do not already
   // carry one. Mirrors the inline driver's `digestFor` algorithm.
-  const { createHash } = require('node:crypto') as typeof import('node:crypto');
   return createHash('sha256').update(blob).digest('hex');
 }

@@ -15,6 +15,9 @@
  * infrastructure does, and the round-trip itself must actually run.
  */
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { createDb } from '@ninedeploy/db';
 import { RegistryBuildCache } from '../../src/kernel/drivers/registryBuildCache.js';
@@ -226,5 +229,40 @@ describe('RegistryBuildCache', () => {
 
     const ref = await cache.lookup(KEY);
     expect(ref, 'an overwritten tag must not surface the stale digest as a hit').toBeNull();
+  });
+
+  // r026 regression: the marker buildkit.ts actually stores can be
+  // `{ digest: RepoDigests[0] }` = `"<repo>@sha256:<hex>"` (runInspectDigest
+  // returns the raw string; only the digestOfString fallback is prefix-clean).
+  // parseMarker rejects a non-`sha256:`-prefixed digest, so that live shape
+  // lands on placeholderHash() — the branch that contained the lazy
+  // require('node:crypto'). It is a documented, deterministic fallback, not
+  // an error path, and must resolve (not reject) with the blob's own digest.
+  it('resolves the placeholder digest for a marker whose digest lacks the sha256: prefix (r026 regression)', async () => {
+    const blob = Buffer.from(
+      JSON.stringify({ digest: `registry.example.com/ninedeploy/app@${LAYER_DIGEST}`, ts: 1 }),
+    );
+    const stored = await newCache().store('ndbuild:prefixless', blob);
+    const hex = createHash('sha256').update(blob).digest('hex');
+    expect(stored.digest, 'a rejected marker must fall back to the blob digest, never reject').toBe(
+      `sha256:${hex}`,
+    );
+  });
+});
+
+// r026: same defect class as r007 (pgbouncer), r018 (oidc) and r025 (iptables
+// egress) — a lazy require() in this pure-ESM package ("type": "module", runs
+// as `node dist/server.js`) is a runtime ReferenceError in production while
+// vitest's module runner shims `require` and keeps the suite green. The real
+// fix is only provable outside vitest (leaf-compile + plain node), so the
+// durable in-suite catcher guards the SOURCE.
+describe('ESM purity (r026 regression)', () => {
+  it('registryBuildCache.ts contains no CJS require() call', () => {
+    const sourcePath = join(
+      dirname(fileURLToPath(import.meta.url)),
+      '../../src/kernel/drivers/registryBuildCache.ts',
+    );
+    const source = readFileSync(sourcePath, 'utf8');
+    expect(source).not.toMatch(/\brequire\s*\(/);
   });
 });
