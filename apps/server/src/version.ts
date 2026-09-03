@@ -1,4 +1,4 @@
-export const VERSION = '0.5.2';
+export const VERSION = '0.5.3';
 
 export interface ChangelogEntry {
   version: string;
@@ -8,6 +8,19 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.5.3',
+    date: '2026-09-03',
+    title: 'Production ESM Repairs & Working Build Caches',
+    changes: [
+      'OIDC login works in production again: RS256 verification pulled node:crypto through a lazy require() — undefined in the pure-ESM server package — so every production sign-in died with "require is not defined" while tests stayed green; the same class had silently killed the iptables egress driver\'s on-disk state layer and crashed RegistryBuildCache.store(). All three now use static imports',
+      'Remote build caches produce hits: the S3 backend\'s lookup demanded a metadata header on HEAD that store() cannot send, and the registry backend compared the cached layer digest against the manifest\'s own Docker-Content-Digest — both store→lookup round-trips always missed and --cache-from built cold every time; both now GET the marker and compare like-for-like',
+      'images prune --keep-last N actually prunes: retention groups were keyed by repo:tag (one image id each), so every group was a singleton and nothing was ever deleted; groups are now per repository',
+      'Email template overrides are scoped by workspace AND template name: a password-reset email could render with the workspace-invitation text, and deleting one override wiped the workspace\'s others',
+      'Live CPU and RAM on the databases pages: running databases show CPU + memory on the list cards and a Live Resources card in the detail view, polling every 3 seconds; redeploying a running service now asks for confirmation first',
+      'Also: exact-length hex magic secrets (SERVICE_PASSWORD_HEX_25 is 25 chars, HEX_1 no longer empty), YAML-ambiguous manifest scalars quoted so round-trips keep string types, monthly cron summaries refuse multi-day day-of-month expressions, PgBouncer status parses pool_mode from the rendered ini, and CLI multi-line pastes feed successive prompts in FIFO order',
+    ],
+  },
   {
     version: '0.5.2',
     date: '2026-09-02',

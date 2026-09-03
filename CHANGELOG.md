@@ -7,6 +7,94 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.5.3] - 2026-09-03
+
+> A production-hardening patch: the lazy `require()` class that only
+> crashed outside vitest is gone (OIDC login works in production again),
+> both remote build-cache backends can finally produce hits, image
+> retention actually prunes, and the databases pages show live CPU/RAM.
+
+### Added
+
+- **Live CPU and RAM for managed databases.** Running databases show a
+  live CPU + memory line on the list cards and a Live Resources card in
+  the detail view — CPU %, memory used against the configured
+  `memLimitMb` — polling the stats snapshot every 3 seconds while
+  visible.
+
+### Changed
+
+- **Redeploying a running service asks first.** The Deploy button on a
+  live service opens a confirmation dialog explaining the blue-green
+  behavior (the current version keeps serving until the new build
+  passes the healthcheck, then traffic swaps); idle, stopped or errored
+  services still deploy immediately.
+
+### Fixed
+
+- **OIDC login works in production again.** RS256 signature verification
+  pulled `node:crypto` through a lazy `require()` — undefined in the
+  pure-ESM server package — so every OIDC sign-in died with
+  `ReferenceError: require is not defined` in production while the unit
+  suite stayed green (vitest's module runner shims `require`). The
+  helpers now ride the module's static import, and the suite gains a
+  source-level ESM-purity guard.
+- **The same `require()` class killed two more production paths.** The
+  iptables egress driver's entire on-disk state layer (rehydrate,
+  persist, delete) threw and was swallowed by best-effort catches — boot
+  forgot every persisted rule, applied rules were never persisted, and
+  detach was a permanent no-op after a restart — and
+  `RegistryBuildCache.store()` crashed outright on every non-marker
+  digest with no catch to soften it. Both now use static `node:fs` /
+  `node:crypto` imports.
+- **Remote build caches can produce hits.** The S3 backend's `lookup()`
+  demanded a metadata header on HEAD that `store()` cannot send — the
+  digest only lives in the marker body — and the registry backend
+  compared the cached layer digest against HEAD's
+  `Docker-Content-Digest`, the digest of the manifest itself, which is
+  never equal. Both now GET the marker/manifest and compare
+  like-for-like, so store→lookup round-trips hit and `--cache-from`
+  stops building cold every time.
+- **`images prune --keep-last N` actually prunes.** Retention groups
+  were keyed by `repo:tag`, which maps to exactly one image id, so every
+  group was a singleton: `keepLast >= 1` protected the entire tagged
+  inventory and nothing was ever deleted on real hosts. Groups are now
+  keyed per repository, keeping the N newest versions per repo.
+- **Email template overrides stay per template.** The override lookup
+  filtered by workspace only, so once a workspace overrode a second
+  template, every render returned an arbitrary sibling override (a
+  password-reset email rendered with the workspace-invitation text) and
+  deleting one template's override wiped the workspace's others.
+  Lookups are now scoped by workspace AND template name, matching the
+  table's unique key.
+- **Magic hex secrets are exact-length.** `SERVICE_PASSWORD_HEX_25`
+  baked a 24-char key and `HEX_1` an empty secret, because the hex
+  generator computed `size / 2` bytes and Node silently truncates
+  fractional sizes. Generation now rounds up and slices to the exact
+  documented length; even sizes are byte-identical.
+- **Manifest formatting keeps string types.** `formatManifestYaml`
+  emitted plain scalars for any charset-safe string, so header values
+  like `true`, `8080` or `007` round-tripped as boolean/number and the
+  schema rejected the manifest the formatter itself produced. Quoting is
+  now self-verifying: a plain scalar ships only if js-yaml loads it back
+  as a string.
+- **Cron summaries refuse wrong monthlies.** `0 0 1,15 * *`,
+  `0 0 */7 * *` and `0 0 1-15 * *` were all summarized as "monthly on
+  the 1st at 00:00" — factually wrong, operator-facing. Multi-day
+  day-of-month expressions now fall through to null so the UI shows the
+  bare expression instead.
+- **PgBouncer status reports the real pool mode.** Status grepped a
+  container env var that is never set, through an invalid Go template,
+  so `poolMode` was always null while the sidecar ran; it now parses the
+  rendered `/etc/pgbouncer/pgbouncer.ini`.
+- **CLI multi-line pastes.** `prompt()`/`promptHidden()` split raw stdin
+  chunks on the first newline, collapsing multi-line pastes into one
+  value and dropping the tail after a hidden prompt's Enter; lines are
+  now framed and fed to successive prompts in FIFO order.
+- Misc: the SettingsTab privilege tests use the global 30s timeout
+  ceiling instead of a tighter per-file override that tripped on loaded
+  CI runners.
+
 ## [0.5.2] - 2026-09-02
 
 > UI polish release: the Hub template catalog drops its noisy per-app
