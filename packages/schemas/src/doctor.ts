@@ -16,6 +16,11 @@ export const doctorTargetType = z.enum([
   'service',
   'deployment',
   'host',
+  // Rows identified by a stored `slug` (see the invalid_slug finding).
+  'project',
+  'workspace',
+  'tunnel',
+  'oidc_provider',
 ]);
 export type DoctorTargetType = z.infer<typeof doctorTargetType>;
 
@@ -40,6 +45,13 @@ export const doctorFindingKind = z.enum([
   'service_runtime_desync',
   /** A deploy row stuck in queued/building far past any live window. */
   'stuck_deployment',
+  /**
+   * A stored `slug` that violates the canonical `slug` contract — legacy rows
+   * written before slugify was fixed (r028 stranded a trailing hyphen, r029 a
+   * one-character slug), or a hand-written `input.slug` the create route stored
+   * without re-validating. Such a row is a record its own API rejects on PATCH.
+   */
+  'invalid_slug',
 ]);
 export type DoctorFindingKind = z.infer<typeof doctorFindingKind>;
 
@@ -56,6 +68,13 @@ export const doctorActionKind = z.enum([
   'mark_database_error',
   'sync_service',
   'cancel_deployment',
+  /**
+   * Rewrite a stored `slug` that violates the canonical contract. Only offered
+   * for tables whose slug is NOT also a live Docker identity — renaming a
+   * service/database/tunnel row alone would desync it from its bridge,
+   * container and volume, so those findings stay advisory with a manual step.
+   */
+  'repair_slug',
 ]);
 export type DoctorActionKind = z.infer<typeof doctorActionKind>;
 

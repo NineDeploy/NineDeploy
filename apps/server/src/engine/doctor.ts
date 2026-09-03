@@ -1,10 +1,22 @@
 import type { DB } from '@ninedeploy/db';
-import { databases, deployments, serviceVolumeAttachments, services } from '@ninedeploy/db';
+import {
+  databases,
+  deployments,
+  oidcProviders,
+  projects,
+  serviceVolumeAttachments,
+  services,
+  tunnels,
+  workspaces,
+} from '@ninedeploy/db';
 import type {
   DoctorActionKind,
   DoctorFinding,
   DoctorReport,
+  DoctorTargetType,
 } from '@ninedeploy/schemas';
+import type { SlugRow, SlugTable } from '../lib/slugAudit.js';
+import { auditSlugRows, slugTableInfo } from '../lib/slugAudit.js';
 import { eq } from 'drizzle-orm';
 import { getDiskUsage, executeAutoPrune } from './autoPrune.js';
 import { removeVolume, startDatabase, volumeExists, volumeLabels } from './database.js';
@@ -353,6 +365,48 @@ export async function scanDoctor(db: DB): Promise<DoctorReport> {
     });
   }
 
+  // ── stored slugs that violate the canonical contract ────────────────────
+  // r028/r029 fixed slugify() for NEW rows; this catches rows already written
+  // by older builds. A stored slug the `slug` schema rejects is a record the
+  // API refuses to round-trip (PATCH of its own value 400s).
+  const slugRows = await Promise.all([
+    db.select({ id: services.id, slug: services.slug, name: services.name }).from(services),
+    db.select({ id: databases.id, slug: databases.slug, name: databases.name }).from(databases),
+    db.select({ id: tunnels.id, slug: tunnels.slug, name: tunnels.name }).from(tunnels),
+    db.select({ id: projects.id, slug: projects.slug, name: projects.name }).from(projects),
+    db.select({ id: workspaces.id, slug: workspaces.slug, name: workspaces.name }).from(workspaces),
+    db
+      .select({ id: oidcProviders.id, slug: oidcProviders.slug, name: oidcProviders.name })
+      .from(oidcProviders),
+  ]);
+  const slugTargets: Array<{ table: SlugTable; targetType: DoctorTargetType; rows: SlugRow[] }> = [
+    { table: 'services', targetType: 'service', rows: slugRows[0] },
+    { table: 'databases', targetType: 'database', rows: slugRows[1] },
+    { table: 'tunnels', targetType: 'tunnel', rows: slugRows[2] },
+    { table: 'projects', targetType: 'project', rows: slugRows[3] },
+    { table: 'workspaces', targetType: 'workspace', rows: slugRows[4] },
+    { table: 'oidc_providers', targetType: 'oidc_provider', rows: slugRows[5] },
+  ];
+  for (const { table, targetType, rows } of slugTargets) {
+    for (const v of auditSlugRows(table, rows)) {
+      finding({
+        id: `invalid_slug:${table}:${v.id}`,
+        kind: 'invalid_slug',
+        severity: 'warn',
+        title: `Invalid slug on ${slugTableInfo(table).label} #${v.id}`,
+        detail: v.dockerBound
+          ? // Not auto-repairable: the slug is also the live Docker identity.
+            // Rewriting the row alone would strand `nd-svc-<slug>-data` (which
+            // holds the service's real data) and its bridge under the old name.
+            `${slugTableInfo(table).label} #${v.id} stores slug ${JSON.stringify(v.current)} (${v.reason}), which the canonical slug contract rejects. This slug is also the container/bridge/volume name, so it cannot be renamed by the Doctor without orphaning live storage — rename the ${slugTableInfo(table).label} so its slug is regenerated, or correct it directly and recreate the bridge and volume under the new name.`
+          : `${slugTableInfo(table).label} #${v.id} stores slug ${JSON.stringify(v.current)} (${v.reason}), which the canonical slug contract rejects. Repair rewrites it to ${JSON.stringify(v.recommended)}.`,
+        target: { type: targetType, name: v.current, id: v.id },
+        // Only DB-only identifiers get an automated repair.
+        action: v.dockerBound || v.recommended === null ? null : 'repair_slug',
+      });
+    }
+  }
+
   const totals = {
     findings: findings.length,
     critical: findings.filter((f) => f.severity === 'critical').length,
@@ -479,6 +533,49 @@ export async function fixDoctorFinding(
       }
       await db.update(services).set({ status: 'error' }).where(eq(services.id, id));
       collect(`service "${row.name}" synced to error — redeploy it from the service page`);
+      break;
+    }
+    case 'repair_slug': {
+      // finding.id is `invalid_slug:<table>:<rowId>`. Re-derive the target from
+      // the id and re-audit from FRESH rows, so a stale report can never write
+      // a slug that has meanwhile become valid (or collide with a new sibling).
+      const parts = finding.id.split(':');
+      const table = parts[1] as SlugTable | undefined;
+      const rowId = Number(parts[2]);
+      if (!table || !Number.isInteger(rowId)) throw new Error(`malformed invalid_slug id: ${finding.id}`);
+      // Only pure-DB identifiers are repairable here. A service/database/tunnel
+      // slug is also its bridge/container/volume name, so rewriting the row
+      // would orphan live storage — those findings carry action: null and can
+      // never reach this branch, but the target list below is the real gate.
+      const targets: Array<{ table: SlugTable; load: () => Promise<SlugRow[]>; write: (slug: string) => Promise<void> }> = [
+        {
+          table: 'projects',
+          load: () => db.select({ id: projects.id, slug: projects.slug, name: projects.name }).from(projects),
+          write: (slug) => db.update(projects).set({ slug }).where(eq(projects.id, rowId)).then(() => undefined),
+        },
+        {
+          table: 'workspaces',
+          load: () => db.select({ id: workspaces.id, slug: workspaces.slug, name: workspaces.name }).from(workspaces),
+          write: (slug) => db.update(workspaces).set({ slug }).where(eq(workspaces.id, rowId)).then(() => undefined),
+        },
+        {
+          table: 'oidc_providers',
+          load: () => db.select({ id: oidcProviders.id, slug: oidcProviders.slug, name: oidcProviders.name }).from(oidcProviders),
+          write: (slug) => db.update(oidcProviders).set({ slug }).where(eq(oidcProviders.id, rowId)).then(() => undefined),
+        },
+      ];
+      const target = targets.find((t) => t.table === table);
+      if (!target) {
+        throw conflict(`${table} slugs name live Docker objects and cannot be repaired by renaming the row alone.`);
+      }
+      const rows = await target.load();
+      const fresh = auditSlugRows(table, rows).find((v) => v.id === rowId);
+      if (!fresh) throw conflict(`${table} #${rowId} no longer holds an invalid slug — re-scan instead.`);
+      if (fresh.recommended === null) {
+        throw conflict(`${table} #${rowId} has no collision-free replacement slug — fix it manually.`);
+      }
+      await target.write(fresh.recommended);
+      collect(`${table} #${rowId} slug ${JSON.stringify(fresh.current)} -> ${JSON.stringify(fresh.recommended)}`);
       break;
     }
     case 'cancel_deployment': {
