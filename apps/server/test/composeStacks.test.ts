@@ -145,6 +145,31 @@ describe('stack environment resolution', () => {
     expect(resolved.values.SERVICE_FQDN_APPWRITE).toBe('app-9.panel.dev');
   });
 
+  // r027 regression: the hex generator divided `size` by 2 for randomBytes, but
+  // node TRUNCATES a fractional size — so an odd-length token silently produced
+  // a short secret (`SERVICE_PASSWORD_HEX_25` → 24 chars) and `..._HEX_1` an
+  // EMPTY one, mid-deploy, with no error. Every pre-existing test masked this by
+  // injecting the `generate` seam or asserting only parseMagicToken output, so
+  // the real generateValue body had zero coverage. These cases run it, no seam.
+  it('generates exactly `size` hex chars for odd, even, and boundary lengths (r027)', () => {
+    const odd = resolveStackEnvironment('$SERVICE_PASSWORD_HEX_25', { publicUrl: 'https://x.test' });
+    expect(odd.values.SERVICE_PASSWORD_HEX_25, 'odd size must yield exactly 25 hex chars, never a truncated 24').toMatch(/^[0-9a-f]{25}$/);
+
+    const one = resolveStackEnvironment('$SERVICE_PASSWORD_HEX_1', { publicUrl: 'https://x.test' });
+    expect(one.values.SERVICE_PASSWORD_HEX_1, 'size 1 must yield one hex char — never the pre-fix empty secret').toMatch(/^[0-9a-f]$/);
+
+    const even = resolveStackEnvironment('$SERVICE_HEX_64', { publicUrl: 'https://x.test' });
+    expect(even.values.SERVICE_HEX_64, 'even sizes keep the documented char length (regression boundary)').toMatch(/^[0-9a-f]{64}$/);
+
+    // Sibling kinds that also consume `size` are untouched by the hex fix:
+    // randomString families already handled odd lengths (one byte per char), and
+    // REALBASE64_ keeps its own contract (N BYTES → ceil(N/3)*4 base64 chars).
+    const mix = resolveStackEnvironment('$SERVICE_PASSWORD_25_A $SERVICE_REALBASE64_32_B', { publicUrl: 'https://x.test' });
+    expect(mix.values.SERVICE_PASSWORD_25_A).toMatch(/^[0-9a-zA-Z]{25}$/);
+    expect(mix.values.SERVICE_REALBASE64_32_B, '32 bytes encode to 44 base64 chars').toHaveLength(44);
+    expect(mix.values.SERVICE_REALBASE64_32_B).toMatch(/^[0-9a-zA-Z+/]+={0,2}$/);
+  });
+
   it('normalizes compose service names like the upstream router', () => {
     expect(composeServiceKey('supabase-kong')).toBe('SUPABASEKONG');
     expect(composeServiceKey('app.writer')).toBe('APP_WRITER');

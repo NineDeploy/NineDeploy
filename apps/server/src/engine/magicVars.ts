@@ -152,8 +152,14 @@ function generateValue(spec: ParsedMagicToken): string {
       return randomString(spec.size ?? 64);
     case 'realBase64':
       return randomBytes(spec.size ?? 32).toString('base64');
-    case 'hex':
-      return randomBytes((spec.size ?? 32) / 2).toString('hex');
+    case 'hex': {
+      // `size` is the HEX-CHAR count, not bytes (the even sizes prove it: 32 →
+      // 16 bytes → 32 chars). node truncates a fractional randomBytes size, so
+      // a bare size/2 silently shortened odd secrets (25 → 24 chars) and made
+      // HEX_1 an empty secret — generate ceil(n/2) bytes and take n chars.
+      const chars = spec.size ?? 32;
+      return randomBytes(Math.ceil(chars / 2)).toString('hex').slice(0, chars);
+    }
     default:
       throw new Error(`magic token ${spec.raw} needs a public URL, not a generated value`);
   }
