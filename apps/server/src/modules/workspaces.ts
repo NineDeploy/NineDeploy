@@ -23,7 +23,7 @@ import {
 import { audit } from '../lib/audit.js';
 import { badRequest, conflict, forbidden, notFound, parseId } from '../lib/errors.js';
 import { iso } from '../lib/serialize.js';
-import { slugify } from '../lib/slug.js';
+import { slugify, slugifyWithSuffix } from '../lib/slug.js';
 import { createOrRefreshInvitation, buildAcceptUrl, buildInviteEmail } from './invitations.js';
 import { sendSystemEmail } from '../lib/notifier.js';
 
@@ -83,7 +83,7 @@ export async function ensureDefaultWorkspace(
   let slug = slugify(baseName);
   const conflictCheck = await db.query.workspaces.findFirst({ where: eq(workspaces.slug, slug) });
   if (conflictCheck) {
-    slug = `${slug}-${user.id}`;
+    slug = slugifyWithSuffix(baseName, String(user.id));
   }
 
   const [ws] = await db

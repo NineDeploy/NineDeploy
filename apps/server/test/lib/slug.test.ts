@@ -1,6 +1,6 @@
 ﻿import { describe, expect, it } from 'vitest';
 import { createProject, createService, slug, updateService } from '@ninedeploy/schemas';
-import { slugify } from '../../src/lib/slug.js';
+import { slugify, slugifyWithSuffix } from '../../src/lib/slug.js';
 
 describe('slugify', () => {
   it('lowercases and trims input', () => {
@@ -123,5 +123,98 @@ describe('slugify', () => {
       expect(slugify('!!!')).toBe('service');
       expect(slugify('   ')).toBe('service');
     });
+  });
+});
+
+// r032 regression: the collision-suffix callers append `-<n>` to an ALREADY
+// truncated 63-char base and persist the result verbatim — services.ts:782/785
+// (clone loop), serviceMigration.ts:129, composeStacks.ts:137/146 and
+// workspaces.ts:86. A service whose slug is 62-63 chars collides with its own
+// clone's re-derived base ("<name> (Copy)" clips away at the cap), so the
+// suffix push stored 64-72 char slugs the canonical `slug` schema rejects —
+// the same generator↔validator pairing gap as r028/r029, now on the suffix
+// paths. slugifyWithSuffix reserves room for the suffix BEFORE truncating and
+// re-runs the join through slugify, so the result stays canonical even when
+// the cut lands on a hyphen or the suffix carries base64url separators.
+describe('slugifyWithSuffix', () => {
+  // slugify(NAME) is 62 chars — and a service with this name OCCUPIES that
+  // slug, which is exactly what makes its own clone's base collide.
+  const NAME = 'Customer Data Platform Integration Service - staging environment alpha';
+  const BASE = slugify(NAME);
+
+  it('appends verbatim for short names (byte-identical to the old append)', () => {
+    expect(slugifyWithSuffix('my-app', 'xyz')).toBe('my-app-xyz');
+    expect(slugifyWithSuffix('my-app', '1')).toBe('my-app-1');
+  });
+
+  it('keeps a max-length base plus counter suffix within the canonical cap', () => {
+    for (const suffix of ['1', '9', '10', '50']) {
+      const out = slugifyWithSuffix(BASE, suffix);
+      expect(out.length, `suffix -${suffix} produced ${out.length} chars`).toBeLessThanOrEqual(63);
+      expect(out.endsWith(`-${suffix}`), `suffix -${suffix} was not preserved verbatim`).toBe(true);
+      expect(slug.safeParse(out).success, `slug schema rejected ${JSON.stringify(out)}`).toBe(true);
+    }
+  });
+
+  it('keeps the 8-char Date.now().toString(36) escape suffix within the cap', () => {
+    const stamp = Date.now().toString(36);
+    const out = slugifyWithSuffix(BASE, stamp);
+    expect(out.length).toBeLessThanOrEqual(63);
+    expect(out.endsWith(`-${stamp}`)).toBe(true);
+    expect(slug.safeParse(out).success).toBe(true);
+  });
+
+  it('normalises base64url token suffixes to the canonical shape', () => {
+    // composeStacks.ts:146 rerolls with randomToken(3).slice(0, 4), whose
+    // alphabet includes '_' and '-' — both illegal in a stored slug.
+    const out = slugifyWithSuffix(BASE, 'ab_c');
+    expect(out).not.toContain('_');
+    expect(out.length).toBeLessThanOrEqual(63);
+    expect(slug.safeParse(out).success).toBe(true);
+  });
+
+  it('stays canonical when the truncated base ends in a hyphen', () => {
+    // 'x'.repeat(59) + '-y' slugifies to 61 chars; a '-1' suffix reserves 61
+    // chars of room, so the base cut lands exactly ON the separator. The
+    // join then carries a double dash, which the final slugify() run must
+    // collapse instead of storing 'xx…--1'.
+    const spiky = slugify(`${'x'.repeat(59)}-y`);
+    for (const suffix of ['1', '22', '333']) {
+      const out = slugifyWithSuffix(spiky, suffix);
+      expect(out.endsWith('-'), `trailing hyphen stranded with suffix -${suffix}`).toBe(false);
+      expect(out, `double hyphen left behind with suffix -${suffix}`).not.toContain('--');
+      expect(slug.safeParse(out).success).toBe(true);
+    }
+  });
+
+  it('preserves uniqueness: distinct suffixes never collapse onto one slug', () => {
+    const outs = ['1', '2', '3'].map((n) => slugifyWithSuffix(BASE, n));
+    expect(new Set(outs).size).toBe(3);
+    for (const out of outs) expect(out).not.toBe(BASE);
+  });
+
+  it('degenerate suffixes still yield a canonical slug', () => {
+    // A token of pure separators slugifies to ''; the result must remain a
+    // legal slug rather than growing an orphan separator.
+    const out = slugifyWithSuffix(BASE, '___');
+    expect(slug.safeParse(out).success).toBe(true);
+    // A pathological suffix is capped instead of squeezing the base away.
+    const huge = slugifyWithSuffix('my-app', 'z'.repeat(80));
+    expect(huge.length).toBeLessThanOrEqual(63);
+    expect(slug.safeParse(huge).success).toBe(true);
+  });
+
+  it('pins the generator↔validator pair on the real clone-loop shape', () => {
+    // Deterministic clone trigger: the source occupies BASE; the default
+    // clone name re-derives it; the loop stores base + '-1'. The persisted
+    // value must satisfy the same schema the API validates slug with.
+    let newSlug = slugify(`${NAME} (Copy)`);
+    expect(newSlug).toBe(BASE); // the collision the r032 proof turned on
+    let counter = 1;
+    while (counter <= 3) {
+      newSlug = slugifyWithSuffix(`${NAME} (Copy)`, String(counter++));
+      const back = updateService.safeParse({ slug: newSlug });
+      expect(back.success, `updateService rejected clone slug ${newSlug}`).toBe(true);
+    }
   });
 });

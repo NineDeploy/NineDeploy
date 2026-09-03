@@ -25,7 +25,7 @@ import { loadServiceForUser } from '../lib/serviceAccess.js';
 import { assertServiceRole, visibleServiceIdSet } from '../lib/resourceAccess.js';
 import { assertMayUseHostPrivilege } from '../lib/hostPrivilege.js';
 import { assertMayPublishPort } from '../lib/hostPort.js';
-import { slugify } from '../lib/slug.js';
+import { slugify, slugifyWithSuffix } from '../lib/slug.js';
 import { composeBuilder } from '../engine/builders/compose.js';
 import { dockerBuilder } from '../engine/builders/docker.js';
 import { pm2Builder, pm2Logs, pm2Restart, pm2Start, pm2Stop } from '../engine/builders/pm2.js';
@@ -779,10 +779,10 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
     let counter = 1;
     while (await app.db.query.services.findFirst({ where: eq(services.slug, newSlug) })) {
       if (counter > 50) {
-        newSlug = `${slugify(newName)}-${Date.now().toString(36)}`;
+        newSlug = slugifyWithSuffix(newName, Date.now().toString(36));
         break;
       }
-      newSlug = `${slugify(newName)}-${counter++}`;
+      newSlug = slugifyWithSuffix(newName, String(counter++));
     }
 
     const [created] = await app.db

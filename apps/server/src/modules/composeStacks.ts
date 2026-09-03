@@ -5,7 +5,7 @@ import { eq } from 'drizzle-orm';
 import type { ComposePreviewResponse } from '@ninedeploy/schemas';
 import { badRequest } from '../lib/errors.js';
 import { randomToken } from '../lib/crypto.js';
-import { slugify } from '../lib/slug.js';
+import { slugify, slugifyWithSuffix } from '../lib/slug.js';
 import { config } from '../config.js';
 import { materialiseComposeFile } from '../lib/composeWorkspace.js';
 import { getAcmeEmail } from '../engine/proxy.js';
@@ -134,7 +134,7 @@ export async function prepareComposeStack(
   if (!pre.ok) throw badRequest(`Template compose definition cannot run here: ${pre.reasons.join('; ')}`);
 
   const name = input.name ?? template.name;
-  const requestedSlug = input.name ? slugify(name) : `${slugify(template.name)}-${Date.now().toString(36).slice(-4)}`;
+  const requestedSlug = input.name ? slugify(name) : slugifyWithSuffix(template.name, Date.now().toString(36).slice(-4));
 
   let slug = requestedSlug;
   let service = await app.db.query.services.findFirst({ where: eq(services.slug, slug) });
@@ -143,7 +143,7 @@ export async function prepareComposeStack(
     // an invisible owner's slug by allocating a fresh one, never by leaking.
     let attempt = 0;
     do {
-      slug = `${requestedSlug}-${randomToken(3).slice(0, 4)}`;
+      slug = slugifyWithSuffix(requestedSlug, randomToken(3).slice(0, 4));
       service = await app.db.query.services.findFirst({ where: eq(services.slug, slug) });
     } while (service && ++attempt < 5);
     if (service) throw badRequest('Could not allocate a free service slug — try a different name');

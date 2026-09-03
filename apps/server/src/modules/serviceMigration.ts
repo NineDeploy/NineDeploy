@@ -6,7 +6,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { envVarName } from '@ninedeploy/schemas';
 import { decrypt, encrypt } from '../lib/crypto.js';
 import { badRequest, notFound, parseId as num } from '../lib/errors.js';
-import { slugify } from '../lib/slug.js';
+import { slugify, slugifyWithSuffix } from '../lib/slug.js';
 import { materialiseComposeFile } from '../lib/composeWorkspace.js';
 
 interface ServiceBundle {
@@ -126,7 +126,7 @@ export const serviceMigrationRoutes: FastifyPluginAsync = async (app) => {
     };
 
     // Unique slug to avoid conflicts
-    const slug = `${slugify(bundle.service.name)}-${Date.now().toString(36).slice(-4)}`;
+    const slug = slugifyWithSuffix(bundle.service.name, Date.now().toString(36).slice(-4));
 
     const [svc] = await app.db.insert(services).values({
       name: bundle.service.name,
