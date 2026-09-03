@@ -7,6 +7,7 @@ import { envVarName } from '@ninedeploy/schemas';
 import { decrypt, encrypt } from '../lib/crypto.js';
 import { badRequest, notFound, parseId as num } from '../lib/errors.js';
 import { slugify } from '../lib/slug.js';
+import { materialiseComposeFile } from '../lib/composeWorkspace.js';
 
 interface ServiceBundle {
   version: string;
@@ -19,6 +20,10 @@ interface ServiceBundle {
     image: string | null;
     port: number | null;
     volumeMount: string | null;
+    /** Routed service of a compose stack, and — for an inline stack — its
+     * whole YAML, so the bundle can rebuild the workspace on the new host. */
+    composeService?: string | null;
+    composeContent?: string | null;
     healthPath: string;
     cpuShares: number;
     memLimitMb: number;
@@ -77,6 +82,8 @@ export const serviceMigrationRoutes: FastifyPluginAsync = async (app) => {
         image: svc.image,
         port: svc.port,
         volumeMount: svc.volumeMount,
+        composeService: svc.composeService,
+        composeContent: svc.composeContent,
         healthPath: svc.healthPath,
         cpuShares: svc.cpuShares,
         memLimitMb: svc.memLimitMb,
@@ -131,12 +138,17 @@ export const serviceMigrationRoutes: FastifyPluginAsync = async (app) => {
       image: bundle.service.image,
       port: bundle.service.port,
       volumeMount: bundle.service.volumeMount,
+      composeService: bundle.service.composeService ?? null,
+      composeContent: bundle.service.composeContent ?? null,
       healthPath: bundle.service.healthPath || '/',
       cpuShares: bundle.service.cpuShares || 0,
       memLimitMb: bundle.service.memLimitMb || 0,
       status: 'idle',
     }).returning();
     if (!svc) throw badRequest('Could not create service');
+    // An inline stack has no repository to clone, so its workspace has to be
+    // rebuilt from the bundle before the first deploy on this host.
+    if (svc.composeContent) materialiseComposeFile(svc.id, svc.composeContent);
 
     // Build config
     if (bundle.buildConfig) {

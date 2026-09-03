@@ -158,9 +158,9 @@ Full matrix — environment variables, upgrade paths, systemd internals — in
           │ docker.sock   │ docker.sock       │ HTTP + token     │ S3 API
           ▼               ▼                   ▼                  ▼
     app workloads    managed data        remote agents      off-site backups
-    containers       Postgres · MySQL    (worker nodes,     R2 · AWS · MinIO ·
-    PM2 processes    MariaDB · Redis     same pipeline,     Wasabi — db dumps
-    Compose stacks   Valkey · Mongo      typed op calls)    and volume tars
+    containers       Postgres · MySQL    (typed op calls;   R2 · AWS · MinIO ·
+    PM2 processes    MariaDB · Redis     networks today,    Wasabi — db dumps
+    Compose stacks   Valkey · Mongo      deploys not yet)   and volume tars
     89 templates     ClickHouse ·
                      Meilisearch ·
                      RabbitMQ

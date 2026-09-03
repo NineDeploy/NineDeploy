@@ -24,6 +24,10 @@ vi.mock('pm2', () => ({ default: pm2Mocks }));
 
 const proxyMocks = vi.hoisted(() => ({
   writeDynamicConfig: vi.fn(async () => undefined),
+  // Inline compose stacks resolve their SERVICE_URL_* tokens against the
+  // wildcard domain, and the scheme comes from whether ACME is configured.
+  getAcmeEmail: vi.fn(async () => null as string | null),
+  getStickyEnabledForService: vi.fn(async () => false),
   // docker.ts imports NETWORK from proxy.js; provide it so the mock stays complete.
   NETWORK: 'ninedeploy',
   TRAEFIK_CONTAINER: 'ninedeploy-traefik',
@@ -48,6 +52,13 @@ vi.mock('../src/engine/proxy.js', () => proxyMocks);
 
 // Deleting a service also takes its deploy log files; the real helper touches
 // the filesystem, so it is stubbed and asserted on.
+const composeWorkspaceMocks = vi.hoisted(() => ({
+  materialiseComposeFile: vi.fn((_id: number, _content: string) => '/tmp/docker-compose.yml'),
+  INLINE_COMPOSE_FILE: 'docker-compose.yml',
+  stackWorkspace: vi.fn((id: number) => `/tmp/${id}`),
+}));
+vi.mock('../src/lib/composeWorkspace.js', () => composeWorkspaceMocks);
+
 const logsMocks = vi.hoisted(() => ({ deleteLog: vi.fn(() => true) }));
 vi.mock('../src/engine/logs.js', () => ({ deleteLog: logsMocks.deleteLog }));
 
@@ -1038,5 +1049,230 @@ describe('services routes', () => {
     await app404.register(servicesRoutes);
     const res404 = await app404.inject({ method: 'POST', url: '/99/clone', headers: asUser() });
     expect(res404.statusCode).toBe(404);
+  });
+});
+
+/**
+ * Inline compose stacks: a compose file pasted into the wizard instead of
+ * cloned from a repository. The YAML is stored on the service row and written
+ * into the workspace; `composeWorkspace` is mocked so these tests assert the
+ * WIRING (was it called, with what) without touching the filesystem — the file
+ * itself is covered in test/lib/composeWorkspace.test.ts.
+ */
+describe('inline compose stacks', () => {
+  const STACK = ['services:', '  web:', '    image: nginx:alpine', '  db:', '    image: postgres:16'].join('\n');
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const appWith = async (over: Record<string, unknown> = {}) =>
+    buildTestApp({
+      db: createFakeDb({
+        insert: { services: [svcRow({ id: 4, name: 'Stack', slug: 'stack', type: 'compose', ...over })] },
+        findMany: { envVars: [] },
+      }),
+    });
+
+  it('stores the YAML, derives the routed service and materialises the workspace file', async () => {
+    const app = await appWith();
+    await app.register(servicesRoutes);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/',
+      headers: asUser(),
+      payload: { name: 'Stack', type: 'compose', composeContent: STACK, build: { buildPack: 'auto', baseDir: '/' } },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(composeWorkspaceMocks.materialiseComposeFile).toHaveBeenCalledWith(4, STACK);
+    expect(res.json()).toMatchObject({ id: 4, type: 'compose' });
+  });
+
+  it('refuses a composeService the file does not declare', async () => {
+    const app = await appWith();
+    await app.register(servicesRoutes);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/',
+      headers: asUser(),
+      payload: { name: 'Stack', type: 'compose', composeContent: STACK, composeService: 'nope' },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.message).toMatch(/not declared in the compose file/);
+    expect(composeWorkspaceMocks.materialiseComposeFile).not.toHaveBeenCalled();
+  });
+
+  it('refuses a stack the platform cannot run (preflight) before creating anything', async () => {
+    const app = await appWith();
+    await app.register(servicesRoutes);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/',
+      headers: asUser(),
+      payload: {
+        name: 'Stack',
+        type: 'compose',
+        composeContent: 'services:\n  web:\n    image: nginx\n    env_file: .env\n',
+      },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.message).toMatch(/env_file is not supported/);
+    expect(composeWorkspaceMocks.materialiseComposeFile).not.toHaveBeenCalled();
+  });
+
+  it('refuses a stack with no services', async () => {
+    // `docker compose up` on such a file succeeds while running nothing — the
+    // deploy would go green with no containers.
+    const app = await appWith();
+    await app.register(servicesRoutes);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/',
+      headers: asUser(),
+      payload: { name: 'Stack', type: 'compose', composeContent: 'version: "3"\n' },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.message).toMatch(/no services declared/);
+  });
+
+  it('is operator-only, like every other compose deploy', async () => {
+    const app = await appWith();
+    await app.register(servicesRoutes);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/',
+      headers: asUser({ id: 7, isOperator: false }),
+      payload: { name: 'Stack', type: 'compose', composeContent: STACK },
+    });
+
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('PATCH rewrites the workspace copy of an existing stack', async () => {
+    const next = 'services:\n  web:\n    image: nginx:1.27\n';
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: {
+          services: svcRow({ id: 4, slug: 'stack', type: 'compose', composeService: 'web', composeContent: STACK }),
+        },
+        update: { services: [svcRow({ id: 4, slug: 'stack', type: 'compose', composeContent: next })] },
+      }),
+    });
+    await app.register(servicesRoutes);
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/4',
+      headers: asUser(),
+      payload: { composeContent: next },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(composeWorkspaceMocks.materialiseComposeFile).toHaveBeenCalledWith(4, next);
+  });
+
+  it('PATCH refuses compose YAML for a service whose file comes from its repository', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { services: svcRow({ id: 4, slug: 'stack', type: 'compose', repoUrl: 'https://github.com/a/b.git' }) },
+      }),
+    });
+    await app.register(servicesRoutes);
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/4',
+      headers: asUser(),
+      payload: { composeContent: STACK },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.message).toMatch(/no inline compose stack/);
+    expect(composeWorkspaceMocks.materialiseComposeFile).not.toHaveBeenCalled();
+  });
+
+  it('withholds the YAML from a member — a compose file can carry inline credentials', async () => {
+    // Writing it is operator-only (PATCH runs the compose host-privilege
+    // gate); reading has to match, or a member reads secrets the Environment
+    // tab would never show them.
+    // The member OWNS this service — visibility is not the point here, the
+    // withheld field is.
+    const row = svcRow({ id: 4, slug: 'stack', type: 'compose', ownerUserId: 7, composeContent: STACK });
+    const app = await buildTestApp({ db: createFakeDb({ findFirst: { services: row } }) });
+    await app.register(servicesRoutes);
+
+    const res = await app.inject({ method: 'GET', url: '/4', headers: asUser({ id: 7, isOperator: false }) });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().composeContent).toBeNull();
+  });
+
+  it('serves the stored YAML on the detail route only', async () => {
+    const row = svcRow({ id: 4, slug: 'stack', type: 'compose', composeContent: STACK });
+    const app = await buildTestApp({
+      db: createFakeDb({ findFirst: { services: row }, findMany: { services: [row] } }),
+    });
+    await app.register(servicesRoutes);
+
+    const detail = await app.inject({ method: 'GET', url: '/4', headers: asUser() });
+    expect(detail.json().composeContent).toBe(STACK);
+
+    // The list ships every service on the host; a 256 KiB YAML per row has no
+    // business in it.
+    const list = await app.inject({ method: 'GET', url: '/', headers: asUser() });
+    expect(list.json()[0]).not.toHaveProperty('composeContent');
+  });
+
+  it('previews a pasted file without creating anything', async () => {
+    const app = await buildTestApp({ db: createFakeDb({}) });
+    await app.register(servicesRoutes);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/compose/preview',
+      headers: asUser(),
+      payload: {
+        // biome-ignore lint/suspicious/noTemplateCurlyInString: the compose magic-token syntax is the literal under test
+        content: 'services:\n  web:\n    image: nginx\n    environment:\n      KEY: ${SERVICE_PASSWORD_32}\n',
+      },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({
+      ok: true,
+      services: ['web'],
+      suggestedService: 'web',
+      magicTokens: ['SERVICE_PASSWORD_32'],
+    });
+    expect(composeWorkspaceMocks.materialiseComposeFile).not.toHaveBeenCalled();
+  });
+
+  it('reports why a bad file cannot run instead of failing the request', async () => {
+    // The wizard renders `reasons` inline; a 400 here would be a dead end.
+    const app = await buildTestApp({ db: createFakeDb({}) });
+    await app.register(servicesRoutes);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/compose/preview',
+      headers: asUser(),
+      payload: { content: 'services: [oops\n' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().ok).toBe(false);
+    expect(res.json().reasons.join(' ')).toMatch(/unparsable YAML/);
+  });
+
+  it('refuses the preview to a member (it is the analysis half of a host-privileged deploy)', async () => {
+    const app = await buildTestApp({ db: createFakeDb({}) });
+    await app.register(servicesRoutes);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/compose/preview',
+      headers: asUser({ id: 7, isOperator: false }),
+      payload: { content: 'services:\n  web:\n    image: nginx\n' },
+    });
+
+    expect(res.statusCode).toBe(403);
   });
 });

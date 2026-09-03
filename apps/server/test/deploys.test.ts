@@ -248,6 +248,49 @@ describe('deploys routes', () => {
     expect(res.statusCode).toBe(200);
   });
 
+  it('refuses to deploy a service pinned to a remote node', async () => {
+    // Upfront feedback for the panel; the pipeline refuses it again, which is
+    // the guard webhooks, previews and scheduled jobs also hit.
+    const app = await buildTestApp({
+      db: createFakeDb({ findFirst: { services: svcRow({ id: 1, serverId: 4 }) } }),
+    });
+    await app.register(deploysRoutes, { prefix: '/services' });
+    const res = await app.inject({ method: 'POST', url: '/services/1/deploys', headers: asUser() });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('remote_deploy_unsupported');
+    expect(res.json().error.message).toMatch(/not implemented yet/);
+  });
+
+  it('refuses to roll back a service pinned to a remote node', async () => {
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: { services: svcRow({ id: 1, serverId: 4 }), deployments: depRow({ id: 9, serviceId: 1 }) },
+      }),
+    });
+    await app.register(deploysRoutes, { prefix: '/services' });
+    const res = await app.inject({ method: 'POST', url: '/services/1/deploys/9/rollback', headers: asUser() });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('remote_deploy_unsupported');
+  });
+
+  it('refuses to roll back an inline compose stack, and says what to do instead', async () => {
+    // The stack is defined by the YAML on the service row and deployments keep
+    // no history of it, so a "rollback" would re-run the current file and
+    // report success while changing nothing.
+    const app = await buildTestApp({
+      db: createFakeDb({
+        findFirst: {
+          services: svcRow({ id: 1, type: 'compose', composeContent: 'services:\n  web:\n    image: nginx\n' }),
+          deployments: depRow({ id: 9, serviceId: 1, commitSha: null }),
+        },
+      }),
+    });
+    await app.register(deploysRoutes, { prefix: '/services' });
+    const res = await app.inject({ method: 'POST', url: '/services/1/deploys/9/rollback', headers: asUser() });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.message).toMatch(/Edit the compose file and redeploy/);
+  });
+
   it('returns 404 when the rollback target is missing', async () => {
     const app = await buildTestApp({ db: createFakeDb() });
     await app.register(deploysRoutes, { prefix: '/services' });

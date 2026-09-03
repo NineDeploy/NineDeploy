@@ -1766,4 +1766,43 @@ describe('ServiceDetail', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Analyze now' }));
     expect(await screen.findByText('Analyzing…')).toBeInTheDocument();
   });
+
+  /**
+   * The Compose File tab is mounted only for a service that stores an inline
+   * stack. This asserts the WIRING (tab list + rendered panel + `?tab=`
+   * fallback), not the editor itself — that lives in ComposeTab.test.tsx.
+   */
+  describe('Compose File tab', () => {
+    const stackService = {
+      ...service,
+      type: 'compose',
+      repoUrl: null,
+      composeService: 'web',
+      composeContent: 'services:\n  web:\n    image: nginx:alpine\n',
+    };
+
+    it('is hidden for a service with no inline stack', async () => {
+      renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+      await screen.findByText('api');
+      expect(screen.queryByRole('tab', { name: /compose file/i })).not.toBeInTheDocument();
+    });
+
+    it('is offered — and renders the editor — for an inline stack', async () => {
+      mockOf(api.services.get).mockResolvedValue(stackService as never);
+      renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1' });
+
+      const tab = await screen.findByRole('tab', { name: /compose file/i });
+      fireEvent.click(tab);
+      expect(await screen.findByLabelText('Compose file editor')).toHaveValue(stackService.composeContent);
+    });
+
+    it('falls back to Overview when ?tab=compose names a tab this service does not have', async () => {
+      // A deep link copied between services must not land on a blank panel.
+      renderRoute(<ServiceDetail />, { path: '/services/:id', route: '/services/1?tab=compose' });
+      await screen.findByText('api');
+      expect(screen.queryByLabelText('Compose file editor')).not.toBeInTheDocument();
+      expect(screen.getByRole('tab', { name: /overview/i })).toHaveAttribute('aria-selected', 'true');
+    });
+  });
+
 });

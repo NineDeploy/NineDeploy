@@ -24,13 +24,20 @@ export interface BuildContext {
    */
   registryAuth?: { username: string; password: string; server?: string };
   /**
-   * Remote server this service deploys to (null = this host). Builders route
-   * their docker/git operations through the typed agent protocol when set.
+   * Remote server this service deploys to (null = this host).
+   *
+   * NOT IMPLEMENTED BY ANY BUILDER YET. docker, pm2 and compose all shell out
+   * locally through `lib/exec.ts`, so a deploy with this set would land on the
+   * panel host — `runDeployment` therefore refuses it outright
+   * (`lib/remoteDeploy.ts`) rather than deploying to the wrong machine. The
+   * field and the caller below stay as the seam a remote builder will use.
    */
   serverId?: number;
   /**
    * When serverId is set, the pipeline pre-binds this typed-op caller so
    * builders can run remote operations without touching the DB layer.
+   * Currently unused — see the note on `serverId`. The typed agent protocol
+   * itself is live: `modules/networks.ts` drives remote hosts through it.
    */
   agentCall?: (op: string, params: Record<string, unknown>, sink: (line: string) => void) => Promise<{ exitCode: number; lines: string[] }>;
   /**

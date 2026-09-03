@@ -223,7 +223,7 @@ export function Servers() {
       <PageHeader
         icon={<ServerIcon size={18} />}
         title="Servers & Cluster"
-        subtitle="Multi-node hybrid cluster orchestration — remote edge nodes, SSH auto-onboarding, and cross-server deployments."
+        subtitle="Remote edge nodes with SSH auto-onboarding. Nodes serve Docker network management today — deploying a service to one is not implemented yet."
       />
 
       {/* Cluster Capacity Overview */}
@@ -309,7 +309,7 @@ export function Servers() {
               </h3>
             </div>
             <p className="text-xs text-slate-400 mb-4">
-              The following remote servers announced themselves and are requesting to join the cluster. Verify the host address and approve to enable deployments:
+              The following remote servers announced themselves and are requesting to join the cluster. Verify the host address before approving:
             </p>
             <div className="space-y-3">
               {pendingServers.map((s) => (

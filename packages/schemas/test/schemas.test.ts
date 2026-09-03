@@ -428,6 +428,32 @@ describe('service', () => {
       bad(createService, { name: 'Web', cpuShares: 262145 });
       bad(createService, { name: 'Web', memLimitMb: -5 });
     });
+
+    it('accepts an inline compose stack on a compose service', () => {
+      const data = ok(createService, {
+        name: 'Stack',
+        type: 'compose',
+        composeContent: 'services:\n  web:\n    image: nginx\n',
+      });
+      expect(data?.type).toBe('compose');
+    });
+
+    it('rejects composeContent on a non-compose service', () => {
+      // An inline stack IS a compose deploy: on any other type the YAML
+      // would be stored but never run.
+      bad(createService, { name: 'Web', type: 'docker', composeContent: 'services: {}' });
+    });
+
+    it('rejects composeContent combined with a repoUrl', () => {
+      // The first clone wipes the workspace directory the pasted stack was
+      // written to — the two sources are mutually exclusive.
+      bad(createService, {
+        name: 'Web',
+        type: 'compose',
+        composeContent: 'services: {}',
+        repoUrl: 'https://github.com/a/b.git',
+      });
+    });
   });
 
   describe('updateService', () => {

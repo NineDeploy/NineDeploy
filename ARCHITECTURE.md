@@ -14,7 +14,9 @@ server runs bare-metal (systemd) for direct PM2 + Docker daemon access; a
 container image is also published for Docker-based installs (host socket
 mounted, `DOCKER_GID` supplied so the non-root image user can reach it). Remote
 hosts run the same binary in agent mode (`NINEDEPLOY_AGENT=1`) and execute a
-fixed table of typed, validated operations for the core. App containers live on
+fixed table of typed, validated operations for the core — used today by network
+management; the deploy builders are still local-only, so a service assigned to a
+remote node is refused rather than deployed on the wrong host. App containers live on
 a shared Docker network (`ninedeploy`); Traefik is the intended sole public
 listener on :80/:443, with an explicit, operator-gated escape hatch for direct
 host port publishing (`services.published_port`).
@@ -383,7 +385,7 @@ envelopes; 5xx messages are suppressed in production.
 | resources (system) | /system | resources, docker-events feed, prune-images, **update-check / update-status / update-start (self-update)**, export, import (tar-slip guarded, rollback) |
 | housekeeping | /housekeeping | prune config get/patch, manual prune |
 | jobs | /services/:id/jobs | cron deploy/exec/backup jobs, run-now, run history |
-| servers | /servers | remote agent registry, one-time token on register, connectivity test (one deliberately unauthenticated write: agent self-announce) |
+| servers | /servers | remote agent registry, one-time token on register, connectivity test (one deliberately unauthenticated write: agent self-announce). Nodes drive `docker.network*` today; **deploying a service to a node is not implemented** — `runDeployment` refuses it (`lib/remoteDeploy.ts`) rather than building on the panel host |
 | logDrains | /log-drains | CRUD + test |
 | settings | /settings | registration toggle, ACME email, template source, DNS-01, vault provider (Infisical/Doppler), Cloudflare DNS |
 | configCenter | /config | typed config entries get/set/delete with secret reveal |

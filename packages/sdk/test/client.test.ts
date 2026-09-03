@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { NineDeployError, createClient } from '../src/index.js';
 
 interface RecordedInit {
@@ -291,6 +291,13 @@ describe('createClient', () => {
       expect(last(calls).url).toBe('/v1/services/import');
       expect(last(calls).init.method).toBe('POST');
       expect(JSON.parse(last(calls).init.body ?? '{}')).toEqual({ repo: 'https://github.com/a/b.git' });
+
+      await client.services.composePreview({ composeContent: 'services:\n  web:\n    image: nginx\n' });
+      expect(last(calls).url).toBe('/v1/services/compose/preview');
+      expect(last(calls).init.method).toBe('POST');
+      expect(JSON.parse(last(calls).init.body ?? '{}')).toEqual({
+        composeContent: 'services:\n  web:\n    image: nginx\n',
+      });
     });
 
     it('exportUrl returns the export path without fetching', () => {
@@ -1740,5 +1747,59 @@ describe('query/param edge cases', () => {
     const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
     await client.networks.remove('a b', 0);
     expect(last(calls).url).toBe('/v1/networks/a%20b?serverId=0');
+  });
+});
+
+describe('request timeout', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it('aborts a request that exceeds timeoutMs', async () => {
+    // A fetch that never resolves on its own; it rejects only when the
+    // abort signal the SDK attached fires.
+    const fetchMock = vi.fn((_url: string, init: { signal?: unknown }) => {
+      return new Promise((_resolve, reject) => {
+        const signal = init.signal as { aborted: boolean; addEventListener: (t: string, l: () => void) => void };
+        signal.addEventListener('abort', () => reject(new Error('aborted by timeout')));
+      });
+    });
+    const client = createClient({ baseUrl: 'http://api.test', timeoutMs: 20, fetch: fetchMock });
+    await expect(client.auth.status()).rejects.toThrow('aborted by timeout');
+  });
+
+  it('sends no signal when timeoutMs is 0 (opt-out)', async () => {
+    let seen: unknown;
+    const fetchMock = vi.fn((_url: string, init: { signal?: unknown }) => {
+      seen = init.signal;
+      return Promise.resolve({ ok: true, status: 200, text: async () => '{}' } as unknown as Response);
+    });
+    const client = createClient({ baseUrl: 'http://api.test', timeoutMs: 0, fetch: fetchMock });
+    await client.auth.status();
+    expect(seen).toBeUndefined();
+  });
+
+  it('attaches a signal by default (30s budget)', async () => {
+    let seen: unknown;
+    const fetchMock = vi.fn((_url: string, init: { signal?: unknown }) => {
+      seen = init.signal;
+      return Promise.resolve({ ok: true, status: 200, text: async () => '{}' } as unknown as Response);
+    });
+    const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
+    await client.auth.status();
+    expect(seen).toBeDefined();
+  });
+
+  it('tolerates environments where globalThis.AbortSignal is missing', async () => {
+    vi.stubGlobal('AbortSignal', undefined);
+    let seen: unknown;
+    const fetchMock = vi.fn((_url: string, init: { signal?: unknown }) => {
+      seen = init.signal;
+      return Promise.resolve({ ok: true, status: 200, text: async () => '{}' } as unknown as Response);
+    });
+    const client = createClient({ baseUrl: 'http://api.test', fetch: fetchMock });
+    await expect(client.auth.status()).resolves.toEqual({});
+    expect(seen).toBeUndefined();
   });
 });

@@ -33,8 +33,15 @@ export const createService = z.object({
   image: z.string().optional(),
   volumeMount: z.string().optional(),
   /** Compose deploys: the main service in the compose file (health/routing
-   * target). Defaults to the service slug when omitted. */
+   * target). Defaults to the service slug when omitted — or, for an inline
+   * `composeContent` stack, to the main service the server derives from the
+   * YAML itself. */
   composeService: z.string().min(1).max(200).optional(),
+  /** Inline Docker Compose stack: the whole YAML, pasted instead of cloned.
+   * The server stores it on the service row and re-materialises it into the
+   * workspace before every deploy, so there is no repository to check out.
+   * Same 256 KiB cap as a Hub template's `composeContent`. */
+  composeContent: z.string().min(1).max(262_144).optional(),
   cpuShares: z.number().int().min(0).max(262144).optional(),
   memLimitMb: z.number().int().min(0).optional(),
   healthPath: httpPath.optional(),
@@ -61,6 +68,27 @@ export const createService = z.object({
       stopGraceSeconds: z.number().int().min(0).max(300).optional(),
     })
     .default({ buildPack: 'auto', baseDir: '/' }),
+}).superRefine((value, ctx) => {
+  if (!value.composeContent) return;
+  // An inline stack IS a compose deploy — every other type ignores the field
+  // entirely, so accepting it would store YAML that never runs.
+  if (value.type !== 'compose') {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['composeContent'],
+      message: "composeContent requires type 'compose'",
+    });
+  }
+  // A repository would be cloned into the same workspace the YAML is written
+  // to, and the first clone wipes that directory (lib/git.ts) — the pasted
+  // stack would silently disappear. One source of truth or the other.
+  if (value.repoUrl) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['repoUrl'],
+      message: 'composeContent and repoUrl are mutually exclusive — a git checkout would overwrite the pasted stack',
+    });
+  }
 });
 export type CreateService = z.infer<typeof createService>;
 
@@ -86,6 +114,10 @@ export const updateService = z.object({
   image: z.string().optional(),
   volumeMount: z.string().optional(),
   composeService: z.string().min(1).max(200).optional(),
+  /** Replace an inline stack's YAML. Only meaningful on a service that
+   * already stores one — the route refuses it otherwise, because `type`
+   * alone cannot tell an inline stack from a git-repo compose service. */
+  composeContent: z.string().min(1).max(262_144).optional(),
   cpuShares: z.number().int().min(0).max(262144).optional(),
   memLimitMb: z.number().int().min(0).optional(),
   healthPath: httpPath.optional(),
@@ -150,6 +182,9 @@ export const service = z.object({
   image: z.string().nullable(),
   volumeMount: z.string().nullable(),
   composeService: z.string().nullable(),
+  /** The stored YAML of an inline compose stack; null for every other
+   * service (a git-repo compose service keeps its file in the repository). */
+  composeContent: z.string().nullable().optional(),
   commitSha: z.string().nullable(),
   runtimeId: z.string().nullable(),
   healthPath: z.string(),
@@ -693,6 +728,39 @@ export const deployTemplate = z.object({
 });
 export type DeployTemplateInput = z.input<typeof deployTemplate>;
 export type DeployTemplate = z.infer<typeof deployTemplate>;
+
+/**
+ * Dry-run analysis of a pasted compose file. The wizard calls this while the
+ * user is still typing so blocking problems, host-privilege warnings, the
+ * routable service list and the variables the stack will ask for all appear
+ * inline — instead of arriving as a 400 after the service row already exists.
+ * Reads only: nothing is written and no service is created.
+ */
+export const composePreviewRequest = z.object({
+  content: z.string().min(1).max(262_144),
+  /** The container port the wizard is about to route to, used to pick the
+   * main service by port reference. 0/omitted falls back to name heuristics. */
+  port: z.number().int().min(1).max(65535).optional(),
+});
+export type ComposePreviewRequestInput = z.input<typeof composePreviewRequest>;
+
+export const composePreviewResponse = z.object({
+  /** False when `reasons` is non-empty — the stack cannot run here at all. */
+  ok: z.boolean(),
+  reasons: z.array(z.string()),
+  warnings: z.array(z.string()),
+  /** Every service key in the file, in declaration order. */
+  services: z.array(z.string()),
+  /** Best guess at the routed service; null when the file declares none. */
+  suggestedService: z.string().nullable(),
+  /** `SERVICE_*` tokens the platform will generate values for. */
+  magicTokens: z.array(z.string()),
+  /** `${VAR}` references with no default — the user must supply these. */
+  openPlaceholders: z.array(z.string()),
+  /** `${VAR:-default}` references, offered as prefilled env rows. */
+  configurableEnv: z.array(z.object({ key: z.string(), value: z.string() })),
+});
+export type ComposePreviewResponse = z.infer<typeof composePreviewResponse>;
 
 /**
  * Whether an image reference keeps the template's registry repository while

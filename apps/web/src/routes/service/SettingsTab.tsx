@@ -225,7 +225,10 @@ function SettingsCard({ serviceId }: { serviceId: number }) {
           <Field label="Install command"><Input value={form.installCmd} onChange={set('installCmd')} placeholder="npm ci" className="h-9 font-mono text-xs" /></Field>
           <Field label="Build command"><Input value={form.buildCmd} onChange={set('buildCmd')} placeholder="npm run build" className="h-9 font-mono text-xs" /></Field>
           <Field label="Start command"><Input value={form.startCmd} onChange={set('startCmd')} placeholder="npm start" className="h-9 font-mono text-xs" /></Field>
-          <Field label="Dockerfile path"><Input value={form.dockerfilePath} onChange={set('dockerfilePath')} placeholder="./Dockerfile" className="h-9 font-mono text-xs" /></Field>
+          {/* The same column names the compose file for a git-repo compose
+              service. An inline stack ignores it — it always deploys the YAML
+              stored on the service (Compose File tab). */}
+          <Field label="Dockerfile / compose file path"><Input value={form.dockerfilePath} onChange={set('dockerfilePath')} placeholder="./Dockerfile" className="h-9 font-mono text-xs" /></Field>
 
           {/* Lifecycle hooks execute binaries on the HOST (engine/pipeline.ts),
               so the API restricts them to admins. Showing them to a member

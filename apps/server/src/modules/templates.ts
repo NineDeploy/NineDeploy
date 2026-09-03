@@ -58,11 +58,29 @@ function sameTemplateService(service: Service, template: Template, ownerUserId: 
     && ['idle', 'error', 'stopped'].includes(service.status);
 }
 
+/**
+ * One environment entry a service is seeded with — a template's declared env,
+ * or the values a compose stack's magic tokens resolved to.
+ */
+export interface EnvSeed {
+  key: string;
+  value: string;
+  secret?: boolean;
+  /**
+   * `false` = `value` is already final and must be stored verbatim. Compose
+   * stacks resolve their own secrets (`resolveStackEnvironment`), so the
+   * generator below would otherwise throw away a `SERVICE_URL_*` value — or
+   * any other resolved token — and replace it with unrelated entropy.
+   * Omitted for ordinary template entries, which are generated on install.
+   */
+  generate?: boolean;
+}
+
 /** Upsert template defaults and user overrides without rotating existing secrets on retry. */
 export async function reconcileEnvironment(
   app: FastifyInstance,
   serviceId: number,
-  template: Template,
+  template: { env?: EnvSeed[] },
   overrides: Array<{ key: string; value: string; isSecret: boolean }>,
 ): Promise<Array<{ key: string; value: string }>> {
   const existing = await app.db.query.envVars.findMany({ where: eq(envVars.serviceId, serviceId) });
@@ -82,7 +100,11 @@ export async function reconcileEnvironment(
       // ecosystems either require or recommend ≥32-char values, and a longer
       // value can never fail such a policy. Only generated on first install —
       // retries never rotate existing secrets.
-      const value = entry.secret ? randomToken(32) : entry.value;
+      const mint = entry.secret === true && entry.generate !== false;
+      const value = mint ? randomToken(32) : entry.value;
+      // Pre-resolved secrets are still reported back for one-time display —
+      // a compose stack's generated password is exactly what the installer
+      // needs to see once.
       desired.set(entry.key, { value, isSecret: entry.secret ?? false, generated: entry.secret === true });
     }
   }

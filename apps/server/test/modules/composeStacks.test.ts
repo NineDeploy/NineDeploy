@@ -22,10 +22,14 @@ import type { Template } from '../../src/templates/registry.js';
 // ── engine/magicVars mocks ─────────────────────────────────────────
 const magicVarsMock = vi.hoisted(() => ({
   preflightCompose: vi.fn(() => ({ ok: true, reasons: [] as string[], warnings: [] as string[] })),
+  // `parsed` classifies each resolved key: SERVICE_USER_POSTGRES is a
+  // generated magic token, PUBLIC_URL is a bare `${PUBLIC_URL}` placeholder
+  // the file left open (no entry). The seed builder reads this to decide
+  // which values are secrets.
   resolveStackEnvironment: vi.fn((_content: string, opts: { publicUrl: string }) => ({
     values: { PUBLIC_URL: opts.publicUrl, SERVICE_USER_POSTGRES: 'pg-user' },
-    parsed: {},
-    openPlaceholders: [],
+    parsed: { SERVICE_USER_POSTGRES: { raw: 'SERVICE_USER_POSTGRES', kind: 'user' } },
+    openPlaceholders: ['PUBLIC_URL'],
   })),
 }));
 vi.mock('../../src/engine/magicVars.js', () => magicVarsMock);
@@ -127,8 +131,8 @@ beforeEach(() => {
   magicVarsMock.preflightCompose.mockReturnValue({ ok: true, reasons: [], warnings: [] });
   magicVarsMock.resolveStackEnvironment.mockImplementation((_c, opts) => ({
     values: { PUBLIC_URL: opts.publicUrl, SERVICE_USER_POSTGRES: 'pg-user' },
-    parsed: {},
-    openPlaceholders: [],
+    parsed: { SERVICE_USER_POSTGRES: { raw: 'SERVICE_USER_POSTGRES', kind: 'user' } },
+    openPlaceholders: ['PUBLIC_URL'],
   }));
   // getAcmeEmail's default impl is `async () => 'acme@example.com'`
   // (set in the hoisted factory) and `vi.clearAllMocks` does NOT
@@ -157,10 +161,17 @@ describe('prepareComposeStack', () => {
     // Resolved magic-var values + template env rows. The mock
     // resolves PUBLIC_URL and SERVICE_USER_POSTGRES; the
     // fixture has no `env` field, so the merge is just the
-    // resolved values (each marked secret: true).
+    // resolved values.
     const keys = result.stackEnv.map((e) => e.key).sort();
     expect(keys).toEqual(['PUBLIC_URL', 'SERVICE_USER_POSTGRES']);
-    expect(result.stackEnv.every((e) => e.secret === true)).toBe(true);
+    // Generated entropy is stored encrypted; a plain `${PUBLIC_URL}`
+    // placeholder the user still has to fill in stays readable.
+    const byKey = Object.fromEntries(result.stackEnv.map((e) => [e.key, e]));
+    expect(byKey['SERVICE_USER_POSTGRES']?.secret).toBe(true);
+    expect(byKey['PUBLIC_URL']?.secret).toBe(false);
+    // Every resolved value is FINAL: reconcileEnvironment must store it as
+    // given instead of minting a fresh random secret over the top.
+    expect(result.stackEnv.every((e) => e.generate === false)).toBe(true);
     // File-system side effects: the workspace was created and
     // the compose file was written with the template content
     // and mode 0o600. We use `.calls.length` rather than

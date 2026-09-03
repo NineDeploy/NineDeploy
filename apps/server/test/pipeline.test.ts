@@ -1,4 +1,4 @@
-﻿import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+﻿import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -43,6 +43,7 @@ vi.mock('../src/lib/agentClient.js', () => ({ agentOp: h.agentOp }));
 vi.mock('../src/engine/database.js', () => ({ connectionString: h.connectionString, ENGINES: h.ENGINES }));
 vi.mock('../src/engine/builders/docker.js', () => ({ dockerBuilder: h.builder }));
 vi.mock('../src/engine/builders/pm2.js', () => ({ pm2Builder: h.builder }));
+vi.mock('../src/engine/builders/compose.js', () => ({ composeBuilder: h.builder }));
 vi.mock('../src/engine/proxy.js', () => ({
   writeDynamicConfig: h.writeDynamicConfig,
   getAcmeEmail: h.getAcmeEmail,
@@ -991,18 +992,22 @@ describe('runDeployment', () => {
     expect(ctx.registryAuth).toBeUndefined();
   });
 
-  it('binds the agent call for services assigned to a remote server', async () => {
+  it('hands the builder no agent seam — remote deploys are refused, not routed', async () => {
+    // This used to assert that `agentCall` was bound for a remote service,
+    // which read as "remote deploys work". Nothing ever consumed the binding,
+    // so the deploy ran on the panel host; the pipeline now refuses it
+    // outright (see "runDeployment refuses a remote-server target") and the
+    // seam is re-bound by whichever change teaches a builder to use it.
     const { db } = makeDb();
-    baseSetup(db, { image: 'nginx:latest', serverId: 4 });
+    baseSetup(db, { image: 'nginx:latest', serverId: null });
+    h.builder.buildAndRun.mockClear();
+
     await runDeployment(db as never, 1);
+
     const [ctx] = h.builder.buildAndRun.mock.calls[0] as [Record<string, unknown>];
-    expect(typeof ctx.agentCall).toBe('function');
-    // Invoking the bound call routes through agentOp against the remote server.
-    const out = await (ctx.agentCall as (op: string, p: Record<string, unknown>, s: (l: string) => void) => Promise<unknown>)(
-      'docker.pull', { image: 'nginx' }, () => {},
-    );
-    expect(out).toEqual({ exitCode: 0, lines: [] });
-    expect(h.agentOp).toHaveBeenCalledWith(expect.anything(), 4, 'docker.pull', { image: 'nginx' }, expect.any(Function));
+    expect(ctx.agentCall).toBeUndefined();
+    expect(ctx.serverId).toBeUndefined();
+    expect(h.agentOp).not.toHaveBeenCalled();
   });
 
   it('detects registry hosts with a port and skips Docker Hub names', async () => {
@@ -1522,5 +1527,88 @@ describe('runDeployment audits the outcome', () => {
     expect(auditRows(inserts)).toEqual([
       { userId: OWNER, action: 'deploy.failed', entity: 'Web #1', meta: { reason: 'Unknown service type: nonsense' } },
     ]);
+  });
+});
+
+describe('runDeployment with an inline compose stack', () => {
+  const stack = [
+    'services:',
+    '  app:',
+    '    image: nginx:alpine',
+  ].join('\n');
+
+  it('skips the git checkout and rewrites the compose file from the service row', async () => {
+    const { db } = makeDb();
+    // An inline stack has no repository and no image: without the
+    // composeContent branch, PREPARE would call checkoutCommit('') and the
+    // deploy would die before the builder ever ran.
+    baseSetup(db, { type: 'compose', repoUrl: null, image: null, composeContent: stack, composeService: 'app' });
+    collectLogs(1);
+    // Mocks are file-scoped and this suite runs last; clear the history so the
+    // "never checked out" assertion is about THIS deployment.
+    h.checkoutCommit.mockClear();
+    h.builder.buildAndRun.mockClear();
+
+    await runDeployment(db as never, 1);
+
+    expect(h.checkoutCommit).not.toHaveBeenCalled();
+    // The workspace copy is a cache of the row — asserting the FILE (not just
+    // that a helper exists) is what proves the pipeline is actually wired to
+    // rewrite it before every deploy.
+    const written = readFileSync(path.join(reposDir, '5', 'docker-compose.yml'), 'utf8');
+    expect(written).toBe(stack);
+    expect(h.builder.buildAndRun).toHaveBeenCalled();
+  });
+
+  it('repairs a workspace whose compose file was deleted between deploys', async () => {
+    const { db } = makeDb();
+    baseSetup(db, { type: 'compose', repoUrl: null, image: null, composeContent: stack, composeService: 'app' });
+    collectLogs(1);
+    rmSync(path.join(reposDir, '5'), { recursive: true, force: true });
+
+    await runDeployment(db as never, 1);
+
+    expect(readFileSync(path.join(reposDir, '5', 'docker-compose.yml'), 'utf8')).toBe(stack);
+  });
+});
+
+describe('runDeployment refuses a remote-server target', () => {
+  it('fails the deployment instead of deploying it on the panel host', async () => {
+    // No builder consumes `agentCall`, so running anyway would put the
+    // container on THIS machine while the panel reports the remote node.
+    const { db } = makeDb();
+    baseSetup(db, { image: 'nginx:latest', serverId: 4 });
+    const lines = collectLogs(1);
+    h.builder.buildAndRun.mockClear();
+
+    await runDeployment(db as never, 1);
+
+    expect(h.builder.buildAndRun).not.toHaveBeenCalled();
+    expect(h.checkoutCommit).not.toHaveBeenCalled();
+    expect(lines.join('\n')).toMatch(/not implemented yet/);
+  });
+
+  it('records the refusal as a failed deployment with its reason', async () => {
+    const { db, inserts } = makeDb();
+    baseSetup(db, { ownerUserId: 42, image: 'nginx:latest', serverId: 4 });
+    collectLogs(1);
+
+    await runDeployment(db as never, 1);
+
+    const audits = inserts.filter((i) => i.table === auditLog).map((i) => i.values);
+    expect(audits).toHaveLength(1);
+    expect(audits[0]).toMatchObject({ userId: 42, action: 'deploy.failed' });
+    expect((audits[0]!['meta'] as { reason: string }).reason).toMatch(/remote server are not implemented/);
+  });
+
+  it('still deploys a service with no server assigned', async () => {
+    const { db } = makeDb();
+    baseSetup(db, { image: 'nginx:latest', serverId: null });
+    collectLogs(1);
+    h.builder.buildAndRun.mockClear();
+
+    await runDeployment(db as never, 1);
+
+    expect(h.builder.buildAndRun).toHaveBeenCalled();
   });
 });

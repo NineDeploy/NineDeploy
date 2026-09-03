@@ -9,6 +9,7 @@ import { deleteLog, logBus } from '../engine/logs.js';
 import { resolveUser } from '../lib/auth.js';
 import { loadServiceForUser } from '../lib/serviceAccess.js';
 import { assertMayDeployStoredService } from '../lib/hostPrivilege.js';
+import { assertLocalDeployTarget } from '../lib/remoteDeploy.js';
 import { assertServiceRole, visibleServiceIdSet } from '../lib/resourceAccess.js';
 import { badRequest, notFound, parseId as num } from '../lib/errors.js';
 import { websocketBearerToken } from '../lib/websocketAuth.js';
@@ -34,6 +35,9 @@ export const deploysRoutes: FastifyPluginAsync = async (app) => {
     // Definitions created before this rule (or by an admin) must not become a
     // back door: deploying them is what actually executes on the host.
     await assertMayDeployStoredService(app.db, req.user!, svc);
+    // Upfront 400 for a service pinned to a remote node; the pipeline refuses
+    // it again (that is the guard every queue path passes through).
+    assertLocalDeployTarget(svc);
     // In-progress dedup: a service that is CURRENTLY building or deploying
     // gets that deployment returned (the worker only claims a queued
     // row once the in-flight one finishes, so a brand-new trigger
@@ -194,8 +198,20 @@ export const deploysRoutes: FastifyPluginAsync = async (app) => {
     const svc = await loadServiceForUser(app.db, id, req.user!);
     await assertServiceRole(app.db, svc, req.user!, 'member');
     await assertMayDeployStoredService(app.db, req.user!, svc);
+    // Upfront 400 for a service pinned to a remote node; the pipeline refuses
+    // it again (that is the guard every queue path passes through).
+    assertLocalDeployTarget(svc);
     const old = await app.db.query.deployments.findFirst({ where: eq(deployments.id, depId) });
     if (!old || old.serviceId !== id) throw notFound('Deployment not found');
+    // An inline compose stack is defined by the YAML on the service row, and
+    // deployments keep no history of it: "rolling back" would re-run the
+    // CURRENT file and change nothing while reporting success. Refuse with the
+    // action that actually works instead of staging a no-op.
+    if (svc.composeContent) {
+      throw badRequest(
+        'This service deploys an inline compose stack — there is no previous revision to roll back to. Edit the compose file and redeploy instead.',
+      );
+    }
     void audit(app.db, req.user!.id, 'deploy.rollback', `#${depId} → ${old.commitSha?.slice(0, 7) ?? old.imageDigest?.slice(0, 15) ?? '—'}`);
     const [dep] = await app.db
       .insert(deployments)

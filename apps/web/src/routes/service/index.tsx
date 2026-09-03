@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import {
-  Activity, ArrowLeft, Boxes, Copy, Download, ExternalLink, FileCode2, FolderTree, GitBranch, Globe, HardDrive, KeyRound, LayoutDashboard, Network, Play, Rocket, RotateCcw, Settings, ShieldAlert, Square, Terminal,
+  Activity, ArrowLeft, Boxes, Copy, Download, ExternalLink, FileCode2, FileStack, FolderTree, GitBranch, Globe, HardDrive, KeyRound, LayoutDashboard, Network, Play, Rocket, RotateCcw, Settings, ShieldAlert, Square, Terminal,
 } from 'lucide-react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { api, authedFetch } from '../../lib/api.js';
@@ -12,6 +12,7 @@ import { downloadBlob } from '../../lib/format.js';
 import { OverviewTab } from './OverviewTab.js';
 import { ArchitectureTab } from './ArchitectureTab.js';
 import { ManifestTab } from './ManifestTab.js';
+import { ComposeTab } from './ComposeTab.js';
 import { DeploysTab, IN_FLIGHT } from './DeploysTab.js';
 import { EnvironmentTab } from './EnvironmentTab.js';
 import { NetworkTab } from './NetworkTab.js';
@@ -24,13 +25,15 @@ import { DangerZone } from './DangerZone.js';
 import { ContainerFileBrowser } from '../../components/ContainerFileBrowser.js';
 import { ServiceDomainLauncher } from '../../components/ServiceDomainLauncher.js';
 
-type TabId = 'overview' | 'terminal' | 'architecture' | 'manifest' | 'deploys' | 'environment' | 'network' | 'volumes' | 'files' | 'framework' | 'settings' | 'activity' | 'danger';
+type TabId = 'overview' | 'terminal' | 'architecture' | 'manifest' | 'compose' | 'deploys' | 'environment' | 'network' | 'volumes' | 'files' | 'framework' | 'settings' | 'activity' | 'danger';
 
 const SERVICE_TABS: Array<{ id: TabId; label: string; icon: typeof LayoutDashboard }> = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
   { id: 'terminal', label: 'Terminal & Exec', icon: Terminal },
   { id: 'architecture', label: 'Architecture', icon: Network },
   { id: 'manifest', label: 'Manifest & Traefik', icon: FileCode2 },
+  // Inline compose stacks only — see `visibleTabs`.
+  { id: 'compose', label: 'Compose File', icon: FileStack },
   { id: 'deploys', label: 'Deploys', icon: Rocket },
   { id: 'environment', label: 'Environment', icon: KeyRound },
   { id: 'network', label: 'Network & Domains', icon: Globe },
@@ -54,9 +57,6 @@ export function ServiceDetail() {
   // so a `useState` initializer ignores later `?tab=` deep links (e.g.
   // "View Live Logs →" linking to /services/5?tab=deploys from Overview).
   const tabParam = searchParams.get('tab');
-  const tab: TabId = SERVICE_TABS.some((t) => t.id === tabParam)
-    ? (tabParam as TabId)
-    : 'overview';
   const switchTab = (next: TabId) => {
     const sp = new URLSearchParams(searchParams);
     if (next === 'overview') sp.delete('tab');
@@ -170,6 +170,12 @@ export function ServiceDetail() {
   });
 
   const svc = service.data;
+  // The Compose File tab edits `composeContent`, which only an INLINE stack
+  // has: a git-repo compose service keeps its file in the repository, where
+  // the next checkout would overwrite anything typed here. Hidden — and not
+  // reachable by `?tab=compose` either — for every other service.
+  const visibleTabs = SERVICE_TABS.filter((t) => t.id !== 'compose' || !!svc?.composeContent);
+  const tab: TabId = visibleTabs.some((t) => t.id === tabParam) ? (tabParam as TabId) : 'overview';
   // Redeploying a LIVE service is intentional but easy to hit by accident —
   // the button sits next to Restart/Stop — so a running service requires a
   // confirmation before the build is queued.
@@ -316,7 +322,7 @@ export function ServiceDetail() {
             <div className="px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-slate-500">
               Service Navigation
             </div>
-            {SERVICE_TABS.map((t) => {
+            {visibleTabs.map((t) => {
               const Icon = t.icon;
               const isActive = tab === t.id;
               const isDanger = t.id === 'danger';
@@ -372,6 +378,7 @@ export function ServiceDetail() {
           )}
           {tab === 'architecture' && <ArchitectureTab service={svc} />}
           {tab === 'manifest' && <ManifestTab service={svc} />}
+          {tab === 'compose' && svc.composeContent && <ComposeTab service={svc} />}
           {tab === 'deploys' && (
             <DeploysTab
               serviceId={id}

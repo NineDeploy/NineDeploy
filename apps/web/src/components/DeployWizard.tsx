@@ -2,15 +2,24 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, Check, Download, GitBranch, Globe, Hammer, HeartPulse, Play, Plus, Rocket, Sparkles, Terminal, Wand2, X, Zap } from 'lucide-react';
 import { useNavigate } from 'react-router';
-import type { RepoInsights, Template } from '@ninedeploy/sdk';
+import type { ComposePreviewResponse, RepoInsights, Template } from '@ninedeploy/sdk';
 import { api } from '../lib/api.js';
 import { toInt } from '../lib/format.js';
 import { useAuth } from '../lib/auth.js';
 import { useExperienceMode } from '../lib/mode.js';
 import { useToast } from './Toast.js';
-import { Button, Input, Select, cn } from './ui.js';
+import { Button, Input, Select, Textarea, cn } from './ui.js';
 
 const STEPS = ['Source', 'Runtime', 'Environment', 'Resources', 'Review'];
+
+/** Shown in the empty paste box: the smallest stack that actually deploys. */
+const COMPOSE_PLACEHOLDER = [
+  'services:',
+  '  app:',
+  '    image: nginx:alpine',
+  '  cache:',
+  '    image: redis:7-alpine',
+].join('\n');
 
 interface EnvRow { key: string; value: string; secret: boolean }
 
@@ -27,7 +36,6 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
 
   const [step, setStep] = useState(0);
   const [name, setName] = useState(template?.name ?? '');
-  const [serverId, setServerId] = useState('');
   const [showQuickAdd, setShowQuickAdd] = useState(false);
   const [quickAddName, setQuickAddName] = useState('');
   const [quickAddToken, setQuickAddToken] = useState('');
@@ -112,7 +120,12 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
     };
   }, []);
   const [type, setType] = useState<'docker' | 'pm2' | 'compose'>('docker');
-  const [mode, setMode] = useState<'repo' | 'image'>(template ? 'image' : 'repo');
+  const [mode, setMode] = useState<'repo' | 'image' | 'paste'>(template ? 'image' : 'repo');
+  // Inline compose stack: the pasted YAML and the service the router points
+  // at. `composeService` starts empty and follows the server's suggestion
+  // until the user picks one themselves.
+  const [composeContent, setComposeContent] = useState('');
+  const [composeService, setComposeService] = useState('');
   const [repoUrl, setRepoUrl] = useState('');
   const [branch, setBranch] = useState('main');
   const [sourceId, setSourceId] = useState('');
@@ -214,6 +227,47 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
     return () => clearTimeout(t);
   }, [repoUrl, branch, baseDir, mode, template, runAnalyze]);
 
+  // ── Inline compose preview ────────────────────────────────────────────
+  // The server analyses the pasted YAML (blocking reasons, warnings, declared
+  // services, the variables it will ask for) so the wizard can refuse to
+  // continue BEFORE a service row exists. Debounced: this runs while typing.
+  const [composePreview, setComposePreview] = useState<ComposePreviewResponse | null>(null);
+  const [composePreviewError, setComposePreviewError] = useState<string | null>(null);
+  // Same stale-response guard as the repo analysis above.
+  const previewSeqRef = useRef(0);
+
+  useEffect(() => {
+    const content = composeContent.trim();
+    if (mode !== 'paste' || !content) {
+      setComposePreview(null);
+      setComposePreviewError(null);
+      return;
+    }
+    // Drop the previous verdict immediately: keeping it would let Next stay
+    // enabled against YAML that has since been edited into something invalid.
+    setComposePreview(null);
+    setComposePreviewError(null);
+    const seq = ++previewSeqRef.current;
+    const t = setTimeout(() => {
+      void api.services
+        .composePreview({ content, ...(toInt(port) ? { port: toInt(port)! } : {}) })
+        .then((result) => {
+          if (seq !== previewSeqRef.current) return;
+          setComposePreview(result);
+          // Follow the server's suggestion until the user overrides it, and
+          // re-follow when an edit removes the service they had picked.
+          setComposeService((current) =>
+            current && result.services.includes(current) ? current : (result.suggestedService ?? ''),
+          );
+        })
+        .catch((err: unknown) => {
+          if (seq !== previewSeqRef.current) return;
+          setComposePreviewError(err instanceof Error ? err.message : 'Could not analyze the compose file');
+        });
+    }, 600);
+    return () => clearTimeout(t);
+  }, [composeContent, mode, port]);
+
   /** Copy the detected preset into the form: port, suggested env vars and the
    * build commands that travel with the create-service request. */
   const applySuggestions = () => {
@@ -257,7 +311,6 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
           // Pin a different TAG of the template's own repository — the server
           // rejects cross-repository overrides and digest references.
           ...(image && image !== template.image ? { image } : {}),
-          serverId: serverId ? toInt(serverId) : undefined,
           publishedPort: toInt(publishedPort),
           healthPath: healthPath || undefined,
           cpuShares: toInt(cpuShares),
@@ -299,7 +352,6 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
       const svc = await api.services.create({
         name,
         type,
-        ...(serverId ? { serverId: toInt(serverId) } : {}),
         // Non-template creates always run in repo mode (image mode only
         // exists for templates, which return above), so the image arms of
         // these spreads are type-level only.
@@ -307,6 +359,11 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
         repoUrl: mode === 'repo' ? repoUrl : undefined,
         image: mode === 'image' ? image : undefined,
         /* v8 ignore stop */
+        // Inline compose stack: the YAML travels with the create request and
+        // the server stores it on the row — there is no repository to clone.
+        ...(mode === 'paste'
+          ? { composeContent, ...(composeService ? { composeService } : {}) }
+          : {}),
         branch,
         sourceId: toInt(sourceId),
         port: effectivePort,
@@ -356,7 +413,17 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
 
   const canNext =
     step === 0
-      ? !!name.trim() && (mode === 'image' ? !!image.trim() : !!repoUrl.trim())
+      ? !!name.trim() && (
+          mode === 'image'
+            ? !!image.trim()
+            // A pasted stack may only advance once the SERVER has said it can
+            // run: the analysis is the same one the create route re-runs, so
+            // letting the user through on unverified YAML only trades an
+            // inline message for a 400 three steps later.
+            : mode === 'paste'
+              ? !!composeContent.trim() && composePreview?.ok === true && !!composeService
+              : !!repoUrl.trim()
+        )
       : true;
 
   // H-3: a template that mounts the Docker socket is admin-only server-side —
@@ -367,7 +434,25 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
   const hostPrivilegedTemplate = template?.dockerSocket === true || !!template?.composeContent;
   const adminOnlyTemplate = !isAdmin && hostPrivilegedTemplate;
 
-  const next = () => setStep((s) => Math.min(s + 1, STEPS.length - 1));
+  const next = () => {
+    // `${VAR:-default}` references become editable env rows on the way to the
+    // Environment step — the defaults are what the file itself declares.
+    if (step === 0 && mode === 'paste' && composePreview) {
+      const suggested = composePreview.configurableEnv;
+      if (suggested.length > 0) {
+        setEnvRows((rows) => {
+          const existing = new Set(rows.filter((r) => r.key.trim()).map((r) => r.key));
+          const added = suggested
+            .filter((e) => !existing.has(e.key))
+            .map((e) => ({ key: e.key, value: e.value, secret: false }));
+          if (added.length === 0) return rows;
+          // The blank starter row would otherwise sit above the real ones.
+          return [...rows.filter((r) => r.key.trim()), ...added];
+        });
+      }
+    }
+    setStep((s) => Math.min(s + 1, STEPS.length - 1));
+  };
   const back = () => setStep((s) => Math.max(s - 1, 0));
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -449,7 +534,18 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
               <L label="Name"><Input ref={nameInputRef} value={name} onChange={(e) => setName(e.target.value)} placeholder="my-app" /></L>
               <div className="grid grid-cols-2 gap-3">
                 <L label="Type">
-                  <Select value={type} disabled={!!template} onChange={(e) => setType(e.target.value as 'docker' | 'pm2' | 'compose')}>
+                  <Select
+                    value={type}
+                    disabled={!!template}
+                    onChange={(e) => {
+                      const next = e.target.value as 'docker' | 'pm2' | 'compose';
+                      setType(next);
+                      // 'paste' exists only for compose and 'image' only for
+                      // the others: switching away from either would leave the
+                      // form in a mode its own toggle can no longer show.
+                      setMode((m) => (next === 'compose' ? (m === 'image' ? 'repo' : m) : m === 'paste' ? 'repo' : m));
+                    }}
+                  >
                     <option value="docker">Docker / Nixpacks</option>
                     {isAdmin && <option value="compose">Compose</option>}
                     {isAdmin && <option value="pm2">PM2</option>}
@@ -457,8 +553,10 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
                 </L>
                 <L label="Source type">
                   <div className="flex h-10 items-center gap-1 rounded-lg bg-black/30 p-1 ring-1 ring-inset ring-white/10">
-                    {(['repo', 'image'] as const).map((m) => (
-                      <button key={m} type="button" disabled={!!template} onClick={() => setMode(m)} className={cn('flex-1 rounded-md py-1 text-xs font-medium transition disabled:opacity-50', mode === m ? 'bg-indigo-500 text-white' : 'text-slate-400')}>{m === 'repo' ? 'Git repo' : 'Image'}</button>
+                    {/* Pasting a stack only makes sense for a compose deploy —
+                        every other type has nothing to run a YAML file with. */}
+                    {(type === 'compose' ? (['repo', 'paste'] as const) : (['repo', 'image'] as const)).map((m) => (
+                      <button key={m} type="button" disabled={!!template} onClick={() => setMode(m)} className={cn('flex-1 rounded-md py-1 text-xs font-medium transition disabled:opacity-50', mode === m ? 'bg-indigo-500 text-white' : 'text-slate-400')}>{m === 'repo' ? 'Git repo' : m === 'paste' ? 'Paste YAML' : 'Image'}</button>
                     ))}
                   </div>
                 </L>
@@ -902,6 +1000,64 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
                     </L>
                   )}
                 </>
+              ) : mode === 'paste' ? (
+                <>
+                  <L label="Compose file">
+                    <Textarea
+                      value={composeContent}
+                      onChange={(e) => setComposeContent(e.target.value)}
+                      rows={12}
+                      spellCheck={false}
+                      aria-label="Compose file"
+                      placeholder={COMPOSE_PLACEHOLDER}
+                      className="font-mono text-xs leading-relaxed"
+                    />
+                  </L>
+                  {composePreviewError && (
+                    <div className="rounded-xl border border-rose-500/25 bg-rose-500/[0.08] p-3 text-xs text-rose-200">
+                      {composePreviewError}
+                    </div>
+                  )}
+                  {composePreview && composePreview.reasons.length > 0 && (
+                    <div className="rounded-xl border border-rose-500/25 bg-rose-500/[0.08] p-3 text-xs text-rose-200">
+                      <div className="font-semibold mb-1">This stack cannot run here</div>
+                      <ul className="list-disc pl-4 space-y-0.5">
+                        {composePreview.reasons.map((r) => <li key={r}>{r}</li>)}
+                      </ul>
+                    </div>
+                  )}
+                  {composePreview && composePreview.warnings.length > 0 && (
+                    <div className="rounded-xl border border-amber-500/20 bg-amber-500/[0.08] p-3 text-xs text-amber-200">
+                      <ul className="list-disc pl-4 space-y-0.5">
+                        {composePreview.warnings.map((w) => <li key={w}>{w}</li>)}
+                      </ul>
+                    </div>
+                  )}
+                  {composePreview && composePreview.services.length > 0 && (
+                    <L label="Main service (Traefik and healthchecks point here)">
+                      <Select value={composeService} onChange={(e) => setComposeService(e.target.value)}>
+                        {composePreview.services.map((n) => <option key={n} value={n}>{n}</option>)}
+                      </Select>
+                    </L>
+                  )}
+                  {composePreview && (composePreview.magicTokens.length > 0 || composePreview.openPlaceholders.length > 0) && (
+                    <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3 text-[11px] leading-relaxed text-slate-400 space-y-1">
+                      {composePreview.magicTokens.length > 0 && (
+                        <p>
+                          <span className="font-medium text-slate-300">Generated for you:</span>{' '}
+                          <span className="font-mono">{composePreview.magicTokens.join(', ')}</span>
+                        </p>
+                      )}
+                      {composePreview.openPlaceholders.length > 0 && (
+                        <p>
+                          <span className="font-medium text-slate-300">You must supply:</span>{' '}
+                          <span className="font-mono">{composePreview.openPlaceholders.join(', ')}</span>{' '}
+                          — add them on the Environment step, or the stack starts with empty values.
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </>
               ) : (
                 <L label={template ? 'Image — pin a version (same repository, e.g. :11.5)' : 'Image'}>
                   <Input
@@ -954,18 +1110,20 @@ export function DeployWizard({ template, onClose }: { template?: Template; onClo
               <L label={template ? 'Registry-managed volume mount' : 'Persistent Volume Mount'}><Input value={volumeMount} disabled={!!template} onChange={(e) => setVolumeMount(e.target.value)} placeholder="/app/data" className="font-mono text-xs" /></L>
               <L label="Healthcheck Path"><Input value={healthPath} onChange={(e) => setHealthPath(e.target.value)} placeholder="/" className="font-mono text-xs" /></L>
 
+              {/* Deploying to a remote node is not implemented: every builder
+                  shells out locally, so the API refuses such a deployment
+                  rather than running it on the panel host. The row stays
+                  visible (the nodes are real, and networks do use them) but
+                  cannot be armed for a deploy. */}
               {servers.data && servers.data.length > 0 && (
                 <L label="Target Server Node (Cluster Deployment)">
-                  <Select value={serverId} onChange={(e) => setServerId(e.target.value)}>
+                  <Select value="" disabled title="Remote-node deployments are not implemented yet">
                     <option value="">Local Server (Primary / Master Node)</option>
-                    {servers.data
-                      .filter((s) => s.status !== 'pending')
-                      .map((s) => (
-                        <option key={s.id} value={String(s.id)}>
-                          🖥️ {s.name} ({s.host}:{s.port}) · {s.status}
-                        </option>
-                      ))}
                   </Select>
+                  <p className="mt-1.5 text-[11px] leading-relaxed text-amber-200/80">
+                    {servers.data.length} remote node{servers.data.length === 1 ? '' : 's'} registered, but deploying to
+                    one is not implemented yet — the build would run on this host. Services stay on the primary node.
+                  </p>
                 </L>
               )}
             </div>

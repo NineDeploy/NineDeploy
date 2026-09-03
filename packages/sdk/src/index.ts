@@ -13,6 +13,8 @@ import type {
   UpdateServiceVolumeAttachmentInput,
   Backup,
   BackupWithDb,
+  ComposePreviewRequestInput,
+  ComposePreviewResponse,
   CreateApiTokenInput,
   CreateDatabaseInput,
   CreateDomainInput,
@@ -428,6 +430,12 @@ export interface NineDeployClientOptions {
   baseUrl: string;
   /** Returns the current access token (or bearer credential). */
   getToken?: () => string | undefined | null;
+  /**
+   * Per-request timeout in milliseconds. A stalled backend must not hang
+   * callers forever (worst in CI, where nothing is interactive to Ctrl-C).
+   * Defaults to 30_000; pass `0` to disable entirely.
+   */
+  timeoutMs?: number;
   /** Custom fetch implementation (defaults to globalThis.fetch). */
   fetch?: FetchLike;
 }
@@ -524,6 +532,12 @@ export interface NineDeployClient {
     get: (id: number) => Promise<Service>;
     create: (input: CreateServiceInput) => Promise<Service>;
     update: (id: number, input: UpdateServiceInput) => Promise<Service>;
+    /**
+     * Dry-run a compose file before creating anything: blocking reasons,
+     * host-privilege warnings, the declared services and the variables the
+     * stack will ask for. Admin-only, and writes nothing.
+     */
+    composePreview: (input: ComposePreviewRequestInput) => Promise<ComposePreviewResponse>;
     remove: (id: number) => Promise<void>;
     stop: (id: number) => Promise<{ ok: boolean; status: string }>;
     start: (id: number) => Promise<{ ok: boolean; status: string }>;
@@ -1269,6 +1283,11 @@ interface RequestInit {
   method?: string;
   headers?: Record<string, string>;
   body?: unknown;
+  /**
+   * Propagated to fetch as-is. Typed structurally: the SDK compiles without
+   * DOM lib types, and only `AbortSignal.timeout()` ever produces one here.
+   */
+  signal?: unknown;
 }
 
 const NO_FETCH = (): Promise<never> =>
@@ -1284,6 +1303,8 @@ const NO_FETCH = (): Promise<never> =>
 export function createClient(opts: NineDeployClientOptions): NineDeployClient {
   const baseUrl = opts.baseUrl.replace(/\/$/, '');
   const fetchImpl: FetchLike = opts.fetch ?? ((globalThis as { fetch?: FetchLike }).fetch ?? NO_FETCH);
+  /** Default per-request budget when the caller does not configure one. */
+  const DEFAULT_TIMEOUT_MS = 30_000;
 
   async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const token = opts.getToken?.();
@@ -1293,8 +1314,22 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
       headers['Content-Type'] = 'application/json';
     }
     const body = init.body === undefined ? undefined : JSON.stringify(init.body);
+    const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    // AbortSignal.timeout exists everywhere the SDK runs (Node 17.3+, all
+    // modern browsers); it is resolved off globalThis and attached opaquely —
+    // FetchLike's shape stays untouched (widening it with `signal: unknown`
+    // breaks assigning a real `typeof fetch` at the call sites).
+    const out: { method?: string; headers?: Record<string, string>; body?: string } = {
+      method: init.method ?? 'GET',
+      headers,
+      body,
+    };
+    if (timeoutMs > 0) {
+      const abort = (globalThis as { AbortSignal?: { timeout: (ms: number) => unknown } }).AbortSignal;
+      if (abort) (out as { signal?: unknown }).signal = abort.timeout(timeoutMs);
+    }
 
-    const res = await fetchImpl(`${baseUrl}${path}`, { method: init.method ?? 'GET', headers, body });
+    const res = await fetchImpl(`${baseUrl}${path}`, out);
     const text = await res.text();
     // Guard the parse: proxies (HTML 502 pages, empty bodies) must surface as a
     // typed error, not an opaque SyntaxError.
@@ -1413,6 +1448,7 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
       get: (id) => get<Service>(`/v1/services/${id}`),
       create: (input) => send<Service>('POST', '/v1/services', input),
       update: (id, input) => send<Service>('PATCH', `/v1/services/${id}`, input),
+      composePreview: (input) => send<ComposePreviewResponse>('POST', '/v1/services/compose/preview', input),
       remove: async (id) => {
         await request(`/v1/services/${id}`, { method: 'DELETE' });
       },

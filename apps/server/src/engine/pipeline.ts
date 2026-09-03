@@ -6,6 +6,8 @@ import { buildConfigs, databaseAttachments, databases, type DB, deployments, dom
 import { config } from '../config.js';
 import { decrypt } from '../lib/crypto.js';
 import { checkoutCommit, type CloneCreds } from '../lib/git.js';
+import { materialiseComposeFile } from '../lib/composeWorkspace.js';
+import { REMOTE_DEPLOY_UNSUPPORTED } from '../lib/remoteDeploy.js';
 import { analyzeRepo, summarizeInsights } from '../lib/frameworks.js';
 import { upsertInsights } from './repoInsights.js';
 import { connectionString, ENGINES } from './database.js';
@@ -16,7 +18,6 @@ import { pm2Builder } from './builders/pm2.js';
 import { getAcmeEmail, writeDynamicConfig } from './proxy.js';
 import { run, sleep } from '../lib/exec.js';
 import { resolveVaultRefs } from '../lib/vault.js';
-import { agentOp } from '../lib/agentClient.js';
 import { getBundledTemplates } from '../templates/registry.js';
 import type { BuildContext, Builder, DeployRuntime } from './types.js';
 import { reconcileTemplateDependencies } from './templateDependencies.js';
@@ -352,6 +353,26 @@ export async function runDeployment(db: DB, deploymentId: number, kernelCtx?: { 
     return;
   }
 
+  // Remote-server deploys are NOT implemented. The pipeline binds `agentCall`
+  // below and `engine/types.ts` describes builders routing through it, but no
+  // builder reads either field — every builder shells out locally through
+  // lib/exec.ts. Running anyway would deploy this service on the panel host
+  // while the panel, the Servers page and the deploy log all claim it landed
+  // on the remote node: the wrong host gets the container, the right one
+  // silently gets nothing.
+  //
+  // This is the choke point every deployment passes through — webhooks,
+  // previews, rollbacks, scheduled jobs and the panel button all end up here —
+  // so the refusal lives here rather than in each queue path (the routes add a
+  // friendlier upfront 400 on top).
+  if (service.serverId != null) {
+    const reason = REMOTE_DEPLOY_UNSUPPORTED;
+    log(`✗ ${reason}`);
+    await safeFail(db, deploymentId, service.id, service.runtimeId);
+    await auditOutcome(db, service, deploymentId, 'failed', reason);
+    return;
+  }
+
   const workDir = path.join(config.paths.reposDir, String(service.id));
 
   // The currently-running runtime, if any. For Docker blue-green it keeps
@@ -376,8 +397,16 @@ export async function runDeployment(db: DB, deploymentId: number, kernelCtx?: { 
     if (await isCancelled(db, deploymentId)) throw new DeploymentCancelled();
 
     log('##[stage:PREPARE:running] Resolving repository, sources and workspace');
-    // Image-based deploys skip git entirely; repo-based deploys resolve creds + checkout.
-    if (service.image) {
+    // Image-based deploys and inline compose stacks skip git entirely;
+    // repo-based deploys resolve creds + checkout.
+    if (service.composeContent) {
+      // `services.composeContent` is the source of truth for an inline stack,
+      // so the workspace file is rewritten from it on EVERY deploy: a rollback,
+      // a manually edited file or a wiped workspace all repair themselves here
+      // instead of deploying something the panel never showed.
+      materialiseComposeFile(service.id, service.composeContent);
+      log(`Inline compose stack (${service.composeContent.length} bytes) written to the workspace`);
+    } else if (service.image) {
       log(`Image deploy from ${service.image}`);
     } else {
       let creds: CloneCreds | undefined;
@@ -546,11 +575,11 @@ export async function runDeployment(db: DB, deploymentId: number, kernelCtx?: { 
       env: runtimeEnvironment.values,
       // Registry-type sources provide private-image credentials.
       registryAuth: await loadRegistryAuth(db, service),
-      // Remote deploys: route builder operations through the typed agent.
-      serverId: service.serverId ?? undefined,
-      agentCall: service.serverId
-        ? (op, params, sink) => agentOp(db, service.serverId!, op, params, sink)
-        : undefined,
+      // No serverId / agentCall: a service pinned to a remote node never
+      // reaches this point (the refusal above), and binding a caller no
+      // builder reads is what made remote deploys look implemented in the
+      // first place. Wire them back in the same change that teaches a builder
+      // to use them — see lib/remoteDeploy.ts.
       // Additional named-volume attachments. Loaded fresh on every deploy so
       // a mid-flight attach (before this deployment claims its slot) is
       // reflected in the next run, but NOT in any already-queued deployment

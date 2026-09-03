@@ -11,7 +11,7 @@ const apiMock = vi.hoisted(() => ({
   api: {
     sources: { list: vi.fn(), repos: vi.fn(), branches: vi.fn() },
     servers: { list: vi.fn() },
-    services: { create: vi.fn() },
+    services: { create: vi.fn(), composePreview: vi.fn() },
     env: { create: vi.fn() },
     deploys: { trigger: vi.fn() },
     databases: { create: vi.fn(), get: vi.fn() },
@@ -88,6 +88,10 @@ describe('DeployWizard', () => {
     ]);
     apiMock.api.servers.list.mockResolvedValue([]);
     apiMock.api.services.create.mockResolvedValue({ id: 42, name: 'app' });
+    apiMock.api.services.composePreview.mockResolvedValue({
+      ok: true, reasons: [], warnings: [], services: ['web'], suggestedService: 'web',
+      magicTokens: [], openPlaceholders: [], configurableEnv: [],
+    });
     apiMock.api.env.create.mockResolvedValue({ id: 1, key: 'K', value: 'v', isSecret: false });
     apiMock.api.databases.create.mockResolvedValue({ id: 7, name: 'db', engine: 'postgres', status: 'creating' });
     apiMock.api.databases.get.mockResolvedValue({ id: 7, name: 'db', engine: 'postgres', status: 'running' });
@@ -601,6 +605,10 @@ describe('DeployWizard — repository analysis & Git credential guidance', () =>
     apiMock.api.sources.repos.mockResolvedValue([]);
     apiMock.api.servers.list.mockResolvedValue([]);
     apiMock.api.services.create.mockResolvedValue({ id: 42, name: 'app' });
+    apiMock.api.services.composePreview.mockResolvedValue({
+      ok: true, reasons: [], warnings: [], services: ['web'], suggestedService: 'web',
+      magicTokens: [], openPlaceholders: [], configurableEnv: [],
+    });
     apiMock.api.env.create.mockResolvedValue({ id: 1, key: 'K', value: 'v', isSecret: false });
     apiMock.api.deploys.trigger.mockResolvedValue({ deploymentId: 7 });
   });
@@ -735,30 +743,29 @@ describe('DeployWizard — repository analysis & Git credential guidance', () =>
     await waitFor(() => expect(apiMock.api.deploys.trigger).toHaveBeenCalledWith(42));
   });
 
-  it('targets a remote server node when one is available', async () => {
+  it('cannot target a remote server node — deploying to one is not implemented', async () => {
+    // Every builder shells out locally, so a service pinned to a node would
+    // deploy on THIS host while the panel claimed otherwise. The API refuses
+    // such a deployment, and the wizard must not create one to begin with.
     const user = userEvent.setup();
     apiMock.api.servers.list.mockResolvedValue([
       { id: 2, name: 'node-a', host: '10.0.0.2', port: 2375, status: 'online' },
-      // Pending nodes are not offered as deploy targets.
-      { id: 3, name: 'node-b', host: '10.0.0.3', port: 2375, status: 'pending' },
     ]);
     renderWizard();
 
     await fillRepo(user);
     await user.click(screen.getByRole('button', { name: /continue/i }));
 
-    const serverSelect = (await screen.findByRole('option', { name: /node-a/ })).closest('select')!;
-    // The pending node is not offered as a deploy target.
-    expect(screen.queryByRole('option', { name: /node-b/ })).not.toBeInTheDocument();
-    await user.selectOptions(serverSelect, '2');
-    // Walk the remaining steps to the review + deploy.
+    expect(await screen.findByText(/not implemented yet/)).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: /node-a/ })).not.toBeInTheDocument();
+
     await user.click(screen.getByRole('button', { name: /continue/i }));
     await user.click(screen.getByRole('button', { name: /continue/i }));
     await user.click(screen.getByRole('button', { name: /continue/i }));
     await user.click(screen.getByRole('button', { name: /deploy/i }));
 
-    await waitFor(() =>
-      expect(apiMock.api.services.create).toHaveBeenCalledWith(expect.objectContaining({ serverId: 2 })));
+    await waitFor(() => expect(apiMock.api.services.create).toHaveBeenCalled());
+    expect(apiMock.api.services.create.mock.calls[0]![0]).not.toHaveProperty('serverId');
   });
 
   it('scopes a monorepo sub-app via the package picker and re-analyzes', async () => {    const user = userEvent.setup();
@@ -839,6 +846,10 @@ describe('DeployWizard — advanced review and repository-picker variants', () =
     apiMock.api.sources.repos.mockResolvedValue([]);
     apiMock.api.servers.list.mockResolvedValue([]);
     apiMock.api.services.create.mockResolvedValue({ id: 42, name: 'app' });
+    apiMock.api.services.composePreview.mockResolvedValue({
+      ok: true, reasons: [], warnings: [], services: ['web'], suggestedService: 'web',
+      magicTokens: [], openPlaceholders: [], configurableEnv: [],
+    });
     apiMock.api.env.create.mockResolvedValue({ id: 1, key: 'K', value: 'v', isSecret: false });
     apiMock.api.deploys.trigger.mockResolvedValue({ deploymentId: 7 });
   });
@@ -1082,7 +1093,7 @@ describe('DeployWizard — advanced review and repository-picker variants', () =
     expect((screen.getAllByPlaceholderText('KEY')[0]! as HTMLInputElement).value).toBe('FIRST');
   });
 
-  it('deploys a template onto a remote server node without a health path', async () => {
+  it('deploys a template without a health path, and never pins it to a node', async () => {
     const user = userEvent.setup();
     apiMock.api.servers.list.mockResolvedValue([
       { id: 2, name: 'node-a', host: '10.0.0.2', port: 2375, status: 'online' },
@@ -1090,8 +1101,6 @@ describe('DeployWizard — advanced review and repository-picker variants', () =
     renderWizard({ template: TEMPLATE });
 
     await user.click(screen.getByRole('button', { name: /continue/i }));
-    const serverSelect = (await screen.findByRole('option', { name: /node-a/ })).closest('select')!;
-    await user.selectOptions(serverSelect, '2');
     // Drop the prefilled health path so the create request omits it.
     await user.clear(screen.getByPlaceholderText('/'));
     await user.click(screen.getByRole('button', { name: /continue/i }));
@@ -1100,8 +1109,154 @@ describe('DeployWizard — advanced review and repository-picker variants', () =
     await user.click(screen.getByRole('button', { name: /deploy/i }));
     await waitFor(() =>
       expect(apiMock.api.templates.prepare).toHaveBeenCalledWith('n8n', expect.objectContaining({
-        serverId: 2,
         healthPath: undefined,
       })));
+    expect(apiMock.api.templates.prepare.mock.calls[0]![1]).not.toHaveProperty('serverId');
   });
+
+  /**
+   * Inline compose stacks: Type = Compose swaps the Image source for "Paste
+   * YAML". The wizard refuses to move on until the SERVER has said the file
+   * can run, because the create route re-runs exactly the same analysis.
+   */
+  describe('paste a compose stack', () => {
+    const STACK = 'services:\n  web:\n    image: nginx:alpine\n';
+
+    const okPreview = {
+      ok: true,
+      reasons: [],
+      warnings: [],
+      services: ['web', 'db'],
+      suggestedService: 'web',
+      magicTokens: ['SERVICE_PASSWORD_32'],
+      openPlaceholders: [],
+      configurableEnv: [{ key: 'TZ', value: 'UTC' }],
+    };
+
+    const pasteStack = async (user: ReturnType<typeof userEvent.setup>, yaml = STACK) => {
+      // The Type select is the first combobox on the Source step.
+      await user.selectOptions(screen.getAllByRole('combobox')[0]!, 'compose');
+      await user.click(screen.getByRole('button', { name: 'Paste YAML' }));
+      fireEvent.change(screen.getByLabelText('Compose file'), { target: { value: yaml } });
+    };
+
+    it('offers Paste YAML only for a compose deploy', async () => {
+      renderWizard();
+      const user = userEvent.setup();
+      expect(screen.queryByRole('button', { name: 'Paste YAML' })).not.toBeInTheDocument();
+
+      await user.selectOptions(screen.getAllByRole('combobox')[0]!, 'compose');
+      expect(screen.getByRole('button', { name: 'Paste YAML' })).toBeInTheDocument();
+      // Image mode has no meaning for a stack — the file names the images.
+      expect(screen.queryByRole('button', { name: 'Image' })).not.toBeInTheDocument();
+    });
+
+    it('blocks Continue until the server says the stack can run', async () => {
+      apiMock.api.services.composePreview.mockResolvedValue({
+        ...okPreview,
+        ok: false,
+        reasons: ['env_file is not supported — inline the values or list them as template env entries'],
+        services: [],
+        suggestedService: null,
+      });
+      renderWizard();
+      const user = userEvent.setup();
+      await user.type(screen.getByPlaceholderText('my-app'), 'stack');
+      await pasteStack(user);
+
+      expect(await screen.findByText(/env_file is not supported/)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /continue/i })).toBeDisabled();
+    });
+
+    it('surfaces warnings without blocking', async () => {
+      apiMock.api.services.composePreview.mockResolvedValue({
+        ...okPreview,
+        warnings: ['declares external resources — they must exist before first deploy'],
+      });
+      renderWizard();
+      const user = userEvent.setup();
+      await user.type(screen.getByPlaceholderText('my-app'), 'stack');
+      await pasteStack(user);
+
+      expect(await screen.findByText(/declares external resources/)).toBeInTheDocument();
+      await waitFor(() => expect(screen.getByRole('button', { name: /continue/i })).toBeEnabled());
+    });
+
+    it('sends the YAML and the chosen main service, and prefills the file’s own variables', async () => {
+      apiMock.api.services.composePreview.mockResolvedValue(okPreview);
+      renderWizard();
+      const user = userEvent.setup();
+      await user.type(screen.getByPlaceholderText('my-app'), 'stack');
+      await pasteStack(user);
+
+      // The routed service defaults to the server's suggestion; override it.
+      // The select only appears once the (debounced) preview comes back, so
+      // wait for one of its options rather than for a combobox count.
+      const dbOption = await screen.findByRole('option', { name: 'db' });
+      await user.selectOptions(dbOption.closest('select')!, 'db');
+      await user.click(screen.getByRole('button', { name: /continue/i }));
+
+      // Runtime → Environment: `${TZ:-UTC}` arrived as an editable row.
+      await user.click(screen.getByRole('button', { name: /continue/i }));
+      expect(screen.getAllByPlaceholderText('KEY')[0]).toHaveValue('TZ');
+      await user.click(screen.getByRole('button', { name: /continue/i }));
+      await user.click(screen.getByRole('button', { name: /continue/i }));
+      await user.click(screen.getByRole('button', { name: /deploy/i }));
+
+      await waitFor(() =>
+        expect(apiMock.api.services.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            type: 'compose',
+            composeContent: STACK,
+            composeService: 'db',
+            // No repository: the stack IS the source.
+            repoUrl: undefined,
+            image: undefined,
+          }),
+        ),
+      );
+      await waitFor(() => expect(apiMock.api.deploys.trigger).toHaveBeenCalledWith(42));
+    });
+
+    it('shows the failure when the analysis request itself fails', async () => {
+      // Network/permission failure: without this the box would sit silently
+      // empty and Continue would stay disabled with no explanation.
+      apiMock.api.services.composePreview.mockRejectedValue(new Error('Operator access required'));
+      renderWizard();
+      const user = userEvent.setup();
+      await user.type(screen.getByPlaceholderText('my-app'), 'stack');
+      await pasteStack(user);
+
+      expect(await screen.findByText('Operator access required')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /continue/i })).toBeDisabled();
+    });
+
+    it('names the variables the stack needs from the user', async () => {
+      apiMock.api.services.composePreview.mockResolvedValue({
+        ...okPreview,
+        openPlaceholders: ['ADMIN_EMAIL'],
+        configurableEnv: [],
+      });
+      renderWizard();
+      const user = userEvent.setup();
+      await user.type(screen.getByPlaceholderText('my-app'), 'stack');
+      await pasteStack(user);
+
+      expect(await screen.findByText('ADMIN_EMAIL')).toBeInTheDocument();
+      expect(screen.getByText(/Generated for you:/)).toBeInTheDocument();
+    });
+
+    it('drops back to Git repo when the type moves away from compose', async () => {
+      renderWizard();
+      const user = userEvent.setup();
+      await user.selectOptions(screen.getAllByRole('combobox')[0]!, 'compose');
+      await user.click(screen.getByRole('button', { name: 'Paste YAML' }));
+      expect(screen.getByLabelText('Compose file')).toBeInTheDocument();
+
+      await user.selectOptions(screen.getAllByRole('combobox')[0]!, 'pm2');
+      expect(screen.queryByLabelText('Compose file')).not.toBeInTheDocument();
+      expect(screen.getByPlaceholderText('https://github.com/you/repo')).toBeInTheDocument();
+    });
+  });
+
 });

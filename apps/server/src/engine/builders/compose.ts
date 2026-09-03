@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { Builder, DeployRuntime } from '../types.js';
 import { capture, run } from '../../lib/exec.js';
 import { repoRelative } from '../../lib/repoPath.js';
+import { INLINE_COMPOSE_FILE } from '../../lib/composeWorkspace.js';
 import { connectTraefikToComposeNetwork } from '../../lib/serviceBridge.js';
 
 const DEPLOY_HEARTBEAT_MS = 20_000;
@@ -33,8 +34,9 @@ function dotenvValue(value: string): string {
  * apps. Unlike the docker builder there is NO blue-green — compose replaces
  * the project in place (brief gap, like PM2). Rollback re-checks out the old
  * commit and re-ups. The compose file is `dockerfilePath` from the build
- * config (default docker-compose.yml); `composeService` names the main
- * service for routing/healthchecks.
+ * config (default docker-compose.yml) — except for an inline stack
+ * (`service.composeContent`), which always runs the file the pipeline wrote.
+ * `composeService` names the main service for routing/healthchecks.
  */
 
 const PROJECT_PREFIX = 'ndcmp';
@@ -116,9 +118,17 @@ export const composeBuilder: Builder = {
   async buildAndRun(ctx): Promise<DeployRuntime> {
     const { service, buildConfig, workDir, env, log } = ctx;
     const composeService = service.composeService ?? service.slug;
-    // Same re-anchoring as the docker builder: `-f` runs with cwd=workDir, so
-    // an absolute or climbing path would read a compose file off the host.
-    const composeFile = repoRelative(workDir, buildConfig?.dockerfilePath || 'docker-compose.yml');
+    // An inline stack is always written to INLINE_COMPOSE_FILE by the
+    // pipeline, so the build config's path is not a choice here — honouring it
+    // would point `-f` at a file nothing writes the moment someone fills in
+    // the (Dockerfile-shaped) Settings field.
+    //
+    // Otherwise: same re-anchoring as the docker builder — `-f` runs with
+    // cwd=workDir, so an absolute or climbing path would read a compose file
+    // off the host.
+    const composeFile = service.composeContent
+      ? INLINE_COMPOSE_FILE
+      : repoRelative(workDir, buildConfig?.dockerfilePath || INLINE_COMPOSE_FILE);
     const project = composeProject(service.slug);
 
     log(`Bringing up compose project ${project} (${composeFile}) …`);

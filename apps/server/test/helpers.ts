@@ -571,6 +571,7 @@ export const svcRow = (over: Record<string, unknown> = {}) => ({
   image: null,
   volumeMount: null,
   composeService: null,
+  composeContent: null,
   port: 3000,
   healthPath: '/',
   runtimeId: null,
