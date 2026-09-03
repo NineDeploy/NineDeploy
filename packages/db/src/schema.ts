@@ -402,6 +402,12 @@ export const services = sqliteTable(
     serverId: integer('server_id').references(() => servers.id, { onDelete: 'set null' }),
     // Compose deploys: the "main" service in the compose file (routing target).
     composeService: text('compose_service'),
+    // Inline compose stacks: the YAML the user pasted (or a Hub template
+    // shipped). This column — not the workspace file — is the source of
+    // truth; the pipeline re-materialises it into
+    // `<reposDir>/<serviceId>/docker-compose.yml` before every deploy, so a
+    // wiped workspace, a rollback or a host migration cannot orphan a stack.
+    composeContent: text('compose_content'),
     // Ephemeral PR / MR Preview Deployments settings
     previewDeploymentsEnabled: integer('preview_deployments_enabled', { mode: 'boolean' }).notNull().default(false),
     previewAutoDestroyOnClose: integer('preview_auto_destroy_on_close', { mode: 'boolean' }).notNull().default(true),
@@ -413,9 +419,18 @@ export const services = sqliteTable(
     createdAt: ts('created_at'),
     updatedAt: tsUpdatable('updated_at'),
   },
-  // No DB-level unique on (projectId, slug) anymore — projects are N-N via
-  // `service_projects`, so per-project slug uniqueness is enforced at the
-  // application layer when needed.
+  // Global slug uniqueness IS the invariant — the slug mints live container,
+  // volume and Traefik router names (`nd-svc-<slug>`). Migration 0034 dropped
+  // the narrower (projectId, slug) unique when projects went N-N; 0049
+  // restores it at the global level (after de-duplicating legacy rows). The
+  // application layer still checks first so users get a clean slug_taken 409
+  // instead of a bare constraint error.
+  (t) => ({
+    slugUnique: uniqueIndex('services_slug_unique').on(t.slug),
+    // SQLite does not auto-index FK columns; multi-server installs filter the
+    // services list by the remote server on every panel page.
+    serverIdx: index('services_server_idx').on(t.serverId),
+  }),
 );
 
 export const buildConfigs = sqliteTable('build_configs', {
@@ -643,7 +658,11 @@ export const webhooks = sqliteTable('webhooks', {
   secretEncrypted: text('secret_encrypted').notNull(),
   active: integer('active', { mode: 'boolean' }).notNull().default(true),
   createdAt: ts('created_at'),
-});
+}, (t) => ({
+  // SQLite does not auto-index FK columns; every webhook delivery joins on
+  // the service.
+  serviceIdx: index('webhooks_service_idx').on(t.serviceId),
+}));
 
 // ─── backups & monitoring ─────────────────────────────────────────────────
 export const backups = sqliteTable(
@@ -651,8 +670,11 @@ export const backups = sqliteTable(
   {
     id: id(),
     // databaseId is nullable so volume-scope backups (scope='volumes') can
-    // target a Docker volume without a corresponding DB row. A constraint
-    // check below guarantees exactly one of (databaseId, volumeName) is set.
+    // target a Docker volume without a corresponding DB row. Invariant
+    // (enforced in the insert paths, NOT by a DB constraint — SQLite ALTER
+    // cannot add a CHECK to an existing table, see migration 0035): a
+    // scope='db'/'scheduled' row carries databaseId and volumeName=NULL; a
+    // scope='volumes' row carries volumeName and databaseId=NULL.
     databaseId: integer('database_id').references(() => databases.id, { onDelete: 'cascade' }),
     // Docker volume name (managed: nd-svc-* / nd-db-*). Required for
     // scope='volumes' rows; NULL for scope='db'.
@@ -892,7 +914,11 @@ export const databases = sqliteTable(
     createdAt: ts('created_at'),
     updatedAt: tsUpdatable('updated_at'),
   },
-  (t) => ({ slugIdx: uniqueIndex('databases_slug_idx').on(t.slug) }),
+  (t) => ({
+    slugIdx: uniqueIndex('databases_slug_idx').on(t.slug),
+    // SQLite does not auto-index FK columns; project listings join on it.
+    projectIdx: index('databases_project_idx').on(t.projectId),
+  }),
 );
 
 export const databaseAttachments = sqliteTable(
