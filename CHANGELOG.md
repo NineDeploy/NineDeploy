@@ -7,6 +7,92 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.6.0] - 2026-09-03
+
+> A security-and-reliability minor that also ships inline Compose stacks:
+> paste YAML instead of cloning. Under the hood, a full-system audit closed
+> a privilege-escalation path, made rate limits and audit logs see real
+> client IPs behind Traefik, cleared every production dependency advisory,
+> and stopped multi-gigabyte backups from ever entering the panel's heap.
+
+### Added
+
+- **Inline Compose stacks.** Services can store a pasted Docker Compose
+  file (256 KiB cap) instead of a git clone: the schema enforces
+  `type: compose` and rejects combining it with a repo URL, the server
+  validates the file server-side (dry-run preview endpoint) and re-
+  materialises it into the workspace before every deploy, and the new
+  Compose tab offers Save and Save & redeploy.
+- **Database indexes for hot lookups.** `services.server_id`,
+  `webhooks.service_id` and `databases.project_id` were full-table scans;
+  SQLite does not auto-index FK columns.
+
+### Changed
+
+- **Real client IPs behind Traefik.** The panel now trusts one proxy hop
+  by default (`NINEDEPLOY_TRUST_PROXY`): rate limits are enforced per
+  actual client instead of one shared bucket for the whole instance, and
+  audit rows record the true source address. Set it to `false` when the
+  panel is exposed directly.
+- **SSH password bootstrap refuses fast.** Password authentication was
+  accepted by the schema but never worked (`BatchMode=yes` disables all
+  prompting and the password was never wired to sshpass). It now fails
+  immediately with an actionable message; install a key and use key auth.
+- **The CLI defaults to `https://` for non-loopback server URLs**, so the
+  bearer token no longer rides plaintext HTTP to a remote host (loopback
+  keeps `http://`; type an explicit scheme to override).
+- **Scheduled backup failures are no longer silent.** A failed scheduled
+  backup lands a failed row in the UI and fires the notification
+  channels; MySQL/MariaDB dumps run `--single-transaction --quick`, so
+  backups no longer lock live databases or produce inconsistent dumps.
+- **CI ships tested images only.** The `:edge` image (what
+  `--channel=main` installs) is published only after the full suite and
+  integration tests pass, and the release prune no longer deletes the
+  CI-pushed edge tags.
+
+### Fixed
+
+- **Privilege escalation via scheduled deploy jobs.** A workspace member
+  could wrap an operator-created PM2/compose service in a cron job and
+  reach host command execution. Scheduled deploys now authorize against
+  the service owner's privileges, exactly like manual and webhook deploys.
+- **Editing an env var no longer corrupts secrets.** Inline edits used to
+  silently flip `isSecret` to false and a single typed character could
+  overwrite the stored secret; the classification is preserved and
+  failures surface as toasts.
+- **The panel no longer crashes during self-update** on hosts without
+  `/bin/bash` — a failed updater launch records a finished, failed state
+  instead of an uncaught exception.
+- **Deploy logs stop freezing the tab.** Live output keeps a bounded tail
+  and flushes on an interval (the old per-message re-join was O(n²)) and
+  reconnects a dropped stream; the terminal session also survives the
+  fullscreen toggle.
+- **Webhook replays are rejected.** Provider delivery ids are deduplicated
+  for 24 hours, closing the window where a captured payload could
+  redeploy an old commit.
+- **System export is crash-consistent.** The archive carries a `VACUUM
+  INTO` snapshot of the database instead of a tar raced against live
+  writes; remote backup transfers stream, so multi-GB dumps no longer
+  buffer in the panel's heap (which also hosts the deploy worker).
+- **CLI sessions survive past 15 minutes** — the CLI persists the refresh
+  token and retries through a single-flight refresh; server URLs default
+  to `https` for non-loopback hosts and the JWT secret no longer appears
+  in `docker run` argv (`ps` / `docker inspect`).
+- **Slug collisions are impossible again.** `services.slug` is globally
+  unique at the database level (it mints container, volume and router
+  names) after a one-time dedup; slug uniqueness was application-layer
+  only since the projects overhaul.
+- **Dependency advisories cleared** — `fast-uri` (8× HIGH, SSRF/host
+  confusion) and `qs` (2× MODERATE, DoS) pinned past their vulnerable
+  ranges; `pnpm audit --prod` is clean.
+- The schema-drift CI guard can actually fail now, `/v1/auth/token`
+  answers instead of always 401ing, Traefik certificate backups follow
+  the configured data dir, concurrent routing writes no longer drop just-
+  added domains, PR preview creation survives the slug race, and the
+  installer no longer discards local modifications without `--force`.
+
+---
+
 ## [0.5.3] - 2026-09-03
 
 > A production-hardening patch: the lazy `require()` class that only
