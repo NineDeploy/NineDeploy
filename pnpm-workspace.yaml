@@ -22,6 +22,18 @@ overrides:
   # resolves into the maintained 13.x line already in the tree.
   "@esbuild-kit/esm-loader": "-"
   "glob@^10.0.0": "^13.0.6"
+  # fast-uri <3.1.6 / <4.1.3 (2026 GHSA set: host confusion + SSRF via IDN /
+  # IPv6 / percent-encoding normalization) arrives on BOTH majors via fastify:
+  # ajv + ajv-formats declare ^3, @fastify/ajv-compiler and
+  # fast-json-stringify declare ^4. Pin each major to its first patched
+  # release — a blanket bump to 4.x would yank ajv's edge across a major.
+  "fast-uri@^3.0.0": "3.1.6"
+  "fast-uri@^4.0.0": "4.1.3"
+  # qs <6.16.0 (GHSA-x5fp-wj9c-mxmx, GHSA-4mjr-xmp4-gh2g — DoS via bracket-key
+  # comma parsing / attacker-controlled isBuffer) arrives solely through the
+  # MCP SDK's express → body-parser edge, all on the 6.x line. Single pin is
+  # safe: only one qs instance exists in the tree.
+  qs: "6.16.0"
 
 # Dependencies allowed to run install scripts (pnpm 11 blocks these by default).
 # esbuild ships its native binary via postinstall; Vite/tsx need it.
