@@ -127,6 +127,37 @@ describe('setToken', () => {
       if (descriptor) Object.defineProperty(window, 'sessionStorage', descriptor);
     }
   });
+
+  it('returns null when getItem itself throws (accessible store, denied reads)', async () => {
+    // Deterministic on every platform: the store is reachable (storage()
+    // succeeds) but reads throw — different from a denied GETTER, which the
+    // Storage.prototype spy does not intercept on all runners.
+    const real = window.sessionStorage;
+    const deniedReads = {
+      length: 0,
+      clear: () => {},
+      key: () => null,
+      removeItem: () => {},
+      setItem: () => {},
+      getItem: () => {
+        throw new Error('denied');
+      },
+    };
+    Object.defineProperty(window, 'sessionStorage', {
+      configurable: true,
+      get: () => deniedReads,
+    });
+    try {
+      expect(getToken()).toBeNull();
+      // The refresh reader takes the same guarded path and declines safely.
+      await expect(refreshAccessToken()).resolves.toBe(false);
+    } finally {
+      Object.defineProperty(window, 'sessionStorage', {
+        configurable: true,
+        get: () => real,
+      });
+    }
+  });
 });
 
 describe('setSessionTokens without a refresh token', () => {

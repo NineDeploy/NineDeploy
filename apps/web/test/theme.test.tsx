@@ -48,6 +48,43 @@ describe('ThemeProvider', () => {
     expect(localStorage.getItem(ACCENT_KEY)).toBe('phosphor');
   });
 
+  it('falls back to defaults and ignores write failures when localStorage throws', () => {
+    // Privacy mode / denied storage: every access throws. The provider must
+    // still boot with defaults and swallow write failures (deterministic
+    // object replacement — Storage.prototype spies do not intercept on every
+    // platform).
+    const real = window.localStorage;
+    const denied = {
+      length: 0,
+      clear: () => {},
+      key: () => null,
+      removeItem: () => {},
+      setItem: () => {
+        throw new Error('denied');
+      },
+      getItem: () => {
+        throw new Error('denied');
+      },
+    };
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      get: () => denied,
+    });
+    try {
+      renderTheme();
+      expect(screen.getByTestId('theme')).toHaveTextContent('dark');
+      expect(screen.getByTestId('accent')).toHaveTextContent('phosphor');
+      // Toggling still works in-memory; the persist write fails silently.
+      act(() => screen.getByText('toggle').click());
+      expect(screen.getByTestId('theme')).toHaveTextContent('light');
+    } finally {
+      Object.defineProperty(window, 'localStorage', {
+        configurable: true,
+        get: () => real,
+      });
+    }
+  });
+
   it('reads persisted theme and accent from localStorage', () => {
     localStorage.setItem(THEME_KEY, 'light');
     localStorage.setItem(ACCENT_KEY, 'amber');
