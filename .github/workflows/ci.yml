@@ -61,9 +61,19 @@ jobs:
       # --exit-code`) is used so brand-new untracked migration files are caught
       # too. When drift involves a column conflict drizzle-kit aborts on the
       # missing TTY, so the step also fails fast rather than hanging.
+      #
+      # drizzle-kit 0.31 wraps several internal failure paths in a try/catch
+      # that only console.errors and exits 0 — the exit code alone proves
+      # nothing. The ONLY acceptable outcome is the explicit no-diff line;
+      # an error trace, a generated migration, or silence all fail.
       - name: Check for schema drift
         run: |
-          pnpm --filter @ninedeploy/db exec drizzle-kit generate
+          out="$(pnpm --filter @ninedeploy/db exec drizzle-kit generate 2>&1)"
+          echo "$out"
+          echo "$out" | grep -q "No schema changes, nothing to migrate" || {
+            echo "::error::Schema tooling failed or reported drift (output above)"
+            exit 1
+          }
           if [ -n "$(git status --porcelain -- packages/db/src/migrations)" ]; then
             echo "::error::Schema drift detected: drizzle-kit generate changed files under packages/db/src/migrations"
             git status --porcelain -- packages/db/src/migrations
@@ -117,6 +127,10 @@ jobs:
     # to keep the workflow cheap and to avoid forking a public image
     # for every fork PR.
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # The image must never reach `:edge` (what --channel=main installs
+    # pull) before the full suite and the integration tests are green —
+    # an independent job would happily publish a broken commit.
+    needs: [verify, integration]
     # L-14: least privilege. `packages: write` is the only permission
     # this job needs; everything else stays at the workflow default
     # of `contents: read`.

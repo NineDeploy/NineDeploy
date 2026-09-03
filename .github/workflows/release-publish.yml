@@ -154,9 +154,20 @@ jobs:
             | while IFS=$'\t' read -r id tags; do
                 keep=true
                 for t in ${tags//,/ }; do
-                  case " ${canonical} " in
-                    *" ${t} "*) ;;
-                    *) keep=false ;;
+                  case "${t}" in
+                    # `:edge` and `:main-<sha>` are pushed by ci.yml on every
+                    # green main build — they are what `install.sh
+                    # --channel=main` resolves. This prune used to delete any
+                    # version whose tags were not a subset of the canonical
+                    # release set, which silently broke main-channel installs
+                    # until the next push to main.
+                    edge|main-*) ;;
+                    *)
+                      case " ${canonical} " in
+                        *" ${t} "*) ;;
+                        *) keep=false ;;
+                      esac
+                      ;;
                   esac
                 done
                 if [ "${keep}" = "false" ]; then
