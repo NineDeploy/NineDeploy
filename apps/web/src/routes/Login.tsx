@@ -34,7 +34,6 @@ export function Login() {
 
   const status = useQuery({ queryKey: ['auth-status'], queryFn: () => api.auth.status() });
   const initialized = status.data?.initialized ?? false;
-
   const publicProviders = useQuery({
     queryKey: ['public-oidc-providers'],
     queryFn: () => api.auth.oidc.publicProviders(),
@@ -53,7 +52,9 @@ export function Login() {
       navigate(from, { replace: true });
     } catch (err) {
       // A 2FA-enabled account without a code yet: switch to the second step.
-      if (err instanceof Error && err.message.toLowerCase().includes('two-factor code required')) {
+      // Detected via the server's typed error code — a message substring
+      // would silently break 2FA logins the day the wording changes.
+      if ((err as { code?: string } | null)?.code === 'totp_required') {
         setNeedsTotp(true);
         setError(null);
       } else {
@@ -63,6 +64,27 @@ export function Login() {
       setBusy(false);
     }
   };
+
+  // The status probe is what decides "first run" vs "sign in". If it failed
+  // (server briefly down), rendering the setup form would funnel the user
+  // into a guaranteed 409 — show an explicit retry state instead.
+  if (status.isError) {
+    return (
+      <div className="grid min-h-screen place-items-center px-6">
+        <div className="w-full max-w-sm nd-fade">
+          <Card className="p-6 text-center">
+            <h2 className="text-base font-semibold">Cannot reach the server</h2>
+            <p className="mt-1 text-sm text-slate-400">
+              The login state could not be determined. Check your connection and try again.
+            </p>
+            <Button className="mt-4" variant="secondary" onClick={() => status.refetch()}>
+              Retry
+            </Button>
+          </Card>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="grid min-h-screen place-items-center px-6">

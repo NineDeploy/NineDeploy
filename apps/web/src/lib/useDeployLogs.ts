@@ -1,35 +1,78 @@
 import { useEffect, useRef, useState } from 'react';
 import { deployLogsWsUrl, websocketAuthProtocols } from './api.js';
 
+/**
+ * Only the tail of the log is rendered. The hook used to re-join the WHOLE
+ * accumulated log on every WS message — O(n²) over a deploy's lifetime, which
+ * froze the tab on multi-megabyte builds. Chunks now batch in a ref and flush
+ * on an interval; the retained text is capped at the tail window below.
+ */
+const MAX_RETAINED_CHARS = 512 * 1024;
+const FLUSH_MS = 200;
+/** A proxy idle-timeout silently ends "live" logs mid-deploy; retry a bit. */
+const RECONNECT_DELAY_MS = 2000;
+const RECONNECT_ATTEMPTS = 2;
+
 /** Stream a deployment's logs over WebSocket (backlog + live lines). */
 export function useDeployLogs(serviceId: number | null, deploymentId: number | null) {
   const [lines, setLines] = useState('');
   const [open, setOpen] = useState(false);
   const activeId = useRef<number | null>(null);
-  // Chunks accumulate here and are joined into `lines` after each message.
-  // Growing a string by concatenation in a loop is O(n²) on long deploys;
-  // an array append is amortized O(1) per chunk.
   const chunksRef = useRef<string[]>([]);
+  const linesRef = useRef('');
 
   useEffect(() => {
     if (serviceId == null || deploymentId == null) return;
     activeId.current = deploymentId;
     chunksRef.current = [];
+    linesRef.current = '';
     setLines('');
+    setOpen(false);
 
-    const ws = new WebSocket(deployLogsWsUrl(serviceId, deploymentId), websocketAuthProtocols());
-    ws.onopen = () => setOpen(true);
-    ws.onmessage = (event) => {
-      if (activeId.current !== deploymentId) return;
-      chunksRef.current.push(String(event.data));
-      setLines(chunksRef.current.join(''));
+    let ws: WebSocket | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let attempts = 0;
+
+    const flush = () => {
+      if (chunksRef.current.length === 0) return;
+      const chunk = chunksRef.current.join('');
+      chunksRef.current = [];
+      let next = linesRef.current + chunk;
+      if (next.length > MAX_RETAINED_CHARS) next = next.slice(-MAX_RETAINED_CHARS);
+      linesRef.current = next;
+      setLines(next);
     };
-    ws.onerror = () => setOpen(false);
-    ws.onclose = () => setOpen(false);
+    const flushTimer = setInterval(flush, FLUSH_MS);
+
+    const connect = () => {
+      ws = new WebSocket(deployLogsWsUrl(serviceId, deploymentId), websocketAuthProtocols());
+      ws.onopen = () => {
+        setOpen(true);
+        attempts = 0; // a healthy connection refills the reconnect budget
+      };
+      ws.onmessage = (event) => {
+        if (activeId.current !== deploymentId) return;
+        chunksRef.current.push(String(event.data));
+      };
+      ws.onerror = () => setOpen(false);
+      ws.onclose = () => {
+        setOpen(false);
+        flush();
+        if (activeId.current === deploymentId && attempts < RECONNECT_ATTEMPTS) {
+          attempts++;
+          reconnectTimer = setTimeout(connect, RECONNECT_DELAY_MS);
+        }
+      };
+    };
+    connect();
 
     return () => {
+      // Setting activeId to null first makes the onclose handler below a
+      // no-op for reconnects when the teardown is an unmount/switch.
       activeId.current = null;
-      ws.close();
+      clearInterval(flushTimer);
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (ws) ws.close();
     };
   }, [serviceId, deploymentId]);
 

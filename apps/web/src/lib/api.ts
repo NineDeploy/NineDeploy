@@ -139,6 +139,10 @@ export const api: NineDeployClient = createClient({
   baseUrl: import.meta.env['VITE_API_URL'] ?? '',
   getToken: () => getToken() ?? undefined,
   fetch: fetchWithRefresh,
+  // The SDK's default request timeout protects CLI/CI callers; the dashboard
+  // deliberately opts out — heavy stats/graph queries are better left to the
+  // user's patience (and React Query's error UI) than to an abort.
+  timeoutMs: 0,
 });
 
 function getWsBase(): { proto: string; host: string } {

@@ -16,6 +16,7 @@ const apiMock = vi.hoisted(() => ({
 
 vi.mock('../src/lib/api.js', () => apiMock);
 
+import { ToastProvider } from '../src/components/Toast.js';
 import { EnvCard } from '../src/components/EnvCard.js';
 
 const VARS = [
@@ -150,8 +151,49 @@ describe('EnvCard', () => {
     await user.type(input, 'X');
     await user.click(within(row).getByTitle('Save'));
     await waitFor(() =>
-      expect(apiMock.api.env.update).toHaveBeenCalledWith(7, 1, { key: 'PORT', value: expect.stringContaining('3000') }),
+      expect(apiMock.api.env.update).toHaveBeenCalledWith(7, 1, {
+        key: 'PORT',
+        value: expect.stringContaining('3000'),
+        isSecret: false,
+      }),
     );
+  });
+
+  it('sends isSecret: true when saving an edit on a secret row', async () => {
+    const user = userEvent.setup();
+    renderCard();
+    await waitFor(() => expect(screen.getByText('API_KEY')).toBeInTheDocument());
+    const input = screen.getByPlaceholderText('•••• hidden');
+    const row = input.closest('div.flex.items-center') as HTMLElement;
+    await user.type(input, '9');
+    await user.click(within(row).getByTitle('Save'));
+    await waitFor(() =>
+      // The classification must ride along on the PATCH — the server preserves
+      // it when omitted, but a missing field is exactly how secrets used to be
+      // silently demoted to plain vars.
+      expect(apiMock.api.env.update).toHaveBeenCalledWith(7, 2, {
+        key: 'API_KEY',
+        value: expect.stringContaining('hunter2'),
+        isSecret: true,
+      }),
+    );
+  });
+
+  it('toasts the failure when a save is rejected', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<EnvCard serviceId={7} />, {
+      queryClient: createQueryClient(),
+      wrapper: (children) => <ToastProvider>{children}</ToastProvider>,
+    });
+    await waitFor(() => expect(screen.getByText('PORT')).toBeInTheDocument());
+    const input = screen.getByDisplayValue('3000');
+    const row = input.closest('div.flex.items-center') as HTMLElement;
+    apiMock.api.env.update.mockRejectedValueOnce(new Error('409'));
+    await user.type(input, 'X');
+    await user.click(within(row).getByTitle('Save'));
+    // A silent failure left users believing the edit had landed — the toast
+    // makes the rejection visible.
+    expect(await screen.findByText('Could not save the variable')).toBeInTheDocument();
   });
 
   it('treats a cleared draft as a real edit (value can be blanked)', async () => {

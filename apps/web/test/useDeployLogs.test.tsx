@@ -43,14 +43,20 @@ describe('useDeployLogs', () => {
   });
 
   it('appends incoming messages to the log lines', () => {
+    // Chunks batch and flush on the 200ms interval (re-joining the whole log
+    // per message was O(n²)) — advance the clock to reach the flush.
+    vi.useFakeTimers();
     const { result } = renderHook(() => useDeployLogs(1, 2));
     const ws = FakeWebSocket.instances[0];
     act(() => ws?.message('line one\n'));
     act(() => ws?.message('line two'));
+    act(() => vi.advanceTimersByTime(200));
     expect(result.current.lines).toBe('line one\nline two');
+    vi.useRealTimers();
   });
 
   it('ignores messages from a stale socket after the deployment changes', () => {
+    vi.useFakeTimers();
     const { result, rerender } = renderHook(({ sid, did }) => useDeployLogs(sid, did), {
       initialProps: { sid: 1, did: 2 },
     });
@@ -60,13 +66,30 @@ describe('useDeployLogs', () => {
     rerender({ sid: 1, did: 3 });
     expect(FakeWebSocket.instances).toHaveLength(2);
     const second = FakeWebSocket.instances[1];
+    act(() => vi.advanceTimersByTime(200));
     expect(result.current.lines).toBe('');
 
     // Stale socket still fires, but its deployment id no longer matches.
     act(() => first?.message('stale'));
+    act(() => vi.advanceTimersByTime(200));
     expect(result.current.lines).toBe('');
     act(() => second?.message('fresh'));
+    act(() => vi.advanceTimersByTime(200));
     expect(result.current.lines).toBe('fresh');
+    vi.useRealTimers();
+  });
+
+  it('reconnects after an unexpected close while the deployment is still live', () => {
+    vi.useFakeTimers();
+    const { result } = renderHook(() => useDeployLogs(1, 2));
+    const first = FakeWebSocket.instances[0];
+    act(() => first?.open());
+    act(() => first?.closeFromServer());
+    expect(result.current.open).toBe(false);
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    act(() => vi.advanceTimersByTime(2000));
+    expect(FakeWebSocket.instances).toHaveLength(2);
+    vi.useRealTimers();
   });
 
   it('marks the stream closed on error and on close', () => {

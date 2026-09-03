@@ -38,7 +38,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     api.auth
       .me()
       .then(setUser)
-      .catch(() => clearTokens())
+      .catch((err: unknown) => {
+        // Only an explicit 401 means the credential is dead. A network blip
+        // (fetch failed, 502 from a restarting proxy) must NOT wipe the
+        // stored tokens — that logged the user out because the server blinked.
+        const status = (err as { status?: number } | null)?.status;
+        if (status === 401 || status === 403) clearTokens();
+      })
       .finally(() => setLoading(false));
   }, []);
 

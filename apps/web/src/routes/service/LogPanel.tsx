@@ -76,6 +76,11 @@ function useAutoScroll(ref: RefObject<HTMLPreElement | null>, content: string): 
   // biome-ignore lint/correctness/useExhaustiveDependencies: intentionally keyed on content — scroll to the newest line whenever a new log line arrives, even though the body only touches the DOM node.
   useEffect(() => {
     const el = ref.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (!el) return;
+    // Follow live output only when the user is already (near) the bottom —
+    // force-scrolling on every chunk yanked anyone scrolling up to read
+    // straight back down. 48px ≈ a couple of lines of slack.
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+    if (nearBottom) el.scrollTop = el.scrollHeight;
   }, [content, ref]);
 }

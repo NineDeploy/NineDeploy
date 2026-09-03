@@ -132,13 +132,22 @@ describe('AuthProvider', () => {
     expect(screen.getByTestId('loading')).toHaveTextContent('false');
   });
 
-  it('clears the token and finishes loading when me() rejects', async () => {
+  it('clears the token and finishes loading when me() rejects with 401', async () => {
     apiMock.getToken.mockReturnValue('bad');
-    apiMock.api.auth.me.mockRejectedValue(new Error('nope'));
+    apiMock.api.auth.me.mockRejectedValue(Object.assign(new Error('nope'), { status: 401 }));
     renderAuth();
     await waitFor(() => expect(screen.getByTestId('loading')).toHaveTextContent('false'));
     expect(apiMock.clearTokens).toHaveBeenCalled();
     expect(screen.getByTestId('email')).toHaveTextContent('none');
+  });
+
+  it('keeps the token on a transient network failure (no 401)', async () => {
+    apiMock.getToken.mockReturnValue('good');
+    apiMock.api.auth.me.mockRejectedValue(new Error('fetch failed'));
+    renderAuth();
+    await waitFor(() => expect(screen.getByTestId('loading')).toHaveTextContent('false'));
+    // A server blip must not log the user out — tokens survive.
+    expect(apiMock.clearTokens).not.toHaveBeenCalled();
   });
 
   it('logs in, stores the access token and sets the user', async () => {

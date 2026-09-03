@@ -1,5 +1,5 @@
 ﻿import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { act, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useLocation } from 'react-router';
 import { Login } from '../src/routes/Login.js';
@@ -37,6 +37,24 @@ function authValue(overrides: Record<string, unknown> = {}) {
 describe('Login', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it('shows a retry card instead of the setup form when the status probe fails', async () => {
+    // A failed probe must NOT funnel the user into "Create admin account" —
+    // that submit is a guaranteed 409 on an initialized instance.
+    mockOf(api.auth.status).mockRejectedValue(new Error('ECONNREFUSED') as never);
+    mockOf(useAuth).mockReturnValue(authValue() as never);
+    renderWithProviders(<Login />);
+
+    expect(await screen.findByRole('heading', { name: 'Cannot reach the server' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Sign in/ })).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText('Admin')).not.toBeInTheDocument();
+
+    mockOf(api.auth.status).mockResolvedValue({ initialized: true } as never);
+    await act(async () => {
+      screen.getByRole('button', { name: 'Retry' }).click();
+    });
+    expect(await screen.findByRole('heading', { name: 'Welcome back' })).toBeInTheDocument();
   });
 
   it('redirects to / when already logged in', async () => {
@@ -151,10 +169,13 @@ describe('Login', () => {
 
   it('switches to the two-factor step and signs in with the code', async () => {
     const user = userEvent.setup();
-    // First attempt: the account has 2FA enabled and no code was given.
+    // First attempt: the account has 2FA enabled and no code was given. The
+    // server marks this with the typed `totp_required` error code (the UI
+    // keys off the code, not the English message).
+    const totpRequired = Object.assign(new Error('Two-factor code required'), { code: 'totp_required' });
     const login = vi
       .fn()
-      .mockRejectedValueOnce(new Error('Two-factor code required'))
+      .mockRejectedValueOnce(totpRequired)
       .mockResolvedValueOnce(undefined);
     mockOf(api.auth.status).mockResolvedValue({ initialized: true } as never);
     mockOf(useAuth).mockReturnValue(authValue({ login }) as never);
@@ -173,9 +194,10 @@ describe('Login', () => {
 
   it('shows the error when the two-factor code is wrong', async () => {
     const user = userEvent.setup();
+    const totpRequired = Object.assign(new Error('Two-factor code required'), { code: 'totp_required' });
     const login = vi
       .fn()
-      .mockRejectedValueOnce(new Error('Two-factor code required'))
+      .mockRejectedValueOnce(totpRequired)
       .mockRejectedValueOnce(new Error('Invalid two-factor code'));
     mockOf(api.auth.status).mockResolvedValue({ initialized: true } as never);
     mockOf(useAuth).mockReturnValue(authValue({ login }) as never);

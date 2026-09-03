@@ -77,9 +77,24 @@ export function EnvCard({ serviceId }: { serviceId: number }) {
   };
   const parsed = useMemo(() => parseEnvText(rawText), [rawText]);
 
-  const add = useMutation({ mutationFn: () => api.env.create(serviceId, { key, value, isSecret: secret }), onSuccess: invalidate });
-  const update = useMutation({ mutationFn: (v: { id: number; key: string; value: string }) => api.env.update(serviceId, v.id, { key: v.key, value: v.value }), onSuccess: invalidate });
-  const remove = useMutation({ mutationFn: (id: number) => api.env.remove(serviceId, id), onSuccess: invalidate });
+  const add = useMutation({
+    mutationFn: () => api.env.create(serviceId, { key, value, isSecret: secret }),
+    onSuccess: invalidate,
+    onError: () => toast('Could not add the variable — the key may already exist', 'error'),
+  });
+  const update = useMutation({
+    // isSecret is passed through explicitly: the server preserves the stored
+    // classification when it is omitted, but sending it removes any doubt.
+    mutationFn: (v: { id: number; key: string; value: string; isSecret: boolean }) =>
+      api.env.update(serviceId, v.id, { key: v.key, value: v.value, isSecret: v.isSecret }),
+    onSuccess: invalidate,
+    onError: () => toast('Could not save the variable', 'error'),
+  });
+  const remove = useMutation({
+    mutationFn: (id: number) => api.env.remove(serviceId, id),
+    onSuccess: invalidate,
+    onError: () => toast('Could not delete the variable', 'error'),
+  });
   const saveRaw = useMutation({
     mutationFn: async () => {
       const current: EnvEntry[] = env.data ?? [];
@@ -231,7 +246,7 @@ export function EnvCard({ serviceId }: { serviceId: number }) {
                           className="h-7 min-w-0 flex-1 font-mono text-[11px]"
                         />
                         <button type="button"
-                          onClick={() => update.mutate({ id: v.id, key: v.key, value: draft })}
+                          onClick={() => update.mutate({ id: v.id, key: v.key, value: draft, isSecret: v.isSecret })}
                           disabled={!dirty}
                           className={cn('shrink-0 text-slate-600 transition', dirty ? 'hover:text-emerald-400' : 'opacity-30')}
                           title="Save"

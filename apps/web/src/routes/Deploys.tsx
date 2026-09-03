@@ -151,7 +151,10 @@ export function Deploys() {
                 </thead>
                 <tbody>
                   {items.map((item) => {
-                    const badge = STATUS_BADGE[item.status];
+                    // The queue serializer can race a cancel or gain a status
+                    // this build has never heard of; render it instead of
+                    // letting the page crash on a missing map entry.
+                    const badge = STATUS_BADGE[item.status] ?? { label: item.status, tone: 'amber' as const };
                     return (
                       <tr
                         key={item.id}

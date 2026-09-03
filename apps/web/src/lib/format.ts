@@ -94,5 +94,7 @@ export function downloadBlob(data: BlobPart, filename: string, type = 'applicati
   a.href = url;
   a.download = filename;
   a.click();
-  URL.revokeObjectURL(url);
+  // Revoking synchronously can cancel the download in some browsers (Safari
+  // commits asynchronously) — give the download a beat before freeing.
+  window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
 }

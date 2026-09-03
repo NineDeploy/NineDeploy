@@ -91,7 +91,8 @@ describe('useCopy', () => {
 });
 
 describe('downloadBlob', () => {
-  it('triggers an anchor download and revokes the object URL', () => {
+  it('triggers an anchor download and revokes the object URL (deferred)', () => {
+    vi.useFakeTimers();
     const url = 'blob:mock-url';
     const revoke = vi.fn();
     const createObjectURL = vi.fn().mockReturnValue(url);
@@ -106,9 +107,14 @@ describe('downloadBlob', () => {
     expect(createObjectURL).toHaveBeenCalledOnce();
     expect(anchor.download).toBe('export.json');
     expect(click).toHaveBeenCalledOnce();
+    // Revocation is deferred (some browsers commit downloads asynchronously)
+    // — fire the timer to reach it.
+    expect(revoke).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1_000);
     expect(revoke).toHaveBeenCalledWith(url);
 
     createElement.mockRestore();
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 });

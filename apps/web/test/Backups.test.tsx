@@ -149,7 +149,9 @@ describe('Backups', () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/v1/backups/1/download');
     expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get('Authorization')).toBe(`Bearer ${getToken()}`);
     expect(URL.createObjectURL).toHaveBeenCalled();
-    expect(URL.revokeObjectURL).toHaveBeenCalled();
+    // Revocation is deferred (Safari commits downloads asynchronously); wait
+    // for the 10s cleanup timer instead of expecting a synchronous call.
+    await waitFor(() => expect(URL.revokeObjectURL).toHaveBeenCalled(), { timeout: 3_000 });
 
     // failure path
     fetchMock.mockResolvedValueOnce({ ok: false } as Response);

@@ -69,6 +69,12 @@ export function AcceptInvite() {
         // dashboard, then route the user into the workspace.
         await queryClient.invalidateQueries({ queryKey: ['workspaces'] });
         window.setTimeout(() => navigate(`/?workspace=${result.workspaceId}`), 1200);
+      } else {
+        // The API resolves { ok: false } for business-level failures (used
+        // token, wrong e-mail) — without this branch the page sat on the
+        // "accepting" spinner forever.
+        setStatus('error');
+        setError('This invitation can no longer be accepted');
       }
     },
     /* v8 ignore next 4 */

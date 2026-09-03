@@ -42,9 +42,13 @@ export function Dashboard() {
       const bundle = JSON.parse(text);
       const res = await api.services.importBundle(bundle);
       navigate(`/services/${res.serviceId}`);
-    } catch {
+    } catch (err) {
       setImporting(false);
-      toast('Import failed', 'error');
+      // Surface the API's actual reason (incompatible bundle version, bad
+      // shape, …) — a bare "Import failed" turned every rejection into a
+      // support ticket.
+      const message = err instanceof Error ? err.message : 'Import failed';
+      toast(`Import failed: ${message}`, 'error');
     }
   };
 
