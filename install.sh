@@ -1044,15 +1044,31 @@ update_from_git() {
     git reset --hard HEAD >/dev/null 2>&1 || true
   fi
 
-  git checkout --force "$_ref" || { [ "$HAS_SYSTEMD" = true ] && sudo systemctl start ninedeploy; fail "could not check out $_ref"; }
+  # Contract (see --help): only --force discards local modifications. A dirty
+  # tree must not be silently clobbered by `checkout --force`, so on the
+  # default path detect it and abort with guidance (the panel is restarted in
+  # the fail branch below).
+  if [ "$FORCE_REFRESH" != "1" ] && { ! git diff --quiet || ! git diff --cached --quiet; }; then
+    [ "$HAS_SYSTEMD" = true ] && sudo systemctl start ninedeploy
+    fail "local modifications to tracked files would be overwritten; commit or stash them, or re-run with --force"
+  fi
+
+  if [ "$FORCE_REFRESH" = "1" ]; then
+    git checkout --force "$_ref" || { [ "$HAS_SYSTEMD" = true ] && sudo systemctl start ninedeploy; fail "could not check out $_ref"; }
+  else
+    git checkout "$_ref" || { [ "$HAS_SYSTEMD" = true ] && sudo systemctl start ninedeploy; fail "could not check out $_ref"; }
+  fi
 
   # Land exactly on the remote's idea of $_ref. `checkout --force` on a branch
   # leaves the old local commit in place; on a tag it can silently keep a
-  # stale local tag. Reset to the fetched object either way.
-  if [ "$_ref" = "main" ]; then
-    git reset --hard origin/main || warn "could not reset to origin/main; continuing with the checked-out tree"
-  else
-    git reset --hard "refs/tags/$_ref" || warn "could not reset to $_ref; continuing with the checked-out tree"
+  # stale local tag. Reset to the fetched object either way — but ONLY under
+  # --force, which is the flag that owns destroying local state.
+  if [ "$FORCE_REFRESH" = "1" ]; then
+    if [ "$_ref" = "main" ]; then
+      git reset --hard origin/main || warn "could not reset to origin/main; continuing with the checked-out tree"
+    else
+      git reset --hard "refs/tags/$_ref" || warn "could not reset to $_ref; continuing with the checked-out tree"
+    fi
   fi
 
   ok "Source tree at $_ref ($(git rev-parse --short HEAD 2>/dev/null || echo unknown))"

@@ -14,3 +14,12 @@ coverage
 repos
 backups
 volumes
+# Local tooling / scratch dirs that must never leak into a build context.
+.claude
+.mimosa
+.zcode
+.temp_files
+.tmp-real-validate
+.dfmt
+security-report
+docs

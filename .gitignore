@@ -73,3 +73,4 @@ apps/server/templates-mirror.json
 .tpm-*.log
 .tpm-*.py
 .temp_files/
+AUDIT-*.md
