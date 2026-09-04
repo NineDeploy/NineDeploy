@@ -718,8 +718,20 @@ export interface NineDeployClient {
     list: () => Promise<{
       orchestrators: Array<{ name: string; stacks: Array<{ name: string; serviceCount: number }> }>;
     }>;
-    /** Stable snapshot of one stack. Returns `null` when the orchestrator has no record. */
-    stackStatus: (name: string) => Promise<{
+    /** The stacks one orchestrator knows about. */
+    stacks: (orchestrator: string) => Promise<{
+      stacks: Array<{ name: string; serviceCount: number }>;
+    }>;
+    /**
+     * Stable snapshot of ONE stack. Returns `null` when the orchestrator has
+     * no record of it.
+     *
+     * r036: this used to take only the orchestrator name and hit
+     * `/:name/stacks`, which passed that name through as the STACK name — so
+     * it answered `null` for every stack not coincidentally named after its
+     * orchestrator. The stack now has its own argument and path segment.
+     */
+    stackStatus: (orchestrator: string, stack: string) => Promise<{
       name: string;
       services: Array<{ name: string; state: 'running' | 'stopped' | 'partial' | 'unknown'; replicas: number }>;
       appliedAt: string;
@@ -1580,11 +1592,16 @@ export function createClient(opts: NineDeployClientOptions): NineDeployClient {
       list: () => get<{
         orchestrators: Array<{ name: string; stacks: Array<{ name: string; serviceCount: number }> }>;
       }>('/v1/orchestrators'),
-      stackStatus: (name) => get<{
+      stacks: (orchestrator) => get<{
+        stacks: Array<{ name: string; serviceCount: number }>;
+      }>(`/v1/orchestrators/${encodeURIComponent(orchestrator)}/stacks`),
+      stackStatus: (orchestrator, stack) => get<{
         name: string;
         services: Array<{ name: string; state: 'running' | 'stopped' | 'partial' | 'unknown'; replicas: number }>;
         appliedAt: string;
-      } | null>(`/v1/orchestrators/${encodeURIComponent(name)}/stacks`),
+      } | null>(
+        `/v1/orchestrators/${encodeURIComponent(orchestrator)}/stacks/${encodeURIComponent(stack)}`,
+      ),
     },
     branding: {
       get: () => get<{

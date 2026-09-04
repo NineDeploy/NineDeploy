@@ -416,7 +416,7 @@ describe('Sprint 11 SDK surface (G-13 / G-15 / G-30 / G-24 / G-47 / G-16)', () =
       expect(JSON.parse(calls[0]?.init.body ?? '{}')).toEqual({ values: { x: 1 } });
     });
 
-    it('orchestrators.list / stackStatus', async () => {
+    it('orchestrators.list / stacks / stackStatus', async () => {
       const { fetchMock, calls } = makeFetch(() =>
         ok({ orchestrators: [{ name: 'default', stacks: [] }] }),
       );
@@ -425,8 +425,15 @@ describe('Sprint 11 SDK surface (G-13 / G-15 / G-30 / G-24 / G-47 / G-16)', () =
       const res = await client.orchestrators.list();
       expect(res.orchestrators[0]?.name).toBe('default');
       expect(calls[0]?.url).toBe('/v1/orchestrators');
-      await client.orchestrators.stackStatus('default');
+
+      await client.orchestrators.stacks('default');
       expect(calls[1]?.url).toBe('/v1/orchestrators/default/stacks');
+
+      // r036: the stack is addressed by its own segment. Passing only the
+      // orchestrator meant the API asked for a stack named after the
+      // orchestrator and answered null for every real one.
+      await client.orchestrators.stackStatus('swarm', 'web');
+      expect(calls[2]?.url).toBe('/v1/orchestrators/swarm/stacks/web');
     });
 
     it('branding.get / set', async () => {
