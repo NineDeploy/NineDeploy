@@ -100,7 +100,20 @@ export class ConfigCenter implements IConfigCenter {
     if (isSecret) {
       storedValue = encrypt(String(value));
     } else if (typeof value === 'string') {
-      storedValue = value;
+      // get() re-parses stored rows on a cache miss, so a RAW copy of a
+      // JSON-ambiguous string ('true', '123', 'null', '{}') came back
+      // type-flipped from a cold cache (restart) while the warm cache
+      // returned the string — the store's answer depended on cache warmth
+      // (r033). Encode exactly the strings that would parse; plain strings
+      // stay raw for readability and keep hitting the parse-failure path.
+      let parsesAsJson = false;
+      try {
+        JSON.parse(value);
+        parsesAsJson = true;
+      } catch {
+        /* plain text — store verbatim */
+      }
+      storedValue = parsesAsJson ? JSON.stringify(value) : value;
     } else {
       storedValue = JSON.stringify(value);
     }

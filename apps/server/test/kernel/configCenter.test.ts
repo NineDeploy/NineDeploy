@@ -137,6 +137,66 @@ describe('ConfigCenter', () => {
     unsub();
   });
 
+  // r033 regression: set() stored non-secret strings RAW while get() re-parses
+  // rows on a cache miss, so JSON-ambiguous strings ('true', '123', 'null')
+  // came back type-flipped from a cold cache (process restart) while the warm
+  // cache returned the exact string — the store's answer depended on cache
+  // warmth, and the route's metadata-only update (re-read via get() → re-set)
+  // laundered the corrupted type permanently. set() now encodes exactly the
+  // strings that would parse as JSON; plain strings stay raw. The reader
+  // below is a SECOND ConfigCenter over the same store: for it the cache is
+  // cold, which models a restart (DB persists, cache does not).
+  it('returns the exact stored string on a cold cache (r033 regression)', async () => {
+    const store = new Map<string, any>();
+    const findEntry = (args: any) => {
+      const chunks = args?.where?.queryChunks;
+      if (Array.isArray(chunks)) {
+        for (const chunk of chunks) {
+          if (chunk && typeof chunk === 'object' && 'value' in chunk && typeof chunk.value === 'string') {
+            if (store.has(chunk.value)) return store.get(chunk.value);
+          }
+        }
+      }
+      return undefined;
+    };
+    const fakeDb = createFakeDb({
+      findFirst: {
+        configEntries: ((args: any) => findEntry(args)) as any,
+      },
+      insert: {
+        config_entries: ((val: any) => {
+          store.set(val.key, val);
+          return [val];
+        }) as any,
+        configEntries: ((val: any) => {
+          store.set(val.key, val);
+          return [val];
+        }) as any,
+      },
+      delete: {
+        config_entries: () => [],
+        configEntries: () => [],
+      },
+    });
+
+    const writer = new ConfigCenter(fakeDb);
+    const reader = new ConfigCenter(fakeDb); // cold cache = restart model
+
+    for (const value of ['true', '123', 'null', '{}']) {
+      await writer.set(`cold.${value}`, value);
+      expect(await writer.get(`cold.${value}`)).toBe(value); // warm path
+      expect(await reader.get(`cold.${value}`)).toBe(value); // cold path
+    }
+    // The stored 'null' string must not shadow the caller's defaultValue.
+    expect(await reader.get('cold.null', 'fallback')).toBe('null');
+
+    // Non-strings and plain strings keep their existing round-trip.
+    await writer.set('cold.obj', { beta: true, maxUsers: 10 });
+    expect(await reader.get('cold.obj')).toEqual({ beta: true, maxUsers: 10 });
+    await writer.set('cold.plain', 'just-plain-string-not-json');
+    expect(await reader.get('cold.plain')).toBe('just-plain-string-not-json');
+  });
+
   it('handles watcher errors without crashing set()', async () => {
     const fakeDb = createFakeDb();
     const configCenter = new ConfigCenter(fakeDb);
