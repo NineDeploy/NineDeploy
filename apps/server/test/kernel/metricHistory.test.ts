@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { auditLog, createDb } from '@ninedeploy/db';
 import { MetricHistoryPlugin } from '../../src/kernel/plugins/metricHistory.js';
 import { createFakeDb } from '../helpers.js';
 
@@ -222,5 +223,48 @@ describe('MetricHistoryPlugin', () => {
     const p = new MetricHistoryPlugin();
     expect(p.count('never-archived', 'prometheus')).toBe(0);
     expect(p.count('never-archived', 'influxdb')).toBe(0);
+  });
+
+  // r035 regression: prune() once bound a raw Date param inside a raw sql
+  // template against the INTEGER unix-seconds audit_log.ts column. The param
+  // serialized as non-numeric text, SQLite's INTEGER < TEXT ordering made the
+  // cutoff match EVERY row, and every boot/flush wiped the whole metric
+  // history. This test runs the real prune against a real in-memory libSQL
+  // database (a fake db cannot observe driver binding semantics): exactly the
+  // stale row must go; fresh and non-metric rows must survive.
+  it('prunes exactly the stale metric rows — fresh and non-metric rows survive', async () => {
+    const { db, client, ready } = createDb({ url: ':memory:' });
+    await ready;
+    await client.execute(`CREATE TABLE audit_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER,
+      action TEXT NOT NULL,
+      entity TEXT,
+      meta TEXT,
+      ts INTEGER NOT NULL DEFAULT (unixepoch())
+    )`);
+
+    const DAY = 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    const insertRow = (action: string, entity: string, ageMs: number) =>
+      db.insert(auditLog).values({ userId: null, action, entity, meta: {}, ts: new Date(now - ageMs) });
+    await insertRow('metric.archived', 'fresh', 0);
+    await insertRow('metric.archived', 'stale', 40 * DAY);
+    await insertRow('deployment.created', 'app', 0);
+
+    const plugin = new MetricHistoryPlugin();
+    const kernel = {
+      db,
+      configCenter: { get: async (_key: string, def: unknown) => def },
+      events: { on: () => () => {}, emitCustom: () => {} },
+    };
+    const deleted = await plugin.runRetention(kernel as never);
+
+    expect(deleted).toBe(1);
+    const left = await db.select().from(auditLog);
+    expect(left.map((r) => `${r.action}:${r.entity}`).sort()).toEqual([
+      'deployment.created:app',
+      'metric.archived:fresh',
+    ]);
   });
 });

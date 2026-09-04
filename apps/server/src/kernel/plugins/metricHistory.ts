@@ -1,5 +1,5 @@
 import { auditLog, type DB } from '@ninedeploy/db';
-import { sql } from 'drizzle-orm';
+import { and, eq, lt } from 'drizzle-orm';
 import type { DomainEvents, KernelContext, KernelPlugin } from '../types.js';
 
 /**
@@ -113,7 +113,13 @@ class BuiltinBackend implements MetricBackend {
     const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
     const result = await db
       .delete(auditLog)
-      .where(sql`${auditLog.action} = 'metric.archived' AND ${auditLog.ts} < ${cutoff}`);
+      // Typed columns, not a raw sql template: audit_log.ts is INTEGER
+      // unix-epoch seconds (mode 'timestamp'), and a raw Date param bypassed
+      // the column mapping — it bound as non-numeric text, and SQLite's
+      // INTEGER < TEXT ordering made the cutoff match EVERY row, wiping the
+      // whole metric history on every boot/flush (r035). lt() goes through
+      // the column mapping and binds integer seconds.
+      .where(and(eq(auditLog.action, 'metric.archived'), lt(auditLog.ts, cutoff)));
     return result.rowsAffected ?? 0;
   }
 }
