@@ -7,6 +7,143 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.7.0] - 2026-09-04
+
+> The multi-node release. `server_id` had been on the services table, the
+> Servers page and the build context since the fleet feature shipped, and no
+> builder ever read it: a service pinned to a node was refused outright
+> rather than be built on the wrong machine. Now a `docker` or compose
+> service pinned to a node is actually built and started ON that node
+> through the typed agent protocol, and each node runs its own Traefik so
+> production traffic never hairpins through the panel. The rest of the wave
+> makes the panel honest about itself: build-cache backends that shipped
+> complete but were never registered, settings that were saved and read by
+> nothing, counters pinned at zero — and four post-0.6.0 reliability fixes.
+
+### Added
+
+- **Multi-node docker deploys.** A `docker` service pinned to a node is
+  built and started on that node through the typed agent protocol: the
+  repository is checked out in a per-service workspace on the node, the
+  image is built or pulled there, and the environment arrives as a 0600
+  env-file that is deleted the moment the container has taken it. PM2 and
+  Nixpacks (Dockerfile-less) builds on a node are refused at queue time
+  with a reason naming the missing capability, instead of running on the
+  panel host behind the operator's back.
+- **Compose stacks run on a node too**, which is what makes the one-click
+  template catalogue usable there at all — most of it is compose-shaped.
+  The panel ships the inline stack YAML (or the node checks the repository
+  out), writes the `.env` and any volume-attachment override, then runs the
+  same ordering the local builder uses: `compose config` and `compose pull`
+  complete while the PREVIOUS revision is still serving, so a broken
+  interpolation or a bad tag fails the deployment without ever tearing the
+  live stack down.
+- **Per-node ingress.** Each node runs its own Traefik — you point the
+  domain at the NODE and the node terminates TLS for the services that live
+  on it. The panel stays the source of truth for domains, middlewares and
+  certificates: it renders the node's Traefik configs with the same
+  functions that generate its own and ships them over; the node only writes
+  them to a fixed path. A routing change refreshes every node
+  automatically, and the node proxy is recreated only when the STATIC
+  config changed, so a domain edit is not an ingress interruption.
+- **A Target node card on the service settings tab.** `serverId` had been
+  accepted by the create and update endpoints all along with no field
+  anywhere in the UI, so multi-node was reachable only from the CLI or a
+  raw API call. The card lists the registered nodes, explains the limit for
+  PM2 instead of offering a choice that would fail at deploy time, and
+  shows a non-operator the current target read-only.
+- **Registry and S3 build caches are selectable at last.** Both drivers
+  shipped complete and unit-tested but were never registered on the kernel,
+  so an operator who set the backend to `registry` or `s3` silently kept
+  building against the in-memory LRU. All three are registered now, each
+  reads its connection settings lazily (saving them in the panel needs no
+  restart), and the panel gained the registry/S3 endpoint and credential
+  fields that were missing entirely.
+- **Sessions table retention.** Sessions kept one row per login — each
+  with an IP and User-Agent — and nothing ever deleted one; the panel
+  filtered dead rows out of its response, so the growth was invisible.
+- **`GET /v1/orchestrators/:name/stacks` lists an orchestrator's stacks**,
+  and `GET /:name/stacks/:stack` reports one (SDK:
+  `orchestrators.stackStatus(orchestrator, stack)`).
+
+### Changed
+
+- **The panel proxy and each node proxy render only THEIR OWN services.**
+  A router upstream is a container name resolved over the local Docker
+  network, so once nodes really ran containers, rendering every service
+  into every proxy would have made the panel advertise routes for
+  containers on another machine and answer 502 for each one — with the node
+  doing the same in reverse. A node never receives the panel dashboard
+  router, which would blackhole the control plane behind whichever node
+  answered DNS first.
+- **Node agents gained per-service workspaces.** Git has no per-invocation
+  repository operand — fetch, checkout and reset act on the process working
+  directory — so the agent ran every git operation in its OWN directory: a
+  host could hold exactly one checkout and two remote services would
+  overwrite each other's source tree.
+- **The deploy worker honours the build-cache settings it was ignoring**: it
+  took whichever backend happened to register first instead of the one
+  named in `cache_name`, and the master `enabled` switch on that plugin
+  turned nothing off.
+- **Build-cache hit rate stops reading 0%**: the plugin looked up a key it
+  invented (`service:<id>:no-commit`) that the builder never stores under,
+  so every deploy published a `miss` that could not have been anything
+  else. The hit/miss/error events now come from the build itself, carrying
+  the key it actually consulted.
+- **Four more settings that were saved and never read now work**: the
+  per-minute alert cap on the notification dispatcher (it advertised
+  protection against restart storms and capped nothing) and its
+  deploy-success switch, and the template-bundle override counter that was
+  pinned at 0. A regression guard now fails the build when any plugin
+  declares a setting nothing reads.
+- **Two settings that could never work were removed** rather than left as
+  decoration: the account id and tunnel TOKEN on the Cloudflare Tunnels
+  plugin (a password field whose value went nowhere — real tunnel tokens
+  live per tunnel on the Tunnels page), and the metrics retention on the
+  telemetry streamer (the metrics table is deliberately a 24-hour ring).
+- **Metric history is swept hourly** instead of only when an operator
+  clicks Flush — and the retention cutoff itself stopped matching every
+  row and wiping the archive it was meant to trim.
+
+### Fixed
+
+- **Remote private-registry deploys no longer hang.** The agent built
+  `docker login --password-stdin` so the credential never reaches the
+  process table, but nothing ever wrote to that pipe: the child sat blocked
+  on a stdin that was never closed until the agent's 600-second request
+  timeout.
+- **BuildKit builds stop logging a resolve error every time**: `--cache-from`
+  was handed the literal `ref=empty` on a first build, and a bare
+  `sha256:` content digest after that — neither names a repository, so
+  buildx could never resolve either. A cache reference that cannot be named
+  is simply omitted.
+- **The orchestrator stack API answers real questions**: `GET
+  /:name/stacks` passed the ORCHESTRATOR name into the driver as the STACK
+  name, so it returned null for every real stack — and a test had pinned
+  that behaviour rather than fixing it.
+- **The backup drill no longer OOMs the panel on a multi-gigabyte dump**:
+  the MySQL and Postgres validators sniffed dump headers through
+  `readFile()`, which loads the entire file, and the drill is
+  member-triggerable — a self-service OOM on the process that also hosts
+  the deploy worker. Header sniffing goes through a bounded `readHead()`.
+- **Config-center strings stop type-flipping across a cache boundary**:
+  `set()` stored plain strings raw while `get()` re-parsed stored rows on a
+  cache miss, so JSON-ambiguous values (`true`, `123`, `null`) came back as
+  types after a restart — and a metadata-only save laundered the flip
+  permanently.
+- **Slug collision suffixes stay inside the 63-char cap**: appending
+  `-<n>` to an already-truncated base stored 64–72 char slugs the schema
+  rejects (clone loops, migration imports, compose stacks, personal
+  workspaces).
+- **Documentation corrected where it overstated the product**: the SSRF
+  egress guard never covered the OIDC issuer or the S3 endpoint, and
+  deliberately does not (self-hosted Keycloak and MinIO normally sit on
+  private addresses); the agent transport is a sealed protocol with a
+  cleartext fallback, not plain HTTP; and the multi-node docs name exactly
+  what a node runs (docker, compose) and what it refuses (PM2, Nixpacks).
+
+---
+
 ## [0.6.0] - 2026-09-03
 
 > A security-and-reliability minor that also ships inline Compose stacks:

@@ -134,7 +134,7 @@ export function promptHidden(message: string): Promise<string> {
     // without entering raw mode. Stars preserve the historical echo.
     const buffered = takeLine();
     if (buffered !== null) {
-      process.stdout.write('*'.repeat(buffered.length) + '\n');
+      process.stdout.write(`${'*'.repeat(buffered.length)}\n`);
       resolve(buffered);
       return;
     }
@@ -218,7 +218,7 @@ export function promptHidden(message: string): Promise<string> {
       cleanup();
       eof = true;
       if (typed !== '') {
-        process.stdout.write('*'.repeat(typed.length) + '\n');
+        process.stdout.write(`${'*'.repeat(typed.length)}\n`);
         resolve(typed);
       } else {
         process.stdout.write('\n');

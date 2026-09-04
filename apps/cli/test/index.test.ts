@@ -573,7 +573,7 @@ describe('config action', () => {
 
   it('keeps credentials when the server URL is unchanged', async () => {
     h.loadConfig.mockReturnValue({ baseUrl: 'http://old:3000', token: 'tok', refreshToken: 'rfr' });
-    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const _logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
     await loadIndex();
     await findCommand('config').actionFn!({ server: 'http://old:3000' });
