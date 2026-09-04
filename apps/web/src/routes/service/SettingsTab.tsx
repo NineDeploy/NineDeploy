@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Cpu, GitPullRequest, Layers, Settings, Tag } from 'lucide-react';
+import { Cpu, GitPullRequest, Layers, Server, Settings, Tag } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import type { Service } from '@ninedeploy/sdk';
 import { api } from '../../lib/api.js';
@@ -16,6 +16,7 @@ export function SettingsTab({ serviceId, svc }: { serviceId: number; svc: Servic
       <SettingsCard serviceId={serviceId} />
       <TagsCard serviceId={serviceId} svc={svc} />
       <PreviewEnvironmentsCard svc={svc} />
+      <TargetNodeCard svc={svc} />
       <LimitsCard svc={svc} />
     </div>
   );
@@ -382,6 +383,118 @@ function PreviewEnvironmentsCard({ svc }: { svc: Service }) {
             {save.isPending ? 'Saving…' : 'Save PR preview settings'}
           </Button>
         </div>
+      </CardBody>
+    </Card>
+  );
+}
+
+// ── Target node ────────────────────────────────────────────────────────────
+/**
+ * Where this service runs: the panel host, or one of the registered nodes.
+ *
+ * The API has accepted `serverId` on create and update since the fleet feature
+ * shipped and the panel offered no way to set it, so multi-node was reachable
+ * only from the CLI or a raw API call. Now that a docker service pinned to a
+ * node is genuinely built and started there, the field needs a home in the UI.
+ *
+ * Docker and Compose services can target a node; PM2 cannot, because it is a
+ * host process the agent has no operation for. For PM2 the card explains the
+ * limit instead of offering a choice that would only fail at deploy time.
+ */
+function TargetNodeCard({ svc }: { svc: Service }) {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const { user } = useAuth();
+  const isOperator = user?.isOperator === true;
+  // Docker and Compose both run on a node. PM2 is a host process the agent has
+  // no operation for, so offering the choice would only fail at deploy time.
+  const remotable = svc.type === 'docker' || svc.type === 'compose';
+
+  // Nodes are an operator-only listing; a member sees the current target as
+  // read-only text rather than a select that would 403 on load.
+  const servers = useQuery({
+    queryKey: ['servers'],
+    queryFn: () => api.servers.list(),
+    enabled: isOperator && remotable,
+  });
+
+  // Initialised once from the service row so a background refetch never fights
+  // an edit in progress.
+  const [target, setTarget] = useState(svc.serverId == null ? '' : String(svc.serverId));
+
+  const save = useMutation({
+    mutationFn: () => api.services.update(svc.id, { serverId: target === '' ? null : Number(target) }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['service', svc.id] });
+      qc.invalidateQueries({ queryKey: ['services'] });
+      toast('Target saved — applied on the next deploy', 'success');
+    },
+    onError: () => toast('Could not save the target node', 'error'),
+  });
+
+  const currentName =
+    svc.serverId == null
+      ? 'this panel host'
+      : (servers.data?.find((s) => s.id === svc.serverId)?.name ?? `node #${svc.serverId}`);
+
+  return (
+    <Card>
+      <CardBody>
+        <div className="mb-4 flex items-center gap-2 text-sm font-medium text-slate-300">
+          <Server size={15} className="text-slate-500" /> Target node
+        </div>
+
+        {!remotable ? (
+          <p className="text-xs text-slate-500">
+            PM2 services run on this panel host. They are host processes and the node agent has no
+            operation for them, so a deploy pinned to a node would be refused. Remote nodes run{' '}
+            <code className="font-mono">docker</code> and <code className="font-mono">compose</code>{' '}
+            services.
+          </p>
+        ) : !isOperator ? (
+          <p className="text-xs text-slate-500">
+            Runs on <span className="text-slate-300">{currentName}</span>. Only an instance operator
+            can move a service between hosts.
+          </p>
+        ) : (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              save.mutate();
+            }}
+            className="flex flex-wrap items-end gap-4"
+          >
+            <Field label="Runs on">
+              <Select
+                // `Field` renders its label as a span, not a <label>, so the
+                // control carries its own accessible name.
+                aria-label="Runs on"
+                value={target}
+                onChange={(e) => setTarget(e.target.value)}
+                className="h-9 w-64"
+                disabled={servers.isLoading}
+              >
+                <option value="">This panel host</option>
+                {(servers.data ?? []).map((s) => (
+                  <option key={s.id} value={String(s.id)}>
+                    {s.name} ({s.host}) {s.status === 'online' ? '' : `— ${s.status}`}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Button type="submit" size="sm" variant="secondary" disabled={save.isPending}>
+              {save.isPending ? 'Saving…' : 'Save target'}
+            </Button>
+          </form>
+        )}
+
+        {remotable && isOperator ? (
+          <p className="mt-2 text-xs text-slate-500">
+            A node builds and runs the service itself and terminates TLS for its own domains, so
+            point the DNS record at the node — not at this panel. Applied on the next deploy;
+            the container on the previous host is not moved for you.
+          </p>
+        ) : null}
       </CardBody>
     </Card>
   );
