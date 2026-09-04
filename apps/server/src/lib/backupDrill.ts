@@ -19,7 +19,7 @@
  * backups are fetched to a local temp first via
  * `lib/backupRemote.ts`.
  */
-import { readFile, stat, unlink } from 'node:fs/promises';
+import { open, stat, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { desc, eq } from 'drizzle-orm';
@@ -227,6 +227,23 @@ async function fileExists(p: string): Promise<boolean> {
 // ── engine-specific validators ────────────────────────────────────────────
 
 /**
+ * Read only the first `bytes` of a dump for header sniffing. Dumps scale
+ * unbounded with tenant data — `readFile` loaded multi-GB dumps into heap
+ * just to inspect 4 KiB (r034), so the sniff reads a bounded prefix through
+ * an open handle instead.
+ */
+async function readHead(file: string, bytes = 4096): Promise<string> {
+  const handle = await open(file, 'r');
+  try {
+    const buf = Buffer.alloc(bytes);
+    const { bytesRead } = await handle.read(buf, 0, bytes, 0);
+    return buf.subarray(0, bytesRead).toString('utf8');
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
  * Dispatch to the right engine validator. Each validator is
  * a separate function so a future engine (ClickHouse, Meili,
  * RabbitMQ — already in the DB engine enum but not yet wired
@@ -277,7 +294,7 @@ async function validatePostgres(
     // pg_restore refused — likely a plain-SQL dump. Sniff the
     // header; that's a much weaker guarantee but still
     // proves the file is at least a Postgres SQL script.
-    const head = (await readFile(file, { encoding: 'utf8' })).slice(0, 4096);
+    const head = await readHead(file);
     if (/\b(PostgreSQL|pg_dump|SELECT|SET|CREATE|INSERT|\\restrict|\\unrestrict)\b/.test(head)) {
       return { passed: true, details: { tool: 'header-sniff', mode: 'plain-sql' } };
     }
@@ -299,7 +316,7 @@ async function validatePostgres(
 async function validateMysql(
   file: string,
 ): Promise<{ passed: true; details: Record<string, unknown> } | { passed: false; error: string }> {
-  const head = (await readFile(file, { encoding: 'utf8' })).slice(0, 4096);
+  const head = await readHead(file);
   const banner = /MySQL dump|MariaDB dump/i.test(head) ? head.match(/^(?:-+\s*)?(?:MySQL|MariaDB)\s+dump[\s\S]{0,80}/i)?.[0]?.trim() ?? null : null;
   if (!banner) {
     return { passed: false, error: 'No mysqldump / mariadb-dump banner found in first 4 KiB' };

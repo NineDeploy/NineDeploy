@@ -23,6 +23,7 @@
  *    descending order, parsing `detailsJson` back to an
  *    object.
  */
+import { readFileSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -387,6 +388,25 @@ describe('lib/backupDrill', () => {
       expect(drill).not.toBeNull();
       expect(drill!.details).toEqual({ tool: 'pg_restore', objectCount: 42 });
       expect(typeof drill!.startedAt).toBe('number');
+    });
+
+    // r034 regression: the mysql (always) and postgres-fallback validators
+    // sniffed a dump header with `(await readFile(file, { encoding: 'utf8'
+    // })).slice(0, 4096)` — readFile loads the ENTIRE dump (mysqldump/pg_dump
+    // output scales unbounded with tenant data) into heap on the panel
+    // process, and the drill is member-triggerable (POST /:id/backups/drill
+    // gates at member), so a multi-GB dump was a self-service OOM. Header
+    // sniffing now goes through the bounded readHead() open-handle helper;
+    // this source guard keeps whole-file reads out of the module for good
+    // (same guard shape as the ESM-purity tests — vitest cannot observe the
+    // memory spike directly).
+    it('never whole-file-reads a dump — header sniffing stays bounded (r034 regression)', () => {
+      const source = readFileSync(new URL('../../src/lib/backupDrill.ts', import.meta.url), 'utf8');
+      expect(
+        source,
+        'backupDrill.ts must not call readFile() — dump header sniffing goes through the bounded readHead() helper (r034)',
+      ).not.toMatch(/\breadFile\s*\(/);
+      expect(source).toContain('readHead');
     });
   });
 });
