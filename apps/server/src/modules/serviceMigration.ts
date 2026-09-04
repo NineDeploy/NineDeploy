@@ -6,7 +6,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { envVarName } from '@ninedeploy/schemas';
 import { decrypt, encrypt } from '../lib/crypto.js';
 import { badRequest, notFound, parseId as num } from '../lib/errors.js';
-import { slugify, slugifyWithSuffix } from '../lib/slug.js';
+import { slugifyWithSuffix } from '../lib/slug.js';
 import { materialiseComposeFile } from '../lib/composeWorkspace.js';
 
 interface ServiceBundle {

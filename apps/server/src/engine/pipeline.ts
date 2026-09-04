@@ -7,7 +7,10 @@ import { config } from '../config.js';
 import { decrypt } from '../lib/crypto.js';
 import { checkoutCommit, type CloneCreds } from '../lib/git.js';
 import { materialiseComposeFile } from '../lib/composeWorkspace.js';
-import { REMOTE_DEPLOY_UNSUPPORTED } from '../lib/remoteDeploy.js';
+import { remoteDeploySupported, remoteDeployUnsupportedReason } from '../lib/remoteDeploy.js';
+import { agentOp } from '../lib/agentClient.js';
+import { createRemoteDockerBuilder } from './builders/remoteDocker.js';
+import { createRemoteComposeBuilder } from './builders/remoteCompose.js';
 import { analyzeRepo, summarizeInsights } from '../lib/frameworks.js';
 import { upsertInsights } from './repoInsights.js';
 import { connectionString, ENGINES } from './database.js';
@@ -329,7 +332,15 @@ async function snapshotConfig(
 }
 
 /** Run the full deploy pipeline for one deployment row. */
-export async function runDeployment(db: DB, deploymentId: number, kernelCtx?: { useBuildKit: boolean; buildCache?: import('../kernel/types.js').IBuildCache }): Promise<void> {
+export async function runDeployment(
+  db: DB,
+  deploymentId: number,
+  kernelCtx?: {
+    useBuildKit: boolean;
+    buildCache?: import('../kernel/types.js').IBuildCache;
+    onBuildCacheEvent?: (event: import('./builders/buildkit.js').BuildCacheEvent) => void;
+  },
+): Promise<void> {
   const dep = await db.query.deployments.findFirst({ where: eq(deployments.id, deploymentId) });
   if (!dep) return;
   const service = await db.query.services.findFirst({ where: eq(services.id, dep.serviceId) });
@@ -345,31 +356,34 @@ export async function runDeployment(db: DB, deploymentId: number, kernelCtx?: { 
   await db.update(services).set({ status: 'deploying' }).where(eq(services.id, service.id));
   log(`▶ Deployment #${deploymentId} for "${service.name}" (${service.type})`);
 
-  const builder = builders[service.type];
+  // Remote-server deploys route through the node's agent (r037). Everything
+  // this builder cannot honestly do on a node — PM2, Compose, and Nixpacks
+  // source builds — is refused here with a reason naming the limit, because a
+  // deploy that lands on the panel host while the panel reports the node is
+  // strictly worse than a failed deployment you can read.
+  //
+  // This is the choke point every deployment passes through — webhooks,
+  // previews, rollbacks, scheduled jobs and the panel button all end up here —
+  // so the decision lives here rather than in each queue path (the routes add a
+  // friendlier upfront 400 on top).
+  let builder = builders[service.type];
+  if (service.serverId != null) {
+    const serverId = service.serverId;
+    if (!remoteDeploySupported(service.type)) {
+      const reason = remoteDeployUnsupportedReason(service.type);
+      log(`✗ ${reason}`);
+      await safeFail(db, deploymentId, service.id, service.runtimeId);
+      await auditOutcome(db, service, deploymentId, 'failed', reason);
+      return;
+    }
+    const call = (op: string, params: Record<string, unknown>, sink: (line: string) => void) =>
+      agentOp(db, serverId, op, params, sink);
+    builder = service.type === 'compose' ? createRemoteComposeBuilder(call) : createRemoteDockerBuilder(call);
+  }
   if (!builder) {
     log(`✗ Unknown service type: ${service.type}`);
     await safeFail(db, deploymentId, service.id, service.runtimeId);
     await auditOutcome(db, service, deploymentId, 'failed', `Unknown service type: ${service.type}`);
-    return;
-  }
-
-  // Remote-server deploys are NOT implemented. The pipeline binds `agentCall`
-  // below and `engine/types.ts` describes builders routing through it, but no
-  // builder reads either field — every builder shells out locally through
-  // lib/exec.ts. Running anyway would deploy this service on the panel host
-  // while the panel, the Servers page and the deploy log all claim it landed
-  // on the remote node: the wrong host gets the container, the right one
-  // silently gets nothing.
-  //
-  // This is the choke point every deployment passes through — webhooks,
-  // previews, rollbacks, scheduled jobs and the panel button all end up here —
-  // so the refusal lives here rather than in each queue path (the routes add a
-  // friendlier upfront 400 on top).
-  if (service.serverId != null) {
-    const reason = REMOTE_DEPLOY_UNSUPPORTED;
-    log(`✗ ${reason}`);
-    await safeFail(db, deploymentId, service.id, service.runtimeId);
-    await auditOutcome(db, service, deploymentId, 'failed', reason);
     return;
   }
 
@@ -595,6 +609,7 @@ export async function runDeployment(db: DB, deploymentId: number, kernelCtx?: { 
       // legacy `docker build` path.
       useBuildKit: kernelCtx?.useBuildKit,
       buildCache: kernelCtx?.buildCache,
+      onBuildCacheEvent: kernelCtx?.onBuildCacheEvent,
     };
 
     if (buildConfig?.preDeployCmd) {

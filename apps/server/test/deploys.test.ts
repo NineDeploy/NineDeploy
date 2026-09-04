@@ -248,23 +248,38 @@ describe('deploys routes', () => {
     expect(res.statusCode).toBe(200);
   });
 
-  it('refuses to deploy a service pinned to a remote node', async () => {
-    // Upfront feedback for the panel; the pipeline refuses it again, which is
-    // the guard webhooks, previews and scheduled jobs also hit.
+  it('accepts a docker service pinned to a remote node', async () => {
+    // r037: docker services now route through the node's agent, so the
+    // queue-time guard must let them through rather than 400.
     const app = await buildTestApp({
-      db: createFakeDb({ findFirst: { services: svcRow({ id: 1, serverId: 4 }) } }),
+      db: createFakeDb({ findFirst: { services: svcRow({ id: 1, serverId: 4, type: 'docker' }) } }),
+    });
+    await app.register(deploysRoutes, { prefix: '/services' });
+    const res = await app.inject({ method: 'POST', url: '/services/1/deploys', headers: asUser() });
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('refuses to deploy a pm2 service pinned to a remote node', async () => {
+    // Upfront feedback for the panel; the pipeline refuses it again, which is
+    // the guard webhooks, previews and scheduled jobs also hit. PM2 is a host
+    // process and the node agent has no operation for it.
+    const app = await buildTestApp({
+      db: createFakeDb({ findFirst: { services: svcRow({ id: 1, serverId: 4, type: 'pm2' }) } }),
     });
     await app.register(deploysRoutes, { prefix: '/services' });
     const res = await app.inject({ method: 'POST', url: '/services/1/deploys', headers: asUser() });
     expect(res.statusCode).toBe(400);
     expect(res.json().error.code).toBe('remote_deploy_unsupported');
-    expect(res.json().error.message).toMatch(/not implemented yet/);
+    expect(res.json().error.message).toMatch(/host processes/);
   });
 
-  it('refuses to roll back a service pinned to a remote node', async () => {
+  it('refuses to roll back a pm2 service pinned to a remote node', async () => {
     const app = await buildTestApp({
       db: createFakeDb({
-        findFirst: { services: svcRow({ id: 1, serverId: 4 }), deployments: depRow({ id: 9, serviceId: 1 }) },
+        findFirst: {
+          services: svcRow({ id: 1, serverId: 4, type: 'pm2' }),
+          deployments: depRow({ id: 9, serviceId: 1 }),
+        },
       }),
     });
     await app.register(deploysRoutes, { prefix: '/services' });

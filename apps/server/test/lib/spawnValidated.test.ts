@@ -128,7 +128,7 @@ describe('spawnValidated', () => {
     const promise = spawnValidated('docker', ['logs', 'big'], (l) => lines.push(l));
     const cur = childMocks.current!;
     const BIG_LINE = 'x'.repeat(80_000);
-    cur.emit('stdout:data', Buffer.from(BIG_LINE + '\n'));
+    cur.emit('stdout:data', Buffer.from(`${BIG_LINE}\n`));
     cur.emit('close', 0);
     await expect(promise).resolves.toBe(0);
     expect(lines).toHaveLength(1);

@@ -6,7 +6,7 @@
  * way an IdP exercises it.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createPrivateKey, createPublicKey, generateKeyPairSync, sign as cryptoSign } from 'node:crypto';
+import { createPrivateKey, generateKeyPairSync, sign as cryptoSign } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { verifyIdToken, type OidcConfig, type OidcDiscovery } from '../../src/lib/oidc.js';
 

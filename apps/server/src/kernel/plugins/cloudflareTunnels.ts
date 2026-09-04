@@ -9,26 +9,19 @@ export class CloudflareTunnelsPlugin implements KernelPlugin {
   readonly icon = 'ShieldCheck';
   readonly isOfficial = true;
 
-  readonly configSchema = [
-    {
-      key: 'account_id',
-      type: 'string' as const,
-      isSecret: false,
-      label: 'Cloudflare Account ID',
-      category: 'plugin:cloudflare-tunnels',
-      description: 'Your Cloudflare Zero Trust account ID',
-      tags: ['cloudflare', 'network'],
-    },
-    {
-      key: 'tunnel_token',
-      type: 'string' as const,
-      isSecret: true,
-      label: 'Tunnel Token',
-      category: 'plugin:cloudflare-tunnels',
-      description: 'Cloudflare tunnel runner authentication token',
-      tags: ['cloudflare', 'secret', 'auth'],
-    },
-  ];
+  /**
+   * No config keys.
+   *
+   * This plugin used to declare `account_id` and `tunnel_token` (the latter
+   * marked `isSecret`, so the panel rendered a password field and encrypted
+   * whatever was typed into it) — and nothing anywhere read either one. A
+   * tunnel's credentials live per tunnel in the `tunnels` table: the Tunnels
+   * page stores `tokenEncrypted` and `engine/tunnel.ts` hands it to the
+   * cloudflared container through a 0600 env-file. An operator who pasted
+   * their Zero Trust token into the plugin's field configured nothing, while
+   * believing they had configured the tunnel runner.
+   */
+  readonly configSchema = [];
 
   readonly menuItems = [
     {

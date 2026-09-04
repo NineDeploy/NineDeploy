@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { BuildCachePlugin, buildKey } from '../../src/kernel/plugins/buildCachePlugin.js';
+import { BuildCachePlugin } from '../../src/kernel/plugins/buildCachePlugin.js';
 import { createFakeDb } from '../helpers.js';
 
 interface FakeKernel {
@@ -67,11 +67,26 @@ describe('BuildCachePlugin', () => {
     expect(p.version).toMatch(/^\d+\.\d+\.\d+$/);
   });
 
-  it('declares a 2-key config schema and one command-palette menu item', () => {
+  it('declares the backend-selection + per-backend connection keys, and one command-palette menu item', () => {
     const p = new BuildCachePlugin();
-    expect(p.configSchema).toHaveLength(2);
     const keys = p.configSchema?.map((c) => c.key) ?? [];
-    expect(keys).toEqual(['enabled', 'cache_name']);
+    expect(keys).toEqual([
+      'enabled',
+      'cache_name',
+      'registry_url',
+      'registry_repo',
+      'registry_username',
+      'registry_password',
+      's3_endpoint',
+      's3_region',
+      's3_bucket',
+      's3_access_key_id',
+      's3_secret_access_key',
+      's3_prefix',
+    ]);
+    // Credentials must be stored encrypted, never as plain config rows.
+    const secrets = (p.configSchema ?? []).filter((c) => c.isSecret).map((c) => c.key);
+    expect(secrets).toEqual(['registry_password', 's3_secret_access_key']);
     const item = p.menuItems?.[0];
     expect(item?.slot).toBe('command:palette');
     expect(item?.route).toBe('/settings?section=plugins');
@@ -94,113 +109,37 @@ describe('BuildCachePlugin', () => {
     p.destroy();
   });
 
-  it('emits build.cache.miss when no cache is registered (silent no-op)', async () => {
+  // r034. The plugin used to answer `service.deploying` by looking up a key
+  // it synthesised itself (`service:<id>:no-commit`). Nothing ever STORES
+  // under that key — the builder keys by `buildCacheKey()` → `ndbuild:<hash>`
+  // — so every deploy published a `build.cache.miss` that could not have been
+  // anything else, and the panel's hit rate was pinned at 0% no matter how
+  // well the cache was working. The real observation is published by the
+  // build itself through the worker's `onBuildCacheEvent` sink.
+  it('never publishes a cache hit/miss of its own on service.deploying', async () => {
+    const p = new BuildCachePlugin();
     const kernel = withDefaultGet(newKernel());
-    (kernel.registry.listBuildCaches as ReturnType<typeof vi.fn>).mockReturnValue([]);
-    const p = new BuildCachePlugin();
     p.init(kernel as never);
-    const handler = (kernel.events.on as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as (p: unknown) => void;
-    handler({ serviceId: 7, deployId: 12 });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(kernel.events.emitCustom).not.toHaveBeenCalled();
-  });
 
-  it('emits build.cache.miss when the named cache returns null', async () => {
-    const kernel = withDefaultGet(newKernel());
-    const fakeCache = { name: 'inline', lookup: vi.fn().mockResolvedValue(null), stats: vi.fn() };
-    (kernel.registry.getBuildCache as ReturnType<typeof vi.fn>).mockReturnValue(fakeCache);
-    const p = new BuildCachePlugin();
-    p.init(kernel as never);
-    const handler = (kernel.events.on as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as (p: unknown) => void;
-    handler({ serviceId: 7, deployId: 12 });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(kernel.events.emitCustom).toHaveBeenCalledWith(
-      'build.cache.miss',
-      expect.objectContaining({ serviceId: 7, cache: 'inline', key: buildKey(7) }),
-    );
-  });
-
-  it('emits build.cache.hit when the cache returns a BlobRef', async () => {
-    const kernel = withDefaultGet(newKernel());
-    const fakeCache = {
-      name: 'inline',
-      lookup: vi.fn().mockResolvedValue({ digest: 'sha256:abc', sizeBytes: 1024, storedAt: '2026-08-29T00:00:00.000Z' }),
-      stats: vi.fn(),
-    };
-    (kernel.registry.getBuildCache as ReturnType<typeof vi.fn>).mockReturnValue(fakeCache);
-    const p = new BuildCachePlugin();
-    p.init(kernel as never);
-    const handler = (kernel.events.on as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as (p: unknown) => void;
-    handler({ serviceId: 9, deployId: 14 });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(kernel.events.emitCustom).toHaveBeenCalledWith(
-      'build.cache.hit',
-      expect.objectContaining({ serviceId: 9, cache: 'inline', digest: 'sha256:abc' }),
-    );
-  });
-
-  it('falls back to the first registered cache when the named one is missing', async () => {
-    const kernel = withDefaultGet(newKernel());
-    const fallback = { name: 'inline', lookup: vi.fn().mockResolvedValue(null), stats: vi.fn() };
-    (kernel.registry.getBuildCache as ReturnType<typeof vi.fn>).mockReturnValue(undefined);
-    (kernel.registry.listBuildCaches as ReturnType<typeof vi.fn>).mockReturnValue([fallback]);
-    const p = new BuildCachePlugin();
-    p.init(kernel as never);
-    const handler = (kernel.events.on as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as (p: unknown) => void;
-    handler({ serviceId: 3 });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(fallback.lookup).toHaveBeenCalledOnce();
-  });
-
-  it('is silent when the enabled flag is false', async () => {
-    const kernel = withDefaultGet(newKernel(), { 'plugin:build-cache:enabled': false });
-    const fakeCache = { name: 'inline', lookup: vi.fn(), stats: vi.fn() };
-    (kernel.registry.getBuildCache as ReturnType<typeof vi.fn>).mockReturnValue(fakeCache);
-    const p = new BuildCachePlugin();
-    p.init(kernel as never);
-    const handler = (kernel.events.on as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as (p: unknown) => void;
-    handler({ serviceId: 1 });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(fakeCache.lookup).not.toHaveBeenCalled();
-    expect(kernel.events.emitCustom).not.toHaveBeenCalled();
-  });
-
-  it('emits build.cache.error when the cache throws', async () => {
-    const kernel = withDefaultGet(newKernel());
-    const fakeCache = { name: 'inline', lookup: vi.fn().mockRejectedValue(new Error('boom')), stats: vi.fn() };
-    (kernel.registry.getBuildCache as ReturnType<typeof vi.fn>).mockReturnValue(fakeCache);
-    const p = new BuildCachePlugin();
-    p.init(kernel as never);
-    const handler = (kernel.events.on as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as (p: unknown) => void;
+    const handler = kernel.events.on.mock.calls.find((c) => c[0] === 'service.deploying')?.[1] as (
+      p: unknown,
+    ) => void;
     handler({ serviceId: 5 });
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(kernel.events.emitCustom).toHaveBeenCalledWith(
-      'build.cache.error',
-      expect.objectContaining({ serviceId: 5, reason: 'boom' }),
-    );
-  });
 
-  it('falls back to String() when a non-Error is rejected', async () => {
-    const kernel = withDefaultGet(newKernel());
-    const fakeCache = { name: 'inline', lookup: vi.fn().mockRejectedValue('plain failure'), stats: vi.fn() };
-    (kernel.registry.getBuildCache as ReturnType<typeof vi.fn>).mockReturnValue(fakeCache);
-    const p = new BuildCachePlugin();
-    p.init(kernel as never);
-    const handler = (kernel.events.on as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as (p: unknown) => void;
-    handler({ serviceId: 5 });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(kernel.events.emitCustom).toHaveBeenCalledWith(
-      'build.cache.error',
-      expect.objectContaining({ reason: 'plain failure' }),
-    );
+    expect(kernel.events.emitCustom).not.toHaveBeenCalled();
+    // …and it must not have queried a backend behind the operator's back.
+    expect(kernel.registry.getBuildCache).not.toHaveBeenCalled();
   });
 
   it('does not throw when the payload omits serviceId', async () => {
-    const kernel = withDefaultGet(newKernel());
     const p = new BuildCachePlugin();
+    const kernel = withDefaultGet(newKernel());
     p.init(kernel as never);
-    const handler = (kernel.events.on as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as (p: unknown) => void;
-    handler({});
+    const handler = kernel.events.on.mock.calls.find((c) => c[0] === 'service.deploying')?.[1] as (
+      p: unknown,
+    ) => void;
+    expect(() => handler({})).not.toThrow();
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(kernel.events.emitCustom).not.toHaveBeenCalled();
   });
@@ -225,8 +164,4 @@ describe('BuildCachePlugin', () => {
     expect(stats.totals).toEqual({ entries: 3, totalBytes: 3072, hits: 5, misses: 7, stores: 9, evictions: 11 });
   });
 
-  it('buildKey is deterministic and tags the optional target commit', () => {
-    expect(buildKey(1)).toBe('service:1:no-commit');
-    expect(buildKey(1, 'deadbeef')).toBe('service:1:deadbeef');
-  });
 });

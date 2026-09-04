@@ -72,7 +72,7 @@ describe('matchesAny', () => {
     // never returning. The DP answers in ~1ms with the exact verdict.
     expect(isSafeWatchPath('**a**b**c**d')).toBe(true);
     const start = performance.now();
-    expect(matchesAny('a'.repeat(3999) + 'z', ['**a**b**c**d'])).toBe(false);
+    expect(matchesAny(`${'a'.repeat(3999)}z`, ['**a**b**c**d'])).toBe(false);
     expect(performance.now() - start).toBeLessThan(2000);
   });
 
@@ -86,7 +86,7 @@ describe('matchesAny', () => {
     // Before the bounded matcher this input against `apps/**/a**b` never
     // returned — one verified push payload could hang the event loop.
     const start = performance.now();
-    expect(matchesAny('apps/' + 'a'.repeat(199994) + 'z', ['apps/**/a**b'])).toBe(true);
+    expect(matchesAny(`apps/${'a'.repeat(199994)}z`, ['apps/**/a**b'])).toBe(true);
     expect(performance.now() - start).toBeLessThan(2000);
   });
 });

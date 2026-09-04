@@ -8,16 +8,20 @@ import type { FastifyPluginAsync } from 'fastify';
  *   - `GET /` returns every registered orchestrator with the list
  *     of stacks the driver reports. The shape is a flat array so
  *     the panel can render a single table.
- *   - `GET /:name/stacks` returns the per-service status of one
- *     stack on the named orchestrator. Returns `null` when the
- *     orchestrator has no record of the stack.
+ *   - `GET /:name/stacks` lists the stacks the named orchestrator knows about.
+ *   - `GET /:name/stacks/:stack` returns the per-service status of ONE stack
+ *     on that orchestrator.
+ *
+ * r036: the status route used to be `GET /:name/stacks` with a single path
+ * parameter, and it passed the ORCHESTRATOR name to `getStackStatus()` as the
+ * STACK name — so it could only ever ask for a stack called `swarm` on the
+ * orchestrator `swarm`, and answered `null` for every real stack. A test had
+ * pinned that behaviour ("passes the orchestrator name as the stack name")
+ * instead of fixing it. The stack is now addressed by its own segment, and the
+ * plural path means what its name says.
  *
  * The orchestrator is the source of truth for the I/O. This module
- * is the source of truth for the HTTP shape. PR-B (Sprint 4 PR #19)
- * will add the `POST /:name/stacks` and `DELETE /:name/stacks/:stack`
- * write endpoints once the Swarm driver is in place; PR-A is
- * read-only because the local driver does not own a per-service
- * identity that a write path can address yet.
+ * is the source of truth for the HTTP shape.
  */
 
 export const orchestratorsRoutes: FastifyPluginAsync = async (app) => {
@@ -44,7 +48,14 @@ export const orchestratorsRoutes: FastifyPluginAsync = async (app) => {
     if (!driver) {
       return { error: `Orchestrator "${req.params.name}" is not registered` };
     }
-    const status = await driver.getStackStatus(req.params.name);
-    return status;
+    return { stacks: await driver.listStacks() };
+  });
+
+  app.get<{ Params: { name: string; stack: string } }>('/:name/stacks/:stack', async (req) => {
+    const driver = app.kernel.registry.getOrchestrator(req.params.name);
+    if (!driver) {
+      return { error: `Orchestrator "${req.params.name}" is not registered` };
+    }
+    return await driver.getStackStatus(req.params.stack);
   });
 };

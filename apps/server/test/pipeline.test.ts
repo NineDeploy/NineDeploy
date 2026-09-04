@@ -1572,33 +1572,102 @@ describe('runDeployment with an inline compose stack', () => {
   });
 });
 
-describe('runDeployment refuses a remote-server target', () => {
-  it('fails the deployment instead of deploying it on the panel host', async () => {
-    // No builder consumes `agentCall`, so running anyway would put the
-    // container on THIS machine while the panel reports the remote node.
+describe('runDeployment on a remote-server target', () => {
+  /**
+   * Make the mocked agent answer `docker.inspect --format state` with a
+   * running container, so the remote builder's state-based health check
+   * settles instead of polling to its deadline.
+   */
+  const agentAnswersRunning = () => {
+    h.agentOp.mockImplementation(async (_db: unknown, _serverId: unknown, op: string) =>
+      op === 'docker.inspect'
+        ? { exitCode: 0, lines: ['running|172.18.0.9'] }
+        : { exitCode: 0, lines: [] },
+    );
+  };
+
+  /**
+   * r037. `server_id` existed on the services table, on the Servers page and
+   * in the BuildContext, and no builder read it — so a service pinned to a
+   * node would have been built and started on the PANEL host while the panel
+   * reported the node. It is now routed through the node's agent.
+   */
+  it('runs a docker service through the node agent, never the local builder', async () => {
     const { db } = makeDb();
     baseSetup(db, { image: 'nginx:latest', serverId: 4 });
+    collectLogs(1);
+    h.builder.buildAndRun.mockClear();
+    agentAnswersRunning();
+
+    await runDeployment(db as never, 1);
+
+    // The LOCAL docker builder must not have touched this deployment.
+    expect(h.builder.buildAndRun).not.toHaveBeenCalled();
+
+    const ops = h.agentOp.mock.calls.map((c) => (c as unknown[])[2] as string);
+    expect(ops).toContain('docker.pull');
+    expect(ops).toContain('file.writeEnv');
+    expect(ops).toContain('docker.runEnv');
+    // Every call is addressed to the node the service is pinned to.
+    for (const call of h.agentOp.mock.calls) {
+      expect((call as unknown[])[1]).toBe(4);
+    }
+  });
+
+  it('deletes the env file from the node after the container has taken it', async () => {
+    const { db } = makeDb();
+    baseSetup(db, { image: 'nginx:latest', serverId: 4 });
+    collectLogs(1);
+    agentAnswersRunning();
+
+    await runDeployment(db as never, 1);
+
+    const ops = h.agentOp.mock.calls.map((c) => (c as unknown[])[2] as string);
+    // Leaving decrypted service secrets on the node's disk after `docker run`
+    // has consumed them is pure exposure.
+    expect(ops.indexOf('file.deleteEnv')).toBeGreaterThan(ops.indexOf('docker.runEnv'));
+  });
+
+  it('refuses a pm2 service on a node instead of running it on the panel host', async () => {
+    const { db, inserts } = makeDb();
+    baseSetup(db, { ownerUserId: 42, type: 'pm2', serverId: 4 });
     const lines = collectLogs(1);
     h.builder.buildAndRun.mockClear();
+    h.agentOp.mockClear();
 
     await runDeployment(db as never, 1);
 
     expect(h.builder.buildAndRun).not.toHaveBeenCalled();
-    expect(h.checkoutCommit).not.toHaveBeenCalled();
-    expect(lines.join('\n')).toMatch(/not implemented yet/);
-  });
-
-  it('records the refusal as a failed deployment with its reason', async () => {
-    const { db, inserts } = makeDb();
-    baseSetup(db, { ownerUserId: 42, image: 'nginx:latest', serverId: 4 });
-    collectLogs(1);
-
-    await runDeployment(db as never, 1);
+    expect(h.agentOp).not.toHaveBeenCalled();
+    expect(lines.join('\n')).toMatch(/host processes/);
 
     const audits = inserts.filter((i) => i.table === auditLog).map((i) => i.values);
     expect(audits).toHaveLength(1);
     expect(audits[0]).toMatchObject({ userId: 42, action: 'deploy.failed' });
-    expect((audits[0]!['meta'] as { reason: string }).reason).toMatch(/remote server are not implemented/);
+    expect((audits[0]!['meta'] as { reason: string }).reason).toMatch(/not available for this service/);
+  });
+
+  it('brings a compose stack up on the node through the agent', async () => {
+    const { db } = makeDb();
+    baseSetup(db, { type: 'compose', serverId: 4, composeContent: 'services: {}' });
+    collectLogs(1);
+    h.builder.buildAndRun.mockClear();
+    // The compose builder waits on the container's HEALTH format, not `state`.
+    h.agentOp.mockImplementation(async (_db: unknown, _serverId: unknown, op: string) =>
+      op === 'docker.inspect'
+        ? { exitCode: 0, lines: ['running|healthy|0|0'] }
+        : { exitCode: 0, lines: [] },
+    );
+
+    await runDeployment(db as never, 1);
+
+    expect(h.builder.buildAndRun).not.toHaveBeenCalled();
+    const ops = h.agentOp.mock.calls.map((c) => (c as unknown[])[2] as string);
+    // Preflight BEFORE `up`: a broken interpolation or a bad tag must fail the
+    // deployment without ever having torn the live stack down.
+    expect(ops.indexOf('docker.composeConfig')).toBeLessThan(ops.indexOf('docker.composeUp'));
+    expect(ops.indexOf('docker.composePull')).toBeLessThan(ops.indexOf('docker.composeUp'));
+    expect(ops).toContain('file.writeWorkspace');
   });
 
   it('still deploys a service with no server assigned', async () => {
@@ -1606,9 +1675,11 @@ describe('runDeployment refuses a remote-server target', () => {
     baseSetup(db, { image: 'nginx:latest', serverId: null });
     collectLogs(1);
     h.builder.buildAndRun.mockClear();
+    h.agentOp.mockClear();
 
     await runDeployment(db as never, 1);
 
     expect(h.builder.buildAndRun).toHaveBeenCalled();
+    expect(h.agentOp).not.toHaveBeenCalled();
   });
 });

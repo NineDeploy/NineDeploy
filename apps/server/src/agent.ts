@@ -32,6 +32,66 @@ function validated(value: string | undefined, check: RegExp | ((v: string) => bo
   return value;
 }
 
+/**
+ * Root every remote service checkout and build context lives under, relative
+ * to the agent's working directory.
+ *
+ * Git has no per-invocation repository operand — `fetch`, `checkout`, `reset`
+ * and `rev-parse` all act on the process's cwd. Before this existed the agent
+ * ran every git op in its OWN cwd, so a host could hold exactly one checkout
+ * and two remote services would overwrite each other's source tree. Each
+ * service now gets `<WORK_DIR>/<name>/`.
+ */
+const WORK_DIR = '.agent-work';
+
+/**
+ * Resolve (and create) one service's workspace, refusing anything that would
+ * land outside `WORK_DIR`.
+ *
+ * `RE_NAME` already forbids `/` and any leading dot, so a traversal cannot be
+ * spelled — the containment assertion is defence in depth on the one path that
+ * becomes a child process's cwd.
+ */
+export async function resolveWorkspace(name: string): Promise<string> {
+  const { mkdirSync } = await import('node:fs');
+  const pathmod = await import('node:path');
+  const safe = validated(name, RE_NAME, 'workspace name');
+  const root = pathmod.resolve(process.cwd(), WORK_DIR);
+  const dir = pathmod.resolve(root, safe);
+  if (dir !== root && !dir.startsWith(root + pathmod.sep)) {
+    throw new Error('Invalid workspace name');
+  }
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  return dir;
+}
+
+/** `host:container` publish operand, numeric on both sides. */
+function publishArgs(p: Params): string[] {
+  const spec = str(p, 'publish');
+  if (spec === undefined) return [];
+  const m = /^(\d{1,5}):(\d{1,5})$/.exec(spec);
+  if (!m) throw new Error('Invalid publish spec');
+  const [host, container] = [Number(m[1]), Number(m[2])];
+  if (host < 1 || host > 65535 || container < 1 || container > 65535) throw new Error('Invalid publish spec');
+  return ['-p', `${host}:${container}`];
+}
+
+/**
+ * `compose -p <project> -f <file> [-f <override>]` — the shared prefix of every
+ * compose operation. The optional override file carries the panel's volume
+ * attachments; compose merges `-f` left to right, so it wins on duplicate keys.
+ */
+function composeStackArgs(p: Params): string[] {
+  const argv = [
+    'compose',
+    '-p', validated(str(p, 'project'), RE_NAME, 'project'),
+    '-f', validated(str(p, 'file'), RE_PATH, 'compose file'),
+  ];
+  const override = str(p, 'override');
+  if (override !== undefined) argv.push('-f', validated(override, RE_PATH, 'compose override file'));
+  return argv;
+}
+
 /** Typed operation table: op name → executable + argv template builder. */
 type Op = (p: Params) => string[];
 
@@ -55,6 +115,7 @@ const OPS: Record<string, { exe: 'docker' | 'git'; build: Op }> = {
       if (mem !== undefined) argv.push('--memory', `${/^\d{1,6}$/.test(mem) ? mem : '0'}m`);
       const vol = str(p, 'volume');
       if (vol !== undefined) argv.push('-v', `${validated(vol, RE_NAME, 'volume name')}:${validated(str(p, 'mount') ?? '/', RE_PATH, 'mount path')}`);
+      argv.push(...publishArgs(p));
       argv.push(validated(str(p, 'image'), RE_IMAGE, 'image'));
       return argv;
     },
@@ -73,6 +134,7 @@ const OPS: Record<string, { exe: 'docker' | 'git'; build: Op }> = {
       const vol = str(p, 'volume');
       if (vol !== undefined) argv.push('-v', `${validated(vol, RE_NAME, 'volume name')}:${validated(str(p, 'mount') ?? '/', RE_PATH, 'mount path')}`);
       argv.push('--env-file', validated(str(p, 'envFile'), RE_PATH, 'env file path'));
+      argv.push(...publishArgs(p));
       argv.push(validated(str(p, 'image'), RE_IMAGE, 'image'));
       return argv;
     },
@@ -82,8 +144,19 @@ const OPS: Record<string, { exe: 'docker' | 'git'; build: Op }> = {
   'docker.inspect': {
     exe: 'docker',
     build: (p) => {
+      // A fixed set of literal format strings — never a caller-supplied one,
+      // which would be a template-injection surface into the docker CLI.
       const format = str(p, 'format');
-      const safe = format === 'state' ? '{{.State.Status}}|{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' : '{{.Image}}';
+      const safe =
+        format === 'state'
+          ? '{{.State.Status}}|{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'
+          : format === 'health'
+            // Compose stacks author their own healthchecks: an app that boots,
+            // stays `running` and fails its healthcheck forever must not deploy
+            // green. FailingStreak + RestartCount ride along so a crash-looping
+            // stack fails EARLY instead of burning the whole window.
+            ? '{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}|{{.State.Health.FailingStreak}}{{else}}none|0{{end}}|{{.RestartCount}}'
+            : '{{.Image}}';
       return ['inspect', validated(str(p, 'name'), RE_NAME, 'name'), '--format', safe];
     },
   },
@@ -139,7 +212,18 @@ const OPS: Record<string, { exe: 'docker' | 'git'; build: Op }> = {
   },
   'docker.composeUp': {
     exe: 'docker',
-    build: (p) => ['compose', '-p', validated(str(p, 'project'), RE_NAME, 'project'), '-f', validated(str(p, 'file'), RE_PATH, 'compose file'), 'up', '-d', '--build', '--remove-orphans'],
+    build: (p) => [...composeStackArgs(p), 'up', '-d', '--build', '--remove-orphans'],
+  },
+  // Preflight gates. Both run while the PREVIOUS revision is still serving, so
+  // a bad tag or a broken `${VAR}` reference fails the deployment without ever
+  // having torn the live stack down — the same ordering the local builder uses.
+  'docker.composeConfig': {
+    exe: 'docker',
+    build: (p) => [...composeStackArgs(p), 'config', '--quiet'],
+  },
+  'docker.composePull': {
+    exe: 'docker',
+    build: (p) => [...composeStackArgs(p), 'pull', '--ignore-buildable', '--quiet'],
   },
   'docker.composeDown': {
     exe: 'docker',
@@ -160,6 +244,202 @@ const OPS: Record<string, { exe: 'docker' | 'git'; build: Op }> = {
   'git.rev-parse': { exe: 'git', build: () => ['rev-parse', 'HEAD'] },
   'git.reset': { exe: 'git', build: (p) => ['reset', '--hard', validated(str(p, 'sha') ?? 'HEAD', RE_SHA, 'commit sha')] },
 };
+
+/**
+ * Node-local reverse proxy — Sprint 7, remote deploys.
+ *
+ * Each remote node terminates TLS for the services that run on it, exactly as
+ * the panel host does for its own. That is the model Coolify and Dokploy use,
+ * and it is the only one where production traffic does NOT hairpin through the
+ * panel: the operator points the domain at the NODE, and the node answers.
+ *
+ * The panel renders both Traefik configs (it owns the domain and certificate
+ * model) and ships the rendered text here; the agent only writes it to a fixed
+ * location and runs the container. Nothing about the path is caller-supplied.
+ */
+const PROXY_DIR = '.agent-proxy';
+const PROXY_CONTAINER = 'ninedeploy-proxy';
+const PROXY_IMAGE = 'traefik:v3.1';
+/** Refuse a config larger than this — the panel renders kilobytes, not megabytes. */
+const MAX_PROXY_CONFIG_BYTES = 1024 * 1024;
+
+/** Absolute path of the node's proxy directory, creating it on first use. */
+async function proxyDir(): Promise<string> {
+  const { mkdirSync } = await import('node:fs');
+  const pathmod = await import('node:path');
+  const base = pathmod.resolve(process.cwd(), PROXY_DIR);
+  mkdirSync(pathmod.join(base, 'dynamic'), { recursive: true, mode: 0o700 });
+  return base;
+}
+
+/**
+ * Write one of the two Traefik config files. `kind` is an enum, not a path, so
+ * there is no filename operand a caller could steer.
+ */
+async function writeProxyConfigOp(params: Params): Promise<{ path: string; changed: boolean }> {
+  const { existsSync, readFileSync, writeFileSync, renameSync } = await import('node:fs');
+  const pathmod = await import('node:path');
+  const kind = str(params, 'kind');
+  if (kind !== 'static' && kind !== 'dynamic') throw new Error('Invalid config kind');
+  const content = str(params, 'content');
+  if (content === undefined || content.includes('\u0000')) throw new Error('Invalid config content');
+  if (Buffer.byteLength(content, 'utf8') > MAX_PROXY_CONFIG_BYTES) throw new Error('Config too large');
+
+  const base = await proxyDir();
+  const target = kind === 'static'
+    ? pathmod.join(base, 'traefik.yml')
+    : pathmod.join(base, 'dynamic', 'ninedeploy.yml');
+  // Atomic replace: Traefik watches the dynamic directory, and a half-written
+  // file is a config error that takes routing down until the next write.
+  // Whether the content CHANGED decides, on the caller's side, if the proxy
+  // has to be recreated. Traefik hot-reloads the dynamic file, but reads the
+  // static one only at start-up — and recreating on every routing change would
+  // turn each domain edit into a brief ingress outage.
+  const previous = existsSync(target) ? readFileSync(target, 'utf8') : null;
+  const changed = previous !== content;
+  if (changed) {
+    const tmp = `${target}.tmp`;
+    writeFileSync(tmp, content, { mode: 0o600 });
+    renameSync(tmp, target);
+  }
+  return { path: pathmod.relative(process.cwd(), target), changed };
+}
+
+/**
+ * Start (or restart) the node's Traefik. The argv is entirely literal apart
+ * from the image tag, which is validated as an image reference.
+ */
+async function proxyEnsureOp(params: Params, onLine: (l: string) => void): Promise<number> {
+  const { existsSync, writeFileSync, chmodSync } = await import('node:fs');
+  const pathmod = await import('node:path');
+  const image = str(params, 'image') === undefined
+    ? PROXY_IMAGE
+    : validated(str(params, 'image'), RE_IMAGE, 'proxy image');
+  const base = await proxyDir();
+
+  // Seed acme.json so the bind mount is a FILE; Docker would otherwise create
+  // a directory in its place and Traefik would fail to store certificates.
+  const acme = pathmod.join(base, 'acme.json');
+  if (!existsSync(acme)) writeFileSync(acme, '{}', { mode: 0o600 });
+  try {
+    chmodSync(acme, 0o600);
+  } catch {
+    /* best effort — some filesystems refuse chmod */
+  }
+
+  // The shared network has to exist before the proxy can join it; on a fresh
+  // node nothing has created it yet. An "already exists" failure is expected
+  // and ignored.
+  await spawnValidated('docker', ['network', 'create', 'ninedeploy'], () => {});
+  await spawnValidated('docker', ['rm', '-f', PROXY_CONTAINER], () => {});
+  return spawnValidated(
+    'docker',
+    [
+      'run', '-d', '--name', PROXY_CONTAINER, '--restart', 'unless-stopped',
+      '--network', 'ninedeploy',
+      '--add-host', 'host.docker.internal:host-gateway',
+      '-p', '80:80', '-p', '443:443',
+      '-v', `${base}:/etc/traefik:ro`,
+      '-v', `${acme}:/etc/traefik/acme.json`,
+      image,
+    ],
+    onLine,
+  );
+}
+
+/**
+ * Files a remote compose deploy needs inside its service workspace.
+ *
+ * `kind` is an ENUM, never a filename, so no caller can steer the write — the
+ * same property `proxy.writeConfig` has. The three names are fixed:
+ *
+ *   compose          → docker-compose.yml    (an inline stack's YAML)
+ *   dotenv           → .env                  (compose reads project vars here)
+ *   compose-override → .ninedeploy.compose.override.yml (volume attachments)
+ *
+ * `.env` and the override carry resolved secrets, so both are written 0600 and
+ * `file.deleteWorkspaceFile` removes them once compose has read them.
+ */
+const WORKSPACE_FILES: Record<string, string> = {
+  compose: 'docker-compose.yml',
+  dotenv: '.env',
+  'compose-override': '.ninedeploy.compose.override.yml',
+};
+
+/** Refuse a file larger than this — a compose stack is kilobytes, not megabytes. */
+const MAX_WORKSPACE_FILE_BYTES = 1024 * 1024;
+
+async function writeWorkspaceFileOp(params: Params): Promise<{ path: string }> {
+  const { writeFileSync, renameSync } = await import('node:fs');
+  const pathmod = await import('node:path');
+  const kind = str(params, 'kind');
+  const name = kind === undefined ? undefined : WORKSPACE_FILES[kind];
+  if (name === undefined) throw new Error('Invalid workspace file kind');
+  const content = str(params, 'content');
+  if (content === undefined || content.includes('\u0000')) throw new Error('Invalid file content');
+  if (Buffer.byteLength(content, 'utf8') > MAX_WORKSPACE_FILE_BYTES) throw new Error('File too large');
+
+  const dir = await resolveWorkspace(validated(str(params, 'workspace'), RE_NAME, 'workspace name'));
+  const target = pathmod.join(dir, name);
+  // Atomic replace: compose may be reading the previous revision's file while
+  // the next deploy writes this one.
+  const tmp = `${target}.tmp`;
+  writeFileSync(tmp, content, { mode: 0o600 });
+  renameSync(tmp, target);
+  return { path: pathmod.relative(process.cwd(), target) };
+}
+
+async function deleteWorkspaceFileOp(params: Params): Promise<void> {
+  const { rmSync } = await import('node:fs');
+  const pathmod = await import('node:path');
+  const kind = str(params, 'kind');
+  const name = kind === undefined ? undefined : WORKSPACE_FILES[kind];
+  if (name === undefined) throw new Error('Invalid workspace file kind');
+  const dir = await resolveWorkspace(validated(str(params, 'workspace'), RE_NAME, 'workspace name'));
+  rmSync(pathmod.join(dir, name), { force: true });
+}
+
+/**
+ * Apply the platform's default restart policy to a compose project.
+ *
+ * Compose files without an explicit `restart:` leave every container
+ * unrestartable — they stay dead across a daemon restart and a host reboot —
+ * and `compose up` offers no policy override. On the panel host that is
+ * annoying; on a remote node nobody is watching, so the stack would simply be
+ * gone after a reboot. `compose ps -q` names the containers this project owns,
+ * then `docker update` persists the policy on each.
+ *
+ * Best effort: a project whose containers cannot be listed or updated is
+ * reported and left alone rather than failing a deployment that already
+ * succeeded.
+ */
+async function composeRestartPolicyOp(params: Params, onLine: (l: string) => void): Promise<number> {
+  const dir = await resolveWorkspace(validated(str(params, 'workspace'), RE_NAME, 'workspace name'));
+  const ids: string[] = [];
+  const psCode = await spawnValidated(
+    'docker',
+    [...composeStackArgs(params), 'ps', '-q'],
+    (line) => {
+      const id = line.trim();
+      // Container ids are hex; anything else on this stream is progress noise.
+      if (/^[0-9a-f]{12,64}$/i.test(id)) ids.push(id);
+    },
+    { cwd: dir },
+  );
+  if (psCode !== 0 || ids.length === 0) {
+    onLine('compose ps returned no containers — restart policy not applied');
+    return 0;
+  }
+  const code = await spawnValidated(
+    'docker',
+    ['update', '--restart', 'unless-stopped', ...ids],
+    onLine,
+    { cwd: dir },
+  );
+  if (code !== 0) onLine('docker update failed — containers keep the policy their compose file gave them');
+  onLine(`restart policy applied to ${ids.length} container(s)`);
+  return 0;
+}
 
 /** Env files the agent writes for docker.runEnv live under this fixed dir. */
 const ENV_DIR = '.agent-env';
@@ -193,6 +473,23 @@ async function deleteEnvFileOp(params: Params): Promise<void> {
   rmSync(pathmod.join(process.cwd(), ENV_DIR, `${name}.env`), { force: true });
 }
 
+/**
+ * Operations handled by `runOp` directly rather than through the argv table.
+ * The route consults this alongside `OPS` so a new handler cannot be reachable
+ * without being listed here (or unreachable after being added).
+ */
+const HANDLED_OPS = new Set([
+  'file.writeEnv',
+  'file.deleteEnv',
+  'file.writeWorkspace',
+  'file.deleteWorkspace',
+  'docker.pull',
+  'docker.composeRestartPolicy',
+  'git.ensure',
+  'proxy.writeConfig',
+  'proxy.ensure',
+]);
+
 /** Run one typed operation (exported for tests). */
 export async function runOp(op: string, params: Params, onLine: (l: string) => void): Promise<number> {
   if (op === 'file.writeEnv') {
@@ -204,6 +501,46 @@ export async function runOp(op: string, params: Params, onLine: (l: string) => v
     await deleteEnvFileOp(params);
     return 0;
   }
+  if (op === 'file.writeWorkspace') {
+    const { path } = await writeWorkspaceFileOp(params);
+    onLine(`workspace-file ${path}`);
+    return 0;
+  }
+  if (op === 'file.deleteWorkspace') {
+    await deleteWorkspaceFileOp(params);
+    return 0;
+  }
+  if (op === 'docker.composeRestartPolicy') {
+    return composeRestartPolicyOp(params, onLine);
+  }
+  if (op === 'git.ensure') {
+    // Idempotent checkout: clone when the workspace holds no repository yet,
+    // otherwise fetch. Doing this as ONE op keeps the caller free of
+    // exception-driven control flow ("try fetch, fall back to clone" would
+    // swallow a genuine clone failure and report it as a fetch failure).
+    const { existsSync } = await import('node:fs');
+    const pathmod = await import('node:path');
+    const dir = await resolveWorkspace(validated(str(params, 'workspace'), RE_NAME, 'workspace name'));
+    const url = validated(str(params, 'url'), RE_REF, 'repo url');
+    if (existsSync(pathmod.join(dir, '.git'))) {
+      return spawnValidated('git', ['fetch', '--all', '--prune'], onLine, { cwd: dir });
+    }
+    const depth = str(params, 'depth');
+    const argv = ['clone'];
+    if (depth !== undefined) argv.push('--depth', /^\d{1,3}$/.test(depth) ? depth : '1');
+    argv.push(url, '.');
+    return spawnValidated('git', argv, onLine, { cwd: dir });
+  }
+  if (op === 'proxy.writeConfig') {
+    const { path, changed } = await writeProxyConfigOp(params);
+    // A distinct marker: the exec route scrapes lines beginning `wrote ` to
+    // surface `file.writeEnv`'s path, and a proxy write is not an env file.
+    onLine(`proxy-config ${path} ${changed ? 'changed' : 'unchanged'}`);
+    return 0;
+  }
+  if (op === 'proxy.ensure') {
+    return proxyEnsureOp(params, onLine);
+  }
   if (op === 'docker.pull') {
     const image = validated(str(params, 'image'), RE_IMAGE, 'image');
     await pullDockerImage(image, onLine);
@@ -212,7 +549,26 @@ export async function runOp(op: string, params: Params, onLine: (l: string) => v
   const def = OPS[op];
   if (!def) return -1;
   const argv = def.build(params);
-  return spawnValidated(def.exe, argv, onLine);
+
+  // `docker login` is built with `--password-stdin` so the credential never
+  // appears in argv (and therefore never in `ps` or the process table). The
+  // password has to actually REACH stdin, though: without this the child sat
+  // waiting on a pipe that was never written or closed, and every remote
+  // private-registry deploy hung until the agent's 600 s request timeout.
+  if (op === 'docker.login') {
+    const password = str(params, 'password');
+    if (password === undefined) throw new Error('Invalid registry password');
+    return spawnValidated(def.exe, argv, onLine, { stdin: `${password}
+` });
+  }
+  // A `workspace` operand runs the op inside that service's own directory.
+  // Git needs it (fetch/checkout/reset act on the cwd, so without it one host
+  // could hold a single checkout); `docker build` uses it so two services'
+  // build contexts cannot collide. Absent = the agent's own cwd, which is what
+  // every host-level op (networks, prune, inspect) wants.
+  const workspace = str(params, 'workspace');
+  const cwd = workspace === undefined ? undefined : await resolveWorkspace(workspace);
+  return spawnValidated(def.exe, argv, onLine, cwd === undefined ? {} : { cwd });
 }
 
 export async function announceToMaster(
@@ -337,7 +693,7 @@ export const agentRoutes = async (app: import('fastify').FastifyInstance, opts: 
     }
     const op = typeof input.op === 'string' ? input.op : '';
     const params: Params = typeof input.params === 'object' && input.params ? (input.params as Params) : {};
-    if (!OPS[op] && op !== 'file.writeEnv' && op !== 'file.deleteEnv') {
+    if (!OPS[op] && !HANDLED_OPS.has(op)) {
       return reply.code(400).send({ error: { code: 'unknown_op', message: `Unknown operation: ${op}` } });
     }
     const lines: string[] = [];

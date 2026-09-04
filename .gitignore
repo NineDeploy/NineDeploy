@@ -74,3 +74,7 @@ apps/server/templates-mirror.json
 .tpm-*.py
 .temp_files/
 AUDIT-*.md
+
+# Agent-side per-service checkouts and env files (remote deploys)
+.agent-work/
+.agent-env/

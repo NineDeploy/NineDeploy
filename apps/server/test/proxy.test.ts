@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { domains, services } from '@ninedeploy/db';
-import { encryptDnsToken, ensureNetwork, ensureTraefik, getAcmeEmail, getDnsConfig, NETWORK, parseBasicAuth, parseCertExpiry, parseIpAllowlist, readCertificates, renderStaticConfig, traefikConfigFingerprint, writeDynamicConfig } from '../src/engine/proxy.js';
+import { encryptDnsToken, ensureNetwork, ensureTraefik, getAcmeEmail, getDnsConfig, NETWORK, parseBasicAuth, parseCertExpiry, parseIpAllowlist, readCertificates, renderDynamicConfig, renderStaticConfig, traefikConfigFingerprint, writeDynamicConfig } from '../src/engine/proxy.js';
 
 const h = vi.hoisted(() => {
   const capture = vi.fn(async () => '');
@@ -162,7 +162,10 @@ describe('writeDynamicConfig', () => {
     expect(yaml).toContain('svc_web_1:');
     expect(yaml).toContain('svc_web_2:');
     expect(yaml).toContain('url: "http://web-1:3000"');
-    expect(db.select).toHaveBeenCalledTimes(2);
+    // domains + services to render, then `servers` to decide whether any node
+    // proxy needs the same refresh. A single-host install pays that third
+    // select over an empty table and fans out to nobody.
+    expect(db.select).toHaveBeenCalledTimes(3);
   });
 
   it('routes PM2 services through the host gateway (a process name is not DNS-resolvable)', async () => {
@@ -1001,3 +1004,70 @@ describe('parseBasicAuth and parseIpAllowlist', () => {
   });
 });
 
+
+/**
+ * r037 — a router's upstream is a CONTAINER NAME resolved over the local
+ * Docker network, so which proxy is being rendered decides which services may
+ * appear in it.
+ *
+ * Before remote deploys existed this was moot: a service pinned to a node
+ * never got a `runtimeId`, so the `!svc.runtimeId` guard dropped it anyway.
+ * Now that nodes really run containers, rendering every service into every
+ * proxy would make the panel's Traefik advertise routes for containers on
+ * another machine and answer 502 for each one — with the node's own proxy
+ * doing the same in reverse.
+ */
+describe('renderDynamicConfig scoping', () => {
+  const localAndRemote = () =>
+    makeDb(
+      [
+        { id: 1, serviceId: 1, hostname: 'local.example.com', path: '/', ssl: true, status: 'active' },
+        { id: 2, serviceId: 2, hostname: 'node.example.com', path: '/', ssl: true, status: 'active' },
+      ],
+      [
+        { id: 1, slug: 'local', port: 3000, runtimeId: 'local-1', serverId: null },
+        { id: 2, slug: 'remote', port: 3000, runtimeId: 'remote-9', serverId: 4 },
+      ],
+    );
+
+  it('keeps a node-pinned service out of the panel proxy', async () => {
+    const yaml = await renderDynamicConfig(localAndRemote() as never, { serverId: null });
+    expect(yaml).toContain('local.example.com');
+    // The panel's Traefik cannot resolve `remote-9` — it lives on another host.
+    expect(yaml).not.toContain('node.example.com');
+    expect(yaml).not.toContain('remote-9');
+  });
+
+  it('renders only that node’s services into the node proxy', async () => {
+    const yaml = await renderDynamicConfig(localAndRemote() as never, { serverId: 4 });
+    expect(yaml).toContain('node.example.com');
+    expect(yaml).toContain('url: "http://remote-9:3000"');
+    expect(yaml).not.toContain('local.example.com');
+  });
+
+  it('never gives a node the panel dashboard router', async () => {
+    // The dashboard runs on the panel host. A node claiming its hostname would
+    // blackhole the control plane behind whichever node answered DNS first.
+    const db = makeDb(
+      [],
+      [{ id: 2, slug: 'remote', port: 3000, runtimeId: 'remote-9', serverId: 4 }],
+    );
+    const withPanelDomain = {
+      ...db,
+      query: { settings: { findFirst: async () => ({ value: 'panel.example.com' }) } },
+    };
+    const yaml = await renderDynamicConfig(withPanelDomain as never, { serverId: 4 });
+    expect(yaml).not.toContain('ninedeploy_panel');
+    expect(yaml).not.toContain('panel.example.com');
+  });
+
+  it('still gives the panel its own dashboard router', async () => {
+    const db = makeDb([], [{ id: 1, slug: 'local', port: 3000, runtimeId: 'local-1', serverId: null }]);
+    const withPanelDomain = {
+      ...db,
+      query: { settings: { findFirst: async () => ({ value: 'panel.example.com' }) } },
+    };
+    const yaml = await renderDynamicConfig(withPanelDomain as never, { serverId: null });
+    expect(yaml).toContain('ninedeploy_panel');
+  });
+});

@@ -126,7 +126,7 @@ describe('POST /v1/build-cache/store', () => {
       method: 'POST',
       url: '/store',
       headers: asUser({ id: 7, isOperator: false }),
-      payload: { key: 'svc:1', digest: 'sha256:' + '0'.repeat(64) },
+      payload: { key: 'svc:1', digest: `sha256:${'0'.repeat(64)}` },
     });
     expect(res.statusCode).toBe(403);
     expect(fakeCache.store).not.toHaveBeenCalled();

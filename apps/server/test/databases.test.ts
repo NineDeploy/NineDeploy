@@ -127,7 +127,7 @@ describe('databases routes', () => {
     const rows: Array<Record<string, unknown>> = [];
     let checks = 0;
     let releaseChecks: (() => void) | undefined;
-    const bothExecuted = new Promise<void>((resolve) => { releaseChecks = resolve; });
+    const _bothExecuted = new Promise<void>((resolve) => { releaseChecks = resolve; });
     const fakeDb = createFakeDb({
       select: {
         databases: () => {

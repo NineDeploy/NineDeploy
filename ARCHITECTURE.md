@@ -472,8 +472,18 @@ tree-kill (SIGTERM→SIGKILL) and a whitelisted env inheritance (never
 13. CANCEL — the pipeline re-reads the row status at every checkpoint and tears
     down the partial runtime (`DeploymentCancelled`). In-place compose
     redeploys are detected and NOT torn down (their id is the live instance)
-14. REMOTE — services with `server_id` run the same pipeline; the BuildContext
-    carries an `agentCall` and the builder executes typed ops over agentClient
+14. REMOTE — a `docker` service with `server_id` is built and started ON THAT
+    NODE by `engine/builders/remoteDocker.ts`, which drives the typed agent
+    protocol (git.ensure/checkout/reset, docker.build|pull, file.writeEnv,
+    docker.runEnv, file.deleteEnv). The node runs its own Traefik, so it
+    terminates TLS for its own services and traffic never hairpins through the
+    panel; `lib/nodeProxy.ts` ships the panel-rendered configs. A `compose`
+    service goes through `engine/builders/remoteCompose.ts` — inline YAML or a
+    checkout, then `.env` + volume override, then composeConfig/composePull
+    preflight BEFORE `up`, then the restart policy. PM2 and Nixpacks source
+    builds on a node are still refused with a reason (`lib/remoteDeploy.ts`) —
+    the agent has no operation for them, and a container on the wrong host is
+    worse than a readable failure
 15. Every subprocess has a hard timeout + tree-kill. Audit + EventBus +
     notification dispatch throughout; logs stream over WebSocket and persist to
     disk (engine/logs.ts LogBus), stage-tagged as `##[stage:NAME:state]`
@@ -710,13 +720,15 @@ CI (`ci.yml`) runs typecheck → lint → build → test, plus a **schema-drift 
 (regenerating migrations must produce no diff) and a **deprecated-dependency
 check**, then a Docker image build and the integration job.
 
-⚠ The schema-drift gate is currently **non-functional**: drizzle-kit's snapshot
-chain stops at `0031`, so `drizzle-kit generate` diffs against a five-migration-
-old schema, hits a column-rename prompt and aborts on the missing TTY — the
-failure the step's own comment anticipates. Migrations `0032`–`0038` are
-hand-written (the established practice in this repo) and validated by
-`test/schema-drift.test.ts`, which applies every migration to a fresh in-memory
-database. Restoring the gate means regenerating the missing snapshots.
+The schema-drift gate is **functional** as of 0.6.0. The snapshot chain was
+broken from `0032`–`0048`, so `drizzle-kit generate` diffed against a stale
+schema and aborted on a column-rename prompt with no TTY; the chain was rebuilt
+by introspection and the CI step now *requires* the literal
+`No schema changes, nothing to migrate` line plus a clean `git status`, so a
+tool that fails for any other reason can no longer pass the gate silently.
+`packages/db/test/schema-drift.test.ts` remains the second line of defence:
+it applies every migration to a fresh in-memory database and compares both
+directions against the Drizzle schema.
 
 ## 14. Installation, updates and supervision
 

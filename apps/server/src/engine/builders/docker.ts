@@ -467,6 +467,7 @@ export const dockerBuilder: Builder = {
             lastBuildDigest: imageDigest,
             serviceId: service.id,
             cache: ctx.buildCache,
+            onCacheEvent: ctx.onBuildCacheEvent,
             log,
           });
           log(`BuildKit finished: ${result.imageDigest}${result.cacheHit ? ' (cache hit)' : ''}`);

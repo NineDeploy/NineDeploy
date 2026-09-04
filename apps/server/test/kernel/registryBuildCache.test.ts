@@ -18,7 +18,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDb } from '@ninedeploy/db';
 import { RegistryBuildCache } from '../../src/kernel/drivers/registryBuildCache.js';
 
@@ -92,10 +92,12 @@ async function registryFetch(input: string | URL | globalThis.Request, init?: Re
 function newCache(opts: { username?: string; password?: string } = {}): RegistryBuildCache {
   return new RegistryBuildCache({
     db,
-    url: 'https://registry.example.com',
-    repo: 'ninedeploy/test',
-    username: opts.username,
-    password: opts.password,
+    credentials: {
+      url: 'https://registry.example.com',
+      repo: 'ninedeploy/test',
+      username: opts.username,
+      password: opts.password,
+    },
     fetchImpl: registryFetch,
   });
 }
@@ -264,5 +266,49 @@ describe('ESM purity (r026 regression)', () => {
     );
     const source = readFileSync(sourcePath, 'utf8');
     expect(source).not.toMatch(/\brequire\s*\(/);
+  });
+});
+
+/**
+ * r034. The driver takes a credential SUPPLIER so panel-saved settings apply
+ * without a restart. Unconfigured must read as a cold cache, never an error:
+ * a build must not fail because its optional cache has no settings yet.
+ */
+describe('RegistryBuildCache lazy configuration', () => {
+  it('misses without dialling out while the supplier returns null', async () => {
+    const fetchImpl = vi.fn();
+    const cache = new RegistryBuildCache({ db, credentials: () => null, fetchImpl: fetchImpl as never });
+    await expect(cache.lookup('ndbuild:a')).resolves.toBeNull();
+    expect(fetchImpl).not.toHaveBeenCalled();
+    await expect(cache.store('ndbuild:a', Buffer.from('{}'))).rejects.toThrow(/no registry configured/);
+  });
+
+  it('treats a blank url and a throwing supplier alike — unconfigured', async () => {
+    const fetchImpl = vi.fn();
+    const blank = new RegistryBuildCache({ db, credentials: { url: '   ' }, fetchImpl: fetchImpl as never });
+    await expect(blank.lookup('ndbuild:a')).resolves.toBeNull();
+
+    const boom = new RegistryBuildCache({
+      db,
+      credentials: () => {
+        throw new Error('config centre down');
+      },
+      fetchImpl: fetchImpl as never,
+    });
+    await expect(boom.lookup('ndbuild:a')).resolves.toBeNull();
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('defaults the repository namespace and trims a trailing slash off the url', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(null, { status: 404 }));
+    const cache = new RegistryBuildCache({
+      db,
+      credentials: async () => ({ url: 'https://registry.example.com/' }),
+      fetchImpl: fetchImpl as never,
+    });
+    await expect(cache.lookup('ndbuild:a')).resolves.toBeNull();
+    expect(String(fetchImpl.mock.calls[0]?.[0])).toBe(
+      'https://registry.example.com/v2/ninedeploy/build-cache/manifests/ndbuild-a',
+    );
   });
 });

@@ -79,11 +79,31 @@ function makeDb(opts: {
   return { db: { select, update } as never, select, outerSelect, update, updates };
 }
 
-async function buildApp(db: ReturnType<typeof makeDb>['db']) {
+async function buildApp(db: ReturnType<typeof makeDb>['db'], kernel?: unknown) {
   const app = Fastify({ logger: false });
   app.decorate('db', db);
+  if (kernel) app.decorate('kernel', kernel as never);
   await app.register(workerPlugin);
   return app;
+}
+
+/** Minimal kernel stub exposing just the registry + configCenter the worker reads. */
+function fakeKernel(opts: { caches: string[]; cacheName?: string; enabled?: boolean }) {
+  const caches = opts.caches.map((name) => ({ name }));
+  return {
+    registry: {
+      listBuildCaches: () => caches,
+      getBuildCache: (name: string) => caches.find((c) => c.name === name),
+    },
+    configCenter: {
+      get: async (key: string, fallback: unknown) => {
+        if (key === 'plugin:build-cache:cache_name') return opts.cacheName ?? fallback;
+        if (key === 'plugin:build-cache:enabled') return opts.enabled ?? fallback;
+        return fallback;
+      },
+    },
+    events: { emitCustom: () => {} },
+  };
 }
 
 afterEach(() => {
@@ -189,6 +209,103 @@ describe('worker plugin', () => {
     expect(call?.[0]).toBe(db);
     expect(call?.[1]).toBe(5);
     expect(call?.[2]).toMatchObject({ useBuildKit: false });
+    await app.close();
+  });
+
+  // Wiring guard (r034). The worker used to hand the pipeline
+  // `listBuildCaches()[0]` unconditionally, so an operator who selected the
+  // registry or S3 backend in the panel still built against the in-memory
+  // LRU — the setting was accepted and silently ignored.
+  it('forwards the build cache the operator selected, not merely the first registered', async () => {
+    vi.useFakeTimers();
+    const { db } = makeDb({ queued: [{ id: 5 }] });
+    pipelineMock.runDeployment.mockResolvedValue(undefined);
+
+    const app = await buildApp(db, fakeKernel({ caches: ['inline', 'registry', 's3'], cacheName: 's3' }));
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+
+    expect(pipelineMock.runDeployment.mock.calls[0]?.[2]).toMatchObject({
+      buildCache: { name: 's3' },
+    });
+    await app.close();
+  });
+
+  it('falls back to the first registered cache when the configured name is unknown', async () => {
+    vi.useFakeTimers();
+    const { db } = makeDb({ queued: [{ id: 5 }] });
+    pipelineMock.runDeployment.mockResolvedValue(undefined);
+
+    const app = await buildApp(db, fakeKernel({ caches: ['inline', 's3'], cacheName: 'nope' }));
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+
+    expect(pipelineMock.runDeployment.mock.calls[0]?.[2]).toMatchObject({
+      buildCache: { name: 'inline' },
+    });
+    await app.close();
+  });
+
+  it('passes no cache at all when the build-cache master switch is off', async () => {
+    vi.useFakeTimers();
+    const { db } = makeDb({ queued: [{ id: 5 }] });
+    pipelineMock.runDeployment.mockResolvedValue(undefined);
+
+    const app = await buildApp(db, fakeKernel({ caches: ['inline', 's3'], cacheName: 's3', enabled: false }));
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+
+    expect(pipelineMock.runDeployment.mock.calls[0]?.[2]).toMatchObject({ buildCache: undefined });
+    await app.close();
+  });
+
+  it('degrades to no cache when the kernel has none registered', async () => {
+    vi.useFakeTimers();
+    const { db } = makeDb({ queued: [{ id: 5 }] });
+    pipelineMock.runDeployment.mockResolvedValue(undefined);
+
+    const app = await buildApp(db, fakeKernel({ caches: [] }));
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+
+    expect(pipelineMock.runDeployment.mock.calls[0]?.[2]).toMatchObject({ buildCache: undefined });
+    await app.close();
+  });
+
+  it('falls back to the default backend when the config read rejects', async () => {
+    vi.useFakeTimers();
+    const { db } = makeDb({ queued: [{ id: 5 }] });
+    pipelineMock.runDeployment.mockResolvedValue(undefined);
+
+    const kernel = fakeKernel({ caches: ['inline'] });
+    kernel.configCenter.get = async () => {
+      throw new Error('config centre down');
+    };
+    const app = await buildApp(db, kernel);
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+
+    // A broken config centre must not stop deployments.
+    expect(pipelineMock.runDeployment.mock.calls[0]?.[2]).toMatchObject({
+      useBuildKit: false,
+      buildCache: { name: 'inline' },
+    });
+    await app.close();
+  });
+
+  it('keeps deploying when the event bus throws while publishing a cache observation', async () => {
+    vi.useFakeTimers();
+    const { db } = makeDb({ queued: [{ id: 5 }] });
+    pipelineMock.runDeployment.mockResolvedValue(undefined);
+
+    const kernel = fakeKernel({ caches: ['inline'] });
+    kernel.events.emitCustom = () => {
+      throw new Error('bus exploded');
+    };
+    const app = await buildApp(db, kernel);
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+
+    const sink = pipelineMock.runDeployment.mock.calls[0]?.[2]?.onBuildCacheEvent as
+      | ((e: unknown) => void)
+      | undefined;
+    expect(sink).toBeTypeOf('function');
+    // The sink swallows it: observability is never a deploy dependency.
+    expect(() => sink?.({ kind: 'miss', serviceId: 1, cache: 'inline', key: 'k' })).not.toThrow();
     await app.close();
   });
 

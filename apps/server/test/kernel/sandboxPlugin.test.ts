@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from 'vitest';
 import { NineDeployKernel } from '../../src/kernel/kernel.js';
 import { SandboxPlugin } from '../../src/kernel/sandbox/sandboxPlugin.js';
 import { createFakeDb } from '../helpers.js';
-import { Worker } from 'node:worker_threads';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { writeFileSync, unlinkSync } from 'node:fs';

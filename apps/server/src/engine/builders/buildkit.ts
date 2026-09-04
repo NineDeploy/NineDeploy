@@ -22,6 +22,23 @@ export interface BuildKitBuildOptions {
   cache?: IBuildCache;
   /** Progress line sink — same shape `engine/builders/docker.ts` uses. */
   log: (line: string) => void;
+  /**
+   * Optional sink for `build.cache.*` bus events. Supplied by the worker so
+   * the events carry the key this build actually consulted and the result it
+   * actually got. Absent = no bus (tests, legacy callers).
+   */
+  onCacheEvent?: (event: BuildCacheEvent) => void;
+}
+
+/** One `build.cache.hit` / `.miss` / `.error` observation. */
+export interface BuildCacheEvent {
+  kind: 'hit' | 'miss' | 'error';
+  serviceId: number;
+  cache: string;
+  key: string;
+  digest?: string;
+  sizeBytes?: number;
+  reason?: string;
 }
 
 export interface BuildKitBuildResult {
@@ -76,8 +93,22 @@ export async function buildWithBuildKit(opts: BuildKitBuildOptions): Promise<Bui
         cacheHit = true;
         cacheFromDigest = ref.digest;
         opts.log(`Cache hit: ${cacheKey} (${ref.digest}, ${ref.sizeBytes} bytes)`);
+        opts.onCacheEvent?.({
+          kind: 'hit',
+          serviceId: opts.serviceId,
+          cache: opts.cache.name,
+          key: cacheKey,
+          digest: ref.digest,
+          sizeBytes: ref.sizeBytes,
+        });
       } else {
         opts.log(`Cache miss: ${cacheKey}`);
+        opts.onCacheEvent?.({
+          kind: 'miss',
+          serviceId: opts.serviceId,
+          cache: opts.cache.name,
+          key: cacheKey,
+        });
       }
     } catch (err) {
       // The cache is an optimisation, not a dependency. A lookup error
@@ -85,6 +116,13 @@ export async function buildWithBuildKit(opts: BuildKitBuildOptions): Promise<Bui
       opts.log(
         `Cache lookup failed: ${err instanceof Error ? err.message : String(err)} (continuing without cache)`,
       );
+      opts.onCacheEvent?.({
+        kind: 'error',
+        serviceId: opts.serviceId,
+        cache: opts.cache.name,
+        key: cacheKey,
+        reason: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 
@@ -102,12 +140,21 @@ export async function buildWithBuildKit(opts: BuildKitBuildOptions): Promise<Bui
     '-f',
     opts.dockerfilePath,
   ];
-  if (cacheFromDigest) {
+  // `--cache-from=type=registry,ref=` needs an IMAGE REFERENCE, not a bare
+  // content digest: buildx resolves it against the registry. Two values used
+  // to reach it that never resolve —
+  //   * the literal `ref=empty` this emitted on the first build, and
+  //   * the `sha256:<hex>` fallback `docker inspect` yields for a `--load`ed
+  //     image that was never pushed (so it has no RepoDigests).
+  // Both made buildx log a resolve error on every single build. A cache-from
+  // we cannot name is simply omitted: buildx builds without it, and the
+  // `--cache-to` below still gives the next build something to read.
+  if (cacheFromDigest && isImageRef(cacheFromDigest)) {
     args.push('--cache-from', `type=registry,ref=${cacheFromDigest}`);
-  } else {
-    // First build: no digest to pull from. We still emit a cache-to
-    // so a subsequent build can read back what this one wrote.
-    args.push('--cache-from', 'type=registry,ref=empty');
+  } else if (cacheFromDigest) {
+    opts.log(
+      `Cache hit recorded ${cacheFromDigest}, but that is a content digest rather than a registry reference - building without --cache-from.`,
+    );
   }
   args.push('--cache-to', 'type=inline');
   args.push(opts.baseDir);
@@ -160,6 +207,22 @@ async function runInspectDigest(ref: string, log: (line: string) => void): Promi
     );
     return null;
   }
+}
+
+/**
+ * True when `ref` is something a registry can resolve: `repo:tag`,
+ * `repo@sha256:...`, or a host-qualified form of either. A bare
+ * `sha256:<hex>` is a content digest with no repository, so it is not.
+ */
+export function isImageRef(ref: string): boolean {
+  if (!ref || /\s/.test(ref)) return false;
+  // A digest reference is always `repo@sha256:...`; a string that STARTS with
+  // the algorithm is a bare content digest naming no repository.
+  if (/^sha256:/i.test(ref)) return false;
+  const name = ref.split('@')[0];
+  if (!name) return false;
+  // A tag or a digest must be attached to a repository name.
+  return ref.includes('@sha256:') || /^[^:]+:[^:/]+$/.test(name);
 }
 
 function digestOfString(s: string): string {

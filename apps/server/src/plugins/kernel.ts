@@ -6,6 +6,8 @@ import { CloudflareZoneProvider } from '../kernel/drivers/cloudflareZone.js';
 import { DnsimpleProvider } from '../kernel/drivers/dnsimple.js';
 import { NamecheapProvider } from '../kernel/drivers/namecheapProvider.js';
 import { InlineBuildCache } from '../kernel/drivers/inlineBuildCache.js';
+import { RegistryBuildCache } from '../kernel/drivers/registryBuildCache.js';
+import { S3BuildCache } from '../kernel/drivers/s3BuildCache.js';
 import { LocalOrchestrator } from '../kernel/drivers/localOrchestrator.js';
 import { SwarmOrchestrator } from '../kernel/drivers/swarmOrchestrator.js';
 import { IptablesEgressDriver } from '../kernel/drivers/iptablesEgressDriver.js';
@@ -62,11 +64,55 @@ export default fp(
           }
         }),
       );
-      // Default build cache — the in-memory LRU reference driver. Sprint 3
-      // PR-A only ships the contract + this driver; Sprint 4 PR-17 / PR-18
-      // add the registry and S3 backends. A future operator can replace
-      // this with their own driver by registering a different name first.
+      // Build caches. All three backends are registered unconditionally so
+      // `plugin:build-cache:cache_name` can name any of them; each one reads
+      // its own connection settings lazily on every call (the same
+      // credentials-supplier shape the domain providers use), so an operator
+      // can point the panel at a registry or bucket without restarting.
+      // A backend with no settings saved is simply a cold cache: it misses.
+      //
+      // Registering them here is load-bearing. The registry and S3 drivers
+      // shipped fully implemented but unregistered, so an operator who set
+      // `cache_name=s3` silently got the in-memory LRU instead — the
+      // written-but-never-wired failure this codebase keeps repeating.
       kernel.registry.registerBuildCache(new InlineBuildCache());
+      if (fastify.db) {
+        const cfg = kernel.configCenter;
+        kernel.registry.registerBuildCache(
+          new RegistryBuildCache({
+            db: fastify.db,
+            credentials: async () => {
+              const url = await cfg.get<string>('plugin:build-cache:registry_url', '');
+              if (!url) return null;
+              return {
+                url,
+                repo: await cfg.get<string>('plugin:build-cache:registry_repo', 'ninedeploy/build-cache'),
+                username: (await cfg.get<string>('plugin:build-cache:registry_username', '')) || undefined,
+                password: (await cfg.getSecret('plugin:build-cache:registry_password')) ?? undefined,
+              };
+            },
+          }),
+        );
+        kernel.registry.registerBuildCache(
+          new S3BuildCache({
+            config: async () => {
+              const [endpoint, bucket] = await Promise.all([
+                cfg.get<string>('plugin:build-cache:s3_endpoint', ''),
+                cfg.get<string>('plugin:build-cache:s3_bucket', ''),
+              ]);
+              if (!endpoint || !bucket) return null;
+              return {
+                endpoint,
+                bucket,
+                region: await cfg.get<string>('plugin:build-cache:s3_region', 'us-east-1'),
+                accessKeyId: await cfg.get<string>('plugin:build-cache:s3_access_key_id', ''),
+                secretAccessKey: (await cfg.getSecret('plugin:build-cache:s3_secret_access_key')) ?? '',
+                prefix: await cfg.get<string>('plugin:build-cache:s3_prefix', 'build-cache/'),
+              };
+            },
+          }),
+        );
+      }
       // Default orchestrator — the local Docker driver that wraps the
       // existing `IComputeDriver` flow behind the new `IOrchestrator`
       // contract. The Swarm driver is also registered but stays

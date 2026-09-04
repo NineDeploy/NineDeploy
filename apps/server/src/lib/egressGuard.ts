@@ -4,10 +4,11 @@ import { isIP } from 'node:net';
 /**
  * L-11: refuse outbound requests aimed at the host's own network.
  *
- * Several settings are operator-supplied URLs the server then fetches:
- * notification webhooks, the OIDC issuer, the S3 backup endpoint and
- * `templates_source`. They are admin-only, so this is not a privilege
- * escalation — but "admin" in a PaaS is not the same trust level as "the
+ * Several settings are operator-supplied URLs the server then fetches. They are
+ * operator-only (`requireAdmin` is an alias of `requireOperator`), so this is
+ * not a privilege escalation — an operator can already run host commands
+ * through a PM2 service. The guard is defence in depth against an accident or
+ * a copy-pasted URL, because "operator" is not the same trust level as "the
  * process's network position". The panel sits inside the Docker network with
  * every managed container, and on a cloud VM it can reach the instance
  * metadata service. A webhook URL is therefore a way to turn a settings field
@@ -24,6 +25,28 @@ import { isIP } from 'node:net';
  *
  * Escape hatch: many self-hosters legitimately point a webhook at a receiver
  * on the same LAN. `NINEDEPLOY_ALLOW_PRIVATE_EGRESS=1` turns the check off.
+ *
+ * WHAT IS ACTUALLY GUARDED — keep this list true, it was wrong once (r038).
+ * Guarded (`guardedFetch` / `assertPublicHttpUrl`): notification channels and
+ * system email webhooks (`lib/notifier.ts`), log drains
+ * (`engine/logDrainManager.ts`), push delivery (`lib/fcm.ts`), git remotes
+ * (`lib/gitEgress.ts`), the marketplace catalog, the Namecheap API, OAuth
+ * token exchange (`lib/oauth.ts`), `templates_source`
+ * (`templates/registry.ts`) and repo insights.
+ *
+ * DELIBERATELY NOT guarded, because private addresses are the NORMAL
+ * deployment for them and blocking would break working installs:
+ *   - the OIDC issuer (`lib/oidc.ts`) — self-hosted Keycloak/Authentik
+ *     usually sits on the same Docker network;
+ *   - the S3 endpoint (`lib/s3.ts`) — MinIO at `minio:9000` is the common
+ *     self-hosted backup target;
+ *   - the Vault address (`lib/vault.ts`), the log-search backend
+ *     (`lib/logSearch.ts`), the telemetry `export_endpoint` and the
+ *     `webhook-out` endpoint — Loki, Prometheus and Vault are internal by
+ *     design.
+ * An earlier version of this comment claimed the OIDC issuer and the S3
+ * endpoint were covered. They never were, and a security note that overstates
+ * its coverage is worse than no note: it stops the next reader from checking.
  */
 
 /** Private, loopback, link-local and other non-routable IPv4 space. */

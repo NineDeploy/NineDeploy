@@ -178,3 +178,49 @@ describe('S3BuildCache', () => {
     expect(stats.stores).toBe(3);
   });
 });
+
+/**
+ * r034. The driver now accepts a SUPPLIER so an operator can save bucket
+ * settings in the panel without restarting the kernel. An unconfigured
+ * supplier must behave as a cold cache — a build must never fail because its
+ * optional cache has no settings yet.
+ */
+describe('S3BuildCache lazy configuration', () => {
+  it('misses without dialling out while the supplier returns null', async () => {
+    const spy = vi.spyOn(globalThis, 'fetch');
+    const cache = new S3BuildCache({ config: () => null });
+    await expect(cache.lookup('ndbuild:a')).resolves.toBeNull();
+    expect(spy).not.toHaveBeenCalled();
+    await expect(cache.store('ndbuild:a', Buffer.from('{}'))).rejects.toThrow(/no bucket configured/);
+    spy.mockRestore();
+  });
+
+  it('treats a throwing supplier as unconfigured rather than failing the build', async () => {
+    const cache = new S3BuildCache({
+      config: () => {
+        throw new Error('config centre down');
+      },
+    });
+    await expect(cache.lookup('ndbuild:a')).resolves.toBeNull();
+  });
+
+  it('takes the key prefix from the resolved settings, not only the constructor', async () => {
+    s3 = installMiniS3();
+    const cache = new S3BuildCache({
+      config: async () => ({
+        endpoint: 'https://s3.example.com',
+        region: 'us-east-1',
+        bucket: 'test-bucket',
+        accessKeyId: 'AKIA',
+        secretAccessKey: 'secret',
+        prefix: '/team-b/',
+      }),
+      prefix: 'ignored/',
+    });
+    await cache.store('ndbuild:abc', Buffer.from(JSON.stringify({ digest: 'sha256:abc', sizeBytes: 1 })));
+    // A leading slash would produce an unreachable `//team-b/...` object key.
+    expect(s3.calls.some((c) => c.path.includes('/test-bucket/team-b/'))).toBe(true);
+    expect(s3.calls.every((c) => !c.path.includes('//team-b'))).toBe(true);
+    s3.restore();
+  });
+});

@@ -34,17 +34,38 @@ import type { BlobRef, IBuildCache } from '../types.js';
  *     self-describing on the bucket itself, and a kernel restart
  *     recovers by listing the prefix on the first miss.
  */
-export interface S3BuildCacheOptions {
-  /** S3 connection settings — the same shape `S3StorageDriver` accepts. */
-  config: S3Config;
+/** Bucket settings plus the key prefix that isolates one operator's markers. */
+export interface S3BuildCacheSettings extends S3Config {
   /** Object-key prefix, e.g. `build-cache/`. Empty = bucket root. */
+  prefix?: string;
+}
+
+export type S3BuildCacheConfigSupplier = () =>
+  | Promise<S3BuildCacheSettings | null>
+  | S3BuildCacheSettings
+  | null;
+
+export interface S3BuildCacheOptions {
+  /**
+   * S3 connection settings — the same shape `S3StorageDriver` accepts —
+   * or a supplier resolved per call. A supplier returning `null` means the
+   * operator has not configured a bucket yet: `lookup()` misses and
+   * `store()` throws a descriptive error, so a build never fails because
+   * its optional cache is unconfigured. This is the same lazy-supplier
+   * shape the Cloudflare / DNSimple / Namecheap domain providers use.
+   */
+  config: S3BuildCacheSettings | S3BuildCacheConfigSupplier;
+  /**
+   * Fallback object-key prefix used when the resolved settings do not carry
+   * one. Default `build-cache/`.
+   */
   prefix?: string;
 }
 
 export class S3BuildCache implements IBuildCache {
   readonly name = 's3';
 
-  private readonly config: S3Config;
+  private readonly config: S3BuildCacheSettings | S3BuildCacheConfigSupplier;
   private readonly prefix: string;
 
   private hits = 0;
@@ -53,7 +74,22 @@ export class S3BuildCache implements IBuildCache {
 
   constructor(opts: S3BuildCacheOptions) {
     this.config = opts.config;
-    this.prefix = (opts.prefix ?? 'build-cache/').replace(/^\/?/, '');
+    this.prefix = opts.prefix ?? 'build-cache/';
+  }
+
+  /**
+   * Resolve the bucket settings for this call. A supplier that throws or
+   * returns null means "not configured" — treated as a cold cache.
+   */
+  private async resolve(): Promise<{ cfg: S3Config; prefix: string } | null> {
+    try {
+      const raw = typeof this.config === 'function' ? await this.config() : this.config;
+      if (!raw || !raw.bucket || !raw.endpoint) return null;
+      const { prefix, ...cfg } = raw;
+      return { cfg, prefix: normalisePrefix(prefix ?? this.prefix) };
+    } catch {
+      return null;
+    }
   }
 
   async lookup(key: string): Promise<BlobRef | null> {
@@ -63,8 +99,13 @@ export class S3BuildCache implements IBuildCache {
     // exactly what the store() side documents. A HEAD that demanded the
     // metadata header turned every store→lookup round-trip into a miss,
     // so the cache could never hit (r019).
-    const objectKey = this.objectKeyFor(key);
-    const res = await s3Request(this.config, 'GET', objectKey, undefined, 'application/octet-stream');
+    const conn = await this.resolve();
+    if (!conn) {
+      this.misses += 1;
+      return null;
+    }
+    const objectKey = objectKeyFor(conn.prefix, key);
+    const res = await s3Request(conn.cfg, 'GET', objectKey, undefined, 'application/octet-stream');
     if (res.status !== 200) {
       this.misses += 1;
       return null;
@@ -84,7 +125,14 @@ export class S3BuildCache implements IBuildCache {
     const parsed = parseMarker(blob);
     const digest = parsed?.digest ?? placeholderHash(blob);
     const sizeBytes = parsed?.sizeBytes ?? blob.byteLength;
-    const objectKey = this.objectKeyFor(key);
+    const conn = await this.resolve();
+    if (!conn) {
+      throw new Error(
+        'S3BuildCache.store: no bucket configured — set plugin:build-cache:s3_endpoint / s3_bucket / credentials first',
+      );
+    }
+
+    const objectKey = objectKeyFor(conn.prefix, key);
 
     // SigV4 signs the canonical headers; the `x-amz-meta-*` pair is
     // passed through. We do not have a way to add custom headers via
@@ -96,7 +144,7 @@ export class S3BuildCache implements IBuildCache {
     // body. The `BlobRef` marker IS the body, so on lookup we
     // GET the marker body, parse the digest, and use the rest of
     // the workflow unchanged.
-    await s3Request(this.config, 'PUT', objectKey, Buffer.from(blob), 'application/octet-stream');
+    await s3Request(conn.cfg, 'PUT', objectKey, Buffer.from(blob), 'application/octet-stream');
 
     this.stores += 1;
     return { digest, sizeBytes, storedAt: new Date().toISOString() };
@@ -124,13 +172,19 @@ export class S3BuildCache implements IBuildCache {
     };
   }
 
-  private objectKeyFor(key: string): string {
-    // S3 keys are 1-1024 bytes; the cache key is `ndbuild:<hex>`
-    // and the prefix already includes a `/`, so the final key is
-    // safe and within the limit.
-    const safe = key.replace(/[^A-Za-z0-9._-]/g, '_');
-    return `${this.prefix}${safe}.ndcache`;
-  }
+}
+
+/** Strip a leading slash so the prefix concatenates into a valid S3 key. */
+function normalisePrefix(prefix: string): string {
+  return prefix.replace(/^\/+/, '');
+}
+
+function objectKeyFor(prefix: string, key: string): string {
+  // S3 keys are 1-1024 bytes; the cache key is `ndbuild:<hex>`
+  // and the prefix already includes a `/`, so the final key is
+  // safe and within the limit.
+  const safe = key.replace(/[^A-Za-z0-9._-]/g, '_');
+  return `${prefix}${safe}.ndcache`;
 }
 
 interface MarkerPayload {

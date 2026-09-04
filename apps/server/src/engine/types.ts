@@ -68,6 +68,14 @@ export interface BuildContext {
    */
   useBuildKit?: boolean;
   buildCache?: IBuildCache;
+  /**
+   * Sink for `build.cache.*` observations, supplied by the worker so the
+   * events carry the key the build actually consulted. The BuildCachePlugin
+   * used to synthesise its own key (`service:<id>:no-commit`) that nothing
+   * ever stored under, so every deploy published a `miss` that could not
+   * have been anything else.
+   */
+  onBuildCacheEvent?: (event: import('./builders/buildkit.js').BuildCacheEvent) => void;
 }
 
 /** Identifies a running workload so the engine can stop/inspect it later. */

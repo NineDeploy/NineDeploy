@@ -20,7 +20,19 @@
  *    "Amazon S3 & Cloudflare R2 Sync", entered a bucket and secret key and saw
  *    it active would reasonably believe their backups were being copied
  *    off-site. They were not, and they would find out at restore time.
+ *
+ * 3. **Plugins declared settings nothing read.** A `configSchema` entry is
+ *    rendered as a real field in Settings -> Plugins and its value is
+ *    persisted (encrypted, for `isSecret` ones). Five keys across four
+ *    built-in plugins were saved and never consulted: the Cloudflare Tunnels
+ *    account id + tunnel TOKEN, the notification dispatcher's per-minute alert
+ *    cap and its deploy-success switch, the telemetry streamer's metrics
+ *    retention, and the template-bundle override counter. The guard at the
+ *    bottom of this file keeps the schema and the code that reads it in step.
  */
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 import { EventBus } from '../src/kernel/eventBus.js';
 import { bridgeAuditEvents, mapAuditToDomainEvent } from '../src/kernel/auditBridge.js';
@@ -245,5 +257,75 @@ describe('MARKETPLACE_CATALOG builtIn pointers', () => {
     // The day one becomes real, this flips — and `installPlugin` stops refusing
     // it. Until then a `true` here would put back the install button that lied.
     expect(MARKETPLACE_CATALOG.filter((e) => e.implemented === true)).toEqual([]);
+  });
+});
+
+/**
+ * Every key a built-in plugin declares must be read by something.
+ *
+ * A `configSchema` entry is not documentation: the panel renders it as an
+ * editable field and persists whatever the operator types, encrypting it when
+ * `isSecret`. A key nothing reads is therefore a control that silently does
+ * nothing — the worst kind, because the panel confirms the save. This has now
+ * happened five times across four plugins, so it gets a guard rather than
+ * another round of review.
+ *
+ * The check is a source scan: for each declared `<category>:<key>`, some file
+ * under `src/` other than the declaring plugin itself must mention the full
+ * dotted key. That is exactly how every real consumer reads one
+ * (`configCenter.get('plugin:x:y', …)`), and it is cheap enough to run on
+ * every commit.
+ */
+describe('no plugin declares a setting nothing reads', () => {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const srcDir = path.join(here, '..', 'src');
+  const pluginsDir = path.join(srcDir, 'kernel', 'plugins');
+
+  function walk(dir: string): string[] {
+    return readdirSync(dir).flatMap((entry) => {
+      const full = path.join(dir, entry);
+      if (statSync(full).isDirectory()) return walk(full);
+      return full.endsWith('.ts') ? [full] : [];
+    });
+  }
+
+  const sourceFiles = walk(srcDir);
+
+  it('every configSchema key is consulted somewhere in src/', async () => {
+    const orphans: string[] = [];
+
+    for (const file of readdirSync(pluginsDir).filter((f) => f.endsWith('.ts'))) {
+      const mod = (await import(path.join(pluginsDir, file))) as Record<string, unknown>;
+      for (const exported of Object.values(mod)) {
+        if (typeof exported !== 'function') continue;
+        let instance: { configSchema?: Array<{ key: string; category?: string }> };
+        try {
+          instance = new (exported as new () => never)() as never;
+        } catch {
+          continue; // constructor needs arguments — not a zero-arg built-in plugin
+        }
+        for (const entry of instance.configSchema ?? []) {
+          if (!entry?.category) continue;
+          const fullKey = `${entry.category}:${entry.key}`;
+          // The declaring file counts: a plugin reading its own key with
+          // `configCenter.get('plugin:x:y', …)` is a real consumer. The schema
+          // entry itself never spells the dotted key out (it is `category` +
+          // `key` as two fields), so scanning for the joined string finds
+          // reads only — never the declaration that produced it.
+          // Some readers build the key by interpolation, e.g. config-presets'
+          // `${await namespace()}:preset.list`. Those still spell out the
+          // `:<key>` suffix in a file that also names the plugin's namespace,
+          // so accept that shape too rather than forcing a literal.
+          const readSomewhere = sourceFiles.some((f) => {
+            const text = readFileSync(f, 'utf8');
+            if (text.includes(fullKey)) return true;
+            return text.includes(`:${entry.key}\``) && text.includes(entry.category!);
+          });
+          if (!readSomewhere) orphans.push(`${fullKey} (declared in kernel/plugins/${file})`);
+        }
+      }
+    }
+
+    expect(orphans).toEqual([]);
   });
 });

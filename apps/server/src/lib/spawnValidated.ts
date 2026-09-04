@@ -10,14 +10,33 @@ import { makeLineSplitter } from './exec.js';
 
 export type AllowedExecutable = 'docker' | 'git';
 
+export interface SpawnValidatedOptions {
+  /**
+   * Working directory for the child. MUST already be resolved and confined by
+   * the caller (`agent.ts` derives it from `resolveWorkspace()`, which refuses
+   * anything outside the agent's workspace root). It exists because git has no
+   * per-invocation repo operand: `git fetch` / `checkout` / `reset` act on the
+   * process's cwd, so without this the agent could only ever hold ONE
+   * repository — every remote service would fight over the same checkout.
+   */
+  cwd?: string;
+  /** Written to the child's stdin, then closed. Used by `docker login`. */
+  stdin?: string;
+}
+
 /** Spawn one of the two fixed executables and collect its output lines. */
 export function spawnValidated(
   executable: AllowedExecutable,
   argv: string[],
   onLine: (line: string) => void,
+  opts: SpawnValidatedOptions = {},
 ): Promise<number> {
+  const spawnOpts = opts.cwd ? { cwd: opts.cwd } : {};
   const child: ChildProcess =
-    executable === 'docker' ? spawn('docker', argv, {}) : spawn('git', argv, {});
+    executable === 'docker' ? spawn('docker', argv, spawnOpts) : spawn('git', argv, spawnOpts);
+  if (opts.stdin !== undefined) {
+    child.stdin?.end(opts.stdin);
+  }
   return new Promise<number>((resolve) => {
     child.stdin?.on('error', () => { /* child gone */ });
     const outSplitter = makeLineSplitter();

@@ -28,9 +28,13 @@ import type { KernelContext, KernelPlugin } from '../types.js';
  * non-custom producer emits `telemetry.recorded` directly.
  *
  * Contract:
- *   - `metrics_retention_days` is read by the housekeeping pass; the
- *     plugin only registers the schema entry today and lets the sweep
- *     trim the audit_log rows.
+ *   - This plugin owns NO retention setting. It used to declare
+ *     `metrics_retention_days` (default 30) and claim the housekeeping pass
+ *     read it; nothing did. The `metrics` table is deliberately a 24-hour
+ *     ring trimmed by `plugins/collector.ts`, matching the 1440-minute cap
+ *     that `GET /services/:id/metrics` accepts — a longer window would store
+ *     rows no endpoint can return. Long-lived history is the
+ *     `metric-history` plugin's job, and its `retention_days` key is real.
  *   - `export_endpoint` empty / missing → the local re-emit still
  *     works, the network call is a silent no-op.
  *   - The plugin NEVER throws. Every error path lands on
@@ -49,15 +53,6 @@ export class TelemetryStreamerPlugin implements KernelPlugin {
   readonly isOfficial = true;
 
   readonly configSchema = [
-    {
-      key: 'metrics_retention_days',
-      type: 'number' as const,
-      isSecret: false,
-      label: 'Metrics Retention (Days)',
-      category: 'plugin:telemetry-streamer',
-      defaultValue: 30,
-      tags: ['telemetry', 'storage'],
-    },
     {
       key: 'export_endpoint',
       type: 'string' as const,

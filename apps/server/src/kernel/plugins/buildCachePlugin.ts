@@ -3,37 +3,38 @@ import type { KernelContext, KernelPlugin } from '../types.js';
 /**
  * Build Cache plugin — Sprint 3, Gap G-01 (PR-A).
  *
- * Watches the `deploy:before` hook firehose and, when the operator
- * has at least one `IBuildCache` registered on the kernel, asks the
- * first one for a hit on the cache key the plugin derives from the
- * service + last successful build. The hit / miss / error is published
- * as a custom event on the bus so the rest of the panel can read it
- * (PR #16 will wire BuildKit; this PR only proves the contract).
+ * Owns the operator-facing configuration of the layer cache — which
+ * backend is active (`inline` / `registry` / `s3`), and each backend's
+ * connection settings — plus the aggregated hit/miss counters behind
+ * `GET /v1/build-cache/stats`.
  *
- * The plugin NEVER throws. A failing cache is reported as
- * `build.cache.error` and the deploy pipeline runs as if no cache were
- * configured — that is the same defensive pattern `domain-presets`,
- * `metric-history` and `sticky-session` use.
+ * It deliberately does NOT perform cache lookups of its own. The build
+ * itself publishes `build.cache.hit` / `.miss` / `.error` through the sink
+ * the worker passes to `runDeployment`, because only the builder knows the
+ * real cache key (`lib/buildCacheKey.ts`). See the note in `init()`.
+ *
+ * The plugin NEVER throws — that is the same defensive pattern
+ * `domain-presets`, `metric-history` and `sticky-session` use.
  *
  * Contract:
  *   - `enabled` (default `true`) is the master switch. When `false`,
  *     the listener is set up but every event short-circuits before the
  *     cache backend.
- *   - `cache_name` (default `inline`) picks which `IBuildCache` to use.
- *     Unknown / unset values fall back to the first registered cache
- *     rather than throwing.
- *   - The cache key is a content hash of the service id + repo +
- *     target commit (or "no-commit" for ad-hoc deploys). PR-B will
- *     extend the key with the Dockerfile digest; the shape stays
- *     stable so the panel can render it.
- *   - `destroy()` clears the single `deploy:before` subscription.
+ *   - `cache_name` (default `inline`) picks which `IBuildCache` the deploy
+ *     worker uses. All three backends are registered at boot
+ *     (`plugins/kernel.ts`); a backend with no connection settings saved is
+ *     a cold cache that always misses. Unknown / unset values fall back to
+ *     the first registered cache rather than throwing.
+ *   - The `registry_*` / `s3_*` keys are read lazily on every cache call, so
+ *     saving them in the panel takes effect without a restart.
+ *   - `destroy()` clears every subscription registered in `init()`.
  */
 export class BuildCachePlugin implements KernelPlugin {
   readonly id = 'build-cache';
   readonly name = 'Build Cache';
   readonly version = '0.1.0';
   readonly description =
-    'Looks up the inline / registry / S3 layer cache before each deploy and emits build.cache.hit / miss / error. (G-01)';
+    'Configures the inline / registry / S3 layer cache and aggregates its hit-rate counters. (G-01)';
   readonly author = 'NineDeploy Core';
   readonly icon = 'Layers';
   readonly isOfficial = true;
@@ -57,8 +58,106 @@ export class BuildCachePlugin implements KernelPlugin {
       category: 'plugin:build-cache',
       defaultValue: 'inline',
       description:
-        'Stable name of the `IBuildCache` to query. Unknown / empty values fall back to the first registered cache.',
+        'Stable name of the `IBuildCache` to use: `inline` (in-memory LRU), `registry` (OCI registry) or `s3`. Unknown / empty values fall back to the first registered cache.',
       tags: ['build', 'cache', 'backend'],
+    },
+    // ── registry backend ────────────────────────────────────────────────
+    {
+      key: 'registry_url',
+      type: 'string' as const,
+      isSecret: false,
+      label: 'Registry Base URL',
+      category: 'plugin:build-cache',
+      defaultValue: '',
+      description:
+        'Base URL of the OCI registry backing `cache_name=registry`, e.g. https://registry.example.com. Empty = the registry backend stays cold (every lookup misses).',
+      tags: ['build', 'cache', 'registry'],
+    },
+    {
+      key: 'registry_repo',
+      type: 'string' as const,
+      isSecret: false,
+      label: 'Registry Repository',
+      category: 'plugin:build-cache',
+      defaultValue: 'ninedeploy/build-cache',
+      description: 'Repository namespace the cache markers are pushed under.',
+      tags: ['build', 'cache', 'registry'],
+    },
+    {
+      key: 'registry_username',
+      type: 'string' as const,
+      isSecret: false,
+      label: 'Registry Username',
+      category: 'plugin:build-cache',
+      defaultValue: '',
+      description: 'Basic-auth username. Leave empty for an anonymous registry.',
+      tags: ['build', 'cache', 'registry', 'auth'],
+    },
+    {
+      key: 'registry_password',
+      type: 'string' as const,
+      isSecret: true,
+      label: 'Registry Password',
+      category: 'plugin:build-cache',
+      description: 'Basic-auth password / token. Only sent when a username is also set.',
+      tags: ['build', 'cache', 'registry', 'secret', 'auth'],
+    },
+    // ── s3 backend ──────────────────────────────────────────────────────
+    {
+      key: 's3_endpoint',
+      type: 'string' as const,
+      isSecret: false,
+      label: 'S3 Endpoint',
+      category: 'plugin:build-cache',
+      defaultValue: '',
+      description:
+        'S3-compatible endpoint backing `cache_name=s3`, e.g. https://s3.eu-central-1.amazonaws.com. Empty = the S3 backend stays cold.',
+      tags: ['build', 'cache', 's3'],
+    },
+    {
+      key: 's3_region',
+      type: 'string' as const,
+      isSecret: false,
+      label: 'S3 Region',
+      category: 'plugin:build-cache',
+      defaultValue: 'us-east-1',
+      tags: ['build', 'cache', 's3'],
+    },
+    {
+      key: 's3_bucket',
+      type: 'string' as const,
+      isSecret: false,
+      label: 'S3 Bucket',
+      category: 'plugin:build-cache',
+      defaultValue: '',
+      tags: ['build', 'cache', 's3'],
+    },
+    {
+      key: 's3_access_key_id',
+      type: 'string' as const,
+      isSecret: false,
+      label: 'S3 Access Key ID',
+      category: 'plugin:build-cache',
+      defaultValue: '',
+      tags: ['build', 'cache', 's3', 'auth'],
+    },
+    {
+      key: 's3_secret_access_key',
+      type: 'string' as const,
+      isSecret: true,
+      label: 'S3 Secret Access Key',
+      category: 'plugin:build-cache',
+      tags: ['build', 'cache', 's3', 'secret', 'auth'],
+    },
+    {
+      key: 's3_prefix',
+      type: 'string' as const,
+      isSecret: false,
+      label: 'S3 Key Prefix',
+      category: 'plugin:build-cache',
+      defaultValue: 'build-cache/',
+      description: 'Object-key prefix so two operators can share one bucket.',
+      tags: ['build', 'cache', 's3'],
     },
   ];
 
@@ -81,11 +180,20 @@ export class BuildCachePlugin implements KernelPlugin {
     // plugin listens with `events.on` because the cache is a firehose
     // event, not a hook — we want to observe every trigger without
     // becoming part of the build pipeline's stop-the-world checkpoints.
-    const unsub = ctx.events.on('service.deploying', (payload) => {
-      const record = payload as { serviceId?: number; deployId?: number };
-      const serviceId = record.serviceId;
-      if (typeof serviceId !== 'number') return;
-      void this.announce(ctx, serviceId);
+    // NOTE: this plugin does NOT synthesise a cache key of its own. It used
+    // to answer `service.deploying` by looking up `service:<id>:no-commit`,
+    // a key the build path never stores under (the builder keys by
+    // `buildCacheKey()` -> `ndbuild:<hash>`), so every deploy published a
+    // `build.cache.miss` that could not have been anything else. The REAL
+    // hit / miss / error is published by the build itself: the worker hands
+    // `runDeployment` an `onBuildCacheEvent` sink that emits
+    // `build.cache.hit|miss|error` with the key the build actually consulted.
+    // Keeping a second, fabricated source of the same event names is how a
+    // panel ends up showing a 0% hit rate on a cache that is working.
+    const unsub = ctx.events.on('service.deploying', () => {
+      // Observed only to keep the subscription (and `destroy()`) symmetric
+      // with `service.deployed`; the lookup that matters happens inside the
+      // builder, which owns the real key.
     });
     this.unsubs.push(unsub);
 
@@ -163,51 +271,4 @@ export class BuildCachePlugin implements KernelPlugin {
     );
     return { backends: rows, totals };
   }
-
-  private async announce(ctx: KernelContext, serviceId: number): Promise<void> {
-    try {
-      const [enabled, cacheName] = await Promise.all([
-        ctx.configCenter.get<boolean>('plugin:build-cache:enabled', true),
-        ctx.configCenter.get<string>('plugin:build-cache:cache_name', 'inline'),
-      ]);
-      if (!enabled) return;
-      const cache = ctx.registry.getBuildCache(cacheName) ?? ctx.registry.listBuildCaches()[0];
-      if (!cache) return; // no cache configured → silent no-op
-
-      const key = buildKey(serviceId);
-      const hit = await cache.lookup(key);
-      if (hit) {
-        ctx.events.emitCustom('build.cache.hit', {
-          serviceId,
-          cache: cache.name,
-          key,
-          digest: hit.digest,
-          sizeBytes: hit.sizeBytes,
-          ts: Date.now(),
-        });
-      } else {
-        ctx.events.emitCustom('build.cache.miss', {
-          serviceId,
-          cache: cache.name,
-          key,
-          ts: Date.now(),
-        });
-      }
-    } catch (err) {
-      ctx.events.emitCustom('build.cache.error', {
-        serviceId,
-        reason: err instanceof Error ? err.message : String(err),
-        ts: Date.now(),
-      });
-    }
-  }
-}
-
-/**
- * Deterministic cache key per service. The shape is stable so the
- * panel can render it; PR-B will hash in the Dockerfile + dependency
- * lockfile contents to give a true content-addressed key.
- */
-export function buildKey(serviceId: number, targetCommit?: string): string {
-  return `service:${serviceId}:${targetCommit ?? 'no-commit'}`;
 }

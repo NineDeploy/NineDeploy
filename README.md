@@ -10,7 +10,7 @@ the databases, certificates, secrets, backups and access rules around it — fro
 terminal CLI, a typed SDK, or an AI agent over MCP.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
-[![Release](https://img.shields.io/badge/Release-0.6.0-blue.svg)](./CHANGELOG.md)
+[![Release](https://img.shields.io/badge/Release-0.7.0-blue.svg)](./CHANGELOG.md)
 [![Node.js](https://img.shields.io/badge/Node.js-%E2%89%A522.13-green.svg)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-7-blue.svg)](https://www.typescriptlang.org)
 [![Docker](https://img.shields.io/badge/Docker-required-blue.svg)](https://docker.com)
@@ -68,12 +68,12 @@ runs the SQLite migrations, and starts a hardened `systemd` unit (`ProtectSystem
 Re-running the same command is the upgrade path; it snapshots `.data` before touching anything.
 
 ```bash
-./install.sh --version v0.6.0     # pin an exact tag
+./install.sh --version v0.7.0     # pin an exact tag
 ./install.sh --channel main       # track edge
 ./install.sh --force              # discard local edits + stale build artifacts, then rebuild
 ```
 
-> **Where `main` stands:** the default channel installs the newest release tag (**0.6.0**).
+> **Where `main` stands:** the default channel installs the newest release tag (**0.7.0**).
 > The newest work (doctor mode, retained-volume re-keying) lands on `main` before it is tagged —
 > see [`CHANGELOG.md`](./CHANGELOG.md) under *Unreleased*, or run `--channel main` to get it today.
 
@@ -271,9 +271,13 @@ Watch paths, `[skip ci]` handling, cancellation and PR previews: [**docs/DEPLOYM
 
 - AES-256-GCM in versioned envelopes with a rotatable master-key ring and a re-encryption job; older
   envelopes stay readable.
-- **SSRF egress guard** on every operator-supplied outbound URL (notification webhooks, OIDC issuer,
-  S3 endpoint, template sources, log drains, git remotes) — private, loopback and link-local targets
-  are refused, closing the `169.254.169.254` metadata path.
+- **SSRF egress guard** on the operator-supplied outbound URLs whose targets are normally public:
+  notification channels, log drains, push delivery, git remotes, OAuth token exchange, the
+  marketplace catalog and `templates_source`. Private, loopback and link-local targets are refused,
+  closing the `169.254.169.254` metadata path. It is deliberately **not** applied to the OIDC issuer,
+  the S3 endpoint, Vault, the log-search backend or the telemetry endpoint — self-hosted Keycloak,
+  MinIO and Loki normally *are* on a private address, so guarding those would break working installs.
+  Those settings are operator-only, and an operator can already run host commands through a service.
 - Subprocesses inherit a whitelisted environment (never `NINEDEPLOY_*`), and the panel refuses to boot
   in production with a known-insecure JWT secret or a weak master key.
 - **SSO and 2FA:** OpenID Connect (Google, GitHub, Keycloak, Okta), WebAuthn passkeys, TOTP with
@@ -284,7 +288,26 @@ Watch paths, `[skip ci]` handling, cancellation and PR previews: [**docs/DEPLOYM
 - Remote hosts run the same binary with `NINEDEPLOY_AGENT=1` and register with a one-time token. The
   panel drives them through **typed operations** from a fixed table (~24 ops) rather than a command
   line, with every operand regex-validated on both ends.
-- A service pinned to a `server_id` runs the identical pipeline on that remote host.
+- **Deploy to a node, not through the panel.** A `docker` service pinned to a `server_id` is built
+  and started on that host through the typed agent protocol: the repo is checked out in a
+  per-service workspace on the node, the image is built or pulled there, and the environment
+  arrives as a 0600 env-file that is deleted the moment the container has taken it.
+- **Each node runs its own Traefik.** The node terminates TLS for the services that live on it, so
+  you point the domain at the *node* and production traffic never hairpins through the panel. The
+  panel stays the source of truth for domains, middlewares and certificate policy: it renders both
+  Traefik configs and ships them to the node, which only writes them to a fixed path. A routing
+  change refreshes every node automatically; the proxy is only recreated when the *static* config
+  changed, so a domain edit is not an ingress interruption.
+- **Compose stacks run on a node too**, which matters because most of the one-click template
+  catalogue is compose-shaped: the panel ships an inline stack's YAML (or the node checks the repo
+  out), writes the `.env` and any volume-attachment override, and then runs the same
+  preflight-then-up ordering the local builder uses — `compose config` and `compose pull` complete
+  while the previous revision is still serving, so a broken `${VAR}` or a bad tag fails the deploy
+  without ever tearing the live stack down. The platform restart policy is applied afterwards,
+  because a compose file with no `restart:` leaves every container dead after a reboot.
+- PM2 and Nixpacks (Dockerfile-less) builds on a node are **refused at queue time** with a reason
+  naming the missing capability — the node agent has no operation for them, and a container on the
+  wrong host is worse than a deployment you can read. See *Known limits*.
 
 ### Observability
 
@@ -525,14 +548,24 @@ build, and the integration job.
 
 Stated plainly, because finding these out during an incident is worse than reading them here:
 
-- **Agent transport is plain HTTP.** The agent token and, when writing env files, decrypted service
-  secrets cross the network in cleartext. Treat worker nodes as same-LAN or same-VPN only until this
-  gains TLS.
+- **Agent transport is sealed, but falls back to cleartext.** Operations are encrypted end-to-end
+  with the shared agent token when the agent advertises `sealed` on `GET /agent/ping`; a core that
+  is newer than its agents silently falls back to plain HTTP, which an on-path attacker can force by
+  stripping that flag. Set `NINEDEPLOY_AGENT_REQUIRE_SEALED=1` once the whole fleet is upgraded to
+  close that door. There is still no TLS on the transport itself, so keep worker nodes same-LAN or
+  same-VPN.
+- **Remote deployments cover `docker` and `compose` services.** PM2 (a host process with no agent
+  operation) and Nixpacks source builds (no nixpacks on the node) are refused with a reason rather
+  than silently run on the panel host. Add a Dockerfile, or clear the target server, to deploy
+  those here.
+- **Remote health is container state, not an HTTP probe.** The panel sits outside the node's Docker
+  network, and publishing a host port purely to be probed would expose every remote service on the
+  node's public interface. A remote `docker` deploy is healthy when the container reaches — and
+  stays in — `running`; a remote `compose` stack additionally has to pass its own declared
+  healthcheck, and fails fast on a crash loop. Both are weaker signals than the local builder's HTTP
+  check, and the deploy log says so.
 - **The plugin marketplace is inert.** The microkernel, hook pipeline and config center are real and
   drive the built-in plugins; the *remote* marketplace listing is not yet a live index.
-- **The CI schema-drift gate is currently non-functional** — drizzle-kit's snapshot chain stops at
-  `0031`, so regeneration aborts. Migrations past that point are hand-written and validated by
-  `test/schema-drift.test.ts`, which applies all of them to a fresh in-memory database.
 - **DNS rebinding is not solved** by the egress guard; it validates at resolve time only.
 - **PM2 services have no blue-green window** — they stop, then start, with auto-rollback on failure.
 

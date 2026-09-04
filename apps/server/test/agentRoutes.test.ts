@@ -67,7 +67,9 @@ describe('agent /agent/exec route', () => {
     expect(res.json().exitCode).toBe(0);
     expect(res.json().lines).toEqual(['stopping web-3']);
     expect(res.json().envFile).toBeNull();
-    expect(spawnMock).toHaveBeenCalledWith('docker', ['stop', '-t', '5', 'web-3'], expect.any(Function));
+    // The 4th argument carries the confined cwd. A host-level op like `stop`
+    // names no workspace, so it runs in the agent's own directory.
+    expect(spawnMock).toHaveBeenCalledWith('docker', ['stop', '-t', '5', 'web-3'], expect.any(Function), {});
   });
 
   it('surfaces operand validation failures as 400', async () => {

@@ -34,16 +34,37 @@ import type { BlobRef, IBuildCache } from '../types.js';
  *     plugin `aggregateStats()` (PR #15) merges them with the inline
  *     and S3 drivers.
  */
-export interface RegistryBuildCacheOptions {
-  /** Drizzle DB handle. */
-  db: DB;
+/**
+ * Connection settings for a registry-backed cache. Resolved once per call
+ * when supplied as a function, so an operator can save credentials in the
+ * panel without restarting the kernel — the same lazy-supplier shape the
+ * Cloudflare / DNSimple / Namecheap domain providers use.
+ */
+export interface RegistryBuildCacheCredentials {
   /** Registry base URL, e.g. `https://registry.example.com`. */
   url: string;
   /** Repository namespace, e.g. `ninedeploy/build-cache`. */
-  repo: string;
+  repo?: string;
   /** Optional basic-auth credentials (encrypted in config-center). */
   username?: string;
   password?: string;
+}
+
+export type RegistryBuildCacheCredentialSupplier = () =>
+  | Promise<RegistryBuildCacheCredentials | null>
+  | RegistryBuildCacheCredentials
+  | null;
+
+export interface RegistryBuildCacheOptions {
+  /** Drizzle DB handle. */
+  db: DB;
+  /**
+   * Static settings, or a supplier returning `null` while the operator has
+   * not configured a registry yet. An unconfigured cache is a cold cache:
+   * `lookup()` misses and `store()` throws a descriptive error rather than
+   * silently pretending to have cached anything.
+   */
+  credentials: RegistryBuildCacheCredentials | RegistryBuildCacheCredentialSupplier;
   /**
    * Custom fetch implementation. Default: global `fetch`. Tests inject a
    * stub to avoid hitting a real registry.
@@ -63,9 +84,7 @@ export class RegistryBuildCache implements IBuildCache {
   readonly name = 'registry';
 
   private readonly db: DB;
-  private readonly baseUrl: string;
-  private readonly repo: string;
-  private readonly auth: string | null;
+  private readonly credentials: RegistryBuildCacheCredentials | RegistryBuildCacheCredentialSupplier;
   private readonly fetchImpl: typeof fetch;
 
   private hits = 0;
@@ -74,12 +93,32 @@ export class RegistryBuildCache implements IBuildCache {
 
   constructor(opts: RegistryBuildCacheOptions) {
     this.db = opts.db;
-    this.baseUrl = opts.url.replace(/\/$/, '');
-    this.repo = opts.repo || DEFAULT_NAMESPACE;
-    this.auth = opts.username && opts.password
-      ? Buffer.from(`${opts.username}:${opts.password}`).toString('base64')
-      : null;
+    this.credentials = opts.credentials;
     this.fetchImpl = opts.fetchImpl ?? globalThis.fetch;
+  }
+
+  /**
+   * Resolve the connection settings for this call. A supplier that throws or
+   * returns null/blank-url means "not configured" — every caller treats that
+   * as a cold cache rather than an error, because a build must never fail
+   * because its optional cache is unconfigured.
+   */
+  private async resolve(): Promise<{ baseUrl: string; repo: string; auth: string | null } | null> {
+    let raw: RegistryBuildCacheCredentials | null;
+    try {
+      raw = typeof this.credentials === 'function' ? await this.credentials() : this.credentials;
+    } catch {
+      return null;
+    }
+    if (!raw || typeof raw.url !== 'string' || raw.url.trim() === '') return null;
+    return {
+      baseUrl: raw.url.trim().replace(/\/$/, ''),
+      repo: raw.repo || DEFAULT_NAMESPACE,
+      auth:
+        raw.username && raw.password
+          ? Buffer.from(`${raw.username}:${raw.password}`).toString('base64')
+          : null,
+    };
   }
 
   async lookup(key: string): Promise<BlobRef | null> {
@@ -88,7 +127,13 @@ export class RegistryBuildCache implements IBuildCache {
     // is the digest OF THE MANIFEST, not of the layer the row stores, so a
     // HEAD-based comparison never matched and every store→lookup round-trip
     // missed on a real registry (r021).
-    const manifest = await this.fetchManifest(this.tagFor(key));
+    const conn = await this.resolve();
+    if (!conn) {
+      // Registry not configured — a cold cache, not an error.
+      this.misses += 1;
+      return null;
+    }
+    const manifest = await this.fetchManifest(conn, this.tagFor(key));
     if (!manifest) {
       this.misses += 1;
       return null;
@@ -132,13 +177,20 @@ export class RegistryBuildCache implements IBuildCache {
     const sizeBytes = parsed?.sizeBytes ?? blob.byteLength;
     const tag = this.tagFor(key);
 
+    const conn = await this.resolve();
+    if (!conn) {
+      throw new Error(
+        'RegistryBuildCache.store: no registry configured — set plugin:build-cache:registry_url (and repo/credentials) first',
+      );
+    }
+
     // Push the marker to the registry as a single-tag manifest. Real
     // blob bytes are already in the registry from a previous
     // `--cache-to=type=registry` invocation; the manifest is just a
     // pointer.
-    const pushed = await this.pushManifest(tag, digest, sizeBytes);
+    const pushed = await this.pushManifest(conn, tag, digest, sizeBytes);
     if (!pushed) {
-      throw new Error(`RegistryBuildCache.store: failed to push ${tag} to ${this.baseUrl}`);
+      throw new Error(`RegistryBuildCache.store: failed to push ${tag} to ${conn.baseUrl}`);
     }
 
     // Upsert the (key, backend, repo) row.
@@ -154,7 +206,7 @@ export class RegistryBuildCache implements IBuildCache {
       await this.db.insert(cacheRegistryBlobs).values({
         key,
         backend: this.name,
-        repo: this.repo,
+        repo: conn.repo,
         digest,
         sizeBytes,
       });
@@ -193,15 +245,18 @@ export class RegistryBuildCache implements IBuildCache {
     return key.replace(/[^A-Za-z0-9._-]/g, '-').slice(0, 128);
   }
 
-  private manifestPath(tag: string): string {
-    return `/v2/${this.repo}/manifests/${tag}`;
+  private manifestPath(repo: string, tag: string): string {
+    return `/v2/${repo}/manifests/${tag}`;
   }
 
-  private async fetchManifest(tag: string): Promise<RegistryManifest | null> {
+  private async fetchManifest(
+    conn: { baseUrl: string; repo: string; auth: string | null },
+    tag: string,
+  ): Promise<RegistryManifest | null> {
     try {
-      const res = await this.fetchImpl(`${this.baseUrl}${this.manifestPath(tag)}`, {
+      const res = await this.fetchImpl(`${conn.baseUrl}${this.manifestPath(conn.repo, tag)}`, {
         method: 'GET',
-        headers: this.authHeaders({ Accept: 'application/vnd.oci.image.manifest.v1+json' }),
+        headers: authHeaders(conn.auth, { Accept: 'application/vnd.oci.image.manifest.v1+json' }),
       });
       if (res.status !== 200) return null;
       const parsed = (await res.json()) as {
@@ -223,7 +278,12 @@ export class RegistryBuildCache implements IBuildCache {
     }
   }
 
-  private async pushManifest(tag: string, digest: string, sizeBytes: number): Promise<boolean> {
+  private async pushManifest(
+    conn: { baseUrl: string; repo: string; auth: string | null },
+    tag: string,
+    digest: string,
+    sizeBytes: number,
+  ): Promise<boolean> {
     // A real registry push is a two-step: blob upload (layer
     // already there) + manifest PUT. The OCI distribution spec
     // requires a JSON body that names the config + layer media
@@ -247,9 +307,9 @@ export class RegistryBuildCache implements IBuildCache {
       ],
     });
     try {
-      const res = await this.fetchImpl(`${this.baseUrl}${this.manifestPath(tag)}`, {
+      const res = await this.fetchImpl(`${conn.baseUrl}${this.manifestPath(conn.repo, tag)}`, {
         method: 'PUT',
-        headers: this.authHeaders({
+        headers: authHeaders(conn.auth, {
           'Content-Type': 'application/vnd.oci.image.manifest.v1+json',
         }),
         body,
@@ -260,11 +320,12 @@ export class RegistryBuildCache implements IBuildCache {
     }
   }
 
-  private authHeaders(extra: Record<string, string>): Record<string, string> {
-    const headers: Record<string, string> = { ...extra };
-    if (this.auth) headers.Authorization = `Basic ${this.auth}`;
-    return headers;
-  }
+}
+
+function authHeaders(auth: string | null, extra: Record<string, string>): Record<string, string> {
+  const headers: Record<string, string> = { ...extra };
+  if (auth) headers.Authorization = `Basic ${auth}`;
+  return headers;
 }
 
 interface MarkerPayload {

@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { domains, services, type DB } from '@ninedeploy/db';
+import { domains, servers, services, type DB } from '@ninedeploy/db';
 import { config } from '../config.js';
 import { capture, run, sleep } from '../lib/exec.js';
 import { getSettingString } from '../lib/settings.js';
@@ -448,9 +448,68 @@ export function writeDynamicConfig(db: DB): Promise<void> {
 }
 
 async function writeDynamicConfigUnlocked(db: DB): Promise<void> {
+  writeAtomic(dynamicPath(), await renderDynamicConfig(db, { serverId: null }));
+  await refreshNodeProxies(db);
+}
+
+/**
+ * Push the refreshed routing to every node that runs at least one service.
+ *
+ * This lives INSIDE `writeDynamicConfig` on purpose. Routing changes arrive
+ * from a dozen places — deploys, domain create/update/delete, the domain index,
+ * webhooks, service edits, the kernel's proxy driver — and every one of them
+ * already funnels through here. Fanning out at each call site instead would
+ * mean the next new one silently leaves the fleet stale, which is the exact
+ * failure this codebase keeps repeating.
+ *
+ * The import is dynamic to keep `lib/nodeProxy.ts` free to import this module
+ * statically (it reuses `renderStaticConfig` / `renderDynamicConfig`, so the
+ * two would otherwise form an ESM cycle). By the time this runs, both modules
+ * are fully evaluated, so there is no temporal-dead-zone hazard of the kind
+ * `test/importCycles.test.ts` exists to catch.
+ *
+ * Never throws: a node that cannot be reached keeps serving its previous
+ * config, and the panel's own routing must not fail because a worker is down.
+ */
+async function refreshNodeProxies(db: DB): Promise<void> {
+  try {
+    // Ask which NODES exist, not which services are pinned: a node whose last
+    // service was just deleted still needs its route table cleared, and a
+    // single-host install pays one trivial select over an empty table.
+    const nodes = await db.select({ id: servers.id }).from(servers);
+    if (nodes.length === 0) return;
+    const { syncAllNodeProxies } = await import('../lib/nodeProxy.js');
+    await syncAllNodeProxies(db, nodes.map((n) => n.id));
+  } catch {
+    /* a fleet refresh must never fail the panel's own routing write */
+  }
+}
+
+/**
+ * Render the Traefik dynamic configuration for ONE proxy.
+ *
+ * `serverId: null` renders the panel host's own proxy: the services that run
+ * here, plus the panel dashboard router. A numeric `serverId` renders the
+ * configuration for that node's proxy — only the services pinned to it, and no
+ * panel router (the dashboard lives on the panel host).
+ *
+ * The scoping is load-bearing, not a convenience. Remote services now get a
+ * `runtimeId` like any other, and the upstream a router points at is the
+ * CONTAINER NAME resolved over the local Docker network. Rendering every
+ * service into every proxy would make the panel's Traefik advertise routes for
+ * containers that live on another machine and answer 502 for each one, while
+ * the node's own proxy did the same in reverse.
+ */
+export async function renderDynamicConfig(
+  db: DB,
+  opts: { serverId: number | null } = { serverId: null },
+): Promise<string> {
+  const forNode = opts.serverId != null;
   const all = await db.select().from(domains);
   const servicesById = new Map(
-    (await db.select().from(services)).map((s) => [s.id, s]),
+    (await db.select().from(services))
+      .filter((s) => (forNode ? s.serverId === opts.serverId : s.serverId == null))
+      .map((s) => [s.id, s]),
   );
   const acmeEmail = await getAcmeEmail(db);
   const dns = await getDnsConfig(db);
@@ -573,12 +632,17 @@ async function writeDynamicConfigUnlocked(db: DB): Promise<void> {
     }
   }
 
-  // NineDeploy Panel Dashboard domain (Settings -> Security or NINEDEPLOY_DOMAIN)
-  let panelDomain: string | null = null;
-  try {
-    panelDomain = (await getSettingString(db, 'panel_domain', null)) ?? process.env['NINEDEPLOY_DOMAIN'] ?? null;
-  } catch {
-    panelDomain = process.env['NINEDEPLOY_DOMAIN'] ?? null;
+  // NineDeploy Panel Dashboard domain (Settings -> Security or NINEDEPLOY_DOMAIN).
+  // The dashboard runs on the PANEL host, so a node's proxy must never claim
+  // its hostname — that would blackhole the control plane behind whichever
+  // node answered DNS first.
+  let panelDomain: string | null = forNode ? null : null;
+  if (!forNode) {
+    try {
+      panelDomain = (await getSettingString(db, 'panel_domain', null)) ?? process.env['NINEDEPLOY_DOMAIN'] ?? null;
+    } catch {
+      panelDomain = process.env['NINEDEPLOY_DOMAIN'] ?? null;
+    }
   }
   if (panelDomain) {
     const host = String(panelDomain).replace(HOST_RE, '');
@@ -647,7 +711,7 @@ async function writeDynamicConfigUnlocked(db: DB): Promise<void> {
         tlsCerts
     : '';
 
-  writeAtomic(dynamicPath(), yaml);
+  return yaml;
 }
 
 /** Parse the domain `headers` JSON column into sanitized {name, value} pairs. */

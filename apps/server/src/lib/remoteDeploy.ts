@@ -1,24 +1,59 @@
 import { badRequest } from './errors.js';
 
 /**
- * Remote-server deployments are not implemented.
+ * What a remote node can and cannot run.
  *
- * The agent protocol itself is real and in use — `modules/networks.ts` drives
- * `docker.network*` on remote hosts through `agentOp`, and `src/agent.ts`
- * exposes typed docker/git operations. What does NOT exist is any builder that
- * uses it: `engine/pipeline.ts` binds `ctx.agentCall` for a service with
- * `serverId` set, but docker, pm2 and compose all shell out locally through
- * `lib/exec.ts`. A deploy assigned to a remote node therefore lands on the
- * PANEL host, while the panel reports it as running on the node.
+ * Remote deployments used to be refused outright: `server_id` existed on the
+ * services table, on the Servers page and in the BuildContext, and no builder
+ * read it, so a service pinned to a node would have been built and started on
+ * the PANEL host while the panel reported the node. Refusing was the honest
+ * behaviour — a failed deployment is recoverable, a container on the wrong
+ * machine is not.
  *
- * Refusing is the honest behaviour until a builder actually routes through the
- * agent: a failed deployment with this reason is recoverable, a container on
- * the wrong host is not.
+ * `engine/builders/remoteDocker.ts` now routes docker services through the
+ * node's agent, so the blanket refusal is gone. What remains is a narrower and
+ * still-honest one: the shapes the agent has no operation for.
+ *
+ *   - PM2 has no agent operation at all, and it is host-privileged.
+ *
+ * Compose stacks DO run on a node now (`engine/builders/remoteCompose.ts`):
+ * the panel ships an inline stack's YAML, or the node checks the repository
+ * out, and the same preflight-then-up ordering the local builder uses is
+ * driven through typed operations.
+ *
+ * Nixpacks source builds are refused too, but only the builder can see that
+ * (it depends on the build config, not the service type) — see
+ * `RemoteDeployUnsupportedError` there.
  */
-export const REMOTE_DEPLOY_UNSUPPORTED =
-  'Deployments to a remote server are not implemented yet — the build would run on the panel host instead of the assigned node. Clear the target server to deploy here.';
 
-/** Throw a 400 for a service pinned to a remote node (queue-time feedback). */
-export function assertLocalDeployTarget(service: { serverId?: number | null }): void {
-  if (service.serverId != null) throw badRequest(REMOTE_DEPLOY_UNSUPPORTED, 'remote_deploy_unsupported');
+/** Service types a node's agent can run today. */
+const REMOTE_CAPABLE_TYPES = new Set(['docker', 'compose']);
+
+/** True when a service of this type can be deployed to a node. */
+export function remoteDeploySupported(type: string): boolean {
+  return REMOTE_CAPABLE_TYPES.has(type);
+}
+
+/** Operator-facing reason a service of this type cannot go to a node. */
+export function remoteDeployUnsupportedReason(type: string): string {
+  const why =
+    type === 'pm2'
+      ? 'PM2 services run as host processes and the node agent has no operation for them'
+      : `service type "${type}" has no remote implementation`;
+  return `Deployments to a remote server are not available for this service: ${why}. Clear the target server to deploy it on the panel host.`;
+}
+
+/**
+ * Throw a 400 for a service pinned to a node whose type cannot run there
+ * (queue-time feedback, so the operator hears it before a deployment row is
+ * created). A docker service passes straight through.
+ */
+export function assertRemoteDeploySupported(service: {
+  serverId?: number | null;
+  type?: string | null;
+}): void {
+  if (service.serverId == null) return;
+  const type = service.type ?? 'docker';
+  if (remoteDeploySupported(type)) return;
+  throw badRequest(remoteDeployUnsupportedReason(type), 'remote_deploy_unsupported');
 }

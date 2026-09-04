@@ -48,7 +48,8 @@ export class TemplateBundlesPlugin implements KernelPlugin {
       label: 'Currently Registered Overrides',
       category: 'plugin:template-bundles',
       defaultValue: 0,
-      description: 'Read-only counter; updated by the observer when an override is matched.',
+      description:
+        'Read-only counter: the number of template installs this observer has republished as `template.bundle.observed` since the counter was last reset.',
       tags: ['templates', 'bundles', 'metric'],
     },
   ];
@@ -99,6 +100,19 @@ export class TemplateBundlesPlugin implements KernelPlugin {
             actorUserId: record.actorUserId ?? null,
             ts: record.ts ?? new Date().toISOString(),
           });
+          // `override_count` describes itself in the panel as "updated by the
+          // observer when an override is matched" — and nothing ever wrote it,
+          // so the counter an operator reads was permanently 0 no matter how
+          // many templates they installed. Persisting it here is what makes
+          // the number the schema advertises mean something.
+          return ctx.configCenter
+            .get<number>('plugin:template-bundles:override_count', 0)
+            .then((current) =>
+              ctx.configCenter.set(
+                'plugin:template-bundles:override_count',
+                (typeof current === 'number' && Number.isFinite(current) ? current : 0) + 1,
+              ),
+            );
         })
         .catch((err: unknown) => {
           // A config read failure must not crash the audit bus. The error is

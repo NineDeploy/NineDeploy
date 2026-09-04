@@ -1,6 +1,6 @@
 ﻿import Fastify from 'fastify';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { auditLog, deployments, jobRuns, notificationLog } from '@ninedeploy/db';
+import { auditLog, deployments, jobRuns, notificationLog, sessions } from '@ninedeploy/db';
 
 const logsMock = vi.hoisted(() => ({ pruneOldLogs: vi.fn(() => 0), deleteLog: vi.fn(() => true) }));
 const execMock = vi.hoisted(() => ({
@@ -47,9 +47,10 @@ function makeDb(expiredDeployments: Array<{ id: number }> = []) {
   return { db: { delete: del, select } as never, deleted };
 }
 
-async function buildApp(db: ReturnType<typeof makeDb>['db']) {
+async function buildApp(db: ReturnType<typeof makeDb>['db'], kernel?: unknown) {
   const app = Fastify({ logger: false });
   app.decorate('db', db);
+  if (kernel) app.decorate('kernel', kernel as never);
   await app.register(housekeepingPlugin);
   return app;
 }
@@ -86,8 +87,59 @@ describe('housekeeping plugin', () => {
     expect(tables).toContain(jobRuns);
     // Dangling Docker images are pruned each tick too.
     expect(execMock.run).toHaveBeenCalledWith('docker', ['image', 'prune', '-f'], {}, expect.any(Function));
+    // `sessions` had no retention either: one row per login, forever, each
+    // carrying an IP + User-Agent. The panel filters dead rows out of its
+    // RESPONSE, so the growth was invisible while the file kept growing.
+    expect(tables).toContain(sessions);
     // Auto-prune was triggered because 90% >= 85%
     expect(autoPruneMock.executeAutoPrune).toHaveBeenCalledTimes(1);
+    await app.close();
+  });
+
+  /**
+   * `plugin:metric-history:retention_days` documents itself as swept by "a
+   * /v1/housekeeping pass", but nothing outside the manual
+   * `POST /v1/metric-history/flush` route ever called `runRetention` — an
+   * operator who lowered the window saw no effect until they clicked.
+   */
+  it('runs the metric-history retention sweep each tick', async () => {
+    const runRetention = vi.fn(async () => 3);
+    const kernel = { getPlugin: vi.fn(() => ({ runRetention })) };
+    const { db } = makeDb();
+    const app = await buildApp(db, kernel);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(kernel.getPlugin).toHaveBeenCalledWith('metric-history');
+    expect(runRetention).toHaveBeenCalledWith(kernel);
+    await app.close();
+  });
+
+  it('skips the metric-history sweep when the plugin is absent', async () => {
+    const kernel = { getPlugin: vi.fn(() => undefined) };
+    const { db } = makeDb();
+    const app = await buildApp(db, kernel);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(kernel.getPlugin).toHaveBeenCalledWith('metric-history');
+    // The rest of the tick still ran.
+    expect(execMock.run).toHaveBeenCalledWith('docker', ['image', 'prune', '-f'], {}, expect.any(Function));
+    await app.close();
+  });
+
+  it('keeps sweeping when the metric-history backend throws', async () => {
+    const runRetention = vi.fn(async () => {
+      throw new Error('backend down');
+    });
+    const kernel = { getPlugin: vi.fn(() => ({ runRetention })) };
+    const { db } = makeDb();
+    const app = await buildApp(db, kernel);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    // The failure is contained: the Docker prune later in the same tick ran.
+    expect(execMock.run).toHaveBeenCalledWith('docker', ['image', 'prune', '-f'], {}, expect.any(Function));
     await app.close();
   });
 

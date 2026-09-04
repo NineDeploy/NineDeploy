@@ -1,8 +1,38 @@
 import { and, asc, eq, inArray, notInArray, sql } from 'drizzle-orm';
 import { deployments, services } from '@ninedeploy/db';
 import fp from 'fastify-plugin';
+import type { FastifyInstance } from 'fastify';
 import { config } from '../config.js';
 import { runDeployment } from '../engine/pipeline.js';
+
+/**
+ * The `IBuildCache` the deploy pipeline should use, per the operator's
+ * `plugin:build-cache:enabled` + `cache_name` settings. Best-effort: a missing kernel, an
+ * unreadable config row or a name nothing registered all degrade to the first
+ * registered cache (and finally to `undefined`, the legacy `docker build`
+ * path) rather than failing the deploy.
+ */
+async function resolveBuildCache(
+  fastify: FastifyInstance,
+): Promise<import('../kernel/types.js').IBuildCache | undefined> {
+  const registry = fastify.kernel?.registry;
+  if (!registry?.listBuildCaches) return undefined;
+  const all = registry.listBuildCaches();
+  if (all.length === 0) return undefined;
+
+  const cfg = fastify.kernel?.configCenter;
+  // The plugin's master switch. Off = the pipeline gets no cache at all, which
+  // is exactly the legacy `docker build` path.
+  const enabled = cfg
+    ? await cfg.get<boolean>('plugin:build-cache:enabled', true).catch(() => true)
+    : true;
+  if (!enabled) return undefined;
+
+  const name = cfg
+    ? await cfg.get<string>('plugin:build-cache:cache_name', 'inline').catch(() => 'inline')
+    : 'inline';
+  return (name ? registry.getBuildCache(name) : undefined) ?? all[0];
+}
 
 const POLL_MS = 2000;
 /** Bounded grace period for an in-flight deploy during graceful shutdown. The
@@ -158,10 +188,29 @@ export default fp(
                   .get<boolean>('engine:use_buildkit', false)
                   .catch(() => false)
               : false;
-            const buildCache = fastify.kernel?.registry?.listBuildCaches?.()[0];
+            // Honour the operator's `plugin:build-cache:cache_name` choice.
+            // Taking `listBuildCaches()[0]` unconditionally meant a panel set
+            // to `s3` or `registry` still built against the in-memory LRU —
+            // the setting was accepted and silently ignored. An unknown or
+            // unset name still falls back to the first registered cache, which
+            // is the behaviour the plugin's own contract documents.
+            const buildCache = await resolveBuildCache(fastify);
+            const kernelEvents = fastify.kernel?.events;
             const run = runDeployment(fastify.db, queued.id, {
               useBuildKit,
               buildCache,
+              // Publish the build's REAL cache observation. Best-effort: a
+              // bus that throws must not fail the deploy.
+              onBuildCacheEvent: kernelEvents
+                ? (event) => {
+                    try {
+                      const { kind, ...rest } = event;
+                      kernelEvents.emitCustom(`build.cache.${kind}`, { ...rest, ts: Date.now() });
+                    } catch {
+                      /* the bus is observability, never a deploy dependency */
+                    }
+                  }
+                : undefined,
             });
             currents.push(run);
             try {

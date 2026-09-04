@@ -35,9 +35,13 @@ describe('Official Kernel Plugins', () => {
       kernel.events.on('notification.queued', (payload) => {
         notifications.push(payload);
       });
+      // Re-emission is async now: the plugin awaits `alert_on_deploy_success`
+      // and `rate_limit_per_minute` from the config centre before publishing.
+      const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
       // 1. Deployment status changed (failed)
       kernel.events.emit('deployment.status_changed', { deploymentId: 10, serviceName: 'api', status: 'failed' });
+      await settle();
       expect(notifications).toHaveLength(1);
       expect(notifications[0]).toEqual({
         title: 'Deployment failed',
@@ -47,6 +51,7 @@ describe('Official Kernel Plugins', () => {
 
       // 2. Deployment status changed (success)
       kernel.events.emit('deployment.status_changed', { deploymentId: 11, serviceName: 'web', status: 'ready' });
+      await settle();
       expect(notifications).toHaveLength(2);
       expect(notifications[1]).toEqual({
         title: 'Deployment ready',
@@ -56,6 +61,7 @@ describe('Official Kernel Plugins', () => {
 
       // 3. Deployment status without name/id
       kernel.events.emit('deployment.status_changed', {});
+      await settle();
       expect(notifications).toHaveLength(3);
       expect(notifications[2]).toEqual({
         title: 'Deployment Updated',
@@ -65,6 +71,7 @@ describe('Official Kernel Plugins', () => {
 
       // 4. Service health changed (unhealthy)
       kernel.events.emit('service.health_changed', { serviceId: 5, status: 'unhealthy' });
+      await settle();
       expect(notifications).toHaveLength(4);
       expect(notifications[3]).toEqual({
         title: 'Service Health Alert',
@@ -74,6 +81,7 @@ describe('Official Kernel Plugins', () => {
 
       // 5. Service health changed (dead status and empty serviceId)
       kernel.events.emit('service.health_changed', { status: 'dead' });
+      await settle();
       expect(notifications).toHaveLength(5);
       expect(notifications[4]).toEqual({
         title: 'Service Health Alert',
@@ -83,10 +91,12 @@ describe('Official Kernel Plugins', () => {
 
       // 6. Service health changed (healthy - should not notify)
       kernel.events.emit('service.health_changed', { serviceId: 5, status: 'healthy' });
+      await settle();
       expect(notifications).toHaveLength(5);
 
       // 7. Backup completed
       kernel.events.emit('backup.completed', { databaseId: 2, sizeBytes: 102400 });
+      await settle();
       expect(notifications).toHaveLength(6);
       expect(notifications[5]).toEqual({
         title: 'Database Backup Completed',
@@ -96,6 +106,7 @@ describe('Official Kernel Plugins', () => {
 
       // 8. Backup completed with empty payload
       kernel.events.emit('backup.completed', {});
+      await settle();
       expect(notifications).toHaveLength(7);
       expect(notifications[6]).toEqual({
         title: 'Database Backup Completed',
@@ -104,6 +115,98 @@ describe('Official Kernel Plugins', () => {
       });
 
       // Destroy
+      plugin.destroy();
+    });
+
+    /**
+     * r034. Both keys were declared in `configSchema` — so the panel rendered
+     * and saved them — while nothing in the plugin ever read one. Switching
+     * "Alert on Deployment Success" off changed nothing, and the "Max Alerts
+     * Per Minute" cap that advertises itself as preventing "alert storming
+     * during cascade container restarts" capped nothing.
+     */
+    it('honours alert_on_deploy_success', async () => {
+      const kernel = new NineDeployKernel(mockDb as never, mockConfig);
+      const plugin = new NotificationsDispatcherPlugin();
+      await kernel.registerPlugin(plugin);
+      await kernel.configCenter.set('plugin:notifications-dispatcher:alert_on_deploy_success', false);
+
+      const notifications: unknown[] = [];
+      kernel.events.on('notification.queued', (p) => notifications.push(p));
+      const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+      // `auditBridge` maps `deploy.success` onto status: 'success'.
+      kernel.events.emit('deployment.status_changed', { deploymentId: 1, serviceName: 'api', status: 'success' });
+      await settle();
+      expect(notifications).toHaveLength(0);
+
+      // A FAILURE is never suppressed by the success switch.
+      kernel.events.emit('deployment.status_changed', { deploymentId: 2, serviceName: 'api', status: 'failed' });
+      await settle();
+      expect(notifications).toHaveLength(1);
+
+      plugin.destroy();
+    });
+
+    it('caps emissions at rate_limit_per_minute within the sliding window', async () => {
+      const kernel = new NineDeployKernel(mockDb as never, mockConfig);
+      const plugin = new NotificationsDispatcherPlugin();
+      await kernel.registerPlugin(plugin);
+      await kernel.configCenter.set('plugin:notifications-dispatcher:rate_limit_per_minute', 2);
+
+      const notifications: unknown[] = [];
+      const limited: unknown[] = [];
+      kernel.events.on('notification.queued', (p) => notifications.push(p));
+      kernel.events.onCustom('notification.rate_limited', (p) => limited.push(p));
+      const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+      // A cascade of five container deaths in the same minute.
+      for (let i = 0; i < 5; i++) {
+        kernel.events.emit('service.health_changed', { serviceId: i, status: 'dead' });
+        await settle();
+      }
+
+      expect(notifications).toHaveLength(2);
+      expect(limited).toHaveLength(3);
+
+      plugin.destroy();
+    });
+
+    it('still delivers the alert when the config centre itself fails', async () => {
+      const kernel = new NineDeployKernel(mockDb as never, mockConfig);
+      const plugin = new NotificationsDispatcherPlugin();
+      await kernel.registerPlugin(plugin);
+      vi.spyOn(kernel.configCenter, 'get').mockRejectedValue(new Error('config centre down'));
+
+      const notifications: unknown[] = [];
+      kernel.events.on('notification.queued', (p) => notifications.push(p));
+      const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+      kernel.events.emit('service.health_changed', { serviceId: 1, status: 'dead' });
+      await settle();
+      // Dropping an alert because the settings could not be read would be the
+      // wrong failure: deliver, then let the operator fix the config centre.
+      expect(notifications).toHaveLength(1);
+
+      plugin.destroy();
+    });
+
+    it('treats a corrupted rate limit as no limit rather than silence', async () => {
+      const kernel = new NineDeployKernel(mockDb as never, mockConfig);
+      const plugin = new NotificationsDispatcherPlugin();
+      await kernel.registerPlugin(plugin);
+      await kernel.configCenter.set('plugin:notifications-dispatcher:rate_limit_per_minute', 'not-a-number');
+
+      const notifications: unknown[] = [];
+      kernel.events.on('notification.queued', (p) => notifications.push(p));
+      const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+      for (let i = 0; i < 3; i++) {
+        kernel.events.emit('service.health_changed', { serviceId: i, status: 'dead' });
+        await settle();
+      }
+      expect(notifications).toHaveLength(3);
+
       plugin.destroy();
     });
   });

@@ -36,4 +36,6 @@ Integrate enterprise identity providers for unified authentication — configure
 
 ## 🕳️ 5. Egress Controls
 
-Operator-supplied URLs — notification webhooks, OIDC issuers, S3 destinations, log drains, templates sources, git clones and PR inspections — are resolved through a guarded fetch that refuses private, loopback, link-local, CGNAT and multicast addresses (including the cloud metadata endpoint `169.254.169.254`). Self-hosted LAN remotes keep working with `NINEDEPLOY_ALLOW_PRIVATE_EGRESS=1`.
+Operator-supplied URLs whose targets are normally public — notification channels, log drains, push delivery, git clones and PR inspections, OAuth token exchange, the marketplace catalog and `templates_source` — are resolved through a guarded fetch that refuses private, loopback, link-local, CGNAT and multicast addresses (including the cloud metadata endpoint `169.254.169.254`). Self-hosted LAN remotes keep working with `NINEDEPLOY_ALLOW_PRIVATE_EGRESS=1`.
+
+The guard is deliberately **not** applied to the OIDC issuer, the S3 endpoint, the Vault address, the log-search backend or the telemetry endpoint: self-hosted Keycloak, MinIO, Vault and Loki normally *are* on a private address, so guarding those would break working installs. All of them are operator-only settings, and an operator can already run host commands through a service — the guard is defence in depth against a copy-pasted URL, not a privilege boundary.

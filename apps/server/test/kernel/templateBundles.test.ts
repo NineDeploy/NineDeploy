@@ -36,6 +36,34 @@ describe('TemplateBundlesPlugin', () => {
     dataDir: '/tmp/ninedeploy-test',
   };
 
+  /**
+   * r034. `override_count` describes itself in the panel as "updated by the
+   * observer when an override is matched" and nothing ever wrote it, so the
+   * counter an operator reads was pinned at 0 however many templates they
+   * installed.
+   */
+  it('increments override_count for each observed template install', async () => {
+    const kernel = new NineDeployKernel(makeDb() as never, mockConfig);
+    const plugin = new TemplateBundlesPlugin();
+    await kernel.registerPlugin(plugin);
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+    kernel.events.emitCustom('audit.recorded', { action: 'template.install', entity: 'template:ghost' });
+    await settle();
+    expect(await kernel.configCenter.get('plugin:template-bundles:override_count', 0)).toBe(1);
+
+    kernel.events.emitCustom('audit.recorded', { action: 'template.install', entity: 'template:umami' });
+    await settle();
+    expect(await kernel.configCenter.get('plugin:template-bundles:override_count', 0)).toBe(2);
+
+    // An unrelated audit action must not move the counter.
+    kernel.events.emitCustom('audit.recorded', { action: 'service.start', entity: 'api #1' });
+    await settle();
+    expect(await kernel.configCenter.get('plugin:template-bundles:override_count', 0)).toBe(2);
+
+    plugin.destroy();
+  });
+
   it('registers the plugin with the expected id and version', () => {
     const plugin = new TemplateBundlesPlugin();
     expect(plugin.id).toBe('template-bundles');
