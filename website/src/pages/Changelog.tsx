@@ -1,8 +1,178 @@
 const releases = [
   {
+    version: "0.7.1",
+    date: "2026-09-05",
+    status: "current",
+    notes: [
+      {
+        t: "Fixed — Remote Compose stop() No Longer Tears Down the Wrong Project",
+        items: [
+          "The remote compose builder's stop() recovered the project from a single trailing `-[^-]+-\\d+` block on the runtimeId, so a compose service key that contained its own hyphen (services.frontend-api:) made it extract the wrong project — ndcmp-web-frontend-api-1 yielded ndcmp-web-frontend instead of ndcmp-web, and the production path ran `docker compose down -p` on the wrong stack on the node",
+          "The builder now records the project it minted for each runtimeId at buildAndRun time and looks it up at stop(): no string surgery, a runtimeId this builder never recorded is refused outright, and a redeploy of the same service overwrites its own mapping so the latest project always wins",
+          "`createDb({ withClient: false })` actually suppresses the raw libSQL client. The option was a dead no-op since the field existed, so read-only workers (the runtime migrator is one) that wanted to release the underlying libSQL connection could not — Drizzle handle is unaffected, and the regression test pins both the suppression and that queries still answer",
+          "The database-URL secret pattern now matches percent-encoded passwords (`%40` for `@`, etc.). Tools that build connection strings from user input routinely emit percent-encoded forms rather than escaping, and the old regex treated the entire non-special class as raw — the scanner now accepts `[non-special] | %XX` triplets in the password class, the `{3,}` minimum still measures raw characters, and what connection-string builders actually produce is now caught",
+        ],
+      },
+    ],
+  },
+  {
+    version: "0.7.0",
+    date: "2026-09-04",
+    status: "stable",
+    notes: [
+      {
+        t: "Multi-Node Deployments Actually Work",
+        items: [
+          "`server_id` had been on the services table, the Servers page, and the build context since the fleet feature shipped — and no builder ever read it. A docker service pinned to a node is now built and started on that node through the typed agent protocol: the repository is checked out in a per-service workspace on the node, the image is built or pulled there, and the environment arrives as a 0600 env-file that is deleted the moment the container has taken it",
+          "Compose stacks run on a node too, which is what makes the one-click template catalogue usable there at all. The same ordering the local builder uses (`compose config` and `compose pull` complete while the PREVIOUS revision is still serving) so a broken interpolation or a bad tag fails the deployment without ever tearing the live stack down",
+          "PM2 and Nixpacks source builds on a node are refused at queue time with a reason naming the missing capability, instead of being run on the panel host behind the operator's back",
+          "Remote private-registry deploys no longer hang: the agent built `docker login --password-stdin` so the credential never reaches the process table, but nothing ever wrote to that pipe — now the credential is fed and the request never blocks on stdin",
+        ],
+      },
+      {
+        t: "Per-Node Ingress, Proxies That Know Their Own Services",
+        items: [
+          "Each node runs its own Traefik — point the domain at the NODE and production traffic never hairpins through the panel. The panel stays the source of truth for domains, middlewares, and certificates: it renders the node's Traefik configs with the same functions that generate its own and ships them over, the node only writes them to a fixed path. A routing change refreshes every node automatically, and the node proxy is recreated only when the STATIC config changed, so a domain edit is not an ingress interruption",
+          "The panel proxy and each node proxy now render only THEIR OWN services. A router upstream is a container name resolved over the local Docker network, so once nodes really ran containers, rendering every service into every proxy would have made the panel advertise routes for containers on another machine and answer 502 for each one — with the node doing the same in reverse. A node also never receives the panel dashboard router, which would otherwise blackhole the control plane behind whichever node answered DNS first",
+          "Node agents gained per-service workspaces. Git has no per-invocation repository operand — fetch, checkout and reset act on the process working directory — so the agent previously ran every git operation in its own directory and two remote services on the same host overwrote each other's source tree. Each service now builds in its own confined directory",
+        ],
+      },
+      {
+        t: "Settings That Finally Read What You Save",
+        items: [
+          "The panel finally lets you choose where a service runs. A Target node card on the service settings tab lists the registered nodes, explains the limit for PM2 instead of offering a choice that would fail at deploy time, and shows a non-operator the current target read-only rather than calling an endpoint that would 403",
+          "Remote and S3 build caches are selectable at last. Both drivers shipped complete and unit-tested but were never registered on the kernel, so an operator who set the backend to `registry` or `s3` silently kept building against the in-memory LRU. All three are registered now, each reads its connection settings lazily, and the panel gained the registry/S3 endpoint and credential fields that were missing entirely. A regression guard now fails the build when any plugin declares a setting nothing reads",
+          "Build-cache hit rate stops reading 0%: the plugin looked up a key it invented that the builder never stores under, so every deploy published a miss that could not have been anything else — the hit/miss/error events now come from the build itself, carrying the key it actually consulted",
+          "Two settings that could never work were removed rather than left as decoration: the account id and tunnel TOKEN on the Cloudflare Tunnels plugin (a password field whose value went nowhere) and the metrics retention on the telemetry streamer (the metrics table is deliberately a 24-hour ring)",
+        ],
+      },
+      {
+        t: "Honest Documentation, Tables That Stop Growing Forever",
+        items: [
+          "The orchestrator stack API answers real questions: `GET /v1/orchestrators/:name/stacks` passed the orchestrator name into the driver as the stack name, so it could only ever ask for a stack coincidentally named after its own orchestrator. The plural path now lists an orchestrator's stacks, and `GET /:name/stacks/:stack` reports one (SDK: `orchestrators.stackStatus(orchestrator, stack)`)",
+          "Documentation corrected where it overstated the product: the SSRF egress guard never covered the OIDC issuer or the S3 endpoint (and deliberately does not, because self-hosted Keycloak and MinIO normally sit on private addresses), the agent transport is sealed with a cleartext fallback rather than plain HTTP, and the multi-node docs now name exactly what a node runs and what it refuses instead of a blanket capability claim",
+          "Backup drill no longer OOMs the panel on a multi-gigabyte dump: the MySQL and Postgres validators sniffed dump headers through `readFile()` (which loads the entire file), and the drill is member-triggerable — a self-service OOM on the process that hosts the deploy worker. Header sniffing goes through a bounded `readHead()` open-handle helper",
+          "Config-center strings stop type-flipping across a cache boundary, slug collision suffixes stop overflowing the canonical 63-char cap, and the `sessions` and metric-history tables gain retention so they stop growing forever (the metric-history retention window is now swept hourly and the trim no longer matches every row and wipes the archive)",
+        ],
+      },
+    ],
+  },
+  {
+    version: "0.6.0",
+    date: "2026-09-03",
+    status: "stable",
+    notes: [
+      {
+        t: "Security & Reliability From a Full-System Audit",
+        items: [
+          "Privilege escalation closed: a workspace member could wrap an operator-created PM2/compose service in a scheduled deploy job and reach host command execution on a cron. Scheduled deploys now authorize against the service owner exactly like manual and webhook deploys",
+          "Real client IPs behind Traefik. Without trusting the proxy hop, every rate-limit bucket and audit row collapsed onto the proxy's container IP — one tenant could 429 logins and webhooks instance-wide. `NINEDEPLOY_TRUST_PROXY` (default 1 hop, false for direct exposure) fixes the keying",
+          "Production dependency advisories cleared: `fast-uri` (8× HIGH, SSRF/host confusion via fastify's ajv chain) and `qs` (2× MODERATE, DoS via the MCP SDK's express edge) are pinned past their vulnerable ranges. `pnpm audit --prod` is clean",
+          "Editing an env var no longer corrupts secrets: inline saves silently flipped `isSecret` to false and a typed character overwrote the stored value. The classification is preserved and failures surface as toasts",
+          "Self-update no longer crashes the panel on hosts without `/bin/bash` — a failed updater launch records a finished, failed state instead of an uncaught exception mid-request",
+        ],
+      },
+      {
+        t: "Inline Compose Stacks & Backups That Stream",
+        items: [
+          "Inline Compose stacks: paste YAML instead of cloning. Schema-validated (type: compose, mutual exclusion with repoUrl), server-side preflight and dry-run preview, the workspace is re-materialised before every deploy, and a Compose tab offers Save / Save & redeploy",
+          "Backups are now crash-consistent. System export snapshots SQLite with `VACUUM INTO` (taring the live file could produce unrestorable archives), remote S3 transfers stream (multi-GB dumps no longer buffer in the panel's heap, which also hosts the deploy worker), and MySQL/MariaDB dumps run `--single-transaction --quick` so backups no longer lock live databases or produce inconsistent dumps",
+          "Webhook hardening: replayed provider deliveries are rejected via a 24h delivery-id dedup, and PR preview creation survives the slug race instead of 500ing into provider redelivery",
+          "CI ships tested images only. The `:edge` image (what `--channel=main` installs) is published only after the full suite and integration tests pass, and the release prune no longer deletes the CI-pushed edge tags",
+        ],
+      },
+      {
+        t: "CLI Sessions, Panel Reliability, Ops",
+        items: [
+          "CLI sessions survive past 15 minutes: the refresh token is persisted and 401s retry through a single-flight refresh. Server URLs default to https for non-loopback hosts, and the JWT secret moves off `docker run` argv into a 0600 env-file",
+          "Deploy logs keep a bounded tail with stream reconnect (the per-message re-join froze tabs on multi-MB builds), the terminal session survives the fullscreen toggle, storage-denied reads no longer corrupt auth state, and `/v1/auth/token` answers again",
+          "Scheduled backup failures are no longer silent. A failed scheduled backup lands a failed row in the UI and fires the notification channels",
+          "Services.slug is globally unique at the database level after a one-time dedup (it mints container, volume, and router names), FK indexes replace hot-path full scans, and the schema-drift CI guard can actually fail",
+        ],
+      },
+    ],
+  },
+  {
+    version: "0.5.3",
+    date: "2026-09-03",
+    status: "stable",
+    notes: [
+      {
+        t: "Fixed — OIDC Login Works in Production Again",
+        items: [
+          "RS256 verification pulled `node:crypto` through a lazy `require()` — undefined in the pure-ESM server package — so every production sign-in died with \"require is not defined\" while tests stayed green. The same class had silently killed the iptables egress driver's on-disk state layer and crashed `RegistryBuildCache.store()`. All three now use static imports",
+          "Remote build caches produce hits: the S3 backend's lookup demanded a metadata header on HEAD that store() cannot send, and the registry backend compared the cached layer digest against the manifest's own Docker-Content-Digest — both store→lookup round-trips always missed and `--cache-from` built cold every time. Both now GET the marker and compare like-for-like",
+          "`images prune --keep-last N` actually prunes: retention groups were keyed by `repo:tag` (one image id each), so every group was a singleton and nothing was ever deleted. Groups are now per repository",
+        ],
+      },
+      {
+        t: "Reliability Hardening",
+        items: [
+          "Email template overrides are scoped by workspace AND template name: a password-reset email could render with the workspace-invitation text, and deleting one override wiped the workspace's others",
+          "Live CPU and RAM on the databases pages: running databases show CPU + memory on the list cards and a Live Resources card in the detail view, polling every 3 seconds",
+          "Redeploying a running service now asks for confirmation first",
+          "Also: exact-length hex magic secrets (HEX_25 is 25 chars, HEX_1 no longer empty), YAML-ambiguous manifest scalars quoted so round-trips keep string types, monthly cron summaries refuse multi-day day-of-month expressions, PgBouncer status parses `pool_mode` from the rendered ini, and CLI multi-line pastes feed successive prompts in FIFO order",
+        ],
+      },
+    ],
+  },
+  {
+    version: "0.5.2",
+    date: "2026-09-02",
+    status: "stable",
+    notes: [
+      {
+        t: "Fixed — Uniform Hub Icons & Alert State Seed",
+        items: [
+          "Uniform Hub icons: template cards and the detail drawer render a plain slate Package icon instead of 89 arbitrary per-template emojis, matching the panel's monochrome design. Original brand logos are deliberately not used (licensing and asset hosting for third-party marks)",
+          "New alert rules now evaluate from a clean slate: creating a rule seeds its `alert_state` row so `evaluateAlerts` can track breaches immediately instead of skipping the first evaluation window",
+        ],
+      },
+    ],
+  },
+  {
+    version: "0.5.1",
+    date: "2026-09-02",
+    status: "stable",
+    notes: [
+      {
+        t: "Fixed — The Demo Is Real, Watch-Path Reliability",
+        items: [
+          "The demo is real: Load Demo now creates a single deployable Docker source build of github.com/ersinkoc/nextjs-test (port 3000, /api/health) and queues its first build — replacing rows that claimed to be running with nothing behind them. No PM2, no database; legacy fake demo rows are reaped on first seed",
+          "Watch-path webhook matcher hardening: patterns like `**a**b**c**d` compiled into a regex that backtracked ~C(n,3) steps on long non-matching paths (ReDoS). The matcher is now a bounded DP walk with identical folding semantics, over-long inputs fail open, and branch/tag deletion pushes no longer queue spurious failed deployments",
+          "Orchestrator routes are operator-gated: the stack list and stack-status endpoints executed host Docker daemon commands behind bare authentication",
+          "Deploy finalize no longer strands the previous container when env decryption fails; the managed-env fingerprint merges into the config snapshot instead of replacing it",
+        ],
+      },
+    ],
+  },
+  {
+    version: "0.5.0",
+    date: "2026-09-02",
+    status: "stable",
+    notes: [
+      {
+        t: "Plugin Sandboxing & Hook Rollback",
+        items: [
+          "Isolated Worker Thread plugin runner: third-party and community extensions run inside dedicated `node:worker_threads` with V8 memory boundaries and an asynchronous RPC bridge, preventing host process blocking or fatal server crashes on plugin exceptions",
+          "LIFO Hook Rollback (Saga pattern): pipeline hooks support sequential rollbacks if a downstream interceptor errors or returns a veto (`allowOrAbort: false`), guaranteeing cleanup of provisioned sidecars and resources",
+          "Direct domain events for CRUD operations: services, databases, and edge servers now emit typed domain events directly through the kernel event bus alongside the existing audit bridge",
+          "Dynamic React UI extension slots: Web Dashboard, Service Overview, and Database Detail views render plugin widgets through the new `<PluginSlot />` component",
+        ],
+      },
+      {
+        t: "Security Sweep & Deploy Correctness",
+        items: [
+          "A SAML sign-in bypass (signatures not bound to the assertion) is closed with digest verification and a replay window; community-template ids can no longer traverse out of the data directory; managed git sources are operator-only; database attachments require the member role; OIDC logins are CSRF-bound with CSPRNG state; private workspaces answer 404 to outsiders instead of confirming their existence",
+          "Deploy correctness: compose waits for Docker healthchecks and escapes `.env` values byte-exact, host-port services deploy sequentially instead of failing on \"port already allocated\" forever, PM2 domains route through the host gateway instead of 502ing, concurrent database creation on one volume is serialized",
+        ],
+      },
+    ],
+  },
+  {
     version: "0.4.9",
     date: "2026-09-01",
-    status: "current",
+    status: "stable",
     notes: [
       {
         t: "Added — Pin a Template Image Version at Install Time",
