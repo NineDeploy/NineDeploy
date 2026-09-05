@@ -309,9 +309,53 @@ describe('remote compose builder — health and teardown', () => {
 
   it('brings the project down by the name it minted', async () => {
     const { agent, calls } = fakeAgent();
-    await createRemoteComposeBuilder(agent).stop('ndcmp-ghost-ghost-1');
+    // The builder records the project→runtimeId mapping at buildAndRun time
+    // (r008), so stop() can tear down the right project without string
+    // surgery. Drive buildAndRun first to populate that map.
+    const builder = createRemoteComposeBuilder(agent);
+    const runtime = await builder.buildAndRun(ctx());
+    await builder.stop(runtime.runtimeId);
     expect(calls.find((c) => c.op === 'docker.composeDown')!.params).toMatchObject({
       project: 'ndcmp-ghost',
+    });
+  });
+
+  /**
+   * r008 — the previous stop() recovered the project via
+   * `runtimeId.replace(/-[^-]+-\d+$/, '')`, which strips exactly ONE
+   * trailing `-[^-]+-\d+` block. The compose service key is a user-
+   * controlled YAML map name and can itself contain hyphens
+   * (`services.frontend-api:`), in which case the regex stops inside
+   * the service name and leaves partial residue. `ndcmp-web-frontend-api-1`
+   * extracted `ndcmp-web-frontend` instead of `ndcmp-web`, so the
+   * production path called `docker compose down -p ndcmp-web-frontend`
+   * on the node — tearing down the WRONG project. The fix records the
+   * project at buildAndRun return and looks it up at stop() time, so
+   * no string surgery can drift.
+   */
+  it('tears down the right project when the compose service key contains a hyphen (r008)', async () => {
+    const { agent, calls } = fakeAgent();
+    const builder = createRemoteComposeBuilder(agent);
+    const runtime = await builder.buildAndRun(
+      ctx({ service: svc({ slug: 'web', composeService: 'frontend-api' }) }),
+    );
+    expect(runtime.runtimeId).toBe('ndcmp-web-frontend-api-1');
+    await builder.stop(runtime.runtimeId);
+    expect(calls.find((c) => c.op === 'docker.composeDown')!.params).toMatchObject({
+      project: 'ndcmp-web',
+    });
+  });
+
+  it('tears down the right project when both slug and service key contain hyphens (r008)', async () => {
+    const { agent, calls } = fakeAgent();
+    const builder = createRemoteComposeBuilder(agent);
+    const runtime = await builder.buildAndRun(
+      ctx({ service: svc({ slug: 'web-app', composeService: 'frontend-api' }) }),
+    );
+    expect(runtime.runtimeId).toBe('ndcmp-web-app-frontend-api-1');
+    await builder.stop(runtime.runtimeId);
+    expect(calls.find((c) => c.op === 'docker.composeDown')!.params).toMatchObject({
+      project: 'ndcmp-web-app',
     });
   });
 

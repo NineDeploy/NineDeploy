@@ -81,7 +81,14 @@ export const SECRET_PATTERNS: ReadonlyArray<SecretPattern> = [
   {
     id: 'database-url-credentials',
     description: 'Database URL with embedded credentials (scheme://user:pass@…)',
-    regex: /\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqps?|mssql):\/\/[^\s:@'"]+:[^\s@'"]{3,}@/i,
+    // The password class accepts either non-special chars or `%XX` percent-
+    // encoded triplets: a literal '@' in the password cannot appear (it is
+    // the user/host delimiter), but the URL-encoded form `%40` can — and
+    // tools that build connection strings from user input routinely emit
+    // `%40` instead of escaping it themselves. The `{3,}` minimum is
+    // measured in raw characters (not encoded triplets) to keep the
+    // "obviously not a secret" guardrail a real password still satisfies.
+    regex: /\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqps?|mssql):\/\/[^\s:@'"]+:(?:[^\s@'"]|%[0-9A-Fa-f]{2}){3,}@/i,
   },
   {
     id: 'private-key',

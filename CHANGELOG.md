@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.7.1] - 2026-09-05
+
+> A quiet post-0.7.0 patch: three reliability gaps caught once 0.7.0 went
+> out, all narrow in scope. Remote compose `stop()` was tearing down the
+> wrong project whenever the compose service key itself contained a
+> hyphen; the `withClient: false` option on `createDb()` was a dead
+> no-op; and the database-URL secret pattern missed any connection
+> string whose password was percent-encoded. No new features — just
+> three holes closed.
+
+### Fixed
+
+- **Remote compose `stop()` no longer tears down the wrong project.**
+  The previous recovery stripped a single trailing `-[^-]+-\d+` block
+  from `<project>-<service>-1` to reach the project — but the compose
+  service key is a user-controlled YAML map name and can contain
+  hyphens itself (`services.frontend-api:`), so `ndcmp-web-frontend-api-1`
+  extracted `ndcmp-web-frontend` instead of `ndcmp-web`. The production
+  path then ran `docker compose down -p ndcmp-web-frontend` on the
+  node, tearing down whatever stack happened to share that name (and
+  silently leaving the actual one running). The builder now records
+  the project it minted for each `runtimeId` at `buildAndRun` time and
+  looks it up at `stop()` time: no string surgery, a `runtimeId` this
+  builder never recorded is refused outright rather than guessed, and
+  a redeploy of the same service overwrites its own mapping (a `Map`,
+  not an array — the latest project wins).
+- **`createDb({ withClient: false })` actually suppresses the raw
+  libSQL client.** The option was a dead no-op since the field existed:
+  the raw client was always returned, so read-only workers that wanted
+  to release the underlying connection (the runtime migrator is one)
+  could not. The Drizzle handle is unaffected; the client is omitted
+  only when the caller asks, and the regression test pins both the
+  suppression and that the Drizzle handle still answers queries.
+- **The database-URL secret pattern now matches percent-encoded
+  passwords.** A literal `@` cannot appear in the password class (it
+  is the user/host delimiter) but its URL-encoded form `%40` can, and
+  tools that build connection strings from user input routinely emit
+  `%40` instead of escaping it themselves. The old regex treated the
+  entire non-special class as raw, so a connection string with `%40`
+  in the password was never caught by the secret scanner and slipped
+  into env vars and the panel as a "no credentials detected" string.
+  The pattern now accepts `[non-special] | %XX` triplets in the
+  password class, the `{3,}` minimum still measures raw characters
+  (so a real password still satisfies the guardrail), and the scanner
+  covers what connection-string builders actually produce.
+
+---
+
 ## [0.7.0] - 2026-09-04
 
 > The multi-node release. `server_id` had been on the services table, the

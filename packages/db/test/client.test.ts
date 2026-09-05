@@ -26,4 +26,16 @@ describe('createDb', () => {
     const result = await db.run(sql`SELECT 3 as three`);
     expect(result.rows[0]).toEqual({ three: 3 });
   });
+
+  it('suppresses the raw libsql client when withClient is false', async () => {
+    // Regression for F1: the option used to be a dead no-op, so the raw
+    // client was always returned. Callers that opt out to avoid retaining
+    // the underlying connection must actually get suppression.
+    const { db, client, ready } = createDb({ url: ':memory:', withClient: false });
+    await ready;
+    expect(client).toBeUndefined();
+    // The Drizzle handle is unaffected and must still answer queries.
+    const result = await db.run(sql`SELECT 4 as four`);
+    expect(result.rows[0]).toEqual({ four: 4 });
+  });
 });

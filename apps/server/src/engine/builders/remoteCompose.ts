@@ -76,6 +76,16 @@ function renderVolumeOverride(
 }
 
 export function createRemoteComposeBuilder(agent: AgentCall): Builder {
+  // Recorded at buildAndRun time: the project this builder MINTED for the
+  // runtimeId it MINTED. The Builder interface only hands `stop()` the
+  // runtimeId, so a string-surgery recovery from `<project>-<service>-1`
+  // was the only way to reach the project — and that breaks the moment the
+  // compose service key (user-controlled YAML) contains a hyphen of its
+  // own, leaving partial residue in the "project". A live map keyed by the
+  // builder's own minted runtimeId closes the gap with zero string surgery.
+  // Map, not array: a redeploy of the same service reuses the runtimeId
+  // shape and we want the LATEST project for it.
+  const projectByRuntimeId = new Map<string, string>();
   return {
     async buildAndRun(ctx: BuildContext): Promise<DeployRuntime> {
       const { service, buildConfig, env, log } = ctx;
@@ -203,8 +213,12 @@ export function createRemoteComposeBuilder(agent: AgentCall): Builder {
         }
       }
 
+      const runtimeId = mainContainer(project, composeService);
+      // Record the project this builder MINTED for the runtimeId it MINTED,
+      // so `stop()` can tear down the right project without string surgery.
+      projectByRuntimeId.set(runtimeId, project);
       return {
-        runtimeId: mainContainer(project, composeService),
+        runtimeId,
         port: service.port ?? null,
         healthPath: service.healthPath || '/',
         // Multi-container: digest pinning is per service, so there is no single
@@ -264,15 +278,16 @@ export function createRemoteComposeBuilder(agent: AgentCall): Builder {
     },
 
     async stop(runtimeId: string): Promise<void> {
-      // `runtimeId` is `<project>-<service>-1`, and both halves contain
-      // hyphens, so the project cannot be recovered by string surgery. The
-      // project name IS derivable here, though: this builder minted it from the
-      // slug, and the slug is the leading `ndcmp-<slug>` of the container name
-      // up to the compose service suffix. Take the container's own compose
-      // label instead of guessing — `docker.inspect` cannot read labels, so
-      // fall back to bringing the project down by the name we minted.
-      const project = runtimeId.replace(/-[^-]+-\d+$/, '');
-      if (!project.startsWith(`${PROJECT_PREFIX}-`)) return;
+      // Look up the project this builder minted for this runtimeId. A
+      // string-surgery recovery from `<project>-<service>-1` was the previous
+      // fallback and broke when the compose service key itself contained a
+      // hyphen — `runtimeId.replace(/-[^-]+-\d+$/, '')` strips only the LAST
+      // `-[^-]+-\d+` block, so `ndcmp-web-frontend-api-1` extracted the wrong
+      // project `ndcmp-web-frontend` instead of `ndcmp-web`. A runtimeId this
+      // builder never recorded is one it cannot authoritatively tear down —
+      // refuse it rather than guess.
+      const project = projectByRuntimeId.get(runtimeId);
+      if (project === undefined || !project.startsWith(`${PROJECT_PREFIX}-`)) return;
       await agent('docker.composeDown', { project }, () => undefined).catch(() => undefined);
     },
   };

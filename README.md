@@ -10,11 +10,11 @@ the databases, certificates, secrets, backups and access rules around it — fro
 terminal CLI, a typed SDK, or an AI agent over MCP.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
-[![Release](https://img.shields.io/badge/Release-0.7.0-blue.svg)](./CHANGELOG.md)
+[![Release](https://img.shields.io/badge/Release-0.7.1-blue.svg)](./CHANGELOG.md)
 [![Node.js](https://img.shields.io/badge/Node.js-%E2%89%A522.13-green.svg)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-7-blue.svg)](https://www.typescriptlang.org)
 [![Docker](https://img.shields.io/badge/Docker-required-blue.svg)](https://docker.com)
-[![Tests](https://img.shields.io/badge/Tests-4%2C879%20passing-brightgreen.svg)](#testing)
+[![Tests](https://img.shields.io/badge/Tests-4%2C882%20passing-brightgreen.svg)](#testing)
 [![CI](https://github.com/NineDeploy/NineDeploy/actions/workflows/ci.yml/badge.svg)](https://github.com/NineDeploy/NineDeploy/actions/workflows/ci.yml)
 
 [Website](https://ninedeploy.com) · [Quickstart](./docs/QUICKSTART.md) · [Architecture](./ARCHITECTURE.md) · [Templates](https://ninedeploy.com/templates) · [Changelog](./CHANGELOG.md)
@@ -68,12 +68,12 @@ runs the SQLite migrations, and starts a hardened `systemd` unit (`ProtectSystem
 Re-running the same command is the upgrade path; it snapshots `.data` before touching anything.
 
 ```bash
-./install.sh --version v0.7.0     # pin an exact tag
+./install.sh --version v0.7.1     # pin an exact tag
 ./install.sh --channel main       # track edge
 ./install.sh --force              # discard local edits + stale build artifacts, then rebuild
 ```
 
-> **Where `main` stands:** the default channel installs the newest release tag (**0.7.0**).
+> **Where `main` stands:** the default channel installs the newest release tag (**0.7.1**).
 > The newest work (doctor mode, retained-volume re-keying) lands on `main` before it is tagged —
 > see [`CHANGELOG.md`](./CHANGELOG.md) under *Unreleased*, or run `--channel main` to get it today.
 
@@ -504,15 +504,15 @@ RUN_INTEGRATION=1 pnpm --filter @ninedeploy/server test   # testcontainers: real
 
 | Package | Files | Tests | Coverage floor (stmts/branch/func/lines) |
 | :--- | ---: | ---: | :--- |
-| `apps/server` | 186 | 2,589 | 95 / 90 / 95 / 95 |
+| `apps/server` | 186 | 2,591 | 95 / 90 / 95 / 95 |
 | `apps/web` | 82 | 1,389 | 99 / 95 / 99 / 99 |
 | `apps/cli` | 23 | 460 | 100 |
 | `packages/schemas` | 4 | 257 | 100 |
 | `packages/sdk` | 3 | 122 | 100 |
 | `packages/mcp` | 2 | 28 | 100 |
-| `packages/db` | 8 | 27 | 100 |
+| `packages/db` | 8 | 28 | 100 |
 | `packages/plugin-sdk` | 1 | 7 | 100 |
-| **Total** | **309** | **4,879** | |
+| **Total** | **309** | **4,882** | |
 
 Unit and route suites only — the server's six testcontainers integration files (real Postgres, MySQL,
 Redis, MongoDB, Valkey, ClickHouse and a deploy end-to-end) are opt-in behind `RUN_INTEGRATION=1` and

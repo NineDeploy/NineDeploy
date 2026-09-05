@@ -12,13 +12,22 @@ export interface CreateDbOptions {
   url: string;
   /** Auth token (only relevant for remote/libSQL servers). */
   authToken?: string;
-  /** Return the raw libSQL client as well (needed by the migrator). */
+  /**
+   * When `false`, suppress the raw libSQL client from the returned object so
+   * the caller can avoid retaining the underlying connection when only the
+   * Drizzle handle is needed. The client is included by default.
+   */
   withClient?: boolean;
 }
 
 export interface CreateDbResult {
   db: DB;
-  client: Client;
+  /**
+   * Raw libSQL client. Present unless the caller set
+   * `CreateDbOptions.withClient` to `false`. The runtime migrator uses the
+   * Drizzle `db` only, so it is safe to suppress this in read-only workers.
+   */
+  client?: Client;
   /** Connection PRAGMAs that must settle before the first application query. */
   ready: Promise<void>;
 }
@@ -54,5 +63,7 @@ export function createDb(opts: CreateDbOptions): CreateDbResult {
     .then(() => client.execute('PRAGMA busy_timeout = 5000;'))
     .then(() => undefined);
   const db = drizzle(client, { schema });
-  return { db, client, ready };
+  // The client is opt-out via `withClient: false` so call sites that only
+  // need the Drizzle handle can release the underlying libSQL connection.
+  return opts.withClient === false ? { db, ready } : { db, client, ready };
 }
